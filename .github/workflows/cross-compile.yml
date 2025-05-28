@@ -1,0 +1,159 @@
+name: build, package and deploy
+
+on:
+  push:
+    branches:
+      - develop
+      - feature-**
+      - fix-**
+      - main
+    tags:
+      - "*"
+  pull_request:
+    branches:
+      - develop
+      - main
+env:
+  CHANNEL: "${{ github.ref_type == 'tag' && 'stable' || (github.event_name == 'pull_request' && 'testing' || 'dev') }}"
+  PACKAGE_NAME: "rstream"
+  RSTREAM_URL: "${{ github.ref_type == 'tag' && 'https://rstream.io' || 'https://dev.rstream.io' }}"
+  VERSION: "${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || github.ref_name }}"
+jobs:
+  build:
+    runs-on: ["self-hosted", "Linux"]
+    steps:
+      - shell: bash
+        if: ${{ github.ref_type == 'tag' }}
+        run: |
+          echo "VERSION=${VERSION#v}" >> $GITHUB_ENV
+      - name: Install dependencies
+        shell: bash
+        run: |
+          sudo apt update && sudo apt-get install -y \
+            coreutils         \
+            dpkg              \
+            gawk              \
+            git               \
+            make              \
+            npm               \
+            protobuf-compiler \
+            rsync             \
+            tar               \
+            wget              \
+            zip
+          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
+          echo "deb https://download.mono-project.com/repo/ubuntu stable-focal main" | sudo tee /etc/apt/sources.list.d/mono-official-stable.list
+          sudo apt update && sudo apt-get install -y nuget
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.23.x
+      - name: Configure git for private modules
+        shell: bash
+        run: |
+          git config --global url."https://user:${{ secrets.GIT_TOKEN }}@github.com".insteadOf "https://github.com"
+      - name: Build
+        shell: bash
+        run: |
+          if [[ ${CHANNEL} == stable || ${VERSION} == main ]]; then
+            make -j $(getconf _NPROCESSORS_ONLN) cross
+          else
+            make -j $(getconf _NPROCESSORS_ONLN)
+          fi
+      # - name: Notarize macos binaries
+      #   if: ${{ github.ref_type == 'tag' }}
+      #   shell: bash
+      #   env:
+      #     APPLE_CODESIGN_VERSION: "0.27.0"
+      #     MACOS_APP_STORE_API_KEY: ${{ secrets.MACOS_APP_STORE_API_KEY }}
+      #     MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+      #     MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+      #   run: |
+      #     if [ ! command -v rcodesign &> /dev/null ] || [ "$(rcodesign --version | grep -o '[0-9.]*')" != "$APPLE_CODESIGN_VERSION" ]; then
+      #       echo "Installing apple-codesign ${APPLE_CODESIGN_VERSION}"
+      #       pushd /tmp
+      #       ARCH=$(uname -m)
+      #       if [ "$ARCH" = "x86_64" ]; then
+      #         wget https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F${APPLE_CODESIGN_VERSION}/apple-codesign-${APPLE_CODESIGN_VERSION}-x86_64-unknown-linux-musl.tar.gz
+      #       elif [ "$ARCH" = "aarch64" ]; then
+      #         wget https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F${APPLE_CODESIGN_VERSION}/apple-codesign-${APPLE_CODESIGN_VERSION}-aarch64-unknown-linux-musl.tar.gz
+      #       fi
+      #       tar -zxvf apple-codesign-${APPLE_CODESIGN_VERSION}-*-unknown-linux-musl.tar.gz
+      #       sudo mv apple-codesign-${APPLE_CODESIGN_VERSION}-*-unknown-linux-musl/rcodesign /usr/local/bin
+      #       popd
+      #     fi
+      #     make -j $(getconf _NPROCESSORS_ONLN) ${PACKAGE_NAME}-macos-rcodesign
+      - uses: docker/setup-qemu-action@v3
+        if: ${{ github.ref_type == 'tag' }}
+      - uses: docker/setup-buildx-action@v3
+        if: ${{ github.ref_type == 'tag' }}
+      - uses: docker/login-action@v3
+        if: ${{ github.ref_type == 'tag' }}
+        with:
+          username: rstream
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Package and deploy binaries
+        if: ${{ github.ref_type == 'tag' }}
+        shell: bash
+        env:
+          APTLY_DIGEST: ${{ secrets.APTLY_DIGEST }}
+          APTLY_URL: "https://aptly.rstream.io"
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_SOURCE: "https://nexus.rstream.io/repository/windows/"
+          RSTREAM_TOKEN: ${{ secrets.RSTREAM_TOKEN }}
+        run: |
+          make -j $(getconf _NPROCESSORS_ONLN) ${PACKAGE_NAME}-deploy-pkg-cross ${PACKAGE_NAME}-deploy-deb ${PACKAGE_NAME}-deploy-nupkg ${PACKAGE_NAME}-docker
+      - uses: actions/checkout@v4
+        if: ${{ github.ref_type == 'tag' }}
+        with:
+          repository: rstreamlabs/homebrew
+          token: ${{ secrets.GIT_TOKEN }}
+          path: homebrew
+      - name: Update homebrew cask file
+        if: ${{ github.ref_type == 'tag' }}
+        shell: bash
+        run: |
+          BREW_FORMULA="homebrew/Casks/${PACKAGE_NAME}${{ env.CHANNEL != 'stable' && '-dev' || '' }}.rb"
+          sed -i "s/version \".*\"/version \"${{ env.VERSION }}\"/" ${BREW_FORMULA}
+          PLATFORMS=("macos/x86_64" "macos/arm64" "linux/x86_64" "linux/arm64")
+          for PLATFORM in "${PLATFORMS[@]}"; do
+            OS=$(echo ${PLATFORM} | cut -d '/' -f1)
+            ARCH=$(echo ${PLATFORM} | cut -d '/' -f2)
+            FILEPATH="out/cmd/${PACKAGE_NAME}/${{ env.CHANNEL }}/${{ env.VERSION }}/${OS}/${ARCH}/${PACKAGE_NAME}-${{ env.VERSION }}-${OS}-${ARCH}.tar.gz.info"
+            PACKAGE_ID=$(grep "id:" ${FILEPATH} | cut -d ':' -f2)
+            PACKAGE_URL="${RSTREAM_URL}/api/packages/${PACKAGE_ID}/download"
+            CHECKSUM=$(grep "checksum:" ${FILEPATH} | cut -d ':' -f2)
+            gawk -i inplace -v os="${OS}" -v arch="${ARCH}" -v url="${PACKAGE_URL}" -v sha256="${CHECKSUM}" 'BEGIN{in_os=in_arch=0} $0~"\"" os "\"" " => {" {in_os=1} in_os && $0~"\"" arch "\"" " => {" {in_arch=1} in_os && in_arch && !url_set && /url:/ {gsub(/url:.*/, "url: \"" url "\","); url_set=1} in_os && in_arch && !sha256_set && /sha256:/ {gsub(/sha256:.*/, "sha256: \"" sha256 "\","); sha256_set=1} {print}' ${BREW_FORMULA}
+          done
+          git -C homebrew config user.name 'CI automation'
+          git -C homebrew config user.email 'ci@rstream.io'
+          git -C homebrew add Casks/${PACKAGE_NAME}${{ env.CHANNEL != 'stable' && '-dev' || '' }}.rb
+          git -C homebrew commit -m "update ${PACKAGE_NAME}${{ env.CHANNEL != 'stable' && '-dev' || '' }} cask to ${{ env.VERSION }}"
+          git -C homebrew push
+      - uses: actions/checkout@v4
+        if: ${{ github.ref_type == 'tag' }}
+        with:
+          repository: rstreamlabs/npm
+          token: ${{ secrets.GIT_TOKEN }}
+          path: npm
+      - name: Publish NPM package
+        if: ${{ github.ref_type == 'tag' }}
+        shell: bash
+        run: |
+          PACKAGE_JSON="npm/${PACKAGE_NAME}/package.json"
+          sed -i "s|\"version\": \".*\"|\"version\": \"${{ env.VERSION }}\"|" ${PACKAGE_JSON}
+          sed -i "s|\"registry\": \".*\"|\"registry\": \"${{ env.RSTREAM_URL }}\"|" ${PACKAGE_JSON}
+          git -C npm config user.name 'CI automation'
+          git -C npm config user.email 'ci@rstream.io'
+          git -C npm add ${PACKAGE_NAME}/package.json
+          git -C npm commit -m "update ${PACKAGE_NAME} version to ${{ env.VERSION }}"
+          git -C npm push
+          cd ./npm/${PACKAGE_NAME}
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
+          npm install --ignore-scripts
+          npm publish
+      - name: Cleanup git config
+        if: always()
+        shell: bash
+        run: |
+          rm -f ~/.gitconfig

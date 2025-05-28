@@ -1,0 +1,253 @@
+// See LICENSE file in the project root for license information.
+
+syntax = "proto3";
+
+option go_package = "./pb";
+
+import "google/protobuf/descriptor.proto";
+
+extend google.protobuf.FileOptions {
+  string protocol_version = 51000;
+}
+
+extend google.protobuf.FieldOptions {
+  string access = 51234;
+}
+
+option (protocol_version) = "1.0";
+
+package rstream.io_rstream.protobuf;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+// Address structure used for representing IP addresses
+
+message IpAddress {
+  oneof addr {
+    fixed32 v4 = 1;
+    bytes v6 = 2;
+  }
+}
+
+// Error message structure used for reporting issues.
+
+message Error {
+  int32 code = 1;
+  google.protobuf.StringValue message = 2;
+}
+
+// Client information including details like agent, operating system, authentication token, etc.
+
+message clientDetails {
+  google.protobuf.StringValue agent = 1;
+  google.protobuf.StringValue os = 2;
+  google.protobuf.StringValue arch = 3;
+  google.protobuf.StringValue version = 4;
+  google.protobuf.StringValue token = 5;
+  google.protobuf.StringValue protocol_version = 6;
+}
+
+// Tunnel message structure used for creating and managing tunnels
+
+// message TunnelProperties {
+//   google.protobuf.StringValue id = 1 [(access) = "read-only"];
+//   google.protobuf.StringValue name = 2 [(access) = "read-write"];
+//   google.protobuf.Timestamp creation_date = 3 [(access) = "read-only"];
+//   google.protobuf.StringValue type = 4 [(access) = "read-write"];
+//   google.protobuf.BoolValue publish = 5 [(access) = "read-write"];
+//   google.protobuf.StringValue protocol = 6 [(access) = "read-write"];
+//   map<string, string> labels = 7 [(access) = "read-write"];
+//   repeated string geoip = 8 [(access) = "read-write"];
+//   repeated string trusted_ips = 9 [(access) = "read-write"];
+//   google.protobuf.StringValue domain = 10 [(access) = "read-write"];
+//   google.protobuf.StringValue tls_mode = 11 [(access) = "read-write"];
+//   repeated string tls_alpns = 12 [(access) = "read-write"];
+//   google.protobuf.StringValue tls_min_version = 13 [(access) = "read-write"];
+//   repeated string tls_ciphers = 14 [(access) = "read-write"];
+//   google.protobuf.BoolValue mtls = 15 [(access) = "read-write"];
+//   google.protobuf.StringValue mtls_cacert_pem = 16 [(access) = "read-write"];
+//   google.protobuf.StringValue http_version = 17 [(access) = "read-write"];
+//   google.protobuf.BoolValue http_use_tls = 18 [(access) = "read-write"];
+//   google.protobuf.BoolValue token_auth = 19 [(access) = "read-write"];
+//   google.protobuf.BoolValue sso = 20 [(access) = "read-write"];
+//   repeated string sso_providers = 21 [(access) = "read-write"];
+//   repeated string email_whitelist = 22 [(access) = "read-write"];
+//   repeated string email_blacklist = 23 [(access) = "read-write"];
+//   google.protobuf.BoolValue challenge = 24 [(access) = "read-write"];
+// }
+
+message TunnelProperties {
+  google.protobuf.StringValue id = 1 [(access) = "read-only"];
+  google.protobuf.Timestamp creation_date = 2 [(access) = "read-only"];
+  google.protobuf.StringValue name = 3 [(access) = "read-write"];
+  google.protobuf.BoolValue publish = 4 [(access) = "read-write"];
+  google.protobuf.StringValue protocol = 5 [(access) = "read-write"];
+  map<string, string> labels = 6 [(access) = "read-write"];
+  repeated string geoip = 7 [(access) = "read-write"];
+  repeated string trusted_ips = 8 [(access) = "read-write"];
+  google.protobuf.StringValue domain = 9 [(access) = "read-write"];
+  google.protobuf.StringValue tls_mode = 10 [(access) = "read-write"];
+  repeated string tls_alpns = 11 [(access) = "read-write"];
+  google.protobuf.StringValue tls_min_version = 12 [(access) = "read-write"];
+  repeated string tls_ciphers = 13 [(access) = "read-write"];
+  google.protobuf.BoolValue mtls = 14 [(access) = "read-write"];
+  google.protobuf.StringValue mtls_cacert_pem = 15 [(access) = "read-write"];
+  google.protobuf.StringValue http_version = 16 [(access) = "read-write"];
+  google.protobuf.BoolValue http_use_tls = 17 [(access) = "read-write"];
+  google.protobuf.BoolValue token_auth = 18 [(access) = "read-write"];
+  google.protobuf.BoolValue sso = 19 [(access) = "read-write"];
+  repeated string sso_providers = 20 [(access) = "read-write"];
+  repeated string email_whitelist = 21 [(access) = "read-write"];
+  repeated string email_blacklist = 22 [(access) = "read-write"];
+  google.protobuf.BoolValue challenge = 23 [(access) = "read-write"];
+}
+
+// When a client opens a new control channel to the server
+// it must start by sending an 'OpenControlChannelReq' message
+
+message OpenControlChannelReq {
+  clientDetails client_details = 1;
+}
+
+// The server responds to an 'OpenControlChannelReq' message with an
+// 'OpenControlChannelRsp' message over the control channel
+// The server response includes a unique client ID
+// that is used to associate and authenticate future
+// stream connections
+
+message OpenControlChannelRsp {
+  oneof payload {
+    string client_id = 1;
+    Error error = 2;
+  }
+}
+
+// When a client wants to close the control channel, it sends
+// a 'CloseControlChannelReq' message to the server
+
+message CloseControlChannelReq {
+  
+}
+
+// The server responds to a 'CloseControlChannelReq' message with a
+// 'CloseControlChannelRsp' message over the control channel
+
+message CloseControlChannelRsp {
+  
+}
+
+// Clients send this message to the server over the control channel
+// to request a new tunnel be opened on the client's behalf
+// Tunnel name is optional and can be provided by the user to identify the tunnel
+
+message OpenTunnelReq {
+  string request_id = 1;
+  TunnelProperties tunnel_properties = 2;
+}
+
+// When the server opens a new tunnel on behalf of
+// a client, it sends a 'OpenTunnelRsp' message to notify the client
+
+message OpenTunnelRsp {
+  string request_id = 1;
+  oneof payload {
+    TunnelProperties tunnel_properties = 2;
+    Error error = 3;
+  }
+}
+
+// Message sent by a client to close a previously opened tunnel
+
+message CloseTunnelReq {
+  string tunnel_id = 1;
+}
+
+// Message sent by the server to inform a client that a tunnel has been closed
+
+message CloseTunnelRsp {
+  string tunnel_id = 1;
+}
+
+// When the server wants to initiate a new tunneled connection, it sends
+// this message over the control channel to the client
+// When a client receives this message, it must initiate a
+// new proxy connection to the server
+
+message ProxyConnReq {
+  string tunnel_id = 1;
+  string stream_id = 2;
+  google.protobuf.StringValue secret = 3;
+  IpAddress source_ip = 4;
+}
+
+// Client's response to a 'ConnectionInitReq'. The client can refuse the connection by providing an error.
+
+message ProxyConnRsp {
+  string stream_id = 1;
+  Error error = 2;
+}
+
+// After a client receives a 'ProxyConnReq' message, it opens a new
+// connection to the server and sends a 'ProxyReq' message
+
+message ProxyReq {
+  clientDetails client_details = 1;
+  string stream_id = 2;
+  google.protobuf.BoolValue zero_rtt = 3;
+}
+
+// Server's response to a 'ProxyReq'. Skipped if zero_rtt option is enabled.
+
+message ProxyRsp {
+  Error error = 1;
+}
+
+// When a client wants to open a new stream, it opens a new
+// connection to the server and sends a 'StreamReq' message
+// providing either the tunnel ID or the tunnel name
+
+message StreamReq {
+  clientDetails client_details = 1;
+  string tunnel_id_name = 2;
+  google.protobuf.BoolValue zero_rtt = 3;
+}
+
+// Server's response to a 'StreamReq'. Skipped if zero_rtt option is enabled.
+
+message StreamRsp {
+  oneof payload {
+    string stream_id = 1;
+    Error error = 2;
+  }
+}
+
+// Sent by client and/or server to maintain the control channel active
+
+message Heartbeat { }
+
+// Allows the server to send unsolicited messages to the client
+message ServerMessage {
+  string message = 1;
+}
+
+message Message {
+  oneof payload {
+    OpenControlChannelReq open_control_channel_req = 1;
+    OpenControlChannelRsp open_control_channel_rsp = 2;
+    CloseControlChannelReq close_control_channel_req = 3;
+    CloseControlChannelRsp close_control_channel_rsp = 4;
+    OpenTunnelReq open_tunnel_req = 5;
+    OpenTunnelRsp open_tunnel_rsp = 6;
+    CloseTunnelReq close_tunnel_req = 7;
+    CloseTunnelRsp close_tunnel_rsp = 8;
+    ProxyConnReq proxy_conn_req = 9;
+    ProxyConnRsp proxy_conn_rsp = 10;
+    ProxyReq proxy_req = 11;
+    ProxyRsp proxy_rsp = 12;
+    StreamReq stream_req = 13;
+    StreamRsp stream_rsp = 14;
+    Heartbeat heartbeat = 15;
+    ServerMessage server_message = 16;
+  }
+}

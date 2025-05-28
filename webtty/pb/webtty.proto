@@ -1,0 +1,91 @@
+// See LICENSE file in the project root for license information.
+
+syntax = "proto3";
+
+option go_package = "./pb";
+
+message Options {
+  bool interactive = 1;
+  bool allocate_tty = 2;
+  bool send_heartbeat = 3;
+}
+
+message Environment {
+  string key = 1;
+  string value = 2;
+}
+
+message Username {
+  oneof payload {
+    string name = 1;
+    uint32 id = 2;
+  }
+}
+
+message Workdir {
+  string value = 1;
+}
+
+message Config {
+  Options options = 1;
+  repeated string cmd_args = 2;
+  repeated Environment env_vars = 3;
+  Workdir workdir = 4;
+  Username username = 5;
+}
+
+message Open {
+  Config config = 1;
+}
+
+message Ack { }
+
+message Error {
+  int32 code = 1;
+}
+
+message Close {
+  int32 return_code = 1;
+}
+
+message EndOfStream { }
+
+message Data {
+  enum Type {
+    TYPE_STDIN = 0;
+    TYPE_STDOUT = 1;
+    TYPE_STDERR = 2;
+  }
+  Type type = 1;
+  oneof payload {
+    bytes data = 2;
+    EndOfStream eos = 3;
+  }
+}
+
+message TerminalSize {
+  uint32 row = 1;
+  uint32 col = 2;
+  uint32 xpixel = 3;
+  uint32 ypixel = 4;
+}
+
+message Parameter {
+  oneof parameter {
+    TerminalSize terminal_size = 1;
+  }
+}
+
+message Heartbeat { }
+
+message Message {
+  oneof payload {
+    Open open = 1;
+    Ack ack = 2;
+    Error error = 3;
+    Close close = 4;
+    Data data = 5;
+    Parameter parameter = 6;
+    Heartbeat heartbeat = 7;
+  }
+}

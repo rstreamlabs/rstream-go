@@ -1,0 +1,339 @@
+// See LICENSE file in the project root for license information.
+
+package rstream
+
+import (
+	"bufio"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/rstreamlabs/rstream-go/pb"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/descriptorpb"
+)
+
+func FormatForwardingAddr(props TunnelProperties) (string, error) {
+	if props.Domain != nil {
+		domain := *props.Domain
+		protocol := "tls"
+		var out string
+		if props.Protocol != nil && *props.Protocol == ProtocolHTTP {
+			protocol = "https"
+			out = protocol + "://" + domain
+		} else {
+			out = domain
+		}
+		if protocol != "https" {
+			out += " (" + protocol + ")"
+		}
+		return out, nil
+	}
+	if props.Name != nil {
+		return "rstrm://" + *props.Name + " (unpublished)", nil
+	}
+	if props.ID != nil {
+		return "rstrm://" + *props.ID + " (unpublished)", nil
+	}
+	return "", errors.New("invalid tunnel properties: no domain, name, or ID")
+}
+
+func FormatForwardedAddr(addr net.TCPAddr, props TunnelProperties) (string, error) {
+	if addr.IP == nil || len(addr.IP) == 0 {
+		return "", errors.New("invalid address: no IP")
+	}
+	if addr.Port == 0 {
+		return "", errors.New("invalid address: no Port")
+	}
+	host := addr.IP.String()
+	portStr := strconv.Itoa(addr.Port)
+	var protocol string
+	if props.Protocol != nil && *props.Protocol == ProtocolHTTP {
+		if props.HTTPUseTLS != nil && *props.HTTPUseTLS {
+			protocol = "https"
+		} else {
+			protocol = "http"
+		}
+	} else {
+		protocol = ""
+	}
+	out := ""
+	if protocol == "http" || protocol == "https" {
+		out = protocol + "://"
+	}
+	out += host
+	if !((protocol == "http" && portStr == "80") ||
+		(protocol == "https" && portStr == "443")) {
+		out += ":" + portStr
+	}
+	if protocol == "http" {
+		if props.HTTPVersion != nil {
+			out += " (" + string(*props.HTTPVersion) + ")"
+		}
+	} else if protocol != "https" {
+		if props.TLSMode != nil && *props.TLSMode == TLSModePassthrough {
+			out += " (tls)"
+		} else {
+			out += " (tcp)"
+		}
+	}
+	return out, nil
+}
+
+func toClientDetailsPb(details *clientDetails) *pb.ClientDetails {
+	return &pb.ClientDetails{
+		Agent:           stringPbValueOrNil(details.Agent),
+		Os:              stringPbValueOrNil(details.OS),
+		Arch:            stringPbValueOrNil(details.Arch),
+		Version:         stringPbValueOrNil(details.Version),
+		Token:           stringPbValueOrNil(details.Token),
+		ProtocolVersion: stringPbValueOrNil(details.ProtocolVersion),
+	}
+}
+
+func toTunnelProperties(msg *pb.TunnelProperties) TunnelProperties {
+	return TunnelProperties{
+		ID:             stringPtrFromPbValue(msg.Id),
+		Name:           stringPtrFromPbValue(msg.Name),
+		CreationDate:   nil, // TODO
+		Publish:        boolPtrFromPbValue(msg.Publish),
+		Protocol:       (*Protocol)(stringPtrFromPbValue(msg.Protocol)),
+		Labels:         msg.Labels,
+		GeoIP:          msg.Geoip,
+		TrustedIPs:     msg.TrustedIps,
+		Domain:         stringPtrFromPbValue(msg.Domain),
+		TLSMode:        (*TLSMode)(stringPtrFromPbValue(msg.TlsMode)),
+		TLSALPNs:       msg.TlsAlpns,
+		TLSMinVersion:  nil, // TODO
+		TLSCiphers:     nil, // TODO
+		MTLS:           boolPtrFromPbValue(msg.Mtls),
+		MTLSCACertPEM:  stringPtrFromPbValue(msg.MtlsCacertPem),
+		HTTPVersion:    (*HTTPVersion)(stringPtrFromPbValue(msg.HttpVersion)),
+		HTTPUseTLS:     boolPtrFromPbValue(msg.HttpUseTls),
+		TokenAuth:      boolPtrFromPbValue(msg.TokenAuth),
+		SSO:            boolPtrFromPbValue(msg.Sso),
+		SSOProviders:   msg.SsoProviders,
+		EmailWhitelist: msg.EmailWhitelist,
+		EmailBlacklist: msg.EmailBlacklist,
+		Challenge:      boolPtrFromPbValue(msg.Challenge),
+	}
+}
+
+func toTunnelPropertiesPb(props TunnelProperties) *pb.TunnelProperties {
+	return &pb.TunnelProperties{
+		Id:             stringPbValueOrNil(props.ID),
+		Name:           stringPbValueOrNil(props.Name),
+		CreationDate:   nil, // TODO
+		Publish:        boolPbValueOrNil(props.Publish),
+		Protocol:       stringPbValueOrNil((*string)(props.Protocol)),
+		Labels:         props.Labels,
+		Geoip:          props.GeoIP,
+		TrustedIps:     props.TrustedIPs,
+		Domain:         stringPbValueOrNil(props.Domain),
+		TlsMode:        stringPbValueOrNil((*string)(props.TLSMode)),
+		TlsAlpns:       props.TLSALPNs,
+		TlsMinVersion:  nil, // TODO
+		TlsCiphers:     nil, // TODO
+		Mtls:           boolPbValueOrNil(props.MTLS),
+		MtlsCacertPem:  stringPbValueOrNil(props.MTLSCACertPEM),
+		HttpVersion:    stringPbValueOrNil((*string)(props.HTTPVersion)),
+		HttpUseTls:     boolPbValueOrNil(props.HTTPUseTLS),
+		TokenAuth:      boolPbValueOrNil(props.TokenAuth),
+		Sso:            boolPbValueOrNil(props.SSO),
+		SsoProviders:   props.SSOProviders,
+		EmailWhitelist: props.EmailWhitelist,
+		EmailBlacklist: props.EmailBlacklist,
+		Challenge:      boolPbValueOrNil(props.Challenge),
+	}
+}
+
+func splitHostPort(addr string) (*string, *string, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		if strings.Contains(addr, ":") {
+			return nil, nil, err
+		} else {
+			host = addr
+		}
+	}
+	var hostPtr, portPtr *string
+	if host != "" {
+		hostPtr = &host
+	}
+	if port != "" {
+		portPtr = &port
+	}
+	return hostPtr, portPtr, nil
+}
+
+func getDefaultConfigFilePath() (string, error) {
+	if envPath := os.Getenv("RSTREAM_DEFAULT_CONFIG_PATH"); envPath != "" {
+		return envPath, nil
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(homeDir, ".rstream", "config.json"), nil
+}
+
+func loadTokensFromConfig(configPath string) (map[string]string, error) {
+	f, err := os.Open(configPath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return nil, err
+	}
+	var root struct {
+		Tokens map[string]string `json:"tokens"`
+	}
+	if err := json.Unmarshal(data, &root); err != nil {
+		return nil, err
+	}
+	if root.Tokens == nil {
+		return nil, errors.New("no 'tokens' field in config")
+	}
+	return root.Tokens, nil
+}
+
+func getDefaultEngine() (string, error) {
+	if val := os.Getenv("RSTREAM_DEFAULT_ENGINE"); val != "" {
+		return val, nil
+	}
+	return "engine.rstream.io:443", nil
+}
+
+func getDefaultAuthToken(configFilePath *string, engine *string) (*string, error) {
+	if envToken := os.Getenv("RSTREAM_DEFAULT_AUTHENTICATION_TOKEN"); envToken != "" {
+		return &envToken, nil
+	}
+	if engine == nil {
+		return nil, errors.New("engine URL is unset")
+	}
+	host, _, err := splitHostPort(*engine)
+	if err != nil || host == nil {
+		return nil, fmt.Errorf("failed to extract host from engine URL: %w", err)
+	}
+	if configFilePath == nil {
+		filepath, err := getDefaultConfigFilePath()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get rstream config file path: %w", err)
+		}
+		configFilePath = &filepath
+	}
+	tokens, err := loadTokensFromConfig(*configFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load tokens from config: %w", err)
+	}
+	if token, ok := tokens[*host]; ok {
+		return &token, nil
+	}
+	domain := *host
+	for {
+		dotPos := strings.IndexRune(domain, '.')
+		if dotPos < 0 || dotPos+1 >= len(domain) {
+			break
+		}
+		domain = domain[dotPos+1:]
+		if token, ok := tokens[domain]; ok {
+			return &token, nil
+		}
+	}
+	return nil, errors.New("no token found in config for engine URL or any of its parent domains")
+}
+
+func getClientDetails(token *string) (*clientDetails, error) {
+	agent := "rstream go SDK"
+	var protocolVersion *string
+	{
+		fd := (&pb.ClientDetails{}).ProtoReflect().Descriptor().ParentFile()
+		if opts, ok := fd.Options().(*descriptorpb.FileOptions); ok {
+			if proto.HasExtension(opts, pb.E_ProtocolVersion) {
+				if ext := proto.GetExtension(opts, pb.E_ProtocolVersion); ext != nil {
+					tmp, ok := ext.(string)
+					if ok {
+						protocolVersion = &tmp
+					}
+				}
+			}
+		}
+	}
+	return &clientDetails{
+		Agent:           &agent,
+		OS:              &OS,
+		Arch:            &Arch,
+		Version:         &Version,
+		Token:           token,
+		ProtocolVersion: protocolVersion,
+	}, nil
+}
+
+func readMessage(r *bufio.Reader) ([]byte, error) {
+	lengthBytes := make([]byte, 4)
+	if _, err := io.ReadFull(r, lengthBytes); err != nil {
+		return nil, err
+	}
+	length := binary.BigEndian.Uint32(lengthBytes)
+	msgBytes := make([]byte, length)
+	if _, err := io.ReadFull(r, msgBytes); err != nil {
+		return nil, err
+	}
+	return msgBytes, nil
+}
+
+func writeMessage(w *bufio.Writer, msgBytes []byte) error {
+	length := uint32(len(msgBytes))
+	lengthBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(lengthBytes, length)
+	if _, err := w.Write(lengthBytes); err != nil {
+		return err
+	}
+	if _, err := w.Write(msgBytes); err != nil {
+		return err
+	}
+	return w.Flush()
+}
+
+func readPbMessage(r *bufio.Reader) (*pb.Message, error) {
+	msgBytes, err := readMessage(r)
+	if err != nil {
+		return nil, err
+	}
+	msg := &pb.Message{}
+	if err := proto.Unmarshal(msgBytes, msg); err != nil {
+		return nil, err
+	}
+	// {
+	// 	json, err := protojson.MarshalOptions{Indent: " ", EmitDefaultValues: true}.Marshal(msg)
+	// 	if err != nil {
+	// 		return nil, fmt.Errorf("failed to marshal protobuf: %w", err)
+	// 	}
+	// 	log.Printf("[client] received message\n%s", string(json))
+	// }
+	return msg, nil
+}
+
+func writePbMessage(w *bufio.Writer, msg *pb.Message) error {
+	// {
+	// 	json, err := protojson.MarshalOptions{Indent: " ", EmitDefaultValues: true}.Marshal(msg)
+	// 	if err != nil {
+	// 		return fmt.Errorf("failed to marshal protobuf: %w", err)
+	// 	}
+	// 	log.Printf("[client] sending message\n%s", string(json))
+	// }
+	msgBytes, err := proto.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	return writeMessage(w, msgBytes)
+}
