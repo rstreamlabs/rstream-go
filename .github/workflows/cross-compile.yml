@@ -15,6 +15,7 @@ on:
       - main
 env:
   CHANNEL: "${{ github.ref_type == 'tag' && 'stable' || (github.event_name == 'pull_request' && 'testing' || 'dev') }}"
+  NPM_PACKAGE_NAME: "rstream-cli"
   PACKAGE_NAME: "rstream"
   RSTREAM_URL: "${{ github.ref_type == 'tag' && 'https://rstream.io' || 'https://dev.rstream.io' }}"
   VERSION: "${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || github.ref_name }}"
@@ -141,15 +142,15 @@ jobs:
         if: ${{ github.ref_type == 'tag' }}
         shell: bash
         run: |
-          PACKAGE_JSON="npm/${PACKAGE_NAME}/package.json"
+          PACKAGE_JSON="npm/${NPM_PACKAGE_NAME}/package.json"
           sed -i "s|\"version\": \".*\"|\"version\": \"${{ env.VERSION }}\"|" ${PACKAGE_JSON}
           sed -i "s|\"registry\": \".*\"|\"registry\": \"${{ env.RSTREAM_URL }}\"|" ${PACKAGE_JSON}
           git -C npm config user.name 'CI automation'
           git -C npm config user.email 'ci@rstream.io'
-          git -C npm add ${PACKAGE_NAME}/package.json
-          git -C npm commit -m "update ${PACKAGE_NAME} version to ${{ env.VERSION }}"
+          git -C npm add ${NPM_PACKAGE_NAME}/package.json
+          git -C npm commit -m "update ${NPM_PACKAGE_NAME} version to ${{ env.VERSION }}"
           git -C npm push
-          cd ./npm/${PACKAGE_NAME}
+          cd ./npm/${NPM_PACKAGE_NAME}
           echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
           npm install --ignore-scripts
           npm publish
