@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"runtime"
 	"sync"
 	"time"
 
@@ -23,7 +24,7 @@ import (
 
 type session struct {
 	conn            *websocket.Conn
-	cfg             ServerConfig
+	cfg             *ServerConfig
 	mu              sync.Mutex
 	closed          bool
 	cmd             *exec.Cmd
@@ -36,12 +37,12 @@ type session struct {
 	childExitCode   int
 }
 
-func newSession(conn *websocket.Conn, cfg ServerConfig) *session {
+func newSession(conn *websocket.Conn, cfg *ServerConfig) *session {
 	s := &session{
 		conn:            conn,
 		cfg:             cfg,
 		doneCh:          make(chan struct{}),
-		heartbeatTicker: time.NewTicker(20 * time.Second),
+		heartbeatTicker: time.NewTicker(20 * time.Second), // TODO, make configurable
 	}
 	return s
 }
@@ -55,9 +56,9 @@ func (s *session) readLoop() {
 	for {
 		mt, data, err := s.conn.ReadMessage()
 		s.mu.Lock()
-		res := s.onIncomingMessage(mt, data, err)
+		ok := s.onIncomingMessage(mt, data, err)
 		s.mu.Unlock()
-		if !res {
+		if !ok {
 			return
 		}
 	}
@@ -69,9 +70,9 @@ func (s *session) heartbeatLoop() {
 		select {
 		case <-s.heartbeatTicker.C:
 			s.mu.Lock()
-			res := s.doSendHeartbeat()
+			ok := s.doSendHeartbeat()
 			s.mu.Unlock()
-			if !res {
+			if !ok {
 				return
 			}
 		}
@@ -79,13 +80,13 @@ func (s *session) heartbeatLoop() {
 }
 
 func (s *session) copyStreamLoop(r io.Reader, t pb.Data_Type) {
-	buf := make([]byte, 4096)
+	buf := make([]byte, 4096) // TODO, make configurable
 	for {
 		n, err := r.Read(buf)
 		s.mu.Lock()
-		res := s.onReadStream(t, buf[:n], err)
+		ok := s.onReadStream(t, buf[:n], err)
 		s.mu.Unlock()
-		if !res {
+		if !ok {
 			return
 		}
 	}
@@ -152,7 +153,7 @@ func (s *session) onReadStream(t pb.Data_Type, p []byte, err error) bool {
 	if s.closed {
 		return false
 	}
-	eos := err == io.EOF
+	eos := (err == io.EOF)
 	if eos {
 		err = nil
 		err = s.sendEOS(t)
@@ -166,7 +167,7 @@ func (s *session) onReadStream(t pb.Data_Type, p []byte, err error) bool {
 		}
 	} else if err == nil {
 		chunk := append([]byte(nil), p...)
-		s.sendData(pb.Data_TYPE_STDOUT, chunk)
+		s.sendData(t, chunk)
 	}
 	if err != nil {
 		s.error(err)
@@ -209,7 +210,7 @@ func (s *session) handleMessage(m *pb.Message) error {
 	case *pb.Message_Data:
 		return s.handleData(payload.Data)
 	case *pb.Message_Error:
-		return fmt.Errorf("client error: code=%d", payload.Error.Code)
+		return fmt.Errorf("client error (%s)", payload.Error.Msg)
 	case *pb.Message_Heartbeat:
 		return nil
 	case *pb.Message_Parameter:
@@ -231,51 +232,116 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 	if s.cmd != nil {
 		return errors.New("process already started")
 	}
-	var cmdArgs = openCfg.Config.CmdArgs
-	if len(cmdArgs) == 0 {
-		cmdArgs = []string{"/bin/bash"}
-	}
-	name := cmdArgs[0]
-	args := cmdArgs[1:]
-	cmd := exec.Command(name, args...)
-	if openCfg.Config.Options.AllocateTty {
-		ptmx, err := pty.Start(cmd)
-		if err != nil {
-			return err
+	setup := func() error {
+		var uv *UsernameVariant
+		if pu := openCfg.Config.Username; pu != nil {
+			switch p := pu.Payload.(type) {
+			case *pb.Username_Name:
+				uv = &UsernameVariant{Name: &p.Name}
+			case *pb.Username_Id:
+				id := p.Id
+				uv = &UsernameVariant{UID: &id}
+			}
 		}
-		s.ptyFile = ptmx
-		s.cmd = cmd
-		s.streamsActive = 1
-		go s.copyStdoutLoop(ptmx)
+		if runtime.GOOS == "windows" && uv != nil {
+			return fmt.Errorf("changing user is not supported on Windows")
+		}
+		ui, err := GetUserInfo(uv)
+		if err != nil {
+			return fmt.Errorf("failed to get user info: %w", err)
+		}
+		cmdArgs := openCfg.Config.CmdArgs
+		if len(cmdArgs) == 0 {
+			cmdArgs = []string{ui.Shell}
+		}
+		exe, args := cmdArgs[0], cmdArgs[1:]
+		cmd := exec.Command(exe, args...)
+		if wd := openCfg.Config.Workdir; wd != nil && wd.Value != "" {
+			cmd.Dir = wd.Value
+		} else {
+			cmd.Dir = ui.Home
+		}
+		env := BuildEnvironment(openCfg.Config.EnvVars)
+		if p := os.Getenv("PATH"); p != "" {
+			AddEnvironmentVariable(&env, "PATH", p, false)
+		}
+		if runtime.GOOS == "windows" {
+			for _, key := range []string{
+				"ALLUSERSPROFILE",
+				"COMPUTERNAME",
+				"ComSpec",
+				"CYGWIN",
+				"OS",
+				"PATHEXT",
+				"PROGRAMFILES",
+				"SYSTEMDRIVE",
+				"SYSTEMROOT",
+				"TEMP",
+				"TMP",
+				"USERNAME",
+				"USERPROFILE",
+				"WINDIR",
+			} {
+				if value := os.Getenv(key); value != "" {
+					AddEnvironmentVariable(&env, key, value, false)
+				}
+			}
+		} else {
+			AddEnvironmentVariable(&env, "USER", ui.Name, false)
+			AddEnvironmentVariable(&env, "SHELL", ui.Shell, false)
+			AddEnvironmentVariable(&env, "HOME", ui.Home, false)
+		}
+		for key, value := range *s.cfg.EnvVars {
+			AddEnvironmentVariable(&env, key, value, false)
+		}
+		cmd.Env = env
+		if uv != nil {
+			if err := SetupCredential(cmd, ui); err != nil {
+				return fmt.Errorf("failed to switch user: %w", err)
+			}
+		}
+		allocateTty := openCfg.Config.Options.AllocateTty
+		if allocateTty {
+			ptmx, err := pty.Start(cmd)
+			if err != nil {
+				return err
+			}
+			s.ptyFile = ptmx
+			s.cmd = cmd
+			s.streamsActive = 1
+			go s.copyStdoutLoop(ptmx)
+		} else {
+			stdout, err := cmd.StdoutPipe()
+			if err != nil {
+				return err
+			}
+			stderr, err := cmd.StderrPipe()
+			if err != nil {
+				return err
+			}
+			stdin, err := cmd.StdinPipe()
+			if err != nil {
+				return err
+			}
+			s.stdinPipe = stdin
+			s.cmd = cmd
+			if err := cmd.Start(); err != nil {
+				return err
+			}
+			s.streamsActive = 2
+			go s.copyStdoutLoop(stdout)
+			go s.copyStderrLoop(stderr)
+		}
+		return nil
+	}
+	err := setup()
+	if err != nil {
+		_ = s.sendError(err)
+		return err
 	} else {
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			return err
-		}
-		stderr, err := cmd.StderrPipe()
-		if err != nil {
-			return err
-		}
-		stdin, err := cmd.StdinPipe()
-		if err != nil {
-			return err
-		}
-		s.stdinPipe = stdin
-		s.cmd = cmd
-		if err := cmd.Start(); err != nil {
-			return err
-		}
-		s.streamsActive = 2
-		go s.copyStdoutLoop(stdout)
-		go s.copyStderrLoop(stderr)
+		go s.heartbeatLoop()
+		return s.sendAck()
 	}
-	go s.heartbeatLoop()
-	ackMsg := &pb.Message{
-		Payload: &pb.Message_Ack{
-			Ack: &pb.Ack{},
-		},
-	}
-	return s.writeMessage(ackMsg)
 }
 
 func (s *session) handleData(d *pb.Data) error {
@@ -339,6 +405,9 @@ func (s *session) doClose() error {
 }
 
 func (s *session) error(err error) {
+	if s.closed {
+		return
+	}
 	log.Printf("[session %p] error: %v", s, err)
 	s.close()
 }
@@ -370,6 +439,35 @@ func (s *session) close() {
 	log.Printf("[session %p] closed", s)
 }
 
+func (s *session) sendAck() error {
+	msg := &pb.Message{
+		Payload: &pb.Message_Ack{
+			Ack: &pb.Ack{},
+		},
+	}
+	return s.writeMessage(msg)
+}
+
+func (s *session) sendError(err error) error {
+	msg := &pb.Message{
+		Payload: &pb.Message_Error{
+			Error: &pb.Error{
+				Msg: err.Error(),
+			},
+		},
+	}
+	return s.writeMessage(msg)
+}
+
+func (s *session) sendHeartbeat() error {
+	msg := &pb.Message{
+		Payload: &pb.Message_Heartbeat{
+			Heartbeat: &pb.Heartbeat{},
+		},
+	}
+	return s.writeMessage(msg)
+}
+
 func (s *session) sendData(t pb.Data_Type, chunk []byte) error {
 	msg := &pb.Message{
 		Payload: &pb.Message_Data{
@@ -393,15 +491,6 @@ func (s *session) sendEOS(t pb.Data_Type) error {
 					Eos: &pb.EndOfStream{},
 				},
 			},
-		},
-	}
-	return s.writeMessage(msg)
-}
-
-func (s *session) sendHeartbeat() error {
-	msg := &pb.Message{
-		Payload: &pb.Message_Heartbeat{
-			Heartbeat: &pb.Heartbeat{},
 		},
 	}
 	return s.writeMessage(msg)

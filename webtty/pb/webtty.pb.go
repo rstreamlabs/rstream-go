@@ -468,7 +468,7 @@ func (*Ack) Descriptor() ([]byte, []int) {
 
 type Error struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Code          int32                  `protobuf:"varint,1,opt,name=code,proto3" json:"code,omitempty"`
+	Msg           string                 `protobuf:"bytes,1,opt,name=msg,proto3" json:"msg,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -503,11 +503,11 @@ func (*Error) Descriptor() ([]byte, []int) {
 	return file_pb_webtty_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *Error) GetCode() int32 {
+func (x *Error) GetMsg() string {
 	if x != nil {
-		return x.Code
+		return x.Msg
 	}
-	return 0
+	return ""
 }
 
 type Close struct {
@@ -1038,9 +1038,9 @@ const file_pb_webtty_proto_rawDesc = "" +
 	"\busername\x18\x05 \x01(\v2\t.UsernameR\busername\"'\n" +
 	"\x04Open\x12\x1f\n" +
 	"\x06config\x18\x01 \x01(\v2\a.ConfigR\x06config\"\x05\n" +
-	"\x03Ack\"\x1b\n" +
-	"\x05Error\x12\x12\n" +
-	"\x04code\x18\x01 \x01(\x05R\x04code\"(\n" +
+	"\x03Ack\"\x19\n" +
+	"\x05Error\x12\x10\n" +
+	"\x03msg\x18\x01 \x01(\tR\x03msg\"(\n" +
 	"\x05Close\x12\x1f\n" +
 	"\vreturn_code\x18\x01 \x01(\x05R\n" +
 	"returnCode\"\r\n" +

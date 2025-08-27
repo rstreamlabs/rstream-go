@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"context"
 	"os"
 
 	"github.com/rstreamlabs/rstream-go"
@@ -18,6 +19,7 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.AddGroup(&cobra.Group{ID: "common", Title: "Common Commands:"})
 	rootCmd.AddGroup(&cobra.Group{ID: "management", Title: "Management Commands:"})
+	rootCmd.AddGroup(&cobra.Group{ID: "utils", Title: "Utility Commands:"})
 	rootCmd.Flags().SortFlags = false
 	rootCmd.PersistentFlags().SortFlags = false
 	rootCmd.PersistentFlags().String("config", "", "path to rstream configuration file")
@@ -50,8 +52,8 @@ func init() {
 	rootCmd.PersistentFlags().String("proxy-tls-cacert-file", "", "path to CA cert PEM file for verifying certificates (proxy)")
 }
 
-func Execute() {
-	if err := rootCmd.Execute(); err != nil {
+func ExecuteContext(ctx context.Context) {
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
 	}
 }
