@@ -41,7 +41,7 @@ message Open {
 message Ack { }
 
 message Error {
-  int32 code = 1;
+  string msg = 1;
 }
 
 message Close {
