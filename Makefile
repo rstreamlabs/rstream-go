@@ -44,6 +44,11 @@ $(eval arch=$(lastword $(subst /, ,$(dist))))\
 $(eval platform=$(if $(filter darwin,$(os)),$(subst darwin,macos,$(dist)),$(dist)))\
 $(if $(filter arm,$(arch)),$(foreach arch,$(ARM_ARCHS),$(foreach fp,$(ARM_FLOATING_POINTS),$(platform)$(arch)$(if $(filter hardfloat,$(fp)),hf,))),$(if $(filter amd64,$(arch)),$(foreach x86_64_variant,$(X86_64_VARIANTS),$(subst x86_64_v1,x86_64,$(subst amd64,x86_64_$(x86_64_variant),$(platform)))),$(if $(filter 386,$(arch)),$(foreach fp,$(X86_FLOATING_POINTS),$(if $(filter 387,$(fp)),$(subst 386,x86_i386,$(platform)),$(subst 386,x86_i686,$(platform)))),$(platform)))))
 
+# Current platform
+CURRENT_OS := $(subst darwin,macos,$(shell go env GOOS))
+CURRENT_ARCH := $(subst amd64,x86_64_v2,$(shell go env GOARCH))
+CURRENT_PLATFORM := $(CURRENT_OS)/$(CURRENT_ARCH)
+
 # Supported operating systems
 OS_WHITELIST := linux macos netbsd openbsd freebsd windows
 
@@ -95,7 +100,7 @@ APTLY_URL ?= https://aptly.rstream.io
 DOCKER_REPO := rstream
 
 # List of docker platforms
-DOCKER_PLATFORMS := $(if $(filter $(CHANNEL),stable),$(filter $(PLATFORMS),linux/arm64 linux/x86_64 linux/x86_64_v2 linux/ppc64le linux/x86_i686 linux/armv7hf linux/armv6hf),linux/$(shell go env GOARCH))
+DOCKER_PLATFORMS := $(if $(filter $(CHANNEL),stable),$(filter $(PLATFORMS),linux/arm64 linux/x86_64 linux/x86_64_v2 linux/ppc64le linux/x86_i686 linux/armv7hf linux/armv6hf),linux/$(CURRENT_ARCH))
 
 # Nuget source
 NUGET_SOURCE := https://nexus.rstream.io/repository/windows/
@@ -349,6 +354,12 @@ examples: $(EXAMPLES)
 clean:
 	@rm -rf $(OUT_DIR)
 
+.PHONY: tests
+
+tests:
+	@echo "==> Running tests..."
+	go test -v ./...
+
 .SECONDARY: $(call sources_proto)
 
 $(call sources_pb_go): $(call sources_proto)
@@ -358,7 +369,7 @@ $(call sources_pb_go): $(call sources_proto)
 
 $(foreach bin,$(BINARIES),$(eval .PHONY: $(bin)))
 
-$(foreach bin,$(BINARIES),$(eval $(bin): $(call binary_path,$(bin),$(subst darwin,macos,$(shell go env GOOS)),$(shell go env GOARCH))))
+$(foreach bin,$(BINARIES),$(eval $(bin): $(call binary_path,$(bin),$(CURRENT_OS),$(CURRENT_ARCH))))
 
 define template_target_build_cmd
 $(call binary_path,$1,$2,$3): $(call sources,cmd,$1)
@@ -388,11 +399,11 @@ $(foreach bin,$(BINARIES),$(foreach platform,$(PLATFORMS),$(eval $(call template
 
 .PHONY: pkg
 
-pkg: $(foreach bin,$(BINARIES),$(call pkg_path,$(bin),$(subst darwin,macos,$(shell go env GOOS)),$(shell go env GOARCH)))
+pkg: $(foreach bin,$(BINARIES),$(call pkg_path,$(bin),$(CURRENT_OS),$(CURRENT_ARCH)))
 
 $(foreach bin,$(BINARIES),$(eval .PHONY: $(bin)-pkg))
 
-$(foreach bin,$(BINARIES),$(eval $(bin)-pkg: $(call pkg_path,$(bin),$(subst darwin,macos,$(shell go env GOOS)),$(shell go env GOARCH))))
+$(foreach bin,$(BINARIES),$(eval $(bin)-pkg: $(call pkg_path,$(bin),$(CURRENT_OS),$(CURRENT_ARCH))))
 
 $(foreach bin,$(BINARIES),$(eval .PHONY: $(bin)-pkg-cross))
 
@@ -413,11 +424,11 @@ $(foreach bin,$(BINARIES),$(foreach platform,$(PLATFORMS),$(eval $(call template
 
 .PHONY: deploy-pkg
 
-deploy-pkg: $(foreach bin,$(BINARIES),$(bin)-$(subst darwin,macos,$(shell go env GOOS))-$(shell go env GOARCH)-deploy-pkg)
+deploy-pkg: $(foreach bin,$(BINARIES),$(bin)-$(CURRENT_OS)-$(CURRENT_ARCH)-deploy-pkg)
 
 $(foreach bin,$(BINARIES),$(eval .PHONY: $(bin)-deploy-pkg))
 
-$(foreach bin,$(BINARIES),$(eval $(bin)-deploy-pkg: $(bin)-$(subst darwin,macos,$(shell go env GOOS))-$(shell go env GOARCH)-deploy-pkg))
+$(foreach bin,$(BINARIES),$(eval $(bin)-deploy-pkg: $(bin)-$(CURRENT_OS)-$(CURRENT_ARCH)-deploy-pkg))
 
 $(foreach bin,$(BINARIES),$(eval .PHONY: $(bin)-deploy-pkg-cross))
 
@@ -436,11 +447,11 @@ $(foreach bin,$(BINARIES),$(foreach platform,$(DEBIAN_PLATFORMS),$(eval $(call t
 
 .PHONY: deb
 
-deb: $(foreach bin,$(BINARIES),$(call deb_path,$(bin),$(subst darwin,macos,$(shell go env GOOS)),$(shell go env GOARCH)))
+deb: $(foreach bin,$(BINARIES),$(call deb_path,$(bin),$(CURRENT_OS),$(CURRENT_ARCH)))
 
 $(foreach bin,$(BINARIES),$(eval .PHONY: $(bin)-deb))
 
-$(foreach bin,$(BINARIES),$(eval $(bin)-deb: $(call deb_path,$(bin),$(subst darwin,macos,$(shell go env GOOS)),$(shell go env GOARCH))))
+$(foreach bin,$(BINARIES),$(eval $(bin)-deb: $(call deb_path,$(bin),$(CURRENT_OS),$(CURRENT_ARCH))))
 
 $(foreach bin,$(BINARIES),$(eval .PHONY: $(bin)-deb-cross))
 
@@ -552,7 +563,7 @@ $(foreach bin,$(EXAMPLES),$(eval $(bin): $(call base_dir_examples)/$(bin)))
 
 define template_target_build_examples
 $(call base_dir_examples)/$1: $(call sources,examples,$1)
-	@$(call build,examples,$1,$(subst darwin,macos,$(shell go env GOOS)),$(shell go env GOARCH))
+	@$(call build,examples,$1,$(CURRENT_OS),$(CURRENT_ARCH))
 endef
 
 $(foreach bin,$(EXAMPLES),$(eval $(call template_target_build_examples,$(bin))))
