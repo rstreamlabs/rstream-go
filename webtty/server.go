@@ -10,15 +10,38 @@ import (
 )
 
 type ServerConfig struct {
-	MaxMessageSize  int64
-	ReadBufferSize  int
-	WriteBufferSize int
+	MaxMessageSize  *int64
+	ReadBufferSize  *int
+	WriteBufferSize *int
+	EnvVars         *map[string]string
 }
 
-func NewWebTTYHandler(cfg ServerConfig) http.Handler {
+func NewWebTTYHandler(cfg *ServerConfig) http.Handler {
+	if cfg == nil {
+		cfg = &ServerConfig{}
+	}
+	if cfg.MaxMessageSize == nil {
+		defaultSize := int64(1024 * 1024) // 1 MB
+		cfg.MaxMessageSize = &defaultSize
+	}
+	if cfg.ReadBufferSize == nil {
+		defaultReadSize := 1024 // 1 KB
+		cfg.ReadBufferSize = &defaultReadSize
+	}
+	if cfg.WriteBufferSize == nil {
+		defaultWriteSize := 1024 // 1 KB
+		cfg.WriteBufferSize = &defaultWriteSize
+	}
+	if cfg.EnvVars == nil {
+		defaultEnvVars := make(map[string]string)
+		cfg.EnvVars = &defaultEnvVars
+	}
 	upgrader := websocket.Upgrader{
-		ReadBufferSize:  cfg.ReadBufferSize,
-		WriteBufferSize: cfg.WriteBufferSize,
+		ReadBufferSize:  *cfg.ReadBufferSize,
+		WriteBufferSize: *cfg.WriteBufferSize,
+		CheckOrigin: func(r *http.Request) bool {
+			return true
+		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
