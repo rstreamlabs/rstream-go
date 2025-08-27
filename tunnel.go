@@ -46,38 +46,40 @@ const (
 
 type TunnelProperties struct {
 	// Basic tunnel properties
-	ID           *string
-	Name         *string
-	CreationDate *time.Time
+	ID           *string    `json:"id,omitempty"`
+	Name         *string    `json:"name,omitempty"`
+	CreationDate *time.Time `json:"creation_date,omitempty"`
 
 	// Tunnel options
-	Type     *TunnelType
-	Publish  *bool
-	Protocol *Protocol // Only for published tunnels
-	Labels   map[string]string
+	Type     *TunnelType       `json:"type,omitempty"`
+	Publish  *bool             `json:"publish,omitempty"`
+	Protocol *Protocol         `json:"protocol,omitempty"`
+	Labels   map[string]string `json:"labels,omitempty"`
+	Host     *string           `json:"host,omitempty"`
+	Path     *string           `json:"path,omitempty"`
 
 	// Security options
-	GeoIP      []string
-	TrustedIPs []string
-	Domain     *string // Only for published tunnels
+	GeoIP      []string `json:"geo_ip,omitempty"`
+	TrustedIPs []string `json:"trusted_ips,omitempty"`
+	Domain     *string  `json:"domain,omitempty"`
 
 	// TLS options
-	TLSMode       *TLSMode // Passthorugh is only supported for TLS tunnels
-	TLSALPNs      []string
-	TLSMinVersion *uint16
-	TLSCiphers    []uint16
-	MTLS          *bool
-	MTLSCACertPEM *string
+	TLSMode       *TLSMode `json:"tls_mode,omitempty"`
+	TLSALPNs      []string `json:"tls_alpns,omitempty"`
+	TLSMinVersion *uint16  `json:"tls_min_version,omitempty"`
+	TLSCiphers    []uint16 `json:"tls_ciphers,omitempty"`
+	MTLS          *bool    `json:"mtls,omitempty"`
+	MTLSCACertPEM *string  `json:"mtls_ca_cert_pem,omitempty"`
 
 	// HTTP tunnel options (only for HTTP tunnels)
-	HTTPVersion    *HTTPVersion
-	HTTPUseTLS     *bool // Only for HTTP/1.1 and HTTP/2 (bytestream)
-	TokenAuth      *bool
-	SSO            *bool
-	SSOProviders   []string
-	EmailWhitelist []string
-	EmailBlacklist []string
-	Challenge      *bool
+	HTTPVersion    *HTTPVersion `json:"http_version,omitempty"`
+	HTTPUseTLS     *bool        `json:"http_use_tls,omitempty"`
+	TokenAuth      *bool        `json:"token_auth,omitempty"`
+	SSO            *bool        `json:"sso,omitempty"`
+	SSOProviders   []string     `json:"sso_providers,omitempty"`
+	EmailWhitelist []string     `json:"email_whitelist,omitempty"`
+	EmailBlacklist []string     `json:"email_blacklist,omitempty"`
+	Challenge      *bool        `json:"challenge,omitempty"`
 }
 
 type Tunnel interface {
