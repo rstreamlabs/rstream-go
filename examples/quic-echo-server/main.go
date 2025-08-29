@@ -100,6 +100,7 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to generate TLS config: %w", err)
 	}
+	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 	transport := quic.Transport{
 		Conn: rstream.PacketConnFromPacketListener(packetListener),
 	}
