@@ -3,6 +3,9 @@
 package rstream
 
 import (
+	"net"
+
+	"github.com/rstreamlabs/rstream-go/pb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -48,4 +51,26 @@ func boolPtrFromPbValue(b *wrapperspb.BoolValue) *bool {
 		return nil
 	}
 	return &b.Value
+}
+
+func Uint32ToIPv4(ip uint32) net.IP {
+	return net.IPv4(
+		byte(ip>>24),
+		byte(ip>>16),
+		byte(ip>>8),
+		byte(ip),
+	)
+}
+
+func NetIPFromPbValue(ip *pb.IpAddress) net.IP {
+	if ip == nil {
+		return nil
+	}
+	if x, ok := ip.Addr.(*pb.IpAddress_V4); ok {
+		return Uint32ToIPv4(x.V4)
+	}
+	if x, ok := ip.Addr.(*pb.IpAddress_V6); ok {
+		return net.IP(x.V6)
+	}
+	return nil
 }

@@ -533,7 +533,9 @@ func (c *controlChannelImpl) handleProxyConnReq(req *pb.ProxyConnReq) {
 	tunnel, found := c.tunnels[tunnelId]
 	if found {
 		go func() {
-			conn, err := c.client.dial(context.Background(), dialTypeProxyReq, Addr{IdOrName: req.StreamId}, stringPtrFromPbValue(req.Secret))
+			laddr := Addr{IdOrName: req.StreamId, SourceIP: NetIPFromPbValue(req.SourceIp)}
+			raddr := Addr{IdOrName: tunnelId}
+			conn, err := c.client.dial(context.Background(), dialTypeProxyReq, laddr, stringPtrFromPbValue(req.Secret))
 			if err != nil {
 				fmt.Println("failed to dial proxy connection:", err)
 			} else {
@@ -544,7 +546,7 @@ func (c *controlChannelImpl) handleProxyConnReq(req *pb.ProxyConnReq) {
 					conn.Close()
 				} else {
 					select {
-					case tunnel.conns <- &bytestreamConn{conn: conn}:
+					case tunnel.conns <- &bytestreamConn{conn: conn, laddr: laddr, raddr: raddr}:
 						return
 					default:
 						fmt.Println("tunnel conns channel is full, closing proxy connection")
