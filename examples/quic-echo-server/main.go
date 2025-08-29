@@ -13,7 +13,6 @@ import (
 	"io"
 	"log"
 	"math/big"
-	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -43,7 +42,7 @@ func generateTLSConfig() (*tls.Config, error) {
 	}, nil
 }
 
-func handleConnection(conn quic.Connection) {
+func handleConnection(conn *quic.Conn) {
 	defer conn.CloseWithError(0, "server done")
 	stream, err := conn.AcceptStream(context.Background())
 	if err != nil {
@@ -78,7 +77,7 @@ func run(ctx context.Context) error {
 	// 2. Create the tunnel
 	tunnelProps := rstream.TunnelProperties{
 		Name:     rstream.StringPtr("quic-echo"),
-		Type:     rstream.TunnelTypePtr(rstream.TunnelDatagram), // TODO
+		Type:     rstream.TunnelTypePtr(rstream.TunnelDatagram),
 		Publish:  rstream.BoolPtr(true),
 		Protocol: rstream.ProtocolPtr(rstream.ProtocolQUIC),
 	}
@@ -91,9 +90,9 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to get forwarding address: %w", err)
 	}
-	packetConn, ok := tunnel.(interface{ net.PacketConn })
+	packetListener, ok := tunnel.(rstream.PacketListener)
 	if !ok {
-		return fmt.Errorf("tunnel does not implement net.PacketConn")
+		return fmt.Errorf("tunnel does not implement rstream.PacketListener")
 	}
 	fmt.Printf("Server listening on %s\n", forwardingAddr)
 	// 3. Echo server
@@ -102,7 +101,7 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("failed to generate TLS config: %w", err)
 	}
 	transport := quic.Transport{
-		Conn: packetConn,
+		Conn: rstream.PacketConnFromPacketListener(packetListener),
 	}
 	listener, err := transport.Listen(tlsCfg, nil)
 	defer listener.Close()

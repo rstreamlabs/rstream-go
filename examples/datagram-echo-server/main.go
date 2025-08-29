@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -13,6 +14,25 @@ import (
 
 	"github.com/rstreamlabs/rstream-go"
 )
+
+func handleConnection(conn net.PacketConn) {
+	defer conn.Close()
+	buf := make([]byte, 2048)
+	for {
+		n, raddr, err := conn.ReadFrom(buf)
+		if err != nil {
+			if err != io.EOF {
+				log.Printf("Read error from %s: %v", raddr, err)
+			}
+			return
+		}
+		log.Printf("Received %d bytes from %s: %s\n", n, raddr, buf[:n])
+		if _, err := conn.WriteTo(buf[:n], raddr); err != nil {
+			log.Printf("Write error to %s: %v", raddr, err)
+			return
+		}
+	}
+}
 
 func run(ctx context.Context) error {
 	// 1. Open control channel
@@ -31,26 +51,26 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create tunnel: %w", err)
 	}
+	forwardingAddr, err := tunnel.ForwardingAddress()
+	if err != nil {
+		return fmt.Errorf("failed to get forwarding address: %w", err)
+	}
 	go func() {
 		<-ctx.Done()
 		tunnel.Close()
 	}()
-	packetConn, ok := tunnel.(net.PacketConn)
+	packetListener, ok := tunnel.(rstream.PacketListener)
 	if !ok {
-		return fmt.Errorf("tunnel does not implement net.PacketConn")
+		return fmt.Errorf("tunnel does not implement rstream.PacketListener")
 	}
+	fmt.Printf("Server listening on %s\n", forwardingAddr)
 	// 3. Echo server
-	buf := make([]byte, 2048)
 	for {
-		n, addr, err := packetConn.ReadFrom(buf)
+		conn, _, err := packetListener.Accept()
 		if err != nil {
-			return fmt.Errorf("readfrom error: %w", err)
+			return fmt.Errorf("listener accept error: %w", err)
 		}
-		log.Printf("Received %d bytes from %s: %s\n", n, addr, buf[:n])
-		_, err = packetConn.WriteTo(buf[:n], addr)
-		if err != nil {
-			return fmt.Errorf("writeto error: %w", err)
-		}
+		go handleConnection(conn)
 	}
 }
 

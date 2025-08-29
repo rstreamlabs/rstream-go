@@ -372,7 +372,10 @@ func (c *controlChannelImpl) CreateTunnel(ctx context.Context, props TunnelPrope
 				c.tunnels[tunnelID] = tunnel
 				c.mu.Unlock()
 				if props.Type != nil && *props.Type == TunnelDatagram {
-					return newDatagramTunnel(tunnel), nil
+					return &datagramTunnelImpl{
+						inner: tunnel,
+						pl:    PacketListenerFromListener(tunnel),
+					}, nil
 				} else {
 					return tunnel, nil
 				}
