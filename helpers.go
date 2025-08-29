@@ -45,15 +45,7 @@ func FormatForwardingAddr(props TunnelProperties) (string, error) {
 	return "", errors.New("invalid tunnel properties: no domain, name, or ID")
 }
 
-func FormatForwardedAddr(addr net.TCPAddr, props TunnelProperties) (string, error) {
-	if addr.IP == nil || len(addr.IP) == 0 {
-		return "", errors.New("invalid address: no IP")
-	}
-	if addr.Port == 0 {
-		return "", errors.New("invalid address: no Port")
-	}
-	host := addr.IP.String()
-	portStr := strconv.Itoa(addr.Port)
+func FormatForwardedHostPort(host, port string, props TunnelProperties) (string, error) {
 	var protocol string
 	if props.Protocol != nil && *props.Protocol == ProtocolHTTP {
 		if props.HTTPUseTLS != nil && *props.HTTPUseTLS {
@@ -69,9 +61,9 @@ func FormatForwardedAddr(addr net.TCPAddr, props TunnelProperties) (string, erro
 		out = protocol + "://"
 	}
 	out += host
-	if !((protocol == "http" && portStr == "80") ||
-		(protocol == "https" && portStr == "443")) {
-		out += ":" + portStr
+	if !((protocol == "http" && port == "80") ||
+		(protocol == "https" && port == "443")) {
+		out += ":" + port
 	}
 	if protocol == "http" {
 		if props.HTTPVersion != nil {
@@ -85,6 +77,16 @@ func FormatForwardedAddr(addr net.TCPAddr, props TunnelProperties) (string, erro
 		}
 	}
 	return out, nil
+}
+
+func FormatForwardedAddr(addr net.TCPAddr, props TunnelProperties) (string, error) {
+	if addr.IP == nil || len(addr.IP) == 0 {
+		return "", errors.New("invalid address: no IP")
+	}
+	if addr.Port == 0 {
+		return "", errors.New("invalid address: no Port")
+	}
+	return FormatForwardedHostPort(addr.IP.String(), strconv.Itoa(addr.Port), props)
 }
 
 func toClientDetailsPb(details *clientDetails) *pb.ClientDetails {

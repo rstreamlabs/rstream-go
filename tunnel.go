@@ -186,7 +186,9 @@ func (t *bytestreamTunnelImpl) onError(err error) {
 }
 
 type bytestreamConn struct {
-	conn net.Conn
+	conn  net.Conn
+	laddr Addr
+	raddr Addr
 }
 
 func (bc *bytestreamConn) Read(p []byte) (int, error) {
@@ -202,11 +204,11 @@ func (bc *bytestreamConn) Close() error {
 }
 
 func (bc *bytestreamConn) LocalAddr() net.Addr {
-	return bc.conn.LocalAddr()
+	return &bc.laddr
 }
 
 func (bc *bytestreamConn) RemoteAddr() net.Addr {
-	return bc.conn.RemoteAddr()
+	return &bc.raddr
 }
 
 func (bc *bytestreamConn) SetDeadline(t time.Time) error {
