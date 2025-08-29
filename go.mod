@@ -32,6 +32,7 @@ require (
 	github.com/gdamore/tcell/v2 v2.9.0
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/quic-go/quic-go v0.54.0
+	github.com/quic-go/webtransport-go v0.9.0
 	github.com/spf13/pflag v1.0.7 // indirect
 	golang.org/x/sys v0.35.0 // indirect
 	golang.org/x/term v0.34.0

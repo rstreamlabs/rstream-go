@@ -27,6 +27,7 @@ func run(ctx context.Context) error {
 	tlsCfg := &tls.Config{
 		InsecureSkipVerify: true,
 	}
+	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 	transport := quic.Transport{
 		Conn: packetConn,
 	}
