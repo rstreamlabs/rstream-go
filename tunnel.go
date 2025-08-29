@@ -3,11 +3,9 @@
 package rstream
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/rstreamlabs/rstream-go/pb"
@@ -225,167 +223,30 @@ func (bc *bytestreamConn) SetWriteDeadline(t time.Time) error {
 
 type DatagramTunnel interface {
 	Tunnel
-	net.PacketConn
-}
-
-type dtPacket struct {
-	data []byte
-	from net.Addr
-}
-
-type dtSession struct {
-	conn   net.Conn
-	w      *bufio.Writer
-	r      *bufio.Reader
-	raddr  net.Addr
-	parent *datagramTunnelImpl
-	doneCh chan struct{}
+	PacketListener
 }
 
 type datagramTunnelImpl struct {
-	tunnel   BytestreamTunnel
-	sessions map[string]*dtSession
-	incoming chan dtPacket
-	mu       sync.Mutex
-	closed   bool
-}
-
-func newDatagramTunnel(t BytestreamTunnel) *datagramTunnelImpl {
-	d := &datagramTunnelImpl{
-		tunnel:   t,
-		sessions: make(map[string]*dtSession),
-		incoming: make(chan dtPacket, 100),
-	}
-	go d.accept()
-	return d
-}
-
-func (d *datagramTunnelImpl) accept() {
-	for {
-		conn, err := d.tunnel.Accept()
-		if err != nil {
-			d.mu.Lock()
-			if d.closed {
-				d.mu.Unlock()
-				return
-			}
-			d.mu.Unlock()
-			fmt.Println("Accept error:", err) // TODO : Treat error as fatal
-			return
-		}
-		raddr := conn.RemoteAddr()
-		s := &dtSession{
-			conn:   conn,
-			w:      bufio.NewWriter(conn),
-			r:      bufio.NewReader(conn),
-			raddr:  raddr,
-			parent: d,
-			doneCh: make(chan struct{}),
-		}
-		d.mu.Lock()
-		d.sessions[raddr.String()] = s
-		d.mu.Unlock()
-		go s.read()
-	}
+	inner Tunnel
+	pl    PacketListener
 }
 
 func (t *datagramTunnelImpl) ForwardingAddress() (string, error) {
-	return t.tunnel.ForwardingAddress()
+	return t.inner.ForwardingAddress()
 }
 
 func (t *datagramTunnelImpl) Properties() (TunnelProperties, error) {
-	return t.tunnel.Properties()
-}
-
-func (t *datagramTunnelImpl) ReadFrom(p []byte) (int, net.Addr, error) {
-	pkt, ok := <-t.incoming
-	if !ok {
-		return 0, nil, net.ErrClosed
-	}
-	if len(pkt.data) > len(p) {
-		copy(p, pkt.data[:len(p)])
-		return len(p), pkt.from, fmt.Errorf("datagram truncated")
-	} else {
-		copy(p, pkt.data)
-		return len(pkt.data), pkt.from, nil
-	}
-}
-
-func (t *datagramTunnelImpl) WriteTo(p []byte, addr net.Addr) (int, error) {
-	t.mu.Lock()
-	s, ok := t.sessions[addr.String()]
-	t.mu.Unlock()
-	if !ok {
-		return 0, fmt.Errorf("no session for remote %s", addr)
-	}
-	return s.write(p)
+	return t.inner.Properties()
 }
 
 func (t *datagramTunnelImpl) Close() error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.closed {
-		return nil
-	}
-	t.closed = true
-	for _, s := range t.sessions {
-		s.conn.Close()
-	}
-	t.sessions = nil
-	t.tunnel.Close()
-	close(t.incoming)
-	return nil
+	return t.inner.Close()
 }
 
-func (t *datagramTunnelImpl) LocalAddr() net.Addr {
-	return t.tunnel.Addr()
+func (t *datagramTunnelImpl) Accept() (net.PacketConn, net.Addr, error) {
+	return t.pl.Accept()
 }
 
-func (t *datagramTunnelImpl) SetDeadline(time time.Time) error {
-	return errors.New("not implemented yet")
-}
-
-func (t *datagramTunnelImpl) SetReadDeadline(time time.Time) error {
-	return errors.New("not implemented yet")
-}
-
-func (t *datagramTunnelImpl) SetWriteDeadline(time time.Time) error {
-	return errors.New("not implemented yet")
-}
-
-func (s *dtSession) read() {
-	defer func() {
-		s.close()
-	}()
-	for {
-		data, err := readMessage(s.r)
-		if err != nil {
-			fmt.Println("read error, closing session:", err)
-			break
-		}
-		pkt := dtPacket{data: data, from: s.raddr}
-		select {
-		case s.parent.incoming <- pkt:
-		default:
-			fmt.Println("incoming datagram queue is full, dropping packet")
-			return
-		}
-	}
-}
-
-func (s *dtSession) write(p []byte) (int, error) {
-	err := writeMessage(s.w, p)
-	if err != nil {
-		return 0, err
-	} else {
-		return len(p), nil
-	}
-}
-
-func (s *dtSession) close() {
-	s.conn.Close()
-	s.parent.mu.Lock()
-	delete(s.parent.sessions, s.raddr.String())
-	s.parent.mu.Unlock()
-	close(s.doneCh)
+func (t *datagramTunnelImpl) Addr() net.Addr {
+	return t.pl.Addr()
 }
