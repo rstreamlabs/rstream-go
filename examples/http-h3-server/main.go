@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"log"
 	"math/big"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -61,7 +60,7 @@ func run(ctx context.Context) error {
 	// 2. Create the tunnel
 	tunnelProps := rstream.TunnelProperties{
 		Name:        rstream.StringPtr("h3-example"),
-		Type:        rstream.TunnelTypePtr(rstream.TunnelDatagram), // TODO
+		Type:        rstream.TunnelTypePtr(rstream.TunnelDatagram),
 		Publish:     rstream.BoolPtr(true),
 		Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
 		HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP3),
@@ -75,9 +74,9 @@ func run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to get forwarding address: %w", err)
 	}
-	packetConn, ok := tunnel.(interface{ net.PacketConn })
+	packetListener, ok := tunnel.(rstream.PacketListener)
 	if !ok {
-		return fmt.Errorf("tunnel does not implement net.PacketConn")
+		return fmt.Errorf("tunnel does not implement rstream.PacketListener")
 	}
 	fmt.Printf("Server listening on %s\n", forwardingAddr)
 	// 3. Start an HTTP server using the tunnel as a listener (HTTP/3)
@@ -91,7 +90,7 @@ func run(ctx context.Context) error {
 	}
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- server.Serve(packetConn)
+		errCh <- server.Serve(rstream.PacketConnFromPacketListener(packetListener))
 	}()
 	select {
 	case <-ctx.Done():

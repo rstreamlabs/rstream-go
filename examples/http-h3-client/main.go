@@ -21,7 +21,7 @@ func main() {
 	// 1. Create the HTTP client (HTTP/3)
 	httpClient := &http.Client{
 		Transport: &http3.Transport{
-			Dial: func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (quic.EarlyConnection, error) {
+			Dial: func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
 				host, _, err := net.SplitHostPort(addr)
 				if err != nil || host == "" {
 					return nil, fmt.Errorf("failed to extract host from address: %v", err)

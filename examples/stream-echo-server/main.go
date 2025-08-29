@@ -45,11 +45,15 @@ func run(ctx context.Context) error {
 	tunnelProps := rstream.TunnelProperties{
 		Name:    rstream.StringPtr("stream-echo"),
 		Type:    rstream.TunnelTypePtr(rstream.TunnelBytestream),
-		Publish: rstream.BoolPtr(false),
+		Publish: rstream.BoolPtr(true),
 	}
 	tunnel, err := ctrl.CreateTunnel(ctx, tunnelProps)
 	if err != nil {
 		return fmt.Errorf("failed to create tunnel: %w", err)
+	}
+	forwardingAddr, err := tunnel.ForwardingAddress()
+	if err != nil {
+		return fmt.Errorf("failed to get forwarding address: %w", err)
 	}
 	go func() {
 		<-ctx.Done()
@@ -59,6 +63,7 @@ func run(ctx context.Context) error {
 	if !ok {
 		return fmt.Errorf("tunnel does not implement net.Listener")
 	}
+	fmt.Printf("Server listening on %s\n", forwardingAddr)
 	// 3. Echo server
 	for {
 		conn, err := listener.Accept()

@@ -9,7 +9,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,10 +18,11 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/pion/dtls/v3"
 	"github.com/rstreamlabs/rstream-go"
 )
 
-func generateTLSConfig() (*tls.Config, error) {
+func generateDTLSConfig() (*dtls.Config, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
 		return nil, err
@@ -38,7 +38,7 @@ func generateTLSConfig() (*tls.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &tls.Config{
+	return &dtls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 	}, nil
 }
@@ -71,17 +71,41 @@ func run(ctx context.Context) error {
 	defer ctrl.Close()
 	// 2. Create the tunnel
 	tunnelProps := rstream.TunnelProperties{
-		Name:     rstream.StringPtr("dtls-echo"),
-		Type:     rstream.TunnelTypePtr(rstream.TunnelDatagram), // TODO
-		Publish:  rstream.BoolPtr(true),
-		Protocol: rstream.ProtocolPtr(rstream.ProtocolDTLS),
+		Name:    rstream.StringPtr("dtls-echo"),
+		Type:    rstream.TunnelTypePtr(rstream.TunnelDatagram),
+		Publish: rstream.BoolPtr(true),
 	}
 	tunnel, err := ctrl.CreateTunnel(ctx, tunnelProps)
 	if err != nil {
 		return fmt.Errorf("failed to create tunnel: %w", err)
 	}
-	defer tunnel.Close()
-	return errors.New("not implemented") // TODO
+	forwardingAddr, err := tunnel.ForwardingAddress()
+	if err != nil {
+		return fmt.Errorf("failed to get forwarding address: %w", err)
+	}
+	go func() {
+		<-ctx.Done()
+		tunnel.Close()
+	}()
+	packetListener, ok := tunnel.(rstream.PacketListener)
+	if !ok {
+		return fmt.Errorf("tunnel does not implement rstream.PacketListener")
+	}
+	fmt.Printf("Server listening on %s\n", forwardingAddr)
+	// 3. Echo server
+	dtlsCfg, err := generateDTLSConfig()
+	if err != nil {
+		return fmt.Errorf("failed to generate TLS config: %w", err)
+	}
+	listener, err := dtls.NewListener(packetListener, dtlsCfg)
+	defer listener.Close()
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return fmt.Errorf("listener accept error: %w", err)
+		}
+		go handleConnection(conn)
+	}
 }
 
 func main() {
