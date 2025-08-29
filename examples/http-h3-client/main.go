@@ -10,6 +10,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -19,6 +20,7 @@ import (
 
 func main() {
 	// 1. Create the HTTP client (HTTP/3)
+	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 	httpClient := &http.Client{
 		Transport: &http3.Transport{
 			Dial: func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {

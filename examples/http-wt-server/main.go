@@ -18,6 +18,7 @@ import (
 	"syscall"
 
 	"github.com/quic-go/quic-go/http3"
+	"github.com/quic-go/webtransport-go"
 	"github.com/rstreamlabs/rstream-go"
 )
 
@@ -37,17 +38,7 @@ func generateTLSConfig() (*tls.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &tls.Config{
-		Certificates: []tls.Certificate{tlsCert},
-		NextProtos:   []string{"h3"},
-	}, nil
-}
-
-func handler(w http.ResponseWriter, r *http.Request) {
-	hostname, _ := os.Hostname()
-	w.Header().Set("Server", "rstream-go-example/1.0")
-	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintln(w, hostname)
+	return &tls.Config{Certificates: []tls.Certificate{tlsCert}, NextProtos: []string{"h3"}}, nil
 }
 
 func run(ctx context.Context) error {
@@ -59,7 +50,7 @@ func run(ctx context.Context) error {
 	defer ctrl.Close()
 	// 2. Create the tunnel
 	tunnelProps := rstream.TunnelProperties{
-		Name:        rstream.StringPtr("h3-example"),
+		Name:        rstream.StringPtr("wt-example"),
 		Type:        rstream.TunnelTypePtr(rstream.TunnelDatagram),
 		Publish:     rstream.BoolPtr(true),
 		Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
@@ -79,24 +70,48 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("tunnel does not implement rstream.PacketListener")
 	}
 	fmt.Printf("Server listening on %s\n", forwardingAddr)
-	// 3. Start an HTTP server using the tunnel as a listener (HTTP/3)
+	// 3. Start a WebTransport server using the tunnel as a packet listener (HTTP/3)
 	tlsCfg, err := generateTLSConfig()
 	if err != nil {
 		return fmt.Errorf("failed to generate TLS config: %w", err)
 	}
 	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
-	server := &http3.Server{
-		Handler:   http.HandlerFunc(handler),
-		TLSConfig: tlsCfg,
-	}
+	mux := http.NewServeMux()
+	srv := webtransport.Server{H3: http3.Server{Handler: mux, TLSConfig: tlsCfg}}
+	mux.HandleFunc("/webtransport", func(w http.ResponseWriter, r *http.Request) {
+		sess, err := srv.Upgrade(w, r)
+		if err != nil {
+			http.Error(w, "upgrade failed", http.StatusBadRequest)
+			return
+		}
+		go func() {
+			for {
+				stream, err := sess.AcceptStream(r.Context())
+				if err != nil {
+					return
+				}
+				go func() {
+					defer stream.Close()
+					buf := make([]byte, 4096)
+					for {
+						n, err := stream.Read(buf)
+						if err != nil {
+							return
+						}
+						if _, err := stream.Write(buf[:n]); err != nil {
+							return
+						}
+					}
+				}()
+			}
+		}()
+	})
 	errCh := make(chan error, 1)
-	go func() {
-		errCh <- server.Serve(rstream.PacketConnFromPacketListener(packetListener))
-	}()
+	go func() { errCh <- srv.Serve(rstream.PacketConnFromPacketListener(packetListener)) }()
 	select {
 	case <-ctx.Done():
 		log.Println("Shutting down HTTP server...")
-		return server.Shutdown(context.Background())
+		return srv.Close()
 	case err := <-errCh:
 		return fmt.Errorf("http server error: %w", err)
 	}
