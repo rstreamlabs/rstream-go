@@ -3,8 +3,6 @@
 package rstream
 
 import (
-	"bufio"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -113,8 +111,8 @@ func toTunnelProperties(msg *pb.TunnelProperties) TunnelProperties {
 		Domain:         stringPtrFromPbValue(msg.Domain),
 		TLSMode:        (*TLSMode)(stringPtrFromPbValue(msg.TlsMode)),
 		TLSALPNs:       msg.TlsAlpns,
-		TLSMinVersion:  nil, // TODO
-		TLSCiphers:     nil, // TODO
+		TLSMinVersion:  stringPtrFromPbValue(msg.TlsMinVersion),
+		TLSCiphers:     msg.TlsCiphers,
 		MTLS:           boolPtrFromPbValue(msg.Mtls),
 		MTLSCACertPEM:  stringPtrFromPbValue(msg.MtlsCacertPem),
 		HTTPVersion:    (*HTTPVersion)(stringPtrFromPbValue(msg.HttpVersion)),
@@ -141,8 +139,8 @@ func toTunnelPropertiesPb(props TunnelProperties) *pb.TunnelProperties {
 		Domain:         stringPbValueOrNil(props.Domain),
 		TlsMode:        stringPbValueOrNil((*string)(props.TLSMode)),
 		TlsAlpns:       props.TLSALPNs,
-		TlsMinVersion:  nil, // TODO
-		TlsCiphers:     nil, // TODO
+		TlsMinVersion:  stringPbValueOrNil(props.TLSMinVersion),
+		TlsCiphers:     props.TLSCiphers,
 		Mtls:           boolPbValueOrNil(props.MTLS),
 		MtlsCacertPem:  stringPbValueOrNil(props.MTLSCACertPEM),
 		HttpVersion:    stringPbValueOrNil((*string)(props.HTTPVersion)),
@@ -278,64 +276,4 @@ func getClientDetails(token *string) (*clientDetails, error) {
 		Token:           token,
 		ProtocolVersion: protocolVersion,
 	}, nil
-}
-
-func readMessage(r *bufio.Reader) ([]byte, error) {
-	lengthBytes := make([]byte, 4)
-	if _, err := io.ReadFull(r, lengthBytes); err != nil {
-		return nil, err
-	}
-	length := binary.BigEndian.Uint32(lengthBytes)
-	msgBytes := make([]byte, length)
-	if _, err := io.ReadFull(r, msgBytes); err != nil {
-		return nil, err
-	}
-	return msgBytes, nil
-}
-
-func writeMessage(w *bufio.Writer, msgBytes []byte) error {
-	length := uint32(len(msgBytes))
-	lengthBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(lengthBytes, length)
-	if _, err := w.Write(lengthBytes); err != nil {
-		return err
-	}
-	if _, err := w.Write(msgBytes); err != nil {
-		return err
-	}
-	return w.Flush()
-}
-
-func readPbMessage(r *bufio.Reader) (*pb.Message, error) {
-	msgBytes, err := readMessage(r)
-	if err != nil {
-		return nil, err
-	}
-	msg := &pb.Message{}
-	if err := proto.Unmarshal(msgBytes, msg); err != nil {
-		return nil, err
-	}
-	// {
-	// 	json, err := protojson.MarshalOptions{Indent: " ", EmitDefaultValues: true}.Marshal(msg)
-	// 	if err != nil {
-	// 		return nil, fmt.Errorf("failed to marshal protobuf: %w", err)
-	// 	}
-	// 	log.Printf("[client] received message\n%s", string(json))
-	// }
-	return msg, nil
-}
-
-func writePbMessage(w *bufio.Writer, msg *pb.Message) error {
-	// {
-	// 	json, err := protojson.MarshalOptions{Indent: " ", EmitDefaultValues: true}.Marshal(msg)
-	// 	if err != nil {
-	// 		return fmt.Errorf("failed to marshal protobuf: %w", err)
-	// 	}
-	// 	log.Printf("[client] sending message\n%s", string(json))
-	// }
-	msgBytes, err := proto.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	return writeMessage(w, msgBytes)
 }

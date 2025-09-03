@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -18,11 +19,37 @@ import (
 	"github.com/rstreamlabs/rstream-go"
 )
 
+// NB : Any HTTP version can be used (HTTP/1.1, HTTP/2, HTTP/3) on client side for published tunnels.
+
 func main() {
-	// 1. Create the HTTP client (HTTP/3)
-	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
+	publish := flag.Bool("publish", false, "connect to published host instead of using rstream dialer")
+	flag.Parse()
+	// Create the HTTP client
 	httpClient := &http.Client{
-		Transport: &http3.Transport{
+		Timeout: 5 * time.Second,
+	}
+	name := "h3-example"
+	var url *string = nil
+	if *publish {
+		// List tunnels to find the published host using rstream control API
+		tunnels, err := (&rstream.Client{}).ListTunnels(context.Background(), nil)
+		if err != nil {
+			log.Fatalf("failed to list tunnels: %v", err)
+		}
+		for _, tunnel := range *tunnels {
+			if tunnel.Name != nil && *tunnel.Name == name && tunnel.Host != nil {
+				url = rstream.StringPtr("https://" + *tunnel.Host + "/")
+				break
+			}
+		}
+		if url == nil {
+			log.Fatalf("tunnel %q not found or not published", name)
+		}
+	} else {
+		url = rstream.StringPtr("https://" + name + "/")
+		// Dial the tunnel using custom rstream dialer (HTTP/3)
+		os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
+		httpClient.Transport = &http3.Transport{
 			Dial: func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
 				host, _, err := net.SplitHostPort(addr)
 				if err != nil || host == "" {
@@ -41,16 +68,15 @@ func main() {
 				InsecureSkipVerify: true,
 				NextProtos:         []string{"h3"},
 			},
-		},
-		Timeout: 5 * time.Second,
+		}
 	}
-	// 2. Make the HTTP request
-	resp, err := httpClient.Get("https://h3-example/")
+	// Make the HTTP request
+	resp, err := httpClient.Get(*url)
 	if err != nil {
 		log.Fatalf("HTTP request failed: %v", err)
 	}
 	defer resp.Body.Close()
-	// 3. Read and print the response
+	// Read and print the response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatalf("Failed to read response body: %v", err)

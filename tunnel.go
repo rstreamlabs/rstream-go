@@ -64,8 +64,8 @@ type TunnelProperties struct {
 	// TLS options
 	TLSMode       *TLSMode `json:"tls_mode,omitempty"`
 	TLSALPNs      []string `json:"tls_alpns,omitempty"`
-	TLSMinVersion *uint16  `json:"tls_min_version,omitempty"`
-	TLSCiphers    []uint16 `json:"tls_ciphers,omitempty"`
+	TLSMinVersion *string  `json:"tls_min_version,omitempty"`
+	TLSCiphers    []string `json:"tls_ciphers,omitempty"`
 	MTLS          *bool    `json:"mtls,omitempty"`
 	MTLSCACertPEM *string  `json:"mtls_ca_cert_pem,omitempty"`
 
@@ -79,6 +79,21 @@ type TunnelProperties struct {
 	EmailBlacklist []string     `json:"email_blacklist,omitempty"`
 	Challenge      *bool        `json:"challenge,omitempty"`
 }
+
+type ListTunnelsFilters struct {
+	Status   *string            `json:"status,omitempty"`
+	ClientID *string            `json:"client_id,omitempty"`
+	Protocol *string            `json:"protocol,omitempty"`
+	Publish  *bool              `json:"publish,omitempty"`
+	Labels   map[string]*string `json:"labels,omitempty"`
+}
+
+type ListTunnelsParams struct {
+	Limit   *int                `json:"limit,omitempty"`
+	Filters *ListTunnelsFilters `json:"filters,omitempty"`
+}
+
+type ListTunnelsResponse = []TunnelProperties
 
 type Tunnel interface {
 	ForwardingAddress() (string, error)

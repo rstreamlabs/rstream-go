@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -15,10 +16,36 @@ import (
 	"github.com/rstreamlabs/rstream-go"
 )
 
+// NB : Any HTTP version can be used (HTTP/1.1, HTTP/2, HTTP/3) on client side for published tunnels.
+
 func main() {
-	// 1. Create the HTTP client (HTTP/1.1, HTTP/2, over TLS)
+	publish := flag.Bool("publish", false, "connect to published host instead of using rstream dialer")
+	flag.Parse()
+	// Create the HTTP client
 	httpClient := &http.Client{
-		Transport: &http.Transport{
+		Timeout: 5 * time.Second,
+	}
+	name := "http-tls-example"
+	var url *string = nil
+	if *publish {
+		// List tunnels to find the published host using rstream control API
+		tunnels, err := (&rstream.Client{}).ListTunnels(context.Background(), nil)
+		if err != nil {
+			log.Fatalf("failed to list tunnels: %v", err)
+		}
+		for _, tunnel := range *tunnels {
+			if tunnel.Name != nil && *tunnel.Name == name && tunnel.Host != nil {
+				url = rstream.StringPtr("https://" + *tunnel.Host + "/")
+				break
+			}
+		}
+		if url == nil {
+			log.Fatalf("tunnel %q not found or not published", name)
+		}
+	} else {
+		url = rstream.StringPtr("https://" + name + "/")
+		// Dial the tunnel using custom rstream dialer (HTTP/1.1, HTTP/2, over TLS)
+		httpClient.Transport = &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				host, _, err := net.SplitHostPort(addr)
 				if err != nil || host == "" {
@@ -31,16 +58,15 @@ func main() {
 				NextProtos:         []string{"h2", "http/1.1"},
 			},
 			ForceAttemptHTTP2: true,
-		},
-		Timeout: 5 * time.Second,
+		}
 	}
-	// 2. Make the HTTP request
-	resp, err := httpClient.Get("https://http-tls-example/")
+	// Make the HTTP request
+	resp, err := httpClient.Get(*url)
 	if err != nil {
 		log.Fatalf("HTTP request failed: %v", err)
 	}
 	defer resp.Body.Close()
-	// 3. Read and print the response
+	// Read and print the response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatalf("Failed to read response body: %v", err)
