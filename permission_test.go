@@ -10,10 +10,9 @@ func u16p(v uint16) *uint16 { return &v }
 
 func TestMatchPermissions(t *testing.T) {
 	base := TunnelProperties{
-		Name:          strp("my.tunnel"),
-		Publish:       boolp(true),
-		TLSMinVersion: u16p(772),
-		Labels:        map[string]string{"env": "prod"},
+		Name:    strp("my.tunnel"),
+		Publish: boolp(true),
+		Labels:  map[string]string{"env": "prod"},
 	}
 	noPublish := base
 	noPublish.Publish = nil

@@ -4,8 +4,11 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -13,22 +16,16 @@ import (
 	"github.com/rstreamlabs/rstream-go"
 )
 
-func run(ctx context.Context) error {
-	// 1. Dial the tunnel
-	raddr := rstream.Addr{IdOrName: "stream-echo"}
-	conn, err := (&rstream.Client{}).Dial(ctx, raddr)
-	if err != nil {
-		return fmt.Errorf("failed to dial tunnel: %w", err)
-	}
+func handleConnection(conn net.Conn) error {
 	defer conn.Close()
-	// 2. Send a message
+	// Send a message
 	msg := []byte("Hello from rstream-go!")
 	n, err := conn.Write(msg)
 	if err != nil {
 		return fmt.Errorf("failed to write: %w", err)
 	}
 	log.Printf("Wrote %d bytes: %s", n, msg)
-	// 3. Receive a message
+	// Receive a message
 	buf := make([]byte, 2048)
 	n, err = conn.Read(buf)
 	if err != nil {
@@ -38,7 +35,43 @@ func run(ctx context.Context) error {
 	return nil
 }
 
+func run(ctx context.Context, publish bool) error {
+	name := "stream-echo"
+	if publish {
+		// List tunnels to find the published host using rstream control API
+		tunnels, err := (&rstream.Client{}).ListTunnels(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to list tunnels: %w", err)
+		}
+		for _, tunnel := range *tunnels {
+			if tunnel.Name != nil && *tunnel.Name == name && tunnel.Host != nil {
+				host := *tunnel.Host
+				hostname, _, err := net.SplitHostPort(*tunnel.Host)
+				if err != nil {
+					return fmt.Errorf("failed to split host and port: %w", err)
+				}
+				// Connect to the published host using standard TLS dialer
+				conn, err := tls.Dial("tcp", host, &tls.Config{ServerName: hostname})
+				if err != nil {
+					return fmt.Errorf("failed to dial published host: %w", err)
+				}
+				return handleConnection(conn)
+			}
+		}
+		return fmt.Errorf("tunnel %q not found or not published", name)
+	} else {
+		// Dial the tunnel using custom rstream dialer
+		conn, err := (&rstream.Client{}).Dial(ctx, rstream.Addr{IdOrName: name})
+		if err != nil {
+			return fmt.Errorf("failed to dial tunnel: %w", err)
+		}
+		return handleConnection(conn)
+	}
+}
+
 func main() {
+	publish := flag.Bool("publish", false, "connect to published host instead of using rstream dialer")
+	flag.Parse()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigChan := make(chan os.Signal, 1)
@@ -48,7 +81,7 @@ func main() {
 		log.Println("Got signal, exiting...")
 		cancel()
 	}()
-	if err := run(ctx); err != nil {
+	if err := run(ctx, *publish); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }

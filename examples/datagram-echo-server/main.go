@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -34,18 +35,19 @@ func handleConnection(conn net.PacketConn) {
 	}
 }
 
-func run(ctx context.Context) error {
-	// 1. Open control channel
+func run(ctx context.Context, publish bool) error {
+	// Open control channel
 	ctrl, err := (&rstream.Client{}).Connect(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect to rstream engine server: %w", err)
 	}
 	defer ctrl.Close()
-	// 2. Create the tunnel
+	// Create the tunnel
 	tunnelProps := rstream.TunnelProperties{
-		Name:    rstream.StringPtr("datagram-echo"),
-		Type:    rstream.TunnelTypePtr(rstream.TunnelDatagram),
-		Publish: rstream.BoolPtr(false),
+		Name:     rstream.StringPtr("datagram-echo"),
+		Type:     rstream.TunnelTypePtr(rstream.TunnelDatagram),
+		Publish:  rstream.BoolPtr(publish),
+		Protocol: rstream.ProtocolPtr(rstream.ProtocolDTLS),
 	}
 	tunnel, err := ctrl.CreateTunnel(ctx, tunnelProps)
 	if err != nil {
@@ -64,7 +66,7 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("tunnel does not implement rstream.PacketListener")
 	}
 	fmt.Printf("Server listening on %s\n", forwardingAddr)
-	// 3. Echo server
+	// Echo server
 	for {
 		conn, _, err := packetListener.Accept()
 		if err != nil {
@@ -75,6 +77,8 @@ func run(ctx context.Context) error {
 }
 
 func main() {
+	publish := flag.Bool("publish", false, "publish the tunnel")
+	flag.Parse()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigChan := make(chan os.Signal, 1)
@@ -84,7 +88,7 @@ func main() {
 		log.Println("Got signal, exiting...")
 		cancel()
 	}()
-	if err := run(ctx); err != nil {
+	if err := run(ctx, *publish); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }

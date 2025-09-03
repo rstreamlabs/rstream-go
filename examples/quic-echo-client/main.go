@@ -5,8 +5,10 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,41 +17,22 @@ import (
 	"github.com/rstreamlabs/rstream-go"
 )
 
-func run(ctx context.Context) error {
-	// 1. Dial the tunnel
-	raddr := rstream.Addr{IdOrName: "quic-echo"}
-	packetConn, err := (&rstream.Client{}).PacketDial(ctx, raddr)
-	if err != nil {
-		return fmt.Errorf("failed to dial tunnel: %w", err)
-	}
-	defer packetConn.Close()
-	// 2. Connect to the QUIC server
-	tlsCfg := &tls.Config{
-		InsecureSkipVerify: true,
-	}
-	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
-	transport := quic.Transport{
-		Conn: packetConn,
-	}
-	conn, err := transport.Dial(ctx, &raddr, tlsCfg, nil)
-	if err != nil {
-		return fmt.Errorf("failed to dial QUIC server: %w", err)
-	}
+func handleConnection(conn *quic.Conn) error {
 	defer conn.CloseWithError(0, "client done")
-	// 3. Open a single stream
+	// Open a single stream
 	stream, err := conn.OpenStream()
 	if err != nil {
 		return fmt.Errorf("failed to open stream: %w", err)
 	}
 	defer stream.Close()
-	// 4. Send a message
+	// Send a message
 	msg := []byte("Hello from rstream-go!")
 	n, err := stream.Write(msg)
 	if err != nil {
 		return fmt.Errorf("failed to write: %w", err)
 	}
 	log.Printf("Wrote %d bytes: %s", n, msg)
-	// 5. Receive a message
+	// Receive a message
 	buf := make([]byte, 2048)
 	n, err = stream.Read(buf)
 	if err != nil {
@@ -59,7 +42,55 @@ func run(ctx context.Context) error {
 	return nil
 }
 
+func run(ctx context.Context, publish bool) error {
+	name := "quic-echo"
+	if publish {
+		// List tunnels to find the published host using rstream control API
+		tunnels, err := (&rstream.Client{}).ListTunnels(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("failed to list tunnels: %w", err)
+		}
+		for _, tunnel := range *tunnels {
+			if tunnel.Name != nil && *tunnel.Name == name && tunnel.Host != nil {
+				host := *tunnel.Host
+				hostname, _, err := net.SplitHostPort(host)
+				if err != nil {
+					return fmt.Errorf("failed to split host and port: %w", err)
+				}
+				// Connect to the published host using standard QUIC dialer
+				conn, err := quic.DialAddr(ctx, host, &tls.Config{ServerName: hostname}, nil)
+				if err != nil {
+					return fmt.Errorf("failed to dial published host: %w", err)
+				}
+				return handleConnection(conn)
+			}
+		}
+		return fmt.Errorf("tunnel %q not found or not published", name)
+	} else {
+		// Dial the tunnel using custom rstream dialer
+		raddr := rstream.Addr{IdOrName: name}
+		packetConn, err := (&rstream.Client{}).PacketDial(ctx, raddr)
+		if err != nil {
+			return fmt.Errorf("failed to dial tunnel: %w", err)
+		}
+		tlsCfg := &tls.Config{
+			InsecureSkipVerify: true,
+		}
+		os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
+		transport := quic.Transport{
+			Conn: packetConn,
+		}
+		conn, err := transport.Dial(ctx, &raddr, tlsCfg, nil)
+		if err != nil {
+			return fmt.Errorf("failed to dial QUIC server: %w", err)
+		}
+		return handleConnection(conn)
+	}
+}
+
 func main() {
+	publish := flag.Bool("publish", false, "connect to published host instead of using rstream dialer")
+	flag.Parse()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigChan := make(chan os.Signal, 1)
@@ -69,7 +100,7 @@ func main() {
 		log.Println("Got signal, exiting...")
 		cancel()
 	}()
-	if err := run(ctx); err != nil {
+	if err := run(ctx, *publish); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }
