@@ -172,32 +172,8 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 			tlsALPNSlice = nil
 		}
 	}
-	var tlsMinVersionPtr *uint16
-	if cmd.Flags().Lookup("tls-min-version").Changed {
-		val, _ := cmd.Flags().GetString("tls-min-version")
-		switch val {
-		case "tls1.2":
-			mv := uint16(tls.VersionTLS12) // 0x0303
-			tlsMinVersionPtr = &mv
-		case "tls1.3":
-			mv := uint16(tls.VersionTLS13) // 0x0304
-			tlsMinVersionPtr = &mv
-		}
-	}
-	var tlsCipherIDs []uint16
-	if cmd.Flags().Lookup("tls-ciphers").Changed {
-		ciphersStr, _ := cmd.Flags().GetString("tls-ciphers")
-		for _, c := range strings.Split(ciphersStr, ",") {
-			ciph, err := parseTLSCipher(c)
-			if err != nil {
-				return nil, fmt.Errorf("invalid cipher in --tls-ciphers: %v", err)
-			}
-			tlsCipherIDs = append(tlsCipherIDs, ciph)
-		}
-		if len(tlsCipherIDs) == 0 {
-			tlsCipherIDs = nil
-		}
-	}
+	tlsMinVersionPtr := getStringPtr(cmd, "tls-min-version")
+	tlsCipherIDs := getStringSlice(cmd, "tls-ciphers")
 	mtlsPtr := getBoolPtr(cmd, "mtls")
 	mtlsCACertPtr := getStringPtr(cmd, "mtls-cacert-file")
 	var httpVersionPtr *rstream.HTTPVersion

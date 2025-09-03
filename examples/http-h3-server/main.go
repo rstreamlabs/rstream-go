@@ -9,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"flag"
 	"fmt"
 	"log"
 	"math/big"
@@ -50,18 +51,18 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, hostname)
 }
 
-func run(ctx context.Context) error {
-	// 1. Open control channel
+func run(ctx context.Context, publish bool) error {
+	// Open control channel
 	ctrl, err := (&rstream.Client{}).Connect(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect to rstream engine server: %w", err)
 	}
 	defer ctrl.Close()
-	// 2. Create the tunnel
+	// Create the tunnel
 	tunnelProps := rstream.TunnelProperties{
 		Name:        rstream.StringPtr("h3-example"),
 		Type:        rstream.TunnelTypePtr(rstream.TunnelDatagram),
-		Publish:     rstream.BoolPtr(true),
+		Publish:     rstream.BoolPtr(publish),
 		Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
 		HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP3),
 	}
@@ -79,7 +80,7 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("tunnel does not implement rstream.PacketListener")
 	}
 	fmt.Printf("Server listening on %s\n", forwardingAddr)
-	// 3. Start an HTTP server using the tunnel as a listener (HTTP/3)
+	// Start an HTTP server using the tunnel as a listener (HTTP/3)
 	tlsCfg, err := generateTLSConfig()
 	if err != nil {
 		return fmt.Errorf("failed to generate TLS config: %w", err)
@@ -103,6 +104,8 @@ func run(ctx context.Context) error {
 }
 
 func main() {
+	publish := flag.Bool("publish", false, "publish the tunnel")
+	flag.Parse()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigChan := make(chan os.Signal, 1)
@@ -112,7 +115,7 @@ func main() {
 		log.Println("Received shutdown signal, exiting...")
 		cancel()
 	}()
-	if err := run(ctx); err != nil && err != http.ErrServerClosed {
+	if err := run(ctx, *publish); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
 }

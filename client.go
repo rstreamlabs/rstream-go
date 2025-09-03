@@ -6,10 +6,8 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"sync"
 	"time"
@@ -61,10 +59,13 @@ func (c *Client) getEngine() (*string, error) {
 	return engine, nil
 }
 
-func (c *Client) getClientDetails(token *string) (*clientDetails, error) {
-	engine, err := c.getEngine()
-	if err != nil {
-		return nil, err
+func (c *Client) getClientDetails(engine *string, token *string) (*clientDetails, error) {
+	var err error
+	if engine == nil {
+		engine, err = c.getEngine()
+		if err != nil {
+			return nil, err
+		}
 	}
 	if token == nil {
 		noToken := c.NoToken
@@ -86,17 +87,13 @@ func (c *Client) getClientDetails(token *string) (*clientDetails, error) {
 	return getClientDetails(token)
 }
 
-type dialType string
-
-const (
-	dialTypeProxyReq  dialType = "proxy_req"
-	dialTypeStreamReq dialType = "stream_req"
-)
-
-func (c *Client) dialEngine(ctx context.Context) (net.Conn, error) {
-	engine, err := c.getEngine()
-	if err != nil {
-		return nil, err
+func (c *Client) dialEngine(ctx context.Context, engine *string, nextProtos *[]string) (net.Conn, error) {
+	var err error
+	if engine == nil {
+		engine, err = c.getEngine()
+		if err != nil {
+			return nil, err
+		}
 	}
 	transport := c.Transport
 	if transport == nil {
@@ -114,13 +111,28 @@ func (c *Client) dialEngine(ctx context.Context) (net.Conn, error) {
 		tlsCfg.ServerName = *host
 	}
 	if tlsCfg.NextProtos == nil {
-		tlsCfg.NextProtos = []string{"rstrm/1"}
+		if nextProtos != nil {
+			tlsCfg.NextProtos = *nextProtos
+		} else {
+			tlsCfg.NextProtos = []string{"rstrm/1"}
+		}
 	}
 	return transport.Dial(ctx, *engine, tlsCfg)
 }
 
+type dialType string
+
+const (
+	dialTypeProxyReq  dialType = "proxy_req"
+	dialTypeStreamReq dialType = "stream_req"
+)
+
 func (c *Client) dial(ctx context.Context, dialType dialType, raddr Addr, token *string) (net.Conn, error) {
-	conn, err := c.dialEngine(ctx)
+	engine, err := c.getEngine()
+	if err != nil {
+		return nil, err
+	}
+	conn, err := c.dialEngine(ctx, engine, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial engine: %w", err)
 	}
@@ -130,7 +142,7 @@ func (c *Client) dial(ctx context.Context, dialType dialType, raddr Addr, token 
 	if zeroRTT == nil {
 		zeroRTT = BoolPtr(true) // default to true
 	}
-	clientDetails, cause := c.getClientDetails(token)
+	clientDetails, cause := c.getClientDetails(engine, token)
 	if cause != nil {
 		err = fmt.Errorf("failed to get client details: %w", cause)
 	}
@@ -209,7 +221,7 @@ func (c *Client) PacketDial(ctx context.Context, raddr Addr) (net.PacketConn, er
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial stream: %w", err)
 	}
-	return &datagramConn{conn: conn, raddr: &raddr}, nil
+	return PacketConnFromConn(conn, &raddr, PacketModeFramed), nil
 }
 
 type pendingOpenTunnelReq struct {
@@ -235,12 +247,16 @@ type controlChannelImpl struct {
 }
 
 func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, error) {
-	conn, err := c.dialEngine(ctx)
+	engine, err := c.getEngine()
+	if err != nil {
+		return nil, err
+	}
+	conn, err := c.dialEngine(ctx, engine, nil)
 	var ch *controlChannelImpl = nil
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial engine: %w", err)
 	}
-	clientDetails, cause := c.getClientDetails(nil)
+	clientDetails, cause := c.getClientDetails(engine, nil)
 	if cause != nil {
 		err = fmt.Errorf("failed to get client details: %w", cause)
 	} else {
@@ -606,72 +622,4 @@ func (c *controlChannelImpl) onError(err error) {
 	c.err = err
 	c.doneCh <- err
 	close(c.doneCh)
-}
-
-type datagramConn struct {
-	conn  net.Conn
-	raddr net.Addr
-	wMu   sync.Mutex
-	rMu   sync.Mutex
-}
-
-func (d *datagramConn) WriteTo(p []byte, addr net.Addr) (int, error) {
-	d.wMu.Lock()
-	defer d.wMu.Unlock()
-	if addr.String() != d.raddr.String() {
-		return 0, fmt.Errorf("unreachable address (expected %s, got %s)", d.raddr.String(), addr.String())
-	}
-	length := uint32(len(p))
-	lengthBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(lengthBytes, length)
-	if _, err := d.conn.Write(lengthBytes); err != nil {
-		return 0, err
-	}
-	if _, err := d.conn.Write(p); err != nil {
-		return 0, err
-	}
-	return len(p), nil
-}
-
-func (d *datagramConn) ReadFrom(p []byte) (int, net.Addr, error) {
-	d.rMu.Lock()
-	defer d.rMu.Unlock()
-	lengthBytes := make([]byte, 4)
-	if _, err := io.ReadFull(d.conn, lengthBytes); err != nil {
-		return 0, nil, err
-	}
-	length := binary.BigEndian.Uint32(lengthBytes)
-	if length > uint32(len(p)) {
-		msgBytes := make([]byte, length)
-		if _, err := io.ReadFull(d.conn, msgBytes); err != nil {
-			return 0, nil, err
-		}
-		copy(p, msgBytes[:len(p)])
-		return len(p), d.raddr, fmt.Errorf("datagram truncated")
-	} else {
-		if _, err := io.ReadFull(d.conn, p[:length]); err != nil {
-			return 0, nil, err
-		}
-		return int(length), d.raddr, nil
-	}
-}
-
-func (d *datagramConn) Close() error {
-	return d.conn.Close()
-}
-
-func (d *datagramConn) LocalAddr() net.Addr {
-	return d.conn.LocalAddr()
-}
-
-func (d *datagramConn) SetDeadline(t time.Time) error {
-	return d.conn.SetDeadline(t)
-}
-
-func (d *datagramConn) SetReadDeadline(t time.Time) error {
-	return d.conn.SetReadDeadline(t)
-}
-
-func (d *datagramConn) SetWriteDeadline(t time.Time) error {
-	return d.conn.SetWriteDeadline(t)
 }

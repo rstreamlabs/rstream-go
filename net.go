@@ -4,11 +4,17 @@ package rstream
 
 import (
 	"bufio"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sync"
 	"time"
+
+	"github.com/pion/dtls/v3"
+	"github.com/rstreamlabs/rstream-go/pb"
+	"google.golang.org/protobuf/proto"
 )
 
 type PacketListener interface {
@@ -26,8 +32,16 @@ type listenerWrapper struct {
 	inner net.Listener
 }
 
+type PacketMode int
+
+const (
+	PacketModeFramed PacketMode = iota
+	PacketModeRaw
+)
+
 type connWrapper struct {
 	inner net.Conn
+	mode  PacketMode
 	w     *bufio.Writer
 	r     *bufio.Reader
 	raddr net.Addr
@@ -51,12 +65,7 @@ func (l *listenerWrapper) Accept() (net.PacketConn, net.Addr, error) {
 		return nil, nil, err
 	}
 	raddr := conn.RemoteAddr()
-	return &connWrapper{
-		inner: conn,
-		w:     bufio.NewWriter(conn),
-		r:     bufio.NewReader(conn),
-		raddr: raddr,
-	}, raddr, nil
+	return PacketConnFromConn(conn, raddr, PacketModeFramed), raddr, nil
 }
 
 func (l *listenerWrapper) Close() error {
@@ -67,37 +76,46 @@ func (l *listenerWrapper) Addr() net.Addr {
 	return l.inner.Addr()
 }
 
-func PacketConnFromConn(c net.Conn) net.PacketConn {
-	return &connWrapper{inner: c}
+func PacketConnFromConn(c net.Conn, raddr net.Addr, mode PacketMode) net.PacketConn {
+	if raddr == nil {
+		raddr = c.RemoteAddr()
+	}
+	pc := &connWrapper{inner: c, mode: mode, raddr: raddr}
+	if mode == PacketModeFramed {
+		pc.w = bufio.NewWriter(c)
+		pc.r = bufio.NewReader(c)
+	}
+	return pc
 }
 
-func (c *connWrapper) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
-	n, err = c.read(p)
+func PacketConnFromDTLSConn(c *dtls.Conn) net.PacketConn {
+	return PacketConnFromConn(c, nil, PacketModeRaw)
+}
+
+func (c *connWrapper) ReadFrom(p []byte) (int, net.Addr, error) {
+	if c.mode == PacketModeFramed {
+		msg, err := readMessage(c.r)
+		if err != nil {
+			return 0, nil, err
+		}
+		n := copy(p, msg)
+		return n, c.raddr, nil
+	}
+	n, err := c.inner.Read(p)
 	return n, c.raddr, err
 }
 
-func (c *connWrapper) WriteTo(p []byte, addr net.Addr) (n int, err error) {
-	if addr.String() != c.raddr.String() {
+func (c *connWrapper) WriteTo(p []byte, addr net.Addr) (int, error) {
+	if addr == nil || addr.String() != c.raddr.String() {
 		return 0, fmt.Errorf("invalid address: expected %v, got %v", c.raddr, addr)
 	}
-	return c.write(p)
-}
-
-func (c *connWrapper) read(p []byte) (int, error) {
-	msg, err := readMessage(c.r)
-	if err != nil {
-		return 0, err
+	if c.mode == PacketModeFramed {
+		if err := writeMessage(c.w, p); err != nil {
+			return 0, err
+		}
+		return len(p), nil
 	}
-	n := copy(p, msg)
-	return n, nil
-}
-
-func (c *connWrapper) write(p []byte) (int, error) {
-	err := writeMessage(c.w, p)
-	if err != nil {
-		return 0, err
-	}
-	return len(p), nil
+	return c.inner.Write(p)
 }
 
 func (c *connWrapper) Close() error {
@@ -220,4 +238,64 @@ func (pl *packetListenerWrapper) SetReadDeadline(t time.Time) error {
 
 func (pl *packetListenerWrapper) SetWriteDeadline(t time.Time) error {
 	return errors.New("unimplemented function")
+}
+
+func readMessage(r *bufio.Reader) ([]byte, error) {
+	lengthBytes := make([]byte, 4)
+	if _, err := io.ReadFull(r, lengthBytes); err != nil {
+		return nil, err
+	}
+	length := binary.BigEndian.Uint32(lengthBytes)
+	msgBytes := make([]byte, length)
+	if _, err := io.ReadFull(r, msgBytes); err != nil {
+		return nil, err
+	}
+	return msgBytes, nil
+}
+
+func writeMessage(w *bufio.Writer, msgBytes []byte) error {
+	length := uint32(len(msgBytes))
+	lengthBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(lengthBytes, length)
+	if _, err := w.Write(lengthBytes); err != nil {
+		return err
+	}
+	if _, err := w.Write(msgBytes); err != nil {
+		return err
+	}
+	return w.Flush()
+}
+
+func readPbMessage(r *bufio.Reader) (*pb.Message, error) {
+	msgBytes, err := readMessage(r)
+	if err != nil {
+		return nil, err
+	}
+	msg := &pb.Message{}
+	if err := proto.Unmarshal(msgBytes, msg); err != nil {
+		return nil, err
+	}
+	// {
+	// 	json, err := protojson.MarshalOptions{Indent: " ", EmitDefaultValues: true}.Marshal(msg)
+	// 	if err != nil {
+	// 		return nil, fmt.Errorf("failed to marshal protobuf: %w", err)
+	// 	}
+	// 	log.Printf("[client] received message\n%s", string(json))
+	// }
+	return msg, nil
+}
+
+func writePbMessage(w *bufio.Writer, msg *pb.Message) error {
+	// {
+	// 	json, err := protojson.MarshalOptions{Indent: " ", EmitDefaultValues: true}.Marshal(msg)
+	// 	if err != nil {
+	// 		return fmt.Errorf("failed to marshal protobuf: %w", err)
+	// 	}
+	// 	log.Printf("[client] sending message\n%s", string(json))
+	// }
+	msgBytes, err := proto.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	return writeMessage(w, msgBytes)
 }
