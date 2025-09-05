@@ -126,6 +126,16 @@ func newClientFromFlags(cmd *cobra.Command) (*rstream.Client, error) {
 
 func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties, error) {
 	namePtr := getStringPtr(cmd, "name")
+	bytestreamPtr := getBoolPtr(cmd, "bytestream")
+	datagramPtr := getBoolPtr(cmd, "datagram")
+	var typePtr *rstream.TunnelType
+	if bytestreamPtr != nil && *bytestreamPtr {
+		t := rstream.TunnelTypeBytestream
+		typePtr = &t
+	} else if datagramPtr != nil && *datagramPtr {
+		t := rstream.TunnelTypeDatagram
+		typePtr = &t
+	}
 	publishPtr := getBoolPtr(cmd, "publish")
 	noPublishPtr := getBoolPtr(cmd, "no-publish")
 	var publishFinalPtr *bool
@@ -136,14 +146,22 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 		publishFinalPtr = rstream.BoolPtr(false)
 	default:
 	}
-	httpPtr := getBoolPtr(cmd, "http")
 	tlsPtr := getBoolPtr(cmd, "tls")
+	dtlsPtr := getBoolPtr(cmd, "dtls")
+	quicPtr := getBoolPtr(cmd, "quic")
+	httpPtr := getBoolPtr(cmd, "http")
 	var protocol *rstream.Protocol
-	if httpPtr != nil && *httpPtr {
-		p := rstream.ProtocolHTTP
-		protocol = &p
-	} else if tlsPtr != nil && *tlsPtr {
+	if tlsPtr != nil && *tlsPtr {
 		p := rstream.ProtocolTLS
+		protocol = &p
+	} else if dtlsPtr != nil && *dtlsPtr {
+		p := rstream.ProtocolDTLS
+		protocol = &p
+	} else if quicPtr != nil && *quicPtr {
+		p := rstream.ProtocolQUIC
+		protocol = &p
+	} else if httpPtr != nil && *httpPtr {
+		p := rstream.ProtocolHTTP
 		protocol = &p
 	}
 	labels := getStringArrayMap(cmd, "label")
@@ -206,6 +224,7 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 	challengePtr := getBoolPtr(cmd, "challenge")
 	tunnelProperties := &rstream.TunnelProperties{
 		Name:           namePtr,
+		Type:           typePtr,
 		Publish:        publishFinalPtr,
 		Protocol:       protocol,
 		Labels:         labels,

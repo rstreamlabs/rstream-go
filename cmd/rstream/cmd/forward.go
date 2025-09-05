@@ -95,12 +95,17 @@ func init() {
 	forwardCmd.Flags().BoolP("verbose", "v", false, "enable verbose mode")
 	forwardCmd.Flags().StringP("format", "f", "", "output format (human, human-pretty, json, json-pretty)")
 	forwardCmd.Flags().String("name", "", "tunnel name")
+	forwardCmd.Flags().Bool("bytestream", false, "create a bytestream tunnel")
+	forwardCmd.Flags().Bool("datagram", false, "create a datagram tunnel")
+	forwardCmd.MarkFlagsMutuallyExclusive("bytestream", "datagram")
 	forwardCmd.Flags().Bool("publish", false, "publish the tunnel")
 	forwardCmd.Flags().Bool("no-publish", false, "do not publish the tunnel")
 	forwardCmd.MarkFlagsMutuallyExclusive("publish", "no-publish")
-	forwardCmd.Flags().Bool("http", false, "use HTTP protocol")
 	forwardCmd.Flags().Bool("tls", false, "use TLS protocol")
-	forwardCmd.MarkFlagsMutuallyExclusive("http", "tls")
+	forwardCmd.Flags().Bool("dtls", false, "use DTLS protocol")
+	forwardCmd.Flags().Bool("quic", false, "use QUIC protocol")
+	forwardCmd.Flags().Bool("http", false, "use HTTP protocol")
+	forwardCmd.MarkFlagsMutuallyExclusive("tls", "dtls", "quic", "http")
 	forwardCmd.Flags().StringArray("label", nil, "set tunnel labels (key=value, might be specified multiple times)")
 	forwardCmd.Flags().String("geoip", "", "comma-separated allowed countries (ISO 3166-1 alpha-2)")
 	forwardCmd.Flags().String("trusted-ips", "", "comma-separated allowed IP/CIDR ranges")
@@ -230,10 +235,6 @@ func (s *forwardCtx) runOnce(ctx context.Context) error {
 		return fmt.Errorf("failed to create tunnel: %w", err)
 	}
 	defer tunnel.Close()
-	listener, ok := tunnel.(interface{ net.Listener })
-	if !ok {
-		return fmt.Errorf("tunnel does not implement net.Listener")
-	}
 	props, err := tunnel.Properties()
 	if err != nil {
 		return fmt.Errorf("failed to get tunnel properties: %w", err)
@@ -255,16 +256,111 @@ func (s *forwardCtx) runOnce(ctx context.Context) error {
 		Forwarding: &forwarding,
 		Forwarded:  &forwarded,
 	})
+	if l, ok := tunnel.(interface{ net.Listener }); ok {
+		return s.serveWithCtx(ctx, l.Close, func() error { return s.serveTCP(l) })
+	}
+	if pl, ok := tunnel.(rstream.PacketListener); ok {
+		return s.serveWithCtx(ctx, pl.Close, func() error { return s.serveUDP(pl) })
+	}
+	return fmt.Errorf("tunnel does not implement net.Listener or rstream.PacketListener")
+}
+
+func (s *forwardCtx) serveWithCtx(ctx context.Context, closeFn func() error, fn func() error) error {
 	errCh := make(chan error, 1)
-	go func() { errCh <- s.serveTCP(listener) }()
+	go func() { errCh <- fn() }()
 	select {
 	case <-ctx.Done():
-		_ = listener.Close()
+		_ = closeFn()
 		<-errCh
 		return context.Canceled
 	case err := <-errCh:
 		return err
 	}
+}
+
+func (s *forwardCtx) withTrackedConn(addr net.Addr, run func()) {
+	var streamID *string
+	var sourceIP net.IP
+	if ra, ok := addr.(*rstream.Addr); ok && ra != nil {
+		streamID = &ra.IdOrName
+		sourceIP = ra.SourceIP
+	}
+	idx := s.addConn(forwardConnInfo{Active: true, Date: time.Now(), StreamID: streamID, SourceIP: sourceIP})
+	go func() {
+		defer func() {
+			if idx != nil {
+				s.closeConn(*idx)
+			}
+		}()
+		run()
+	}()
+}
+
+func (s *forwardCtx) proxyTCP(inbound net.Conn) {
+	s.withTrackedConn(inbound.LocalAddr(), func() {
+		defer inbound.Close()
+		outbound, err := net.Dial("tcp", net.JoinHostPort(s.Host, s.Port))
+		if err != nil {
+			if s.Verbose {
+				fmt.Printf("Dial error to %s:%s: %v\n", s.Host, s.Port, err)
+			}
+			return
+		}
+		defer outbound.Close()
+		done := make(chan struct{}, 2)
+		go func() { _, _ = io.Copy(outbound, inbound); done <- struct{}{} }()
+		go func() { _, _ = io.Copy(inbound, outbound); done <- struct{}{} }()
+		<-done
+	})
+}
+
+func (s *forwardCtx) proxyUDP(inbound net.PacketConn, remote net.Addr) {
+	s.withTrackedConn(inbound.LocalAddr(), func() {
+		defer inbound.Close()
+		udpRaddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(s.Host, s.Port))
+		if err != nil {
+			if s.Verbose {
+				fmt.Printf("ResolveUDPAddr error to %s:%s: %v\n", s.Host, s.Port, err)
+			}
+			return
+		}
+		outbound, err := net.DialUDP("udp", nil, udpRaddr)
+		if err != nil {
+			if s.Verbose {
+				fmt.Printf("DialUDP error to %s:%s: %v\n", s.Host, s.Port, err)
+			}
+			return
+		}
+		defer outbound.Close()
+		done := make(chan struct{}, 2)
+		go func() {
+			buf := make([]byte, 65535)
+			for {
+				n, _, err := inbound.ReadFrom(buf)
+				if err != nil {
+					break
+				}
+				if _, err := outbound.Write(buf[:n]); err != nil {
+					break
+				}
+			}
+			done <- struct{}{}
+		}()
+		go func() {
+			buf := make([]byte, 65535)
+			for {
+				n, err := outbound.Read(buf)
+				if err != nil {
+					break
+				}
+				if _, err := inbound.WriteTo(buf[:n], remote); err != nil {
+					break
+				}
+			}
+			done <- struct{}{}
+		}()
+		<-done
+	})
 }
 
 func (s *forwardCtx) serveTCP(l net.Listener) error {
@@ -277,33 +373,21 @@ func (s *forwardCtx) serveTCP(l net.Listener) error {
 			}
 			return err
 		}
-		var streamID *string
-		var sourceIP net.IP
-		if laddr := inbound.LocalAddr().(*rstream.Addr); laddr != nil {
-			streamID = &laddr.IdOrName
-			sourceIP = laddr.SourceIP
-		}
-		idx := s.addConn(forwardConnInfo{Active: true, Date: time.Now(), StreamID: streamID, SourceIP: sourceIP})
-		go func(inbound net.Conn, idx *int) {
-			defer func() {
-				if idx != nil {
-					s.closeConn(*idx)
-				}
-				inbound.Close()
-			}()
-			outbound, err := net.Dial("tcp", net.JoinHostPort(s.Host, s.Port))
-			if err != nil {
-				if s.Verbose {
-					fmt.Printf("Dial error to %s:%s: %v\n", s.Host, s.Port, err)
-				}
-				return
+		s.proxyTCP(inbound)
+	}
+}
+
+func (s *forwardCtx) serveUDP(l rstream.PacketListener) error {
+	for {
+		inbound, raddr, err := l.Accept()
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Temporary() {
+				time.Sleep(50 * time.Millisecond)
+				continue
 			}
-			defer outbound.Close()
-			done := make(chan struct{}, 2)
-			go func() { _, _ = io.Copy(outbound, inbound); done <- struct{}{} }()
-			go func() { _, _ = io.Copy(inbound, outbound); done <- struct{}{} }()
-			<-done
-		}(inbound, idx)
+			return err
+		}
+		s.proxyUDP(inbound, raddr)
 	}
 }
 

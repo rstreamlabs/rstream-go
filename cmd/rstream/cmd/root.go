@@ -4,7 +4,6 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/rstreamlabs/rstream-go"
@@ -51,15 +50,6 @@ func init() {
 	rootCmd.PersistentFlags().String("proxy-tls-key-file", "", "path to TLS key PEM file (proxy)")
 	rootCmd.MarkFlagsRequiredTogether("proxy-tls-cert-file", "proxy-tls-key-file")
 	rootCmd.PersistentFlags().String("proxy-tls-cacert-file", "", "path to CA cert PEM file for verifying certificates (proxy)")
-	origHelp := rootCmd.HelpFunc()
-	rootCmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		origHelp(cmd, args)
-		fmt.Fprintln(cmd.OutOrStdout(), "\nEnvironment Variables:")
-		fmt.Fprintln(cmd.OutOrStdout(), "  RSTREAM_DEFAULT_CONFIG_PATH           path to the default rstream configuration folder")
-		fmt.Fprintln(cmd.OutOrStdout(), "  RSTREAM_DEFAULT_AUTHENTICATION_TOKEN  default authentication token")
-		fmt.Fprintln(cmd.OutOrStdout(), "  RSTREAM_DEFAULT_ENGINE                default engine URL")
-		fmt.Fprintln(cmd.OutOrStdout(), "\nFurther information can be found in the rstream documentation (https://rstream.io/docs)")
-	})
 }
 
 func ExecuteContext(ctx context.Context) {

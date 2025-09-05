@@ -14,8 +14,8 @@ import (
 type TunnelType string
 
 const (
-	TunnelBytestream TunnelType = "bytestream"
-	TunnelDatagram   TunnelType = "datagram"
+	TunnelTypeBytestream TunnelType = "bytestream"
+	TunnelTypeDatagram   TunnelType = "datagram"
 )
 
 type Protocol string
