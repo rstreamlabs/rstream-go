@@ -45,7 +45,7 @@ func run(ctx context.Context, publish bool) error {
 	// Create the tunnel
 	tunnelProps := rstream.TunnelProperties{
 		Name:     rstream.StringPtr("stream-echo"),
-		Type:     rstream.TunnelTypePtr(rstream.TunnelBytestream),
+		Type:     rstream.TunnelTypePtr(rstream.TunnelTypeBytestream),
 		Publish:  rstream.BoolPtr(publish),
 		Protocol: rstream.ProtocolPtr(rstream.ProtocolTLS),
 	}
