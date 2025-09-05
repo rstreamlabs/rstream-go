@@ -78,7 +78,7 @@ func run(ctx context.Context, publish bool) error {
 	// Create the tunnel
 	tunnelProps := rstream.TunnelProperties{
 		Name:     rstream.StringPtr("quic-echo"),
-		Type:     rstream.TunnelTypePtr(rstream.TunnelDatagram),
+		Type:     rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
 		Publish:  rstream.BoolPtr(publish),
 		Protocol: rstream.ProtocolPtr(rstream.ProtocolQUIC),
 	}

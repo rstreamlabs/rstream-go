@@ -161,11 +161,11 @@ func (u *forwardUITCell) draw() {
 					break
 				}
 				c := conns[i]
-				streamID := "-"
+				streamID := "unknown"
 				if c.StreamID != nil {
 					streamID = *c.StreamID
 				}
-				sourceIP := "-"
+				sourceIP := "unknown"
 				if c.SourceIP != nil {
 					sourceIP = c.SourceIP.String()
 				}

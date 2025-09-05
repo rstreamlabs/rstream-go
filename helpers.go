@@ -21,18 +21,18 @@ import (
 func FormatForwardingAddr(props TunnelProperties) (string, error) {
 	if props.Domain != nil {
 		domain := *props.Domain
-		protocol := "tls"
-		var out string
-		if props.Protocol != nil && *props.Protocol == ProtocolHTTP {
-			protocol = "https"
-			out = protocol + "://" + domain
-		} else {
-			out = domain
+		switch {
+		case props.Protocol != nil && *props.Protocol == ProtocolHTTP:
+			return "https://" + domain, nil
+		case props.Protocol != nil && *props.Protocol == ProtocolTLS:
+			return domain + " (tls)", nil
+		case props.Protocol != nil && *props.Protocol == ProtocolDTLS:
+			return domain + " (dtls)", nil
+		case props.Protocol != nil && *props.Protocol == ProtocolQUIC:
+			return domain + " (quic)", nil
+		default:
+			return domain, nil
 		}
-		if protocol != "https" {
-			out += " (" + protocol + ")"
-		}
-		return out, nil
 	}
 	if props.Name != nil {
 		return "rstrm://" + *props.Name + " (unpublished)", nil
@@ -44,37 +44,45 @@ func FormatForwardingAddr(props TunnelProperties) (string, error) {
 }
 
 func FormatForwardedHostPort(host, port string, props TunnelProperties) (string, error) {
-	var protocol string
-	if props.Protocol != nil && *props.Protocol == ProtocolHTTP {
-		if props.HTTPUseTLS != nil && *props.HTTPUseTLS {
-			protocol = "https"
+	isHTTP := props.Protocol != nil && *props.Protocol == ProtocolHTTP
+	isH3 := props.HTTPVersion != nil && *props.HTTPVersion == HTTP3
+	useHTTPS := isHTTP && (isH3 || (props.HTTPUseTLS != nil && *props.HTTPUseTLS))
+	var b strings.Builder
+	if isHTTP {
+		if useHTTPS {
+			b.WriteString("https://")
 		} else {
-			protocol = "http"
-		}
-	} else {
-		protocol = ""
-	}
-	out := ""
-	if protocol == "http" || protocol == "https" {
-		out = protocol + "://"
-	}
-	out += host
-	if !((protocol == "http" && port == "80") ||
-		(protocol == "https" && port == "443")) {
-		out += ":" + port
-	}
-	if protocol == "http" {
-		if props.HTTPVersion != nil {
-			out += " (" + string(*props.HTTPVersion) + ")"
-		}
-	} else if protocol != "https" {
-		if props.TLSMode != nil && *props.TLSMode == TLSModePassthrough {
-			out += " (tls)"
-		} else {
-			out += " (tcp)"
+			b.WriteString("http://")
 		}
 	}
-	return out, nil
+	b.WriteString(host)
+	if !((!useHTTPS && isHTTP && port == "80") || (useHTTPS && port == "443")) {
+		b.WriteByte(':')
+		b.WriteString(port)
+	}
+	if isHTTP && props.HTTPVersion != nil {
+		if !useHTTPS || isH3 {
+			b.WriteString(" (")
+			b.WriteString(string(*props.HTTPVersion))
+			b.WriteByte(')')
+		}
+		return b.String(), nil
+	}
+	if props.Protocol != nil {
+		switch *props.Protocol {
+		case ProtocolTLS:
+			if props.TLSMode != nil && *props.TLSMode == TLSModePassthrough {
+				b.WriteString(" (tls)")
+			} else {
+				b.WriteString(" (tcp)")
+			}
+		case ProtocolDTLS:
+			b.WriteString(" (udp)")
+		case ProtocolQUIC:
+			b.WriteString(" (quic)")
+		}
+	}
+	return b.String(), nil
 }
 
 func FormatForwardedAddr(addr net.TCPAddr, props TunnelProperties) (string, error) {
