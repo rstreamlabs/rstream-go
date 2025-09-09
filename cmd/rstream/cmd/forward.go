@@ -7,21 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/spf13/cobra"
-)
-
-type forwardOutputFormat string
-
-const (
-	forwardOutputFormatHuman       forwardOutputFormat = "human"
-	forwardOutputFormatHumanPretty forwardOutputFormat = "human-pretty"
-	forwardOutputFormatJSON        forwardOutputFormat = "json"
-	forwardOutputFormatJSONPretty  forwardOutputFormat = "json-pretty"
+	"golang.org/x/term"
 )
 
 type forwardStatus struct {
@@ -35,7 +29,7 @@ type forwardConnInfo struct {
 	Active   bool
 	Date     time.Time
 	StreamID *string
-	SourceIP net.IP
+	SourceIP *net.IP
 }
 
 type forwardCtx struct {
@@ -45,8 +39,6 @@ type forwardCtx struct {
 	Port             string
 	AutoReconnect    *bool
 	ReconnectTimeout *time.Duration
-	Verbose          bool
-	Format           forwardOutputFormat
 	UI               forwardUI
 }
 
@@ -74,6 +66,10 @@ var forwardCmd = &cobra.Command{
 			return err
 		}
 		if s.UI != nil {
+			previous := slog.Default()
+			silent := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
+			slog.SetDefault(silent)
+			defer slog.SetDefault(previous)
 			uidone := s.UI.Start(cmd.Context())
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
@@ -92,8 +88,6 @@ var forwardCmd = &cobra.Command{
 func init() {
 	forwardCmd.Flags().SortFlags = false
 	forwardCmd.PersistentFlags().SortFlags = false
-	forwardCmd.Flags().BoolP("verbose", "v", false, "enable verbose mode")
-	forwardCmd.Flags().StringP("format", "f", "", "output format (human, human-pretty, json, json-pretty)")
 	forwardCmd.Flags().String("name", "", "tunnel name")
 	forwardCmd.Flags().Bool("bytestream", false, "create a bytestream tunnel")
 	forwardCmd.Flags().Bool("datagram", false, "create a datagram tunnel")
@@ -160,39 +154,27 @@ func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {
 		d := time.Duration(v) * time.Millisecond
 		reconnectTimeout = &d
 	}
-	verbose, _ := cmd.Flags().GetBool("verbose")
-	fstr, _ := cmd.Flags().GetString("format")
-	var fmtOut forwardOutputFormat
-	switch fstr {
-	case "human", "human-pretty", "json", "json-pretty":
-		fmtOut = forwardOutputFormat(fstr)
-	case "":
-		if stdoutIsTTY() && !verbose {
-			fmtOut = forwardOutputFormatHumanPretty
-		} else {
-			fmtOut = forwardOutputFormatHuman
-		}
-	default:
-		return nil, fmt.Errorf("invalid format: %s", fstr)
-	}
-	if fmtOut == forwardOutputFormatHumanPretty && verbose {
-		return nil, fmt.Errorf("human-pretty cannot be used with verbose")
-	}
-	if fmtOut == forwardOutputFormatHumanPretty && !stdoutIsTTY() {
-		return nil, fmt.Errorf("human-pretty requires a TTY")
-	}
+	fstr, _ := cmd.InheritedFlags().GetString("log-format")
 	var ui forwardUI
-	if fmtOut == forwardOutputFormatHumanPretty {
+	if fstr == "auto" && term.IsTerminal(int(os.Stdout.Fd())) {
 		ui, err = newForwardUITCell()
 		if err != nil {
 			return nil, err
 		}
 	}
 	return &forwardCtx{
-		Client: client, Props: props, Host: host, Port: port,
-		AutoReconnect: autoReconnect, ReconnectTimeout: reconnectTimeout,
-		Verbose: verbose, Format: fmtOut, UI: ui,
+		Client:           client,
+		Props:            props,
+		Host:             host,
+		Port:             port,
+		AutoReconnect:    autoReconnect,
+		ReconnectTimeout: reconnectTimeout,
+		UI:               ui,
 	}, nil
+}
+
+func (s *forwardCtx) logger() *slog.Logger {
+	return slog.Default().With("cmd", "forward")
 }
 
 func (s *forwardCtx) run(ctx context.Context) error {
@@ -247,9 +229,7 @@ func (s *forwardCtx) runOnce(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to format forwarded address: %w", err)
 	}
-	if s.Verbose {
-		fmt.Printf("Forwarding %s to %s\n", forwarding, forwarded)
-	}
+	s.logger().Info("Tunnel established", slog.String("forwarding", forwarding), slog.String("forwarded", forwarded))
 	s.setStatus(forwardStatus{
 		Status:     rstream.StringPtr("online"),
 		TunnelID:   props.ID,
@@ -280,10 +260,20 @@ func (s *forwardCtx) serveWithCtx(ctx context.Context, closeFn func() error, fn 
 
 func (s *forwardCtx) withTrackedConn(addr net.Addr, run func()) {
 	var streamID *string
-	var sourceIP net.IP
+	var sourceIP *net.IP
 	if ra, ok := addr.(*rstream.Addr); ok && ra != nil {
 		streamID = &ra.IdOrName
-		sourceIP = ra.SourceIP
+		sourceIP = &ra.SourceIP
+	}
+	{
+		args := []any{}
+		if streamID != nil {
+			args = append(args, slog.String("stream_id", *streamID))
+		}
+		if sourceIP != nil {
+			args = append(args, slog.String("source_ip", sourceIP.String()))
+		}
+		s.logger().Debug("New connection", args...)
 	}
 	idx := s.addConn(forwardConnInfo{Active: true, Date: time.Now(), StreamID: streamID, SourceIP: sourceIP})
 	go func() {
@@ -301,9 +291,7 @@ func (s *forwardCtx) proxyTCP(inbound net.Conn) {
 		defer inbound.Close()
 		outbound, err := net.Dial("tcp", net.JoinHostPort(s.Host, s.Port))
 		if err != nil {
-			if s.Verbose {
-				fmt.Printf("Dial error to %s:%s: %v\n", s.Host, s.Port, err)
-			}
+			s.logger().Error("Dial error", slog.String("host", s.Host), slog.String("port", s.Port), slog.String("error", err.Error()))
 			return
 		}
 		defer outbound.Close()
@@ -319,16 +307,12 @@ func (s *forwardCtx) proxyUDP(inbound net.PacketConn, remote net.Addr) {
 		defer inbound.Close()
 		udpRaddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(s.Host, s.Port))
 		if err != nil {
-			if s.Verbose {
-				fmt.Printf("ResolveUDPAddr error to %s:%s: %v\n", s.Host, s.Port, err)
-			}
+			s.logger().Error("ResolveUDPAddr error", slog.String("host", s.Host), slog.String("port", s.Port), slog.String("error", err.Error()))
 			return
 		}
 		outbound, err := net.DialUDP("udp", nil, udpRaddr)
 		if err != nil {
-			if s.Verbose {
-				fmt.Printf("DialUDP error to %s:%s: %v\n", s.Host, s.Port, err)
-			}
+			s.logger().Error("DialUDP error", slog.String("host", s.Host), slog.String("port", s.Port), slog.String("error", err.Error()))
 			return
 		}
 		defer outbound.Close()

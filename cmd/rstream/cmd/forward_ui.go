@@ -4,9 +4,6 @@ package cmd
 
 import (
 	"context"
-	"os"
-
-	"golang.org/x/term"
 )
 
 type forwardUI interface {
@@ -16,5 +13,3 @@ type forwardUI interface {
 	AddConn(ci forwardConnInfo) int
 	CloseConn(idx int)
 }
-
-func stdoutIsTTY() bool { return term.IsTerminal(int(os.Stdout.Fd())) }
