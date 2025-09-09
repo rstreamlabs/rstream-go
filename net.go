@@ -5,15 +5,18 @@ package rstream
 import (
 	"bufio"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
 
 	"github.com/pion/dtls/v3"
 	"github.com/rstreamlabs/rstream-go/pb"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -266,6 +269,22 @@ func writeMessage(w *bufio.Writer, msgBytes []byte) error {
 	return w.Flush()
 }
 
+func logProto(dir string, m proto.Message) {
+	if Channel != "dev" {
+		return
+	}
+	b, err := protojson.MarshalOptions{EmitDefaultValues: true}.Marshal(m)
+	if err != nil {
+		slog.With("component", "net").Debug("proto marshal error", slog.String("error", err.Error()))
+	} else {
+		slog.With("component", "net").Debug(
+			dir,
+			slog.String("type", string(m.ProtoReflect().Descriptor().FullName())),
+			slog.Any("message", json.RawMessage(b)),
+		)
+	}
+}
+
 func readPbMessage(r *bufio.Reader) (*pb.Message, error) {
 	msgBytes, err := readMessage(r)
 	if err != nil {
@@ -275,24 +294,12 @@ func readPbMessage(r *bufio.Reader) (*pb.Message, error) {
 	if err := proto.Unmarshal(msgBytes, msg); err != nil {
 		return nil, err
 	}
-	// {
-	// 	json, err := protojson.MarshalOptions{Indent: " ", EmitDefaultValues: true}.Marshal(msg)
-	// 	if err != nil {
-	// 		return nil, fmt.Errorf("failed to marshal protobuf: %w", err)
-	// 	}
-	// 	log.Printf("[client] received message\n%s", string(json))
-	// }
+	logProto("received message", msg)
 	return msg, nil
 }
 
 func writePbMessage(w *bufio.Writer, msg *pb.Message) error {
-	// {
-	// 	json, err := protojson.MarshalOptions{Indent: " ", EmitDefaultValues: true}.Marshal(msg)
-	// 	if err != nil {
-	// 		return fmt.Errorf("failed to marshal protobuf: %w", err)
-	// 	}
-	// 	log.Printf("[client] sending message\n%s", string(json))
-	// }
+	logProto("sending message", msg)
 	msgBytes, err := proto.Marshal(msg)
 	if err != nil {
 		return err

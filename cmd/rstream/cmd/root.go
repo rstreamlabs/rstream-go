@@ -4,17 +4,29 @@ package cmd
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/cmd/logging"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var rootCmd = &cobra.Command{
 	Use:     "rstream",
 	Short:   "Powerful Tunnels for Modern Applications",
 	Version: rstream.Version,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		return initLogger(cmd)
+	},
 }
+
+var (
+	flagLogLevel  string // debug, info, warn, error, none
+	flagLogFormat string // auto, json, text, pretty
+)
 
 func init() {
 	rootCmd.AddGroup(&cobra.Group{ID: "common", Title: "Common Commands:"})
@@ -23,7 +35,8 @@ func init() {
 	rootCmd.Flags().SortFlags = false
 	rootCmd.PersistentFlags().SortFlags = false
 	rootCmd.PersistentFlags().String("config", "", "path to rstream configuration file")
-	rootCmd.PersistentFlags().StringP("log-level", "l", "info", "log level (debug, info, warn, error, fatal, panic)")
+	rootCmd.PersistentFlags().StringVarP(&flagLogLevel, "log-level", "l", "info", "log level (debug, info, warn, error, none)")
+	rootCmd.PersistentFlags().StringVarP(&flagLogFormat, "log-format", "f", "auto", "log format (auto, json, text, pretty)")
 	rootCmd.PersistentFlags().Bool("version", false, "show version information and exit")
 	rootCmd.PersistentFlags().String("token", "", "authentication token")
 	rootCmd.PersistentFlags().Bool("no-token", false, "disable token-based authentication")
@@ -50,6 +63,31 @@ func init() {
 	rootCmd.PersistentFlags().String("proxy-tls-key-file", "", "path to TLS key PEM file (proxy)")
 	rootCmd.MarkFlagsRequiredTogether("proxy-tls-cert-file", "proxy-tls-key-file")
 	rootCmd.PersistentFlags().String("proxy-tls-cacert-file", "", "path to CA cert PEM file for verifying certificates (proxy)")
+}
+
+func initLogger(cmd *cobra.Command) error {
+	level, _ := cmd.Flags().GetString("log-level")
+	format, _ := cmd.Flags().GetString("log-format")
+	formatChanged := cmd.Flags().Changed("log-format")
+	levelChanged := cmd.Flags().Changed("log-level")
+	if format == "auto" {
+		if term.IsTerminal(int(os.Stdout.Fd())) {
+			format = "pretty"
+		} else {
+			format = "text"
+		}
+	}
+	if format == "pretty" && !term.IsTerminal(int(os.Stdout.Fd())) && formatChanged {
+		return fmt.Errorf("pretty log format requires a TTY on stdout")
+	}
+	logger := logging.New(logging.Config{
+		Level:  level,
+		Format: format,
+		Output: os.Stdout,
+	})
+	slog.SetDefault(logger)
+	_ = levelChanged
+	return nil
 }
 
 func ExecuteContext(ctx context.Context) {

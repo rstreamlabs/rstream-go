@@ -6,6 +6,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/lmittmann/tint v1.1.2
 	github.com/pion/dtls/v3 v3.0.7
 	github.com/spf13/cobra v1.9.1
 	golang.org/x/net v0.43.0

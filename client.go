@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
@@ -532,7 +533,7 @@ func (c *controlChannelImpl) handleOpenTunnelRsp(rsp *pb.OpenTunnelRsp) {
 		delete(c.pendingTunnels, requestId)
 		pending.respCh <- rsp
 	} else {
-		fmt.Printf("unexpected OpenTunnelRsp: %v\n", rsp)
+		slog.With("component", "controlChannel").Warn("unexpected OpenTunnelRsp", "rsp", rsp)
 	}
 }
 
@@ -543,7 +544,7 @@ func (c *controlChannelImpl) handleCloseTunnelRsp(rsp *pb.CloseTunnelRsp) {
 		delete(c.tunnels, tunnelId)
 		tunnel.onClose()
 	} else {
-		fmt.Printf("unexpected CloseTunnelRsp: %v\n", rsp)
+		slog.With("component", "controlChannel").Warn("unexpected CloseTunnelRsp", "rsp", rsp)
 	}
 }
 
@@ -589,7 +590,7 @@ func (c *controlChannelImpl) handleProxyConnReq(req *pb.ProxyConnReq) {
 			}
 		}()
 	} else {
-		fmt.Printf("unexpected ProxyConnReq: %v\n", req)
+		slog.With("component", "controlChannel").Warn("unexpected ProxyConnReq", "req", req)
 	}
 }
 
