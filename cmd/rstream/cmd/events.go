@@ -17,6 +17,6 @@ func init() {
 	eventsCmd.Flags().SortFlags = false
 	eventsCmd.PersistentFlags().SortFlags = false
 	eventsCmd.Flags().StringSliceP("events", "e", []string{}, "A comma-separated list of events to listen for")
-	eventsCmd.Flags().StringP("forward-to", "f", "", "A URL to forward the webhook events to")
+	eventsCmd.Flags().StringP("forward-to", "t", "", "A URL to forward the webhook events to")
 	rootCmd.AddCommand(eventsCmd)
 }

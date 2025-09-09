@@ -22,7 +22,7 @@ var tunnelsCmd = &cobra.Command{
 func init() {
 	tunnelsCmd.Flags().SortFlags = false
 	tunnelsCmd.PersistentFlags().SortFlags = false
-	tunnelsCmd.Flags().StringVarP(&tunnelFilter, "filter", "f", "", "Filter output based on conditions provided")
+	tunnelsCmd.Flags().StringVar(&tunnelFilter, "filter", "", "Filter output based on conditions provided")
 	tunnelsCmd.Flags().StringVar(&tunnelFormat, "format", "table", "Format output using a template (table or json)")
 	tunnelsCmd.Flags().BoolVarP(&tunnelQuiet, "quiet", "q", false, "Only display tunnel IDs")
 	rootCmd.AddCommand(tunnelsCmd)

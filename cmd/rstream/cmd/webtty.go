@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -19,15 +20,6 @@ var webttyCmd = &cobra.Command{
 	GroupID: "utils",
 	Use:     "webtty",
 	Short:   "Web Remote Terminal (WebTTY)",
-}
-
-var webttyClientCmd = &cobra.Command{
-	Use:          "client",
-	Short:        "Web Remote Terminal (Client)",
-	SilenceUsage: true,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return fmt.Errorf("webtty client command is not implemented yet")
-	},
 }
 
 var webttyServerCmd = &cobra.Command{
@@ -94,7 +86,7 @@ var webttyServerCmd = &cobra.Command{
 					}
 					listener = netListener
 				}
-				fmt.Printf("server listening on %s (%s)\n", listener.Addr(), listener.Addr().Network())
+				slog.With("cmd", "webtty").Info("server started", "address", listener.Addr().String())
 				go func() {
 					<-ctx.Done()
 					server.Shutdown(context.Background())
@@ -111,7 +103,7 @@ var webttyServerCmd = &cobra.Command{
 			if autoReconnect != nil && !*autoReconnect {
 				return err
 			}
-			fmt.Printf("server error: %v; retrying in %s\n", err, retryInterval)
+			slog.With("cmd", "webtty").Error("server error", "error", err, "retry_in", retryInterval)
 			select {
 			case <-time.After(retryInterval):
 			case <-ctx.Done():
@@ -125,12 +117,6 @@ func init() {
 	webttyCmd.Flags().SortFlags = false
 	webttyCmd.PersistentFlags().SortFlags = false
 	rootCmd.AddCommand(webttyCmd)
-}
-
-func init() {
-	webttyClientCmd.Flags().SortFlags = false
-	webttyClientCmd.PersistentFlags().SortFlags = false
-	webttyCmd.AddCommand(webttyClientCmd)
 }
 
 func init() {
