@@ -5,7 +5,6 @@ package rstream
 import (
 	"bufio"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -280,7 +279,7 @@ func logProto(dir string, m proto.Message) {
 		slog.With("component", "net").Debug(
 			dir,
 			slog.String("type", string(m.ProtoReflect().Descriptor().FullName())),
-			slog.Any("message", json.RawMessage(b)),
+			slog.Any("message", rawJSON(b)),
 		)
 	}
 }
