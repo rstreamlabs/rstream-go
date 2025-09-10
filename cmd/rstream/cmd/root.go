@@ -4,14 +4,19 @@ package cmd
 
 import (
 	"context"
-	"fmt"
+	"io"
 	"log/slog"
 	"os"
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/cmd/logging"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
+)
+
+var (
+	flagVerbose   bool
+	flagLogLevel  string
+	flagLogFormat string
 )
 
 var rootCmd = &cobra.Command{
@@ -23,11 +28,6 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-var (
-	flagLogLevel  string // debug, info, warn, error, none
-	flagLogFormat string // auto, json, text, pretty
-)
-
 func init() {
 	rootCmd.AddGroup(&cobra.Group{ID: "common", Title: "Common Commands:"})
 	rootCmd.AddGroup(&cobra.Group{ID: "management", Title: "Management Commands:"})
@@ -35,8 +35,9 @@ func init() {
 	rootCmd.Flags().SortFlags = false
 	rootCmd.PersistentFlags().SortFlags = false
 	rootCmd.PersistentFlags().String("config", "", "path to rstream configuration file")
+	rootCmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "enable verbose mode")
 	rootCmd.PersistentFlags().StringVarP(&flagLogLevel, "log-level", "l", "info", "log level (debug, info, warn, error, none)")
-	rootCmd.PersistentFlags().StringVarP(&flagLogFormat, "log-format", "f", "auto", "log format (auto, json, text, pretty)")
+	rootCmd.PersistentFlags().StringVarP(&flagLogFormat, "log-format", "f", "auto", "log format (auto, json, json-pretty, text, text-pretty)")
 	rootCmd.PersistentFlags().Bool("version", false, "show version information and exit")
 	rootCmd.PersistentFlags().String("token", "", "authentication token")
 	rootCmd.PersistentFlags().Bool("no-token", false, "disable token-based authentication")
@@ -66,27 +67,24 @@ func init() {
 }
 
 func initLogger(cmd *cobra.Command) error {
-	level, _ := cmd.Flags().GetString("log-level")
-	format, _ := cmd.Flags().GetString("log-format")
-	formatChanged := cmd.Flags().Changed("log-format")
-	levelChanged := cmd.Flags().Changed("log-level")
-	if format == "auto" {
-		if term.IsTerminal(int(os.Stdout.Fd())) {
-			format = "pretty"
-		} else {
-			format = "text"
-		}
+	verbose, _ := cmd.InheritedFlags().GetBool("verbose")
+	level, _ := cmd.InheritedFlags().GetString("log-level")
+	format, _ := cmd.InheritedFlags().GetString("log-format")
+	var out io.Writer
+	if verbose {
+		out = os.Stderr
+	} else {
+		out = io.Discard
 	}
-	if format == "pretty" && !term.IsTerminal(int(os.Stdout.Fd())) && formatChanged {
-		return fmt.Errorf("pretty log format requires a TTY on stdout")
-	}
-	logger := logging.New(logging.Config{
+	logger, err := logging.New(logging.Config{
 		Level:  level,
 		Format: format,
-		Output: os.Stdout,
+		Output: out,
 	})
+	if err != nil {
+		return err
+	}
 	slog.SetDefault(logger)
-	_ = levelChanged
 	return nil
 }
 
