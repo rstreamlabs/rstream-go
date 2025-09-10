@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,22 +15,31 @@ import (
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/cmd/logging"
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
+)
+
+type forwardOutputFormat string
+
+const (
+	forwardOutputFormatText  forwardOutputFormat = "text"
+	forwardOutputFormatJSON  forwardOutputFormat = "json"
+	forwardOutputFormatXTerm forwardOutputFormat = "xterm"
+	forwardOutputFormatNone  forwardOutputFormat = "none"
 )
 
 type forwardStatus struct {
-	Status     *string
-	TunnelID   *string
-	Forwarding *string
-	Forwarded  *string
+	Status     *string `json:"status,omitempty"`
+	TunnelID   *string `json:"tunnel_id,omitempty"`
+	Forwarding *string `json:"forwarding,omitempty"`
+	Forwarded  *string `json:"forwarded,omitempty"`
 }
 
 type forwardConnInfo struct {
-	Active   bool
-	Date     time.Time
-	StreamID *string
-	SourceIP *net.IP
+	Active   bool      `json:"active"`
+	Date     time.Time `json:"date"`
+	StreamID *string   `json:"stream_id,omitempty"`
+	SourceIP *net.IP   `json:"source_ip,omitempty"`
 }
 
 type forwardCtx struct {
@@ -39,6 +49,9 @@ type forwardCtx struct {
 	Port             string
 	AutoReconnect    *bool
 	ReconnectTimeout *time.Duration
+	Logger           *slog.Logger
+	OutputFormat     forwardOutputFormat
+	Out              io.Writer
 	UI               forwardUI
 }
 
@@ -66,10 +79,6 @@ var forwardCmd = &cobra.Command{
 			return err
 		}
 		if s.UI != nil {
-			previous := slog.Default()
-			silent := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
-			slog.SetDefault(silent)
-			defer slog.SetDefault(previous)
 			uidone := s.UI.Start(cmd.Context())
 			ctx, cancel := context.WithCancel(cmd.Context())
 			defer cancel()
@@ -88,6 +97,7 @@ var forwardCmd = &cobra.Command{
 func init() {
 	forwardCmd.Flags().SortFlags = false
 	forwardCmd.PersistentFlags().SortFlags = false
+	forwardCmd.Flags().StringP("output", "o", "", "output mode (text, json, xterm, none)")
 	forwardCmd.Flags().String("name", "", "tunnel name")
 	forwardCmd.Flags().Bool("bytestream", false, "create a bytestream tunnel")
 	forwardCmd.Flags().Bool("datagram", false, "create a datagram tunnel")
@@ -154,9 +164,35 @@ func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {
 		d := time.Duration(v) * time.Millisecond
 		reconnectTimeout = &d
 	}
-	fstr, _ := cmd.InheritedFlags().GetString("log-format")
+	outStr, _ := cmd.Flags().GetString("output")
+	var out forwardOutputFormat
+	switch outStr {
+	case "text":
+		out = forwardOutputFormatText
+	case "json":
+		out = forwardOutputFormatJSON
+	case "xterm":
+		out = forwardOutputFormatXTerm
+	case "none":
+		out = forwardOutputFormatNone
+	case "":
+		if logging.IsTerminal(os.Stdout) && !flagVerbose {
+			out = forwardOutputFormatXTerm
+		} else {
+			out = forwardOutputFormatText
+		}
+	default:
+		return nil, fmt.Errorf("invalid output: %s (valid: text, json, xterm)", outStr)
+	}
+	if out == forwardOutputFormatXTerm {
+		if logging.IsTerminal(os.Stdout) == false {
+			return nil, fmt.Errorf("output mode 'xterm' requires a terminal")
+		} else if flagVerbose == true {
+			return nil, fmt.Errorf("output mode 'xterm' is not compatible with verbose mode")
+		}
+	}
 	var ui forwardUI
-	if fstr == "auto" && term.IsTerminal(int(os.Stdout.Fd())) {
+	if out == forwardOutputFormatXTerm {
 		ui, err = newForwardUITCell()
 		if err != nil {
 			return nil, err
@@ -169,12 +205,11 @@ func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {
 		Port:             port,
 		AutoReconnect:    autoReconnect,
 		ReconnectTimeout: reconnectTimeout,
+		Logger:           slog.With("cmd", "forward"),
+		OutputFormat:     out,
+		Out:              os.Stdout,
 		UI:               ui,
 	}, nil
-}
-
-func (s *forwardCtx) logger() *slog.Logger {
-	return slog.Default().With("cmd", "forward")
 }
 
 func (s *forwardCtx) run(ctx context.Context) error {
@@ -229,7 +264,6 @@ func (s *forwardCtx) runOnce(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to format forwarded address: %w", err)
 	}
-	s.logger().Info("Tunnel established", slog.String("forwarding", forwarding), slog.String("forwarded", forwarded))
 	s.setStatus(forwardStatus{
 		Status:     rstream.StringPtr("online"),
 		TunnelID:   props.ID,
@@ -265,16 +299,6 @@ func (s *forwardCtx) withTrackedConn(addr net.Addr, run func()) {
 		streamID = &ra.IdOrName
 		sourceIP = &ra.SourceIP
 	}
-	{
-		args := []any{}
-		if streamID != nil {
-			args = append(args, slog.String("stream_id", *streamID))
-		}
-		if sourceIP != nil {
-			args = append(args, slog.String("source_ip", sourceIP.String()))
-		}
-		s.logger().Debug("New connection", args...)
-	}
 	idx := s.addConn(forwardConnInfo{Active: true, Date: time.Now(), StreamID: streamID, SourceIP: sourceIP})
 	go func() {
 		defer func() {
@@ -291,14 +315,14 @@ func (s *forwardCtx) proxyTCP(inbound net.Conn) {
 		defer inbound.Close()
 		outbound, err := net.Dial("tcp", net.JoinHostPort(s.Host, s.Port))
 		if err != nil {
-			s.logger().Error("Dial error", slog.String("host", s.Host), slog.String("port", s.Port), slog.String("error", err.Error()))
-			return
+			s.Logger.Error("Dial error", slog.String("host", s.Host), slog.String("port", s.Port), slog.String("error", err.Error()))
+		} else {
+			defer outbound.Close()
+			done := make(chan struct{}, 2)
+			go func() { _, _ = io.Copy(outbound, inbound); done <- struct{}{} }()
+			go func() { _, _ = io.Copy(inbound, outbound); done <- struct{}{} }()
+			<-done
 		}
-		defer outbound.Close()
-		done := make(chan struct{}, 2)
-		go func() { _, _ = io.Copy(outbound, inbound); done <- struct{}{} }()
-		go func() { _, _ = io.Copy(inbound, outbound); done <- struct{}{} }()
-		<-done
 	})
 }
 
@@ -307,12 +331,12 @@ func (s *forwardCtx) proxyUDP(inbound net.PacketConn, remote net.Addr) {
 		defer inbound.Close()
 		udpRaddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(s.Host, s.Port))
 		if err != nil {
-			s.logger().Error("ResolveUDPAddr error", slog.String("host", s.Host), slog.String("port", s.Port), slog.String("error", err.Error()))
+			s.Logger.Error("ResolveUDPAddr error", slog.String("host", s.Host), slog.String("port", s.Port), slog.String("error", err.Error()))
 			return
 		}
 		outbound, err := net.DialUDP("udp", nil, udpRaddr)
 		if err != nil {
-			s.logger().Error("DialUDP error", slog.String("host", s.Host), slog.String("port", s.Port), slog.String("error", err.Error()))
+			s.Logger.Error("DialUDP error", slog.String("host", s.Host), slog.String("port", s.Port), slog.String("error", err.Error()))
 			return
 		}
 		defer outbound.Close()
@@ -376,21 +400,139 @@ func (s *forwardCtx) serveUDP(l rstream.PacketListener) error {
 }
 
 func (s *forwardCtx) setStatus(status forwardStatus) {
-	if s.UI != nil {
-		s.UI.SetStatus(status)
+	{
+		args := []any{}
+		if status.Status != nil {
+			args = append(args, slog.String("status", *status.Status))
+		}
+		if status.TunnelID != nil {
+			args = append(args, slog.String("tunnel_id", *status.TunnelID))
+		}
+		if status.Forwarding != nil {
+			args = append(args, slog.String("forwarding", *status.Forwarding))
+		}
+		if status.Forwarded != nil {
+			args = append(args, slog.String("forwarded", *status.Forwarded))
+		}
+		s.Logger.Debug("Status update", args...)
+	}
+	switch s.OutputFormat {
+	case forwardOutputFormatText:
+		s.renderStatusText(status)
+	case forwardOutputFormatJSON:
+		s.writeJSON(status)
+	case forwardOutputFormatXTerm:
+		if s.UI != nil {
+			s.UI.SetStatus(status)
+		}
+	case forwardOutputFormatNone:
 	}
 }
 
 func (s *forwardCtx) addConn(ci forwardConnInfo) *int {
-	if s.UI != nil {
-		idx := s.UI.AddConn(ci)
-		return &idx
+	{
+		args := []any{
+			slog.Bool("active", ci.Active),
+			slog.String("date", ci.Date.Format(time.RFC3339)),
+		}
+		if ci.StreamID != nil {
+			args = append(args, slog.String("stream_id", *ci.StreamID))
+		}
+		if ci.SourceIP != nil {
+			args = append(args, slog.String("source_ip", ci.SourceIP.String()))
+		}
+		s.Logger.Debug("New connection", args...)
+	}
+	switch s.OutputFormat {
+	case forwardOutputFormatText:
+		streamID := "-"
+		if ci.StreamID != nil {
+			streamID = *ci.StreamID
+		}
+		sourceIP := "-"
+		if ci.SourceIP != nil {
+			sourceIP = ci.SourceIP.String()
+		}
+		s.writef("incoming connection: date=%s stream_id=%s source_ip=%s active=%t\n",
+			ci.Date.UTC().Format("2006-01-02 15:04:05.000 UTC"), streamID, sourceIP, ci.Active)
+	case forwardOutputFormatJSON:
+		s.writeJSON(ci)
+	case forwardOutputFormatXTerm:
+		if s.UI != nil {
+			idx := s.UI.AddConn(ci)
+			return &idx
+		}
+	case forwardOutputFormatNone:
 	}
 	return nil
 }
 
 func (s *forwardCtx) closeConn(idx int) {
-	if s.UI != nil {
-		s.UI.CloseConn(idx)
+	s.Logger.Debug("Connection closed", slog.Int("idx", idx))
+	switch s.OutputFormat {
+	case forwardOutputFormatText:
+		s.writef("connection closed: idx=%d\n", idx)
+	case forwardOutputFormatJSON:
+		s.writeJSON(map[string]any{
+			"event": "connection_closed",
+			"idx":   idx,
+		})
+	case forwardOutputFormatXTerm:
+		if s.UI != nil {
+			s.UI.CloseConn(idx)
+		}
+	case forwardOutputFormatNone:
+	}
+}
+
+func (s *forwardCtx) writeLine(a ...any) {
+	if s.Out == nil {
+		return
+	}
+	fmt.Fprintln(s.Out, a...)
+}
+
+func (s *forwardCtx) writef(format string, a ...any) {
+	if s.Out == nil {
+		return
+	}
+	fmt.Fprintf(s.Out, format, a...)
+}
+
+func (s *forwardCtx) writeJSON(v any) {
+	if s.Out == nil {
+		return
+	}
+	enc := json.NewEncoder(s.Out)
+	_ = enc.Encode(v)
+}
+
+func (s *forwardCtx) renderStatusText(st forwardStatus) {
+	type kv struct{ k, v string }
+	val := func(p *string) string {
+		if p == nil || strings.TrimSpace(*p) == "" {
+			return "-"
+		}
+		return *p
+	}
+	lines := []kv{
+		{"version", "-"},
+		{"update", "-"},
+		{"plan", "-"},
+		{"region", "-"},
+		{"status", val(st.Status)},
+		{"tunnel ID", val(st.TunnelID)},
+		{"forwarding", val(st.Forwarding)},
+		{"forwarded", val(st.Forwarded)},
+	}
+	maxw := 0
+	for _, kv := range lines {
+		if len(kv.k) > maxw {
+			maxw = len(kv.k)
+		}
+	}
+	s.writeLine("tunnel status")
+	for _, kv := range lines {
+		s.writef("  %-*s : %s\n", maxw, kv.k, kv.v)
 	}
 }
