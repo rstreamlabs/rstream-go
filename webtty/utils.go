@@ -12,7 +12,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
 )
@@ -146,11 +145,4 @@ func AddEnvironmentVariable(env *[]string, key, value string, force bool) {
 		}
 	}
 	*env = append(*env, prefix+value)
-}
-
-func SetupCredential(cmd *exec.Cmd, ui *UserInfo) error {
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Credential: &syscall.Credential{Uid: ui.UID, Gid: ui.GID},
-	}
-	return nil
 }
