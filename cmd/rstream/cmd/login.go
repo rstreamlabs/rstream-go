@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -20,7 +19,7 @@ var loginCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		host, err := client.Login(context.Background())
+		host, err := client.Login(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("login failed: %w", err)
 		}
