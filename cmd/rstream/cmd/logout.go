@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -20,7 +19,7 @@ var logoutCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		host, err := client.Logout(context.Background())
+		host, err := client.Logout(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("logout failed: %w", err)
 		}

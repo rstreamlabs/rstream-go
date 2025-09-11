@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -37,8 +36,7 @@ var tunnelsCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("invalid --filter: %w", err)
 		}
-		ctx := context.Background()
-		list, err := client.ListTunnels(ctx, params)
+		list, err := client.ListTunnels(cmd.Context(), params)
 		if err != nil {
 			return fmt.Errorf("failed to list tunnels: %w", err)
 		}
