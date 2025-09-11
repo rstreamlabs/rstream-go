@@ -28,6 +28,7 @@ var webttyServerCmd = &cobra.Command{
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
+		logger := slog.With("cmd", "webtty")
 		retryPtr := getBoolPtr(cmd, "retry")
 		noRetryPtr := getBoolPtr(cmd, "no-retry")
 		var autoReconnect *bool
@@ -86,7 +87,7 @@ var webttyServerCmd = &cobra.Command{
 					}
 					listener = netListener
 				}
-				slog.With("cmd", "webtty").Info("server started", "address", listener.Addr().String())
+				logger.Info("server started", "address", listener.Addr().String())
 				go func() {
 					<-ctx.Done()
 					server.Shutdown(context.Background())
@@ -103,7 +104,7 @@ var webttyServerCmd = &cobra.Command{
 			if autoReconnect != nil && !*autoReconnect {
 				return err
 			}
-			slog.With("cmd", "webtty").Error("server error", "error", err, "retry_in", retryInterval)
+			logger.Error("server error", "error", err, "retry_in", retryInterval)
 			select {
 			case <-time.After(retryInterval):
 			case <-ctx.Done():
