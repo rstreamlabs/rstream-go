@@ -39,7 +39,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&flagLogLevel, "log-level", "l", "info", "log level (debug, info, warn, error, none)")
 	rootCmd.PersistentFlags().StringVarP(&flagLogFormat, "log-format", "f", "auto", "log format (auto, json, json-pretty, text, text-pretty)")
 	rootCmd.PersistentFlags().Bool("version", false, "show version information and exit")
-	rootCmd.PersistentFlags().String("token", "", "authentication token")
+	rootCmd.PersistentFlags().StringP("token", "t", "", "authentication token")
 	rootCmd.PersistentFlags().Bool("no-token", false, "disable token-based authentication")
 	rootCmd.MarkFlagsMutuallyExclusive("token", "no-token")
 	rootCmd.PersistentFlags().String("engine", "", "engine URL (host:port)")

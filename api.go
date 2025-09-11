@@ -5,11 +5,13 @@ package rstream
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -26,10 +28,20 @@ func (c *Client) apiHttpClient() (*http.Client, error) {
 	}, nil
 }
 
-func (c *Client) apiDo(ctx context.Context, method, path string, query url.Values, body io.Reader) ([]byte, int, error) {
-	engine, err := c.getEngine()
-	if err != nil {
-		return nil, 0, err
+func (c *Client) apiDo(ctx context.Context, method, path string, query url.Values, body io.Reader, engine, token *string) ([]byte, int, error) {
+	if engine == nil {
+		var err error
+		engine, err = c.getEngine()
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+	if token == nil {
+		clientDetails, err := c.getClientDetails(engine, nil)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to get client details: %w", err)
+		}
+		token = clientDetails.Token
 	}
 	httpc, err := c.apiHttpClient()
 	if err != nil {
@@ -44,12 +56,8 @@ func (c *Client) apiDo(ctx context.Context, method, path string, query url.Value
 	if err != nil {
 		return nil, 0, err
 	}
-	clientDetails, err := c.getClientDetails(engine, nil)
-	if err != nil {
-		return nil, 0, fmt.Errorf("failed to get client details: %w", err)
-	}
-	if clientDetails.Token != nil && *clientDetails.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+*clientDetails.Token)
+	if token != nil && *token != "" {
+		req.Header.Set("Authorization", "Bearer "+*token)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -73,6 +81,48 @@ func (c *Client) apiDo(ctx context.Context, method, path string, query url.Value
 	return b, resp.StatusCode, nil
 }
 
+func (c *Client) Login(ctx context.Context) (*string, error) {
+	engine, err := c.getEngine()
+	if err != nil {
+		return nil, err
+	}
+	var token *string
+	if c.Token != nil {
+		token = c.Token
+	} else if envToken := os.Getenv("RSTREAM_DEFAULT_AUTHENTICATION_TOKEN"); envToken != "" {
+		token = &envToken
+	}
+	if token == nil {
+		return nil, errors.New("no token provided: set token explicitly (--token) or through environment variable (RSTREAM_DEFAULT_AUTHENTICATION_TOKEN)")
+	}
+	if _, _, err := c.apiDo(ctx, http.MethodGet, "/login", nil, nil, engine, token); err != nil {
+		return nil, fmt.Errorf("login failed: %w", err)
+	}
+	host, _, err := splitHostPort(*engine)
+	if err != nil || host == nil {
+		return nil, errors.New("failed to extract host from address")
+	}
+	if err := upsertTokenInConfig(c.ConfigFilePath, *host, *token); err != nil {
+		return nil, err
+	}
+	return host, nil
+}
+
+func (c *Client) Logout(ctx context.Context) (*string, error) {
+	engine, err := c.getEngine()
+	if err != nil {
+		return nil, err
+	}
+	host, _, err := splitHostPort(*engine)
+	if err != nil || host == nil {
+		return nil, errors.New("failed to extract host from address")
+	}
+	if err := deleteTokenInConfig(c.ConfigFilePath, *host); err != nil {
+		return nil, err
+	}
+	return host, nil
+}
+
 func (c *Client) ListTunnels(ctx context.Context, params *ListTunnelsParams) (*ListTunnelsResponse, error) {
 	q := url.Values{}
 	if params != nil {
@@ -82,7 +132,7 @@ func (c *Client) ListTunnels(ctx context.Context, params *ListTunnelsParams) (*L
 		}
 		q.Set("params", string(raw))
 	}
-	b, _, err := c.apiDo(ctx, http.MethodGet, "/tunnels", q, nil)
+	b, _, err := c.apiDo(ctx, http.MethodGet, "/tunnels", q, nil, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +147,7 @@ func (c *Client) GetTunnel(ctx context.Context, id string) (*TunnelProperties, e
 	if id == "" {
 		return nil, fmt.Errorf("ID is required")
 	}
-	b, _, err := c.apiDo(ctx, http.MethodGet, "/tunnels/"+url.PathEscape(id), nil, nil)
+	b, _, err := c.apiDo(ctx, http.MethodGet, "/tunnels/"+url.PathEscape(id), nil, nil, nil, nil)
 	if err != nil {
 		return nil, err
 	}
