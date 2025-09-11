@@ -10,7 +10,9 @@ var eventsCmd = &cobra.Command{
 	GroupID: "management",
 	Use:     "events",
 	Short:   "Watches and forwards webhook events",
-	Run:     func(cmd *cobra.Command, args []string) {},
+	Run: func(cmd *cobra.Command, args []string) {
+		// TODO
+	},
 }
 
 func init() {
