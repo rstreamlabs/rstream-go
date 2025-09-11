@@ -18,6 +18,10 @@ import (
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
+type configRoot struct {
+	Tokens map[string]string `json:"tokens"`
+}
+
 func FormatForwardingAddr(props TunnelProperties) (string, error) {
 	if props.Domain != nil {
 		domain := *props.Domain
@@ -192,26 +196,55 @@ func getDefaultConfigFilePath() (string, error) {
 	return filepath.Join(homeDir, ".rstream", "config.json"), nil
 }
 
-func loadTokensFromConfig(configPath string) (map[string]string, error) {
-	f, err := os.Open(configPath)
+func readConfigFile(configFilePath string) (configRoot, error) {
+	var out configRoot
+	f, err := os.Open(configFilePath)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, os.ErrNotExist) {
+			out.Tokens = make(map[string]string)
+			return out, nil
+		}
+		return out, err
 	}
 	defer f.Close()
-	data, err := io.ReadAll(f)
+	b, err := io.ReadAll(f)
 	if err != nil {
-		return nil, err
+		return out, err
 	}
-	var root struct {
-		Tokens map[string]string `json:"tokens"`
+	if len(b) == 0 {
+		out.Tokens = make(map[string]string)
+		return out, nil
 	}
-	if err := json.Unmarshal(data, &root); err != nil {
-		return nil, err
+	if err := json.Unmarshal(b, &out); err != nil {
+		return out, fmt.Errorf("invalid config JSON: %w", err)
 	}
-	if root.Tokens == nil {
-		return nil, errors.New("no 'tokens' field in config")
+	if out.Tokens == nil {
+		out.Tokens = make(map[string]string)
 	}
-	return root.Tokens, nil
+	return out, nil
+}
+
+func writeConfigFile(configFilePath string, root configRoot) error {
+	if err := os.MkdirAll(filepath.Dir(configFilePath), 0o700); err != nil {
+		return err
+	}
+	tmp := configFilePath + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "    ")
+	if err := enc.Encode(&root); err != nil {
+		f.Close()
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, configFilePath)
 }
 
 func getDefaultEngine() (string, error) {
@@ -239,11 +272,11 @@ func getDefaultAuthToken(configFilePath *string, engine *string) (*string, error
 		}
 		configFilePath = &filepath
 	}
-	tokens, err := loadTokensFromConfig(*configFilePath)
+	root, err := readConfigFile(*configFilePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load tokens from config: %w", err)
+		return nil, fmt.Errorf("failed to read rstream config file: %w", err)
 	}
-	if token, ok := tokens[*host]; ok {
+	if token, ok := root.Tokens[*host]; ok {
 		return &token, nil
 	}
 	domain := *host
@@ -253,11 +286,46 @@ func getDefaultAuthToken(configFilePath *string, engine *string) (*string, error
 			break
 		}
 		domain = domain[dotPos+1:]
-		if token, ok := tokens[domain]; ok {
+		if token, ok := root.Tokens[domain]; ok {
 			return &token, nil
 		}
 	}
 	return nil, errors.New("no token found in config for engine URL or any of its parent domains")
+}
+
+func upsertTokenInConfig(configFilePath *string, host, token string) error {
+	if configFilePath == nil {
+		filepath, err := getDefaultConfigFilePath()
+		if err != nil {
+			return fmt.Errorf("failed to get rstream config file path: %w", err)
+		}
+		configFilePath = &filepath
+	}
+	root, err := readConfigFile(*configFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to read rstream config file: %w", err)
+	}
+	root.Tokens[host] = token
+	return writeConfigFile(*configFilePath, root)
+}
+
+func deleteTokenInConfig(configFilePath *string, host string) error {
+	if configFilePath == nil {
+		filepath, err := getDefaultConfigFilePath()
+		if err != nil {
+			return fmt.Errorf("failed to get rstream config file path: %w", err)
+		}
+		configFilePath = &filepath
+	}
+	root, err := readConfigFile(*configFilePath)
+	if err != nil {
+		return fmt.Errorf("failed to read rstream config file: %w", err)
+	}
+	if _, ok := root.Tokens[host]; ok {
+		delete(root.Tokens, host)
+		return writeConfigFile(*configFilePath, root)
+	}
+	return nil
 }
 
 func getClientDetails(token *string) (*clientDetails, error) {
