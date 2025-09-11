@@ -230,6 +230,7 @@ type pendingOpenTunnelReq struct {
 }
 
 type controlChannelImpl struct {
+	logger            *slog.Logger
 	client            *Client
 	clientID          string
 	enableHeartbeat   bool
@@ -275,6 +276,7 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 			heartbeatInterval = *cfg.HeartbeatInterval
 		}
 		ch = &controlChannelImpl{
+			logger:            slog.With("component", "control-channel"),
 			client:            c,
 			enableHeartbeat:   enableHeartbeat,
 			heartbeatInterval: heartbeatInterval,
@@ -533,7 +535,7 @@ func (c *controlChannelImpl) handleOpenTunnelRsp(rsp *pb.OpenTunnelRsp) {
 		delete(c.pendingTunnels, requestId)
 		pending.respCh <- rsp
 	} else {
-		slog.With("component", "controlChannel").Warn("unexpected OpenTunnelRsp", "rsp", rsp)
+		c.logger.Warn("unexpected OpenTunnelRsp", "rsp", rsp)
 	}
 }
 
@@ -544,7 +546,7 @@ func (c *controlChannelImpl) handleCloseTunnelRsp(rsp *pb.CloseTunnelRsp) {
 		delete(c.tunnels, tunnelId)
 		tunnel.onClose()
 	} else {
-		slog.With("component", "controlChannel").Warn("unexpected CloseTunnelRsp", "rsp", rsp)
+		c.logger.Warn("unexpected CloseTunnelRsp", "rsp", rsp)
 	}
 }
 
@@ -557,19 +559,19 @@ func (c *controlChannelImpl) handleProxyConnReq(req *pb.ProxyConnReq) {
 			raddr := Addr{IdOrName: tunnelId}
 			conn, err := c.client.dial(context.Background(), dialTypeProxyReq, laddr, stringPtrFromPbValue(req.Secret))
 			if err != nil {
-				fmt.Println("failed to dial proxy connection:", err)
+				c.logger.Error("failed to dial proxy connection", "error", err)
 			} else {
 				c.mu.Lock()
 				defer c.mu.Unlock()
 				if tunnel.closing || tunnel.closed {
-					fmt.Println("tunnel is closing or closed, closing proxy connection")
+					c.logger.Error("tunnel is closing or closed, closing proxy connection", "tunnelID", tunnelId)
 					conn.Close()
 				} else {
 					select {
 					case tunnel.conns <- &bytestreamConn{conn: conn, laddr: laddr, raddr: raddr}:
 						return
 					default:
-						fmt.Println("tunnel conns channel is full, closing proxy connection")
+						c.logger.Warn("tunnel conns channel is full, closing proxy connection", "tunnelID", tunnelId)
 						conn.Close()
 					}
 				}
@@ -590,7 +592,7 @@ func (c *controlChannelImpl) handleProxyConnReq(req *pb.ProxyConnReq) {
 			}
 		}()
 	} else {
-		slog.With("component", "controlChannel").Warn("unexpected ProxyConnReq", "req", req)
+		c.logger.Warn("unexpected ProxyConnReq", "req", req)
 	}
 }
 
