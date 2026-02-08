@@ -33,7 +33,11 @@ var eventsCmd = &cobra.Command{
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		client, err := newClientFromFlags(cmd)
+		runtime, err := resolveRuntime(cmd, true, true)
+		if err != nil {
+			return err
+		}
+		client, err := newClientFromResolved(runtime.Resolved)
 		if err != nil {
 			return err
 		}
