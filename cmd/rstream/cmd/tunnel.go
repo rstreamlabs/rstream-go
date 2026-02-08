@@ -38,7 +38,11 @@ var tunnelListCmd = &cobra.Command{
 	SilenceUsage: true,
 	Args:         cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClientFromFlags(cmd)
+		runtime, err := resolveRuntime(cmd, true, true)
+		if err != nil {
+			return err
+		}
+		client, err := newClientFromResolved(runtime.Resolved)
 		if err != nil {
 			return err
 		}
