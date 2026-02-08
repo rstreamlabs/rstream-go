@@ -143,7 +143,11 @@ func init() {
 }
 
 func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {
-	client, err := newClientFromFlags(cmd)
+	runtime, err := resolveRuntime(cmd, true, true)
+	if err != nil {
+		return nil, err
+	}
+	client, err := newClientFromResolved(runtime.Resolved)
 	if err != nil {
 		return nil, err
 	}

@@ -18,7 +18,6 @@ import (
 )
 
 type Client struct {
-	ConfigFilePath  *string
 	Transport       Dialer
 	TLSClientConfig *tls.Config
 	EngineURL       *string
@@ -63,11 +62,7 @@ type ServerDetails struct {
 func (c *Client) getEngine() (*string, error) {
 	engine := c.EngineURL
 	if engine == nil {
-		url, err := getDefaultEngine() // default engine URL
-		if err != nil {
-			return nil, fmt.Errorf("failed to get default engine URL: %w", err)
-		}
-		engine = &url
+		return nil, errors.New("engine URL is required")
 	}
 	return engine, nil
 }
@@ -83,17 +78,13 @@ func (c *Client) getClientDetails(engine *string, token *string) (*clientDetails
 	if token == nil {
 		noToken := c.NoToken
 		if noToken == nil {
-			noToken = BoolPtr(false) // default to false
+			noToken = BoolPtr(false)
 		}
 		if !*noToken {
 			if c.Token != nil {
 				token = c.Token
 			} else {
-				t, err := getDefaultAuthToken(c.ConfigFilePath, engine)
-				if err != nil {
-					return nil, fmt.Errorf("failed to get authentication token: %w", err)
-				}
-				token = t
+				return nil, errors.New("token is required but not configured")
 			}
 		}
 	}

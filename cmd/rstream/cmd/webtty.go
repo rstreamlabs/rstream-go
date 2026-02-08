@@ -53,7 +53,11 @@ var webttyServerCmd = &cobra.Command{
 				}
 				var listener net.Listener
 				if useWeb, _ := cmd.Flags().GetBool("web"); useWeb {
-					client, err := newClientFromFlags(cmd)
+					runtime, err := resolveRuntime(cmd, true, true)
+					if err != nil {
+						return fmt.Errorf("failed to create rstream client: %w", err)
+					}
+					client, err := newClientFromResolved(runtime.Resolved)
 					if err != nil {
 						return fmt.Errorf("failed to create rstream client: %w", err)
 					}
