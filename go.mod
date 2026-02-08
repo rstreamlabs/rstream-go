@@ -9,6 +9,7 @@ require (
 	github.com/lmittmann/tint v1.1.2
 	github.com/pion/dtls/v3 v3.0.7
 	github.com/spf13/cobra v1.9.1
+	gopkg.in/yaml.v3 v3.0.1
 	golang.org/x/net v0.43.0
 	google.golang.org/protobuf v1.36.8
 )
