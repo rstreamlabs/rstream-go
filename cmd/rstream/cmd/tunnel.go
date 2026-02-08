@@ -5,6 +5,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -17,22 +18,31 @@ import (
 )
 
 var (
-	tunnelFilter       string
-	tunnelOutputFormat string // table | json
-	tunnelQuiet        bool
+	tunnelListFilter string
+	tunnelListOutput string // table | json
+	tunnelListQuiet  bool
 )
 
-var tunnelsCmd = &cobra.Command{
+var tunnelCmd = &cobra.Command{
 	GroupID:      "management",
-	Use:          "tunnels",
+	Use:          "tunnel",
+	Short:        "Manage tunnels",
+	SilenceUsage: true,
+	RunE:         func(cmd *cobra.Command, args []string) error { return cmd.Help() },
+}
+
+var tunnelListCmd = &cobra.Command{
+	Use:          "list",
+	Aliases:      []string{"ls"},
 	Short:        "List tunnels",
 	SilenceUsage: true,
+	Args:         cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		client, err := newClientFromFlags(cmd)
 		if err != nil {
 			return err
 		}
-		params, err := buildListParams(tunnelFilter)
+		params, err := buildListParams(tunnelListFilter)
 		if err != nil {
 			return fmt.Errorf("invalid --filter: %w", err)
 		}
@@ -40,7 +50,7 @@ var tunnelsCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to list tunnels: %w", err)
 		}
-		if tunnelQuiet {
+		if tunnelListQuiet {
 			for _, t := range *list {
 				if t.ID != nil && *t.ID != "" {
 					fmt.Fprintln(os.Stdout, *t.ID)
@@ -48,25 +58,27 @@ var tunnelsCmd = &cobra.Command{
 			}
 			return nil
 		}
-		switch strings.ToLower(tunnelOutputFormat) {
+		switch strings.ToLower(tunnelListOutput) {
 		case "json":
 			return printTunnelsJSON(os.Stdout, list)
 		case "table":
 			return printTunnelsTable(os.Stdout, list)
 		default:
-			return fmt.Errorf("invalid --output %q (valid: table, json)", tunnelOutputFormat)
+			return fmt.Errorf("invalid --output %q (valid: table, json)", tunnelListOutput)
 		}
 	},
 }
 
 func init() {
-	tunnelsCmd.Flags().SortFlags = false
-	tunnelsCmd.PersistentFlags().SortFlags = false
-	tunnelsCmd.Flags().StringVar(&tunnelFilter, "filter", "", "Filter output, e.g. \"status=online,protocol=http,labels.env=prod\"")
-	tunnelsCmd.Flags().StringVarP(&tunnelOutputFormat, "output", "o", "table", "output mode (table, json)")
-	tunnelsCmd.Flags().BoolVarP(&tunnelQuiet, "quiet", "q", false, "Only display tunnel IDs")
-	tunnelsCmd.MarkFlagsMutuallyExclusive("output", "quiet")
-	rootCmd.AddCommand(tunnelsCmd)
+	tunnelCmd.Flags().SortFlags = false
+	tunnelCmd.PersistentFlags().SortFlags = false
+	tunnelCmd.AddCommand(tunnelListCmd)
+	tunnelListCmd.Flags().SortFlags = false
+	tunnelListCmd.Flags().StringVar(&tunnelListFilter, "filter", "", "Filter output, e.g. \"status=online,protocol=http,labels.env=prod\"")
+	tunnelListCmd.Flags().StringVarP(&tunnelListOutput, "output", "o", "table", "output mode (table, json)")
+	tunnelListCmd.Flags().BoolVarP(&tunnelListQuiet, "quiet", "q", false, "Only display tunnel IDs")
+	tunnelListCmd.MarkFlagsMutuallyExclusive("output", "quiet")
+	rootCmd.AddCommand(tunnelCmd)
 }
 
 func buildListParams(filter string) (*rstream.ListTunnelsParams, error) {
@@ -77,9 +89,7 @@ func buildListParams(filter string) (*rstream.ListTunnelsParams, error) {
 	if len(parts) == 0 {
 		return nil, nil
 	}
-	fp := &rstream.ListTunnelsFilters{
-		Labels: make(map[string]*string),
-	}
+	fp := &rstream.ListTunnelsFilters{Labels: make(map[string]*string)}
 	for _, p := range parts {
 		kv := strings.SplitN(p, "=", 2)
 		if len(kv) != 2 {
@@ -115,9 +125,7 @@ func buildListParams(filter string) (*rstream.ListTunnelsParams, error) {
 			return nil, fmt.Errorf("unknown filter key %q", key)
 		}
 	}
-	return &rstream.ListTunnelsParams{
-		Filters: fp,
-	}, nil
+	return &rstream.ListTunnelsParams{Filters: fp}, nil
 }
 
 func parseBool(s string) (bool, error) {
@@ -143,13 +151,13 @@ func splitCSV(s string) []string {
 	return out
 }
 
-func printTunnelsJSON(w *os.File, list *rstream.ListTunnelsResponse) error {
+func printTunnelsJSON(w io.Writer, list *rstream.ListTunnelsResponse) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(list)
 }
 
-func printTunnelsTable(w *os.File, list *rstream.ListTunnelsResponse) error {
+func printTunnelsTable(w io.Writer, list *rstream.ListTunnelsResponse) error {
 	sort.SliceStable(*list, func(i, j int) bool {
 		ti := (*list)[i]
 		tj := (*list)[j]
@@ -191,11 +199,9 @@ func printTunnelsTable(w *os.File, list *rstream.ListTunnelsResponse) error {
 		if t.Publish != nil {
 			pub = strconv.FormatBool(*t.Publish)
 		}
-		domainOrHost := "-"
-		if t.Domain != nil && *t.Domain != "" {
-			domainOrHost = *t.Domain
-		} else if t.Host != nil && *t.Host != "" {
-			domainOrHost = *t.Host
+		host := "-"
+		if t.Host != nil && *t.Host != "" {
+			host = *t.Host
 		}
 		httpv := "-"
 		if t.HTTPVersion != nil {
@@ -205,8 +211,7 @@ func printTunnelsTable(w *os.File, list *rstream.ListTunnelsResponse) error {
 		if t.HTTPUseTLS != nil {
 			httptls = strconv.FormatBool(*t.HTTPUseTLS)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			id, name, tt, proto, pub, domainOrHost, httpv, httptls)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", id, name, tt, proto, pub, host, httpv, httptls)
 	}
 	return tw.Flush()
 }

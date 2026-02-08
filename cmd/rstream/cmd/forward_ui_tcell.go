@@ -117,9 +117,9 @@ func (u *forwardUITCell) draw() {
 	}
 	maxRow := foot - 1
 	row := top
-	row = printWrappedLine(s, row, left, right, "rstream - (https://rstream.io/) - scalable tunneling from localhost to the global network", maxRow)
+	row = printWrappedLine(s, row, left, right, "rstream - (https://rstream.io/) - serverless networking", maxRow)
 	row++
-	row = printWrappedLine(s, row, left, right, "this program is part of rstream (https://rstream.io/download/cli) and was created using rstream Go SDK (https://rstream.io/sdk)", maxRow)
+	row = printWrappedLine(s, row, left, right, "this program is part of rstream (https://rstream.io/download) and was created using rstream Go SDK", maxRow)
 	row++
 	val := func(p *string) string {
 		if p == nil || *p == "" {
@@ -128,11 +128,12 @@ func (u *forwardUITCell) draw() {
 		return *p
 	}
 	rows := [][2]string{
-		{"version", "-"},
-		{"update", "-"},
+		{"version", val(u.status.Version)},
+		{"update", val(u.status.Update)},
 		{"status", val(u.status.Status)},
-		{"plan", "-"},
-		{"region", "-"},
+		{"plan", val(u.status.Plan)},
+		{"provider", val(u.status.Provider)},
+		{"region", val(u.status.Region)},
 		{"tunnel ID", val(u.status.TunnelID)},
 		{"forwarding", val(u.status.Forwarding)},
 		{"forwarded", val(u.status.Forwarded)},

@@ -14,9 +14,9 @@ extend google.protobuf.FieldOptions {
   string access = 51234;
 }
 
-option (protocol_version) = "1.0";
+option (protocol_version) = "1.3.0";
 
-package rstream.io_rstream.protobuf;
+package rstream.io_rstrm.protobuf;
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/wrappers.proto";
@@ -39,75 +39,50 @@ message Error {
 
 // Client information including details like agent, operating system, authentication token, etc.
 
-message clientDetails {
+message ClientDetails {
   google.protobuf.StringValue agent = 1;
-  google.protobuf.StringValue os = 2;
-  google.protobuf.StringValue arch = 3;
-  google.protobuf.StringValue version = 4;
-  google.protobuf.StringValue token = 5;
-  google.protobuf.StringValue protocol_version = 6;
+  google.protobuf.StringValue channel = 2;
+  google.protobuf.StringValue version = 3;
+  google.protobuf.StringValue os = 4;
+  google.protobuf.StringValue arch = 5;
+  google.protobuf.StringValue token = 6;
+  google.protobuf.StringValue protocol_version = 7;
 }
 
 // Tunnel message structure used for creating and managing tunnels
-
-// message TunnelProperties {
-//   google.protobuf.StringValue id = 1 [(access) = "read-only"];
-//   google.protobuf.StringValue name = 2 [(access) = "read-write"];
-//   google.protobuf.Timestamp creation_date = 3 [(access) = "read-only"];
-//   google.protobuf.StringValue type = 4 [(access) = "read-write"];
-//   google.protobuf.BoolValue publish = 5 [(access) = "read-write"];
-//   google.protobuf.StringValue protocol = 6 [(access) = "read-write"];
-//   map<string, string> labels = 7 [(access) = "read-write"];
-//   repeated string geoip = 8 [(access) = "read-write"];
-//   repeated string trusted_ips = 9 [(access) = "read-write"];
-//   google.protobuf.StringValue domain = 10 [(access) = "read-write"];
-//   google.protobuf.StringValue tls_mode = 11 [(access) = "read-write"];
-//   repeated string tls_alpns = 12 [(access) = "read-write"];
-//   google.protobuf.StringValue tls_min_version = 13 [(access) = "read-write"];
-//   repeated string tls_ciphers = 14 [(access) = "read-write"];
-//   google.protobuf.BoolValue mtls = 15 [(access) = "read-write"];
-//   google.protobuf.StringValue mtls_cacert_pem = 16 [(access) = "read-write"];
-//   google.protobuf.StringValue http_version = 17 [(access) = "read-write"];
-//   google.protobuf.BoolValue http_use_tls = 18 [(access) = "read-write"];
-//   google.protobuf.BoolValue token_auth = 19 [(access) = "read-write"];
-//   google.protobuf.BoolValue sso = 20 [(access) = "read-write"];
-//   repeated string sso_providers = 21 [(access) = "read-write"];
-//   repeated string email_whitelist = 22 [(access) = "read-write"];
-//   repeated string email_blacklist = 23 [(access) = "read-write"];
-//   google.protobuf.BoolValue challenge = 24 [(access) = "read-write"];
-// }
 
 message TunnelProperties {
   google.protobuf.StringValue id = 1 [(access) = "read-only"];
   google.protobuf.Timestamp creation_date = 2 [(access) = "read-only"];
   google.protobuf.StringValue name = 3 [(access) = "read-write"];
-  google.protobuf.BoolValue publish = 4 [(access) = "read-write"];
-  google.protobuf.StringValue protocol = 5 [(access) = "read-write"];
-  map<string, string> labels = 6 [(access) = "read-write"];
-  repeated string geoip = 7 [(access) = "read-write"];
-  repeated string trusted_ips = 8 [(access) = "read-write"];
-  google.protobuf.StringValue domain = 9 [(access) = "read-write"];
-  google.protobuf.StringValue tls_mode = 10 [(access) = "read-write"];
-  repeated string tls_alpns = 11 [(access) = "read-write"];
-  google.protobuf.StringValue tls_min_version = 12 [(access) = "read-write"];
-  repeated string tls_ciphers = 13 [(access) = "read-write"];
-  google.protobuf.BoolValue mtls = 14 [(access) = "read-write"];
-  google.protobuf.StringValue mtls_cacert_pem = 15 [(access) = "read-write"];
-  google.protobuf.StringValue http_version = 16 [(access) = "read-write"];
-  google.protobuf.BoolValue http_use_tls = 17 [(access) = "read-write"];
-  google.protobuf.BoolValue token_auth = 18 [(access) = "read-write"];
-  google.protobuf.BoolValue sso = 19 [(access) = "read-write"];
-  repeated string sso_providers = 20 [(access) = "read-write"];
-  repeated string email_whitelist = 21 [(access) = "read-write"];
-  repeated string email_blacklist = 22 [(access) = "read-write"];
-  google.protobuf.BoolValue challenge = 23 [(access) = "read-write"];
+  google.protobuf.StringValue type = 4 [(access) = "read-write"];
+  google.protobuf.BoolValue publish = 5 [(access) = "read-write"];
+  google.protobuf.StringValue protocol = 6 [(access) = "read-write"];
+  map<string, string> labels = 7 [(access) = "read-write"];
+  repeated string geoip = 8 [(access) = "read-write"];
+  repeated string trusted_ips = 9 [(access) = "read-write"];
+  google.protobuf.StringValue host = 10 [(access) = "read-write"];
+  google.protobuf.StringValue tls_mode = 11 [(access) = "read-write"];
+  repeated string tls_alpns = 12 [(access) = "read-write"];
+  google.protobuf.StringValue tls_min_version = 13 [(access) = "read-write"];
+  repeated string tls_ciphers = 14 [(access) = "read-write"];
+  google.protobuf.BoolValue mtls = 15 [(access) = "read-write"];
+  google.protobuf.StringValue mtls_cacert_pem = 16 [(access) = "read-write"];
+  google.protobuf.StringValue http_version = 17 [(access) = "read-write"];
+  google.protobuf.BoolValue http_use_tls = 18 [(access) = "read-write"];
+  google.protobuf.BoolValue token_auth = 19 [(access) = "read-write"];
+  google.protobuf.BoolValue sso = 20 [(access) = "read-write"];
+  repeated string sso_providers = 21 [(access) = "read-write"];
+  repeated string email_whitelist = 22 [(access) = "read-write"];
+  repeated string email_blacklist = 23 [(access) = "read-write"];
+  google.protobuf.BoolValue challenge = 24 [(access) = "read-write"];
 }
 
 // When a client opens a new control channel to the server
 // it must start by sending an 'OpenControlChannelReq' message
 
 message OpenControlChannelReq {
-  clientDetails client_details = 1;
+  ClientDetails client_details = 1;
 }
 
 // The server responds to an 'OpenControlChannelReq' message with an
@@ -117,8 +92,21 @@ message OpenControlChannelReq {
 // stream connections
 
 message OpenControlChannelRsp {
-  oneof payload {
+  message Ok {
+    message ServerDetails {
+      google.protobuf.StringValue agent = 1;
+      google.protobuf.StringValue channel = 2;
+      google.protobuf.StringValue version = 3;
+      google.protobuf.StringValue plan = 4;
+      google.protobuf.StringValue provider = 5;
+      google.protobuf.StringValue region = 6;
+      google.protobuf.StringValue update = 7;
+    }
     string client_id = 1;
+    ServerDetails server_details = 2;
+  }
+  oneof payload {
+    Ok ok = 1;
     Error error = 2;
   }
 }
@@ -192,7 +180,7 @@ message ProxyConnRsp {
 // connection to the server and sends a 'ProxyReq' message
 
 message ProxyReq {
-  clientDetails client_details = 1;
+  ClientDetails client_details = 1;
   string stream_id = 2;
   google.protobuf.BoolValue zero_rtt = 3;
 }
@@ -208,7 +196,7 @@ message ProxyRsp {
 // providing either the tunnel ID or the tunnel name
 
 message StreamReq {
-  clientDetails client_details = 1;
+  ClientDetails client_details = 1;
   string tunnel_id_name = 2;
   google.protobuf.BoolValue zero_rtt = 3;
 }

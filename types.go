@@ -4,8 +4,10 @@ package rstream
 
 import (
 	"net"
+	"time"
 
 	"github.com/rstreamlabs/rstream-go/pb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -39,6 +41,13 @@ func boolPbValueOrNil(b *bool) *wrapperspb.BoolValue {
 	return &wrapperspb.BoolValue{Value: *b}
 }
 
+func timestampPbValueOrNil(t *time.Time) *timestamppb.Timestamp {
+	if t == nil {
+		return nil
+	}
+	return timestamppb.New(*t)
+}
+
 func stringPtrFromPbValue(s *wrapperspb.StringValue) *string {
 	if s == nil {
 		return nil
@@ -51,6 +60,14 @@ func boolPtrFromPbValue(b *wrapperspb.BoolValue) *bool {
 		return nil
 	}
 	return &b.Value
+}
+
+func timePtrFromPbValue(t *timestamppb.Timestamp) *time.Time {
+	if t == nil {
+		return nil
+	}
+	ti := t.AsTime()
+	return &ti
 }
 
 func Uint32ToIPv4(ip uint32) net.IP {

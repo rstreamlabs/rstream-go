@@ -45,7 +45,7 @@ func handleConnection(conn *quic.Conn) error {
 func run(ctx context.Context, publish bool) error {
 	name := "quic-echo"
 	if publish {
-		// List tunnels to find the published host using rstream control API
+		// List tunnels to find the published host using rstream API (data plane)
 		tunnels, err := (&rstream.Client{}).ListTunnels(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("failed to list tunnels: %w", err)
@@ -67,7 +67,7 @@ func run(ctx context.Context, publish bool) error {
 		}
 		return fmt.Errorf("tunnel %q not found or not published", name)
 	} else {
-		// Dial the tunnel using custom rstream dialer
+		// Dial the tunnel using rstream dialer
 		raddr := rstream.Addr{IdOrName: name}
 		packetConn, err := (&rstream.Client{}).PacketDial(ctx, raddr)
 		if err != nil {

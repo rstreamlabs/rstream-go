@@ -38,7 +38,7 @@ func handleConnection(conn net.Conn) error {
 func run(ctx context.Context, publish bool) error {
 	name := "stream-echo"
 	if publish {
-		// List tunnels to find the published host using rstream control API
+		// List tunnels to find the published host using rstream API (data plane)
 		tunnels, err := (&rstream.Client{}).ListTunnels(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("failed to list tunnels: %w", err)
@@ -60,7 +60,7 @@ func run(ctx context.Context, publish bool) error {
 		}
 		return fmt.Errorf("tunnel %q not found or not published", name)
 	} else {
-		// Dial the tunnel using custom rstream dialer
+		// Dial the tunnel using rstream dialer
 		conn, err := (&rstream.Client{}).Dial(ctx, rstream.Addr{IdOrName: name})
 		if err != nil {
 			return fmt.Errorf("failed to dial tunnel: %w", err)

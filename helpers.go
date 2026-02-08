@@ -23,19 +23,19 @@ type configRoot struct {
 }
 
 func FormatForwardingAddr(props TunnelProperties) (string, error) {
-	if props.Domain != nil {
-		domain := *props.Domain
+	if props.Host != nil {
+		host := *props.Host
 		switch {
 		case props.Protocol != nil && *props.Protocol == ProtocolHTTP:
-			return "https://" + domain, nil
+			return "https://" + host, nil
 		case props.Protocol != nil && *props.Protocol == ProtocolTLS:
-			return domain + " (tls)", nil
+			return host + " (tls)", nil
 		case props.Protocol != nil && *props.Protocol == ProtocolDTLS:
-			return domain + " (dtls)", nil
+			return host + " (dtls)", nil
 		case props.Protocol != nil && *props.Protocol == ProtocolQUIC:
-			return domain + " (quic)", nil
+			return host + " (quic)", nil
 		default:
-			return domain, nil
+			return host, nil
 		}
 	}
 	if props.Name != nil {
@@ -44,7 +44,7 @@ func FormatForwardingAddr(props TunnelProperties) (string, error) {
 	if props.ID != nil {
 		return "rstrm://" + *props.ID + " (unpublished)", nil
 	}
-	return "", errors.New("invalid tunnel properties: no domain, name, or ID")
+	return "", errors.New("invalid tunnel properties: no host, name, or ID")
 }
 
 func FormatForwardedHostPort(host, port string, props TunnelProperties) (string, error) {
@@ -102,9 +102,10 @@ func FormatForwardedAddr(addr net.TCPAddr, props TunnelProperties) (string, erro
 func toClientDetailsPb(details *clientDetails) *pb.ClientDetails {
 	return &pb.ClientDetails{
 		Agent:           stringPbValueOrNil(details.Agent),
+		Channel:         stringPbValueOrNil(details.Channel),
+		Version:         stringPbValueOrNil(details.Version),
 		Os:              stringPbValueOrNil(details.OS),
 		Arch:            stringPbValueOrNil(details.Arch),
-		Version:         stringPbValueOrNil(details.Version),
 		Token:           stringPbValueOrNil(details.Token),
 		ProtocolVersion: stringPbValueOrNil(details.ProtocolVersion),
 	}
@@ -113,14 +114,15 @@ func toClientDetailsPb(details *clientDetails) *pb.ClientDetails {
 func toTunnelProperties(msg *pb.TunnelProperties) TunnelProperties {
 	return TunnelProperties{
 		ID:             stringPtrFromPbValue(msg.Id),
+		CreationDate:   timePtrFromPbValue(msg.CreationDate),
 		Name:           stringPtrFromPbValue(msg.Name),
-		CreationDate:   nil, // TODO
+		Type:           (*TunnelType)(stringPtrFromPbValue(msg.Type)),
 		Publish:        boolPtrFromPbValue(msg.Publish),
 		Protocol:       (*Protocol)(stringPtrFromPbValue(msg.Protocol)),
 		Labels:         msg.Labels,
 		GeoIP:          msg.Geoip,
 		TrustedIPs:     msg.TrustedIps,
-		Domain:         stringPtrFromPbValue(msg.Domain),
+		Host:           stringPtrFromPbValue(msg.Host),
 		TLSMode:        (*TLSMode)(stringPtrFromPbValue(msg.TlsMode)),
 		TLSALPNs:       msg.TlsAlpns,
 		TLSMinVersion:  stringPtrFromPbValue(msg.TlsMinVersion),
@@ -141,14 +143,15 @@ func toTunnelProperties(msg *pb.TunnelProperties) TunnelProperties {
 func toTunnelPropertiesPb(props TunnelProperties) *pb.TunnelProperties {
 	return &pb.TunnelProperties{
 		Id:             stringPbValueOrNil(props.ID),
+		CreationDate:   timestampPbValueOrNil(props.CreationDate),
 		Name:           stringPbValueOrNil(props.Name),
-		CreationDate:   nil, // TODO
+		Type:           stringPbValueOrNil((*string)(props.Type)),
 		Publish:        boolPbValueOrNil(props.Publish),
 		Protocol:       stringPbValueOrNil((*string)(props.Protocol)),
 		Labels:         props.Labels,
 		Geoip:          props.GeoIP,
 		TrustedIps:     props.TrustedIPs,
-		Domain:         stringPbValueOrNil(props.Domain),
+		Host:           stringPbValueOrNil(props.Host),
 		TlsMode:        stringPbValueOrNil((*string)(props.TLSMode)),
 		TlsAlpns:       props.TLSALPNs,
 		TlsMinVersion:  stringPbValueOrNil(props.TLSMinVersion),
@@ -251,7 +254,7 @@ func getDefaultEngine() (string, error) {
 	if val := os.Getenv("RSTREAM_DEFAULT_ENGINE"); val != "" {
 		return val, nil
 	}
-	return "engine.rstream.io:443", nil
+	return "", errors.New("engine URL is not defined. Please set RSTREAM_DEFAULT_ENGINE environment variable")
 }
 
 func getDefaultAuthToken(configFilePath *string, engine *string) (*string, error) {
@@ -329,7 +332,6 @@ func deleteTokenInConfig(configFilePath *string, host string) error {
 }
 
 func getClientDetails(token *string) (*clientDetails, error) {
-	agent := "rstream go SDK"
 	var protocolVersion *string
 	{
 		fd := (&pb.ClientDetails{}).ProtoReflect().Descriptor().ParentFile()
@@ -345,10 +347,11 @@ func getClientDetails(token *string) (*clientDetails, error) {
 		}
 	}
 	return &clientDetails{
-		Agent:           &agent,
+		Agent:           &Agent,
+		Channel:         &Channel,
+		Version:         &Version,
 		OS:              &OS,
 		Arch:            &Arch,
-		Version:         &Version,
 		Token:           token,
 		ProtocolVersion: protocolVersion,
 	}, nil

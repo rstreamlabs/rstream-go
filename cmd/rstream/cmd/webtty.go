@@ -67,7 +67,7 @@ var webttyServerCmd = &cobra.Command{
 						Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
 						HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP1_1),
 						TokenAuth:   rstream.BoolPtr(true),
-						Labels:      map[string]string{"application-protocol": "rstream.rtty"}, // for compatibility purposes
+						Labels:      webtty.DefaultLabels(),
 					}
 					tunnel, err := ctrl.CreateTunnel(ctx, props)
 					if err != nil {
