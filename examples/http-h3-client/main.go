@@ -31,7 +31,7 @@ func main() {
 	name := "h3-example"
 	var url *string = nil
 	if *publish {
-		// List tunnels to find the published host using rstream control API
+		// List tunnels to find the published host using rstream API (data plane)
 		tunnels, err := (&rstream.Client{}).ListTunnels(context.Background(), nil)
 		if err != nil {
 			log.Fatalf("failed to list tunnels: %v", err)
@@ -47,7 +47,7 @@ func main() {
 		}
 	} else {
 		url = rstream.StringPtr("https://" + name + "/")
-		// Dial the tunnel using custom rstream dialer (HTTP/3)
+		// Dial the tunnel using rstream dialer (HTTP/3)
 		os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 		httpClient.Transport = &http3.Transport{
 			Dial: func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {

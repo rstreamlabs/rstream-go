@@ -1,8 +1,8 @@
 #!make
 
--include .env.local
-ifeq ($(wildcard .env.local),.env.local)
-export $(shell sed 's/=.*//' .env.local)
+-include .env.makefile
+ifeq ($(wildcard .env.makefile),.env.makefile)
+export $(shell sed 's/=.*//' .env.makefile)
 endif
 
 .DEFAULT_GOAL := all
@@ -85,7 +85,7 @@ NUGET_PLATFORMS := $(filter $(WINDOWS_PLATFORMS),windows/x86_i686 windows/x86_64
 MAINTAINER := support@rstream.io
 
 # Debian description
-DESCRIPTION := Powerful Tunnels for Modern Applications.
+DESCRIPTION := Go SDK for rstream - serverless networking
 
 # rstream repository
 RSTREAM_URL ?= https://rstream.io
@@ -182,7 +182,7 @@ set -e ;\
 echo "Building $1/$2 for $3/$4" ;\
 $(eval GOARCH=$(if $(findstring armv,$(word 1,$(subst /, ,$4))),arm,$(if $(findstring x86_i,$4),386,$(if $(findstring x86_64,$4),amd64,$(word 1,$(subst /, ,$4)))))) \
 $(eval GOAMD64=$(if $(findstring x86_64,$4),$(if $(findstring _v,$4),$(lastword $(subst _, ,$4)),v1),)) \
-CGO_ENABLED=0 GOPRIVATE=github.com/rstreamlabs GOOS=$(subst macos,darwin,$3) GOARCH=$(GOARCH) $(if $(filter $(GOARCH),arm),GOARM=$(word 1,$(subst armv, ,$(word 1,$(subst hf, ,$4))))$(shell echo ,)$(if $(findstring hf,$4),hardfloat,softfloat),) $(if $(filter amd64,$(GOARCH)),GOAMD64=$(GOAMD64),) $(if $(findstring x86_i386,$4),GO386=softfloat,) go build -v -ldflags="-X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).OS=$3' -X '$(GO_MODULE).Arch=$4'" -o $$@ ./$1/$2
+CGO_ENABLED=0 GOPRIVATE=github.com/rstreamlabs GOOS=$(subst macos,darwin,$3) GOARCH=$(GOARCH) $(if $(filter $(GOARCH),arm),GOARM=$(word 1,$(subst armv, ,$(word 1,$(subst hf, ,$4))))$(shell echo ,)$(if $(findstring hf,$4),hardfloat,softfloat),) $(if $(filter amd64,$(GOARCH)),GOAMD64=$(GOAMD64),) $(if $(findstring x86_i386,$4),GO386=softfloat,) go build -v -ldflags="-X '$(GO_MODULE).Agent=$(GO_MODULE)' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).OS=$3' -X '$(GO_MODULE).Arch=$4'" -o $$@ ./$1/$2
 endef
 
 define build_pkg
@@ -359,6 +359,11 @@ clean:
 tests:
 	@echo "==> Running tests..."
 	go test -v ./...
+
+.PHONY: format
+
+format:
+	@find . -type f -name '*.go' ! -name '*.pb.go' -print0 | xargs -0 gofmt -w
 
 .SECONDARY: $(call sources_proto)
 

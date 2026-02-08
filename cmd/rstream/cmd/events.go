@@ -27,7 +27,7 @@ var (
 )
 
 var eventsCmd = &cobra.Command{
-	GroupID:      "management",
+	GroupID:      "common",
 	Use:          "events",
 	Short:        "Watches and forwards webhook events",
 	SilenceUsage: true,

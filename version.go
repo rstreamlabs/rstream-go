@@ -5,6 +5,7 @@ package rstream
 import "runtime"
 
 var (
+	Agent   = "rstream"
 	Channel = "dev"
 	Version = "development"
 	OS      = runtime.GOOS

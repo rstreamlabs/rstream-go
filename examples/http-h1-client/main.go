@@ -27,7 +27,7 @@ func main() {
 	name := "h1-example"
 	var url *string = nil
 	if *publish {
-		// List tunnels to find the published host using rstream control API
+		// List tunnels to find the published host using rstream API (data plane)
 		tunnels, err := (&rstream.Client{}).ListTunnels(context.Background(), nil)
 		if err != nil {
 			log.Fatalf("failed to list tunnels: %v", err)
@@ -43,7 +43,7 @@ func main() {
 		}
 	} else {
 		url = rstream.StringPtr("http://" + name + "/")
-		// Dial the tunnel using custom rstream dialer (HTTP/1.1)
+		// Dial the tunnel using rstream dialer (HTTP/1.1)
 		httpClient.Transport = &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				host, _, err := net.SplitHostPort(addr)

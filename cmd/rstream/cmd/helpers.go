@@ -167,7 +167,7 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 	labels := getStringArrayMap(cmd, "label")
 	geoipSlice := getStringSlice(cmd, "geoip")
 	trustedIPsSlice := getStringSlice(cmd, "trusted-ips")
-	domainPtr := getStringPtr(cmd, "domain")
+	hostPtr := getStringPtr(cmd, "host")
 	var tlsModePtr *rstream.TLSMode
 	if cmd.Flags().Lookup("tls-mode").Changed {
 		val, _ := cmd.Flags().GetString("tls-mode")
@@ -230,7 +230,7 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 		Labels:         labels,
 		GeoIP:          geoipSlice,
 		TrustedIPs:     trustedIPsSlice,
-		Domain:         domainPtr,
+		Host:           hostPtr,
 		TLSMode:        tlsModePtr,
 		TLSALPNs:       tlsALPNSlice,
 		TLSMinVersion:  tlsMinVersionPtr,
