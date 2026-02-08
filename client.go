@@ -37,15 +37,27 @@ type ControlChannel interface {
 	Close() error
 	Done() <-chan error
 	Err() error
+	ServerDetails() *ServerDetails
 }
 
 type clientDetails struct {
 	Agent           *string
+	Channel         *string
+	Version         *string
 	OS              *string
 	Arch            *string
-	Version         *string
 	Token           *string
 	ProtocolVersion *string
+}
+
+type ServerDetails struct {
+	Agent    *string
+	Channel  *string
+	Version  *string
+	Plan     *string
+	Provider *string
+	Region   *string
+	Update   *string
 }
 
 func (c *Client) getEngine() (*string, error) {
@@ -73,7 +85,7 @@ func (c *Client) getClientDetails(engine *string, token *string) (*clientDetails
 		if noToken == nil {
 			noToken = BoolPtr(false) // default to false
 		}
-		if *noToken == false {
+		if !*noToken {
 			if c.Token != nil {
 				token = c.Token
 			} else {
@@ -86,6 +98,21 @@ func (c *Client) getClientDetails(engine *string, token *string) (*clientDetails
 		}
 	}
 	return getClientDetails(token)
+}
+
+func toServerDetails(details *pb.OpenControlChannelRsp_Ok_ServerDetails) *ServerDetails {
+	if details == nil {
+		return nil
+	}
+	return &ServerDetails{
+		Agent:    stringPtrFromPbValue(details.Agent),
+		Channel:  stringPtrFromPbValue(details.Channel),
+		Version:  stringPtrFromPbValue(details.Version),
+		Plan:     stringPtrFromPbValue(details.Plan),
+		Provider: stringPtrFromPbValue(details.Provider),
+		Region:   stringPtrFromPbValue(details.Region),
+		Update:   stringPtrFromPbValue(details.Update),
+	}
 }
 
 func (c *Client) dialEngine(ctx context.Context, engine *string, nextProtos *[]string) (net.Conn, error) {
@@ -176,7 +203,7 @@ func (c *Client) dial(ctx context.Context, dialType dialType, raddr Addr, token 
 			}
 		}
 	}
-	if err == nil && *zeroRTT == false {
+	if err == nil && !*zeroRTT {
 		resp, cause := readPbMessage(r)
 		if cause != nil {
 			err = fmt.Errorf("failed to read response: %w", cause)
@@ -238,6 +265,7 @@ type controlChannelImpl struct {
 	conn              net.Conn
 	w                 *bufio.Writer
 	r                 *bufio.Reader
+	serverDetails     *ServerDetails
 	doneCh            chan error
 	pendingTunnels    map[string]*pendingOpenTunnelReq
 	tunnels           map[string]*bytestreamTunnelImpl
@@ -310,8 +338,13 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 				switch rspPayload := openControlChannelRsp.OpenControlChannelRsp.Payload.(type) {
 				case *pb.OpenControlChannelRsp_Error:
 					err = fmt.Errorf("engine error %d: %s", rspPayload.Error.Code, rspPayload.Error.Message.GetValue())
-				case *pb.OpenControlChannelRsp_ClientId:
-					ch.clientID = rspPayload.ClientId
+				case *pb.OpenControlChannelRsp_Ok_:
+					if rspPayload.Ok == nil {
+						err = errors.New("server returned empty OpenControlChannelRsp payload")
+					} else {
+						ch.clientID = rspPayload.Ok.ClientId
+						ch.serverDetails = toServerDetails(rspPayload.Ok.ServerDetails)
+					}
 				default:
 					err = fmt.Errorf("unexpected OpenControlChannelRsp payload")
 				}
@@ -390,7 +423,7 @@ func (c *controlChannelImpl) CreateTunnel(ctx context.Context, props TunnelPrope
 				c.mu.Lock()
 				c.tunnels[tunnelID] = tunnel
 				c.mu.Unlock()
-				if props.Type != nil && *props.Type == TunnelTypeDatagram {
+				if rProps.Type != nil && *rProps.Type == TunnelTypeDatagram {
 					return &datagramTunnelImpl{
 						inner: tunnel,
 						pl:    PacketListenerFromListener(tunnel),
@@ -411,7 +444,7 @@ func (c *controlChannelImpl) Close() error {
 		c.mu.Unlock()
 		return c.err
 	}
-	if c.closing == false {
+	if !c.closing {
 		c.closing = true
 		go func() {
 			msg := &pb.Message{
@@ -438,6 +471,16 @@ func (c *controlChannelImpl) Err() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.err
+}
+
+func (c *controlChannelImpl) ServerDetails() *ServerDetails {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.serverDetails == nil {
+		return nil
+	}
+	tmp := *c.serverDetails
+	return &tmp
 }
 
 func (c *controlChannelImpl) readLoop() {

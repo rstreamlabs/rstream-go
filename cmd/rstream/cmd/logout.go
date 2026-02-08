@@ -2,30 +2,16 @@
 
 package cmd
 
-import (
-	"fmt"
-	"os"
-
-	"github.com/spf13/cobra"
-)
+import "github.com/spf13/cobra"
 
 var logoutCmd = &cobra.Command{
 	GroupID:      "common",
 	Use:          "logout",
-	Short:        "Log out from the rstream engine",
+	Short:        "Log out from rstream",
+	Long:         "Delete locally stored authentication material.",
 	SilenceUsage: true,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClientFromFlags(cmd)
-		if err != nil {
-			return err
-		}
-		host, err := client.Logout(cmd.Context())
-		if err != nil {
-			return fmt.Errorf("logout failed: %w", err)
-		}
-		fmt.Fprintf(os.Stdout, "Logged out from host %s\n", *host)
-		return nil
-	},
+	Args:         cobra.NoArgs,
+	RunE:         func(cmd *cobra.Command, args []string) error { return nil },
 }
 
 func init() {

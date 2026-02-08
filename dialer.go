@@ -11,3 +11,5 @@ import (
 type Dialer interface {
 	Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (net.Conn, error)
 }
+
+// TODO : Add UDP Dialer

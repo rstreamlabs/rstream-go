@@ -29,6 +29,11 @@ const (
 )
 
 type forwardStatus struct {
+	Version    *string `json:"version,omitempty"`
+	Update     *string `json:"update,omitempty"`
+	Plan       *string `json:"plan,omitempty"`
+	Provider   *string `json:"provider,omitempty"`
+	Region     *string `json:"region,omitempty"`
 	Status     *string `json:"status,omitempty"`
 	TunnelID   *string `json:"tunnel_id,omitempty"`
 	Forwarding *string `json:"forwarding,omitempty"`
@@ -113,7 +118,7 @@ func init() {
 	forwardCmd.Flags().StringArray("label", nil, "set tunnel labels (key=value, might be specified multiple times)")
 	forwardCmd.Flags().String("geoip", "", "comma-separated allowed countries (ISO 3166-1 alpha-2)")
 	forwardCmd.Flags().String("trusted-ips", "", "comma-separated allowed IP/CIDR ranges")
-	forwardCmd.Flags().String("domain", "", "domain name for publishing")
+	forwardCmd.Flags().String("host", "", "host name for publishing")
 	forwardCmd.Flags().String("tls-mode", "", "TLS mode (terminated, passthrough)")
 	forwardCmd.Flags().String("tls-alpn", "", "comma-separated ALPN protocols")
 	forwardCmd.Flags().String("tls-min-version", "", "minimum TLS version (tls1.2, tls1.3)")
@@ -212,15 +217,37 @@ func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {
 	}, nil
 }
 
+func formatVersion(version, channel string) string {
+	ch := strings.TrimSpace(channel)
+	if ch != "" && !strings.EqualFold(ch, "stable") {
+		return fmt.Sprintf("%s (%s)", version, ch)
+	}
+	return version
+}
+
+func newForwardStatus(details *rstream.ServerDetails) forwardStatus {
+	v := formatVersion(rstream.Version, rstream.Channel)
+	status := forwardStatus{
+		Version: &v,
+	}
+	if details != nil {
+		status.Update = details.Update
+		status.Plan = details.Plan
+		status.Provider = details.Provider
+		status.Region = details.Region
+	}
+	return status
+}
+
 func (s *forwardCtx) run(ctx context.Context) error {
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		err := s.runOnce(ctx)
-		s.setStatus(forwardStatus{
-			Status: rstream.StringPtr("disconnected"),
-		})
+		status := newForwardStatus(nil)
+		status.Status = rstream.StringPtr("disconnected")
+		s.setStatus(status)
 		if err == nil {
 			return nil
 		}
@@ -244,9 +271,10 @@ func (s *forwardCtx) runOnce(ctx context.Context) error {
 		return fmt.Errorf("failed to connect to rstream engine server: %w", err)
 	}
 	defer ctrl.Close()
-	s.setStatus(forwardStatus{
-		Status: rstream.StringPtr("connecting"),
-	})
+	baseStatus := newForwardStatus(ctrl.ServerDetails())
+	connectingStatus := baseStatus
+	connectingStatus.Status = rstream.StringPtr("connecting")
+	s.setStatus(connectingStatus)
 	tunnel, err := ctrl.CreateTunnel(ctx, *s.Props)
 	if err != nil {
 		return fmt.Errorf("failed to create tunnel: %w", err)
@@ -264,12 +292,12 @@ func (s *forwardCtx) runOnce(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to format forwarded address: %w", err)
 	}
-	s.setStatus(forwardStatus{
-		Status:     rstream.StringPtr("online"),
-		TunnelID:   props.ID,
-		Forwarding: &forwarding,
-		Forwarded:  &forwarded,
-	})
+	onlineStatus := baseStatus
+	onlineStatus.Status = rstream.StringPtr("online")
+	onlineStatus.TunnelID = props.ID
+	onlineStatus.Forwarding = &forwarding
+	onlineStatus.Forwarded = &forwarded
+	s.setStatus(onlineStatus)
 	if l, ok := tunnel.(interface{ net.Listener }); ok {
 		return s.serveWithCtx(ctx, l.Close, func() error { return s.serveTCP(l) })
 	}
@@ -516,10 +544,11 @@ func (s *forwardCtx) renderStatusText(st forwardStatus) {
 		return *p
 	}
 	lines := []kv{
-		{"version", "-"},
-		{"update", "-"},
-		{"plan", "-"},
-		{"region", "-"},
+		{"version", val(st.Version)},
+		{"update", val(st.Update)},
+		{"plan", val(st.Plan)},
+		{"provider", val(st.Provider)},
+		{"region", val(st.Region)},
 		{"status", val(st.Status)},
 		{"tunnel ID", val(st.TunnelID)},
 		{"forwarding", val(st.Forwarding)},

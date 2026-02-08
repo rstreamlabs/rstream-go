@@ -35,7 +35,7 @@ func run(ctx context.Context, publish bool) error {
 	name := "ws-example"
 	var url *string = nil
 	if publish {
-		// List tunnels to find the published host using rstream control API
+		// List tunnels to find the published host using rstream API (data plane)
 		tunnels, err := (&rstream.Client{}).ListTunnels(context.Background(), nil)
 		if err != nil {
 			log.Fatalf("failed to list tunnels: %v", err)
@@ -51,7 +51,7 @@ func run(ctx context.Context, publish bool) error {
 		}
 	} else {
 		url = rstream.StringPtr("ws://" + name + "/websocket")
-		// Dial the tunnel using custom rstream dialer (HTTP/1.1)
+		// Dial the tunnel using rstream dialer (HTTP/1.1)
 		dialer.NetDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
 			host, _, err := net.SplitHostPort(addr)
 			if err != nil || host == "" {

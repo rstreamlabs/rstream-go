@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
 )
 
@@ -145,4 +146,25 @@ func AddEnvironmentVariable(env *[]string, key, value string, force bool) {
 		}
 	}
 	*env = append(*env, prefix+value)
+}
+
+func DefaultLabels() map[string]string {
+	info := getOSDetails()
+	labels := map[string]string{
+		"application-protocol": "rstream.webtty",
+	}
+	set := func(k, v string) {
+		if v != "" {
+			labels[k] = v
+		}
+	}
+	set("rstream.webtty.os_family", rstream.OS)
+	set("rstream.webtty.arch", rstream.Arch)
+	set("rstream.webtty.os_id", info.id)
+	set("rstream.webtty.os_version_id", info.versionID)
+	set("rstream.webtty.os_version_codename", info.codename)
+	set("rstream.webtty.os_pretty_name", info.prettyName)
+	set("rstream.webtty.kernel_release", info.kernel)
+	set("rstream.webtty.hostname", info.hostname)
+	return labels
 }
