@@ -3,13 +3,10 @@
 package rstream
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -17,10 +14,6 @@ import (
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
 )
-
-type configRoot struct {
-	Tokens map[string]string `json:"tokens"`
-}
 
 func FormatForwardingAddr(props TunnelProperties) (string, error) {
 	if props.Host != nil {
@@ -186,149 +179,6 @@ func splitHostPort(addr string) (*string, *string, error) {
 		portPtr = &port
 	}
 	return hostPtr, portPtr, nil
-}
-
-func getDefaultConfigFilePath() (string, error) {
-	if envPath := os.Getenv("RSTREAM_DEFAULT_CONFIG_PATH"); envPath != "" {
-		return envPath, nil
-	}
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(homeDir, ".rstream", "config.json"), nil
-}
-
-func readConfigFile(configFilePath string) (configRoot, error) {
-	var out configRoot
-	f, err := os.Open(configFilePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			out.Tokens = make(map[string]string)
-			return out, nil
-		}
-		return out, err
-	}
-	defer f.Close()
-	b, err := io.ReadAll(f)
-	if err != nil {
-		return out, err
-	}
-	if len(b) == 0 {
-		out.Tokens = make(map[string]string)
-		return out, nil
-	}
-	if err := json.Unmarshal(b, &out); err != nil {
-		return out, fmt.Errorf("invalid config JSON: %w", err)
-	}
-	if out.Tokens == nil {
-		out.Tokens = make(map[string]string)
-	}
-	return out, nil
-}
-
-func writeConfigFile(configFilePath string, root configRoot) error {
-	if err := os.MkdirAll(filepath.Dir(configFilePath), 0o700); err != nil {
-		return err
-	}
-	tmp := configFilePath + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "    ")
-	if err := enc.Encode(&root); err != nil {
-		f.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, configFilePath)
-}
-
-func getDefaultEngine() (string, error) {
-	if val := os.Getenv("RSTREAM_DEFAULT_ENGINE"); val != "" {
-		return val, nil
-	}
-	return "", errors.New("engine URL is not defined. Please set RSTREAM_DEFAULT_ENGINE environment variable")
-}
-
-func getDefaultAuthToken(configFilePath *string, engine *string) (*string, error) {
-	if envToken := os.Getenv("RSTREAM_DEFAULT_AUTHENTICATION_TOKEN"); envToken != "" {
-		return &envToken, nil
-	}
-	if engine == nil {
-		return nil, errors.New("engine URL is unset")
-	}
-	host, _, err := splitHostPort(*engine)
-	if err != nil || host == nil {
-		return nil, fmt.Errorf("failed to extract host from engine URL: %w", err)
-	}
-	if configFilePath == nil {
-		filepath, err := getDefaultConfigFilePath()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get rstream config file path: %w", err)
-		}
-		configFilePath = &filepath
-	}
-	root, err := readConfigFile(*configFilePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read rstream config file: %w", err)
-	}
-	if token, ok := root.Tokens[*host]; ok {
-		return &token, nil
-	}
-	domain := *host
-	for {
-		dotPos := strings.IndexRune(domain, '.')
-		if dotPos < 0 || dotPos+1 >= len(domain) {
-			break
-		}
-		domain = domain[dotPos+1:]
-		if token, ok := root.Tokens[domain]; ok {
-			return &token, nil
-		}
-	}
-	return nil, errors.New("no token found in config for engine URL or any of its parent domains")
-}
-
-func upsertTokenInConfig(configFilePath *string, host, token string) error {
-	if configFilePath == nil {
-		filepath, err := getDefaultConfigFilePath()
-		if err != nil {
-			return fmt.Errorf("failed to get rstream config file path: %w", err)
-		}
-		configFilePath = &filepath
-	}
-	root, err := readConfigFile(*configFilePath)
-	if err != nil {
-		return fmt.Errorf("failed to read rstream config file: %w", err)
-	}
-	root.Tokens[host] = token
-	return writeConfigFile(*configFilePath, root)
-}
-
-func deleteTokenInConfig(configFilePath *string, host string) error {
-	if configFilePath == nil {
-		filepath, err := getDefaultConfigFilePath()
-		if err != nil {
-			return fmt.Errorf("failed to get rstream config file path: %w", err)
-		}
-		configFilePath = &filepath
-	}
-	root, err := readConfigFile(*configFilePath)
-	if err != nil {
-		return fmt.Errorf("failed to read rstream config file: %w", err)
-	}
-	if _, ok := root.Tokens[host]; ok {
-		delete(root.Tokens, host)
-		return writeConfigFile(*configFilePath, root)
-	}
-	return nil
 }
 
 func getClientDetails(token *string) (*clientDetails, error) {
