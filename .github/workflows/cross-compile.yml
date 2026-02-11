@@ -49,8 +49,8 @@ jobs:
           sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
           echo "deb https://download.mono-project.com/repo/ubuntu stable-focal main" | sudo tee /etc/apt/sources.list.d/mono-official-stable.list
           sudo apt update && sudo apt-get install -y nuget
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version: 1.25.x
           cache: false
@@ -109,7 +109,7 @@ jobs:
           RSTREAM_TOKEN: ${{ secrets.RSTREAM_TOKEN }}
         run: |
           make -j $(getconf _NPROCESSORS_ONLN) ${PACKAGE_NAME}-deploy-pkg-cross ${PACKAGE_NAME}-deploy-deb ${PACKAGE_NAME}-deploy-nupkg ${PACKAGE_NAME}-docker
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         if: ${{ github.ref_type == 'tag' }}
         with:
           repository: rstreamlabs/homebrew
@@ -136,7 +136,7 @@ jobs:
           git -C homebrew add Casks/${PACKAGE_NAME}${{ env.CHANNEL != 'stable' && '-dev' || '' }}.rb
           git -C homebrew commit -m "update ${PACKAGE_NAME}${{ env.CHANNEL != 'stable' && '-dev' || '' }} cask to ${{ env.VERSION }}"
           git -C homebrew push
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         if: ${{ github.ref_type == 'tag' }}
         with:
           repository: rstreamlabs/npm
