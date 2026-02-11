@@ -188,12 +188,13 @@ func getClientDetails(token *string) (*clientDetails, error) {
 			}
 		}
 	}
+	compiletime := CompiletimeIdentity()
 	return &clientDetails{
 		Agent:           &Agent,
 		Channel:         &Channel,
 		Version:         &Version,
-		OS:              &OS,
-		Arch:            &Arch,
+		OS:              &compiletime.OS,
+		Arch:            &compiletime.Arch,
 		Token:           token,
 		ProtocolVersion: protocolVersion,
 	}, nil
