@@ -142,6 +142,11 @@ jobs:
           repository: rstreamlabs/npm
           token: ${{ secrets.GIT_TOKEN }}
           path: npm
+      - uses: actions/setup-node@v6
+        if: ${{ github.ref_type == 'tag' }}
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
       - name: Publish NPM package
         if: ${{ github.ref_type == 'tag' }}
         shell: bash
