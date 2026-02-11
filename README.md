@@ -26,7 +26,7 @@ rstream supports two fundamental tunnel types:
 
 ## Published vs Private Tunnels
 
-**Published Tunnels**: Accessible via standard clients (browsers, curl, etc.) through public URLs. All protocols (HTTP, TLS, DTLS, QUIC) can be published and support various authentication mechanisms including token-based auth, SSO providers (Google, GitHub), and challenge/captcha systems.
+**Published Tunnels**: Accessible via standard clients (browsers, curl, etc.) through public URLs. All protocols (HTTP, TLS, DTLS, QUIC) can be published and support various authentication mechanisms including token-based auth, rstream account authentication, and challenge/captcha systems.
 
 **Private Tunnels**: Require an rstream client to connect. These provide enhanced security for internal services and are accessed by name (if specified) or by ID using the rstream dialer instead of public URLs.
 
@@ -48,7 +48,7 @@ rstream supports two fundamental tunnel types:
 
 **Multi-Protocol Support**: HTTP (1.1, 2, 3), TLS, DTLS, QUIC, WebSockets, and WebTransport protocols with automatic protocol detection and optimization.
 
-**Enterprise Security**: Geographic restrictions, IP whitelisting, mutual TLS authentication, token-based auth, SSO integration (Google, GitHub, etc.), and challenge/captcha protection.
+**Enterprise Security**: Geographic restrictions, IP whitelisting, mutual TLS authentication, token-based auth, rstream account authentication, and challenge/captcha protection.
 
 **Zero Configuration**: No firewall rules, port forwarding, or NAT configuration required. Works behind corporate firewalls and restrictive network environments.
 
@@ -97,11 +97,19 @@ docker pull rstream/rstream:latest
 
 ## Authentication
 
-To function properly, rstream requires an authentication token. To obtain an authentication token, please create an account on https://rstream.io, create a token, then register the token on your machine:
+To function properly, rstream requires an authentication token. Create an account on https://rstream.io, generate a token, then register it on your machine:
 
 ```bash
-rstream login -t ${AUTHENTICATION_TOKEN}
+rstream login ${AUTHENTICATION_TOKEN}
 ```
+
+## Environment Variables
+
+- `RSTREAM_CONFIG`: Override the CLI config file path.
+- `RSTREAM_CONTEXT`: Select the context by name.
+- `RSTREAM_ENGINE`: Override the engine URL (data plane).
+- `RSTREAM_AUTHENTICATION_TOKEN`: Override the authentication token.
+- `RSTREAM_API_URL`: Override the control-plane API URL (mostly for internal or advanced usage).
 
 ## Usage
 
@@ -141,6 +149,27 @@ rstream forward 5000 --dtls
 
 DTLS tunnels automatically handle datagram traffic. The `--datagram` flag is implied with `--dtls`.
 
+### Run (Declarative Tunnels)
+
+`rstream run` keeps tunnels in sync from a YAML file or Docker labels, with optional watch/reconcile.
+
+- `forward`: creates a single tunnel from CLI args and forwards immediately (single tunnel, interactive).
+- `run --apply`: declarative list of tunnels from YAML, supports watch/reconcile.
+- `run --docker`: discovers tunnels from Docker labels, supports watch/reconcile.
+
+```bash
+# Apply a YAML spec once
+rstream -v run --apply examples/run-apply/tunnels.yaml
+
+# Watch the YAML for changes and reconcile
+rstream -v run --apply examples/run-apply/tunnels.yaml --watch
+
+# Discover tunnels from Docker labels
+rstream -v run --docker --watch
+```
+
+See `docs/CMD_RUN.md` for the full YAML schema, Docker label reference, and reconciliation details.
+
 ## Build and Compilation
 
 rstream includes a comprehensive Makefile supporting multiple platforms and packaging formats:
@@ -173,6 +202,8 @@ make nupkg       # Create Windows NuGet packages
 
 rstream includes a comprehensive Go SDK enabling developers to create secure tunnels programmatically. The client-side code is fully open source and inspectable, ensuring transparency and security. Additional examples are available in the `examples/` directory of this repository.
 
+Examples use `config.NewClientFromEnv()` and read the same config/env settings as the CLI. Ensure a default context (or `RSTREAM_ENGINE`) is set, and provide `RSTREAM_AUTHENTICATION_TOKEN` if your engine requires authentication.
+
 ### HTTP Server (Published Tunnel)
 
 This example demonstrates how to create a public HTTP server accessible via standard web browsers. The server will be available through a public rstream URL.
@@ -190,7 +221,14 @@ import (
 )
 
 func main() {
-	ctrl, err := (&rstream.Client{}).Connect(context.Background(), nil)
+	client, err := rstream.NewClient(rstream.ClientOptions{
+		Engine: "engine.example:443",
+		Token:  "authentication_token",
+	})
+	if err != nil {
+		panic(err)
+	}
+	ctrl, err := client.Connect(context.Background(), nil)
 	if err != nil {
 		panic(err)
 	}
@@ -231,15 +269,20 @@ import (
 )
 
 func main() {
-	ctrl, err := (&rstream.Client{}).Connect(context.Background(), nil)
+	client, err := rstream.NewClient(rstream.ClientOptions{
+		Engine: "engine.example:443",
+		Token:  "authentication_token",
+	})
+	if err != nil {
+		panic(err)
+	}
+	ctrl, err := client.Connect(context.Background(), nil)
 	if err != nil {
 		panic(err)
 	}
 	defer ctrl.Close()
 	tunnel, err := ctrl.CreateTunnel(context.Background(), rstream.TunnelProperties{
 		Name:     rstream.StringPtr("echo"),
-		Type:     rstream.TunnelTypePtr(rstream.TunnelTypeBytestream),
-		Protocol: rstream.ProtocolPtr(rstream.ProtocolTLS),
 		Publish:  rstream.BoolPtr(false),
 	})
 	if err != nil {
@@ -278,7 +321,13 @@ import (
 )
 
 func main() {
-	client := &rstream.Client{}
+	client, err := rstream.NewClient(rstream.ClientOptions{
+		Engine: "engine.example:443",
+		Token:  "authentication_token",
+	})
+	if err != nil {
+		panic(err)
+	}
 	conn, err := client.Dial(context.Background(), rstream.Addr{
 		IdOrName: "echo",
 	})
@@ -310,7 +359,14 @@ import (
 )
 
 func main() {
-	ctrl, err := (&rstream.Client{}).Connect(context.Background(), nil)
+	client, err := rstream.NewClient(rstream.ClientOptions{
+		Engine: "engine.example:443",
+		Token:  "authentication_token",
+	})
+	if err != nil {
+		panic(err)
+	}
+	ctrl, err := client.Connect(context.Background(), nil)
 	if err != nil {
 		panic(err)
 	}
@@ -397,7 +453,14 @@ func generateTLSConfig() (*tls.Config, error) {
 }
 
 func main() {
-	ctrl, err := (&rstream.Client{}).Connect(context.Background(), nil)
+	client, err := rstream.NewClient(rstream.ClientOptions{
+		Engine: "engine.example:443",
+		Token:  "authentication_token",
+	})
+	if err != nil {
+		panic(err)
+	}
+	ctrl, err := client.Connect(context.Background(), nil)
 	if err != nil {
 		panic(err)
 	}

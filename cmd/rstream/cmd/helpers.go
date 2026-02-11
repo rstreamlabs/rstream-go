@@ -3,10 +3,7 @@
 package cmd
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
@@ -68,62 +65,6 @@ func getStringSlice(cmd *cobra.Command, name string) []string {
 	return nil
 }
 
-func newClientFromFlags(cmd *cobra.Command) (*rstream.Client, error) {
-	configFilePathPtr := getStringPtr(cmd, "config")
-	tokenPtr := getStringPtr(cmd, "token")
-	noTokenPtr := getBoolPtr(cmd, "no-token")
-	enginePtr := getStringPtr(cmd, "engine")
-	tlsCfg, err := buildTLSConfig(
-		cmd,
-		"tls-cert-file",
-		"tls-key-file",
-		"tls-cacert-file",
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build client TLS config: %w", err)
-	}
-	localAddrPtr := getStringPtr(cmd, "local-addr")
-	networkInterfacePtr := getStringPtr(cmd, "network-interface")
-	forceIPv4Ptr := getBoolPtr(cmd, "force-ipv4")
-	forceIPv6Ptr := getBoolPtr(cmd, "force-ipv6")
-	dnsOverridePtr := getStringPtr(cmd, "dns-override")
-	mptcpPtr := getBoolPtr(cmd, "mptcp")
-	proxyHttpPtr := getStringPtr(cmd, "proxy-http")
-	proxyUsernamePtr := getStringPtr(cmd, "proxy-username")
-	proxyPasswordPtr := getStringPtr(cmd, "proxy-password")
-	proxyHTTPHeaders := getStringArrayMap(cmd, "proxy-http-headers")
-	tlsProxyConfig, err := buildTLSConfig(
-		cmd,
-		"proxy-tls-cert-file",
-		"proxy-tls-key-file",
-		"proxy-tls-cacert-file",
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build proxy TLS config: %w", err)
-	}
-	client := &rstream.Client{
-		ConfigFilePath: configFilePathPtr,
-		Transport: &rstream.Transport{
-			LocalAddr:        localAddrPtr,
-			NetworkInterface: networkInterfacePtr,
-			ForceIPv4:        forceIPv4Ptr,
-			ForceIPv6:        forceIPv6Ptr,
-			DNSOverride:      dnsOverridePtr,
-			MPTCPEnabled:     mptcpPtr,
-			ProxyHTTP:        proxyHttpPtr,
-			ProxyUsername:    proxyUsernamePtr,
-			ProxyPassword:    proxyPasswordPtr,
-			ProxyHTTPHeaders: proxyHTTPHeaders,
-			TLSProxyConfig:   tlsProxyConfig,
-		},
-		TLSClientConfig: tlsCfg,
-		EngineURL:       enginePtr,
-		Token:           tokenPtr,
-		NoToken:         noTokenPtr,
-	}
-	return client, nil
-}
-
 func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties, error) {
 	namePtr := getStringPtr(cmd, "name")
 	bytestreamPtr := getBoolPtr(cmd, "bytestream")
@@ -167,7 +108,7 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 	labels := getStringArrayMap(cmd, "label")
 	geoipSlice := getStringSlice(cmd, "geoip")
 	trustedIPsSlice := getStringSlice(cmd, "trusted-ips")
-	domainPtr := getStringPtr(cmd, "domain")
+	hostPtr := getStringPtr(cmd, "host")
 	var tlsModePtr *rstream.TLSMode
 	if cmd.Flags().Lookup("tls-mode").Changed {
 		val, _ := cmd.Flags().GetString("tls-mode")
@@ -208,43 +149,28 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 	}
 	httpUseTLSPtr := getBoolPtr(cmd, "http-use-tls")
 	tokenAuthPtr := getBoolPtr(cmd, "token-auth")
-	ssoPtr := getBoolPtr(cmd, "sso")
-	var ssoProviders []string
-	if cmd.Flags().Lookup("sso-provider").Changed {
-		val, _ := cmd.Flags().GetString("sso-provider")
-		if val != "" {
-			ssoProviders = strings.Split(val, ",")
-		}
-		if len(ssoProviders) == 0 {
-			ssoProviders = nil
-		}
-	}
-	emailWhitelist := getStringSlice(cmd, "email-whitelist")
-	emailBlacklist := getStringSlice(cmd, "email-blacklist")
-	challengePtr := getBoolPtr(cmd, "challenge")
+	rstreamAuthPtr := getBoolPtr(cmd, "rstream-auth")
+	challengeModePtr := getBoolPtr(cmd, "challenge-mode")
 	tunnelProperties := &rstream.TunnelProperties{
-		Name:           namePtr,
-		Type:           typePtr,
-		Publish:        publishFinalPtr,
-		Protocol:       protocol,
-		Labels:         labels,
-		GeoIP:          geoipSlice,
-		TrustedIPs:     trustedIPsSlice,
-		Domain:         domainPtr,
-		TLSMode:        tlsModePtr,
-		TLSALPNs:       tlsALPNSlice,
-		TLSMinVersion:  tlsMinVersionPtr,
-		TLSCiphers:     tlsCipherIDs,
-		MTLS:           mtlsPtr,
-		MTLSCACertPEM:  mtlsCACertPtr,
-		HTTPVersion:    httpVersionPtr,
-		HTTPUseTLS:     httpUseTLSPtr,
-		TokenAuth:      tokenAuthPtr,
-		SSO:            ssoPtr,
-		SSOProviders:   ssoProviders,
-		EmailWhitelist: emailWhitelist,
-		EmailBlacklist: emailBlacklist,
-		Challenge:      challengePtr,
+		Name:          namePtr,
+		Type:          typePtr,
+		Publish:       publishFinalPtr,
+		Protocol:      protocol,
+		Labels:        labels,
+		GeoIP:         geoipSlice,
+		TrustedIPs:    trustedIPsSlice,
+		Host:          hostPtr,
+		TLSMode:       tlsModePtr,
+		TLSALPNs:      tlsALPNSlice,
+		TLSMinVersion: tlsMinVersionPtr,
+		TLSCiphers:    tlsCipherIDs,
+		MTLS:          mtlsPtr,
+		MTLSCACertPEM: mtlsCACertPtr,
+		HTTPVersion:   httpVersionPtr,
+		HTTPUseTLS:    httpUseTLSPtr,
+		TokenAuth:     tokenAuthPtr,
+		RstreamAuth:   rstreamAuthPtr,
+		ChallengeMode: challengeModePtr,
 	}
 	return tunnelProperties, nil
 }
@@ -262,51 +188,4 @@ func parseTLSCipher(cipherName string) (uint16, error) {
 		return 0, fmt.Errorf("unable to parse cipher: %q", cipherName)
 	}
 	return uint16(val), nil
-}
-
-func loadRootCAs(caPem []byte) (*x509.CertPool, error) {
-	pool := x509.NewCertPool()
-	if ok := pool.AppendCertsFromPEM(caPem); !ok {
-		return nil, fmt.Errorf("unable to append CA certs")
-	}
-	return pool, nil
-}
-
-func buildTLSConfig(cmd *cobra.Command, certFlag, keyFlag, caFlag string) (*tls.Config, error) {
-	certFile := getStringPtr(cmd, certFlag)
-	keyFile := getStringPtr(cmd, keyFlag)
-	caFile := getStringPtr(cmd, caFlag)
-	if (certFile == nil || *certFile == "") &&
-		(keyFile == nil || *keyFile == "") &&
-		(caFile == nil || *caFile == "") {
-		return nil, nil
-	}
-	cfg := &tls.Config{}
-	if certFile != nil && *certFile != "" && keyFile != nil && *keyFile != "" {
-		certPEM, err := os.ReadFile(*certFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read TLS cert file %q: %w", *certFile, err)
-		}
-		keyPEM, err := os.ReadFile(*keyFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read TLS key file %q: %w", *keyFile, err)
-		}
-		cert, err := tls.X509KeyPair(certPEM, keyPEM)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse TLS cert/key: %w", err)
-		}
-		cfg.Certificates = []tls.Certificate{cert}
-	}
-	if caFile != nil && *caFile != "" {
-		caPEM, err := os.ReadFile(*caFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read CA file %q: %w", *caFile, err)
-		}
-		pool, err := loadRootCAs(caPEM)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load CA certs: %w", err)
-		}
-		cfg.RootCAs = pool
-	}
-	return cfg, nil
 }

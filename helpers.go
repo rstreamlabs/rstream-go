@@ -3,13 +3,8 @@
 package rstream
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"net"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -18,24 +13,20 @@ import (
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
-type configRoot struct {
-	Tokens map[string]string `json:"tokens"`
-}
-
 func FormatForwardingAddr(props TunnelProperties) (string, error) {
-	if props.Domain != nil {
-		domain := *props.Domain
+	if props.Host != nil {
+		host := *props.Host
 		switch {
 		case props.Protocol != nil && *props.Protocol == ProtocolHTTP:
-			return "https://" + domain, nil
+			return "https://" + host, nil
 		case props.Protocol != nil && *props.Protocol == ProtocolTLS:
-			return domain + " (tls)", nil
+			return host + " (tls)", nil
 		case props.Protocol != nil && *props.Protocol == ProtocolDTLS:
-			return domain + " (dtls)", nil
+			return host + " (dtls)", nil
 		case props.Protocol != nil && *props.Protocol == ProtocolQUIC:
-			return domain + " (quic)", nil
+			return host + " (quic)", nil
 		default:
-			return domain, nil
+			return host, nil
 		}
 	}
 	if props.Name != nil {
@@ -44,7 +35,7 @@ func FormatForwardingAddr(props TunnelProperties) (string, error) {
 	if props.ID != nil {
 		return "rstrm://" + *props.ID + " (unpublished)", nil
 	}
-	return "", errors.New("invalid tunnel properties: no domain, name, or ID")
+	return "", errors.New("invalid tunnel properties: no host, name, or ID")
 }
 
 func FormatForwardedHostPort(host, port string, props TunnelProperties) (string, error) {
@@ -102,9 +93,10 @@ func FormatForwardedAddr(addr net.TCPAddr, props TunnelProperties) (string, erro
 func toClientDetailsPb(details *clientDetails) *pb.ClientDetails {
 	return &pb.ClientDetails{
 		Agent:           stringPbValueOrNil(details.Agent),
+		Channel:         stringPbValueOrNil(details.Channel),
+		Version:         stringPbValueOrNil(details.Version),
 		Os:              stringPbValueOrNil(details.OS),
 		Arch:            stringPbValueOrNil(details.Arch),
-		Version:         stringPbValueOrNil(details.Version),
 		Token:           stringPbValueOrNil(details.Token),
 		ProtocolVersion: stringPbValueOrNil(details.ProtocolVersion),
 	}
@@ -112,57 +104,53 @@ func toClientDetailsPb(details *clientDetails) *pb.ClientDetails {
 
 func toTunnelProperties(msg *pb.TunnelProperties) TunnelProperties {
 	return TunnelProperties{
-		ID:             stringPtrFromPbValue(msg.Id),
-		Name:           stringPtrFromPbValue(msg.Name),
-		CreationDate:   nil, // TODO
-		Publish:        boolPtrFromPbValue(msg.Publish),
-		Protocol:       (*Protocol)(stringPtrFromPbValue(msg.Protocol)),
-		Labels:         msg.Labels,
-		GeoIP:          msg.Geoip,
-		TrustedIPs:     msg.TrustedIps,
-		Domain:         stringPtrFromPbValue(msg.Domain),
-		TLSMode:        (*TLSMode)(stringPtrFromPbValue(msg.TlsMode)),
-		TLSALPNs:       msg.TlsAlpns,
-		TLSMinVersion:  stringPtrFromPbValue(msg.TlsMinVersion),
-		TLSCiphers:     msg.TlsCiphers,
-		MTLS:           boolPtrFromPbValue(msg.Mtls),
-		MTLSCACertPEM:  stringPtrFromPbValue(msg.MtlsCacertPem),
-		HTTPVersion:    (*HTTPVersion)(stringPtrFromPbValue(msg.HttpVersion)),
-		HTTPUseTLS:     boolPtrFromPbValue(msg.HttpUseTls),
-		TokenAuth:      boolPtrFromPbValue(msg.TokenAuth),
-		SSO:            boolPtrFromPbValue(msg.Sso),
-		SSOProviders:   msg.SsoProviders,
-		EmailWhitelist: msg.EmailWhitelist,
-		EmailBlacklist: msg.EmailBlacklist,
-		Challenge:      boolPtrFromPbValue(msg.Challenge),
+		ID:            stringPtrFromPbValue(msg.Id),
+		CreationDate:  timePtrFromPbValue(msg.CreationDate),
+		Name:          stringPtrFromPbValue(msg.Name),
+		Type:          (*TunnelType)(stringPtrFromPbValue(msg.Type)),
+		Publish:       boolPtrFromPbValue(msg.Publish),
+		Protocol:      (*Protocol)(stringPtrFromPbValue(msg.Protocol)),
+		Labels:        msg.Labels,
+		GeoIP:         msg.Geoip,
+		TrustedIPs:    msg.TrustedIps,
+		Host:          stringPtrFromPbValue(msg.Host),
+		TLSMode:       (*TLSMode)(stringPtrFromPbValue(msg.TlsMode)),
+		TLSALPNs:      msg.TlsAlpns,
+		TLSMinVersion: stringPtrFromPbValue(msg.TlsMinVersion),
+		TLSCiphers:    msg.TlsCiphers,
+		MTLS:          boolPtrFromPbValue(msg.Mtls),
+		MTLSCACertPEM: stringPtrFromPbValue(msg.MtlsCacertPem),
+		HTTPVersion:   (*HTTPVersion)(stringPtrFromPbValue(msg.HttpVersion)),
+		HTTPUseTLS:    boolPtrFromPbValue(msg.HttpUseTls),
+		TokenAuth:     boolPtrFromPbValue(msg.TokenAuth),
+		RstreamAuth:   boolPtrFromPbValue(msg.RstreamAuth),
+		ChallengeMode: boolPtrFromPbValue(msg.ChallengeMode),
 	}
 }
 
 func toTunnelPropertiesPb(props TunnelProperties) *pb.TunnelProperties {
 	return &pb.TunnelProperties{
-		Id:             stringPbValueOrNil(props.ID),
-		Name:           stringPbValueOrNil(props.Name),
-		CreationDate:   nil, // TODO
-		Publish:        boolPbValueOrNil(props.Publish),
-		Protocol:       stringPbValueOrNil((*string)(props.Protocol)),
-		Labels:         props.Labels,
-		Geoip:          props.GeoIP,
-		TrustedIps:     props.TrustedIPs,
-		Domain:         stringPbValueOrNil(props.Domain),
-		TlsMode:        stringPbValueOrNil((*string)(props.TLSMode)),
-		TlsAlpns:       props.TLSALPNs,
-		TlsMinVersion:  stringPbValueOrNil(props.TLSMinVersion),
-		TlsCiphers:     props.TLSCiphers,
-		Mtls:           boolPbValueOrNil(props.MTLS),
-		MtlsCacertPem:  stringPbValueOrNil(props.MTLSCACertPEM),
-		HttpVersion:    stringPbValueOrNil((*string)(props.HTTPVersion)),
-		HttpUseTls:     boolPbValueOrNil(props.HTTPUseTLS),
-		TokenAuth:      boolPbValueOrNil(props.TokenAuth),
-		Sso:            boolPbValueOrNil(props.SSO),
-		SsoProviders:   props.SSOProviders,
-		EmailWhitelist: props.EmailWhitelist,
-		EmailBlacklist: props.EmailBlacklist,
-		Challenge:      boolPbValueOrNil(props.Challenge),
+		Id:            stringPbValueOrNil(props.ID),
+		CreationDate:  timestampPbValueOrNil(props.CreationDate),
+		Name:          stringPbValueOrNil(props.Name),
+		Type:          stringPbValueOrNil((*string)(props.Type)),
+		Publish:       boolPbValueOrNil(props.Publish),
+		Protocol:      stringPbValueOrNil((*string)(props.Protocol)),
+		Labels:        props.Labels,
+		Geoip:         props.GeoIP,
+		TrustedIps:    props.TrustedIPs,
+		Host:          stringPbValueOrNil(props.Host),
+		TlsMode:       stringPbValueOrNil((*string)(props.TLSMode)),
+		TlsAlpns:      props.TLSALPNs,
+		TlsMinVersion: stringPbValueOrNil(props.TLSMinVersion),
+		TlsCiphers:    props.TLSCiphers,
+		Mtls:          boolPbValueOrNil(props.MTLS),
+		MtlsCacertPem: stringPbValueOrNil(props.MTLSCACertPEM),
+		HttpVersion:   stringPbValueOrNil((*string)(props.HTTPVersion)),
+		HttpUseTls:    boolPbValueOrNil(props.HTTPUseTLS),
+		TokenAuth:     boolPbValueOrNil(props.TokenAuth),
+		RstreamAuth:   boolPbValueOrNil(props.RstreamAuth),
+		ChallengeMode: boolPbValueOrNil(props.ChallengeMode),
 	}
 }
 
@@ -185,151 +173,7 @@ func splitHostPort(addr string) (*string, *string, error) {
 	return hostPtr, portPtr, nil
 }
 
-func getDefaultConfigFilePath() (string, error) {
-	if envPath := os.Getenv("RSTREAM_DEFAULT_CONFIG_PATH"); envPath != "" {
-		return envPath, nil
-	}
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(homeDir, ".rstream", "config.json"), nil
-}
-
-func readConfigFile(configFilePath string) (configRoot, error) {
-	var out configRoot
-	f, err := os.Open(configFilePath)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			out.Tokens = make(map[string]string)
-			return out, nil
-		}
-		return out, err
-	}
-	defer f.Close()
-	b, err := io.ReadAll(f)
-	if err != nil {
-		return out, err
-	}
-	if len(b) == 0 {
-		out.Tokens = make(map[string]string)
-		return out, nil
-	}
-	if err := json.Unmarshal(b, &out); err != nil {
-		return out, fmt.Errorf("invalid config JSON: %w", err)
-	}
-	if out.Tokens == nil {
-		out.Tokens = make(map[string]string)
-	}
-	return out, nil
-}
-
-func writeConfigFile(configFilePath string, root configRoot) error {
-	if err := os.MkdirAll(filepath.Dir(configFilePath), 0o700); err != nil {
-		return err
-	}
-	tmp := configFilePath + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	enc := json.NewEncoder(f)
-	enc.SetIndent("", "    ")
-	if err := enc.Encode(&root); err != nil {
-		f.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return os.Rename(tmp, configFilePath)
-}
-
-func getDefaultEngine() (string, error) {
-	if val := os.Getenv("RSTREAM_DEFAULT_ENGINE"); val != "" {
-		return val, nil
-	}
-	return "engine.rstream.io:443", nil
-}
-
-func getDefaultAuthToken(configFilePath *string, engine *string) (*string, error) {
-	if envToken := os.Getenv("RSTREAM_DEFAULT_AUTHENTICATION_TOKEN"); envToken != "" {
-		return &envToken, nil
-	}
-	if engine == nil {
-		return nil, errors.New("engine URL is unset")
-	}
-	host, _, err := splitHostPort(*engine)
-	if err != nil || host == nil {
-		return nil, fmt.Errorf("failed to extract host from engine URL: %w", err)
-	}
-	if configFilePath == nil {
-		filepath, err := getDefaultConfigFilePath()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get rstream config file path: %w", err)
-		}
-		configFilePath = &filepath
-	}
-	root, err := readConfigFile(*configFilePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read rstream config file: %w", err)
-	}
-	if token, ok := root.Tokens[*host]; ok {
-		return &token, nil
-	}
-	domain := *host
-	for {
-		dotPos := strings.IndexRune(domain, '.')
-		if dotPos < 0 || dotPos+1 >= len(domain) {
-			break
-		}
-		domain = domain[dotPos+1:]
-		if token, ok := root.Tokens[domain]; ok {
-			return &token, nil
-		}
-	}
-	return nil, errors.New("no token found in config for engine URL or any of its parent domains")
-}
-
-func upsertTokenInConfig(configFilePath *string, host, token string) error {
-	if configFilePath == nil {
-		filepath, err := getDefaultConfigFilePath()
-		if err != nil {
-			return fmt.Errorf("failed to get rstream config file path: %w", err)
-		}
-		configFilePath = &filepath
-	}
-	root, err := readConfigFile(*configFilePath)
-	if err != nil {
-		return fmt.Errorf("failed to read rstream config file: %w", err)
-	}
-	root.Tokens[host] = token
-	return writeConfigFile(*configFilePath, root)
-}
-
-func deleteTokenInConfig(configFilePath *string, host string) error {
-	if configFilePath == nil {
-		filepath, err := getDefaultConfigFilePath()
-		if err != nil {
-			return fmt.Errorf("failed to get rstream config file path: %w", err)
-		}
-		configFilePath = &filepath
-	}
-	root, err := readConfigFile(*configFilePath)
-	if err != nil {
-		return fmt.Errorf("failed to read rstream config file: %w", err)
-	}
-	if _, ok := root.Tokens[host]; ok {
-		delete(root.Tokens, host)
-		return writeConfigFile(*configFilePath, root)
-	}
-	return nil
-}
-
 func getClientDetails(token *string) (*clientDetails, error) {
-	agent := "rstream go SDK"
 	var protocolVersion *string
 	{
 		fd := (&pb.ClientDetails{}).ProtoReflect().Descriptor().ParentFile()
@@ -345,10 +189,11 @@ func getClientDetails(token *string) (*clientDetails, error) {
 		}
 	}
 	return &clientDetails{
-		Agent:           &agent,
+		Agent:           &Agent,
+		Channel:         &Channel,
+		Version:         &Version,
 		OS:              &OS,
 		Arch:            &Arch,
-		Version:         &Version,
 		Token:           token,
 		ProtocolVersion: protocolVersion,
 	}, nil

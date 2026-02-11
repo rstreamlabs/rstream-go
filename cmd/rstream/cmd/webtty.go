@@ -53,7 +53,11 @@ var webttyServerCmd = &cobra.Command{
 				}
 				var listener net.Listener
 				if useWeb, _ := cmd.Flags().GetBool("web"); useWeb {
-					client, err := newClientFromFlags(cmd)
+					runtime, err := resolveRuntime(cmd, true, true)
+					if err != nil {
+						return fmt.Errorf("failed to create rstream client: %w", err)
+					}
+					client, err := newClientFromResolved(runtime.Resolved)
 					if err != nil {
 						return fmt.Errorf("failed to create rstream client: %w", err)
 					}
@@ -67,7 +71,7 @@ var webttyServerCmd = &cobra.Command{
 						Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
 						HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP1_1),
 						TokenAuth:   rstream.BoolPtr(true),
-						Labels:      map[string]string{"application-protocol": "rstream.rtty"}, // for compatibility purposes
+						Labels:      webtty.DefaultLabels(),
 					}
 					tunnel, err := ctrl.CreateTunnel(ctx, props)
 					if err != nil {
