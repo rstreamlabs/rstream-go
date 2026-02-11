@@ -158,10 +158,10 @@ func DefaultLabels() map[string]string {
 			labels[k] = v
 		}
 	}
-	compiletime := rstream.CompiletimeIdentity()
-	runtime := rstream.RuntimeIdentity()
-	set("rstream.webtty.os_family", compiletime.OS)
-	set("rstream.webtty.arch", runtime.Arch)
+	compiletime_identity := rstream.CompiletimeIdentity()
+	runtime_identity := rstream.RuntimeIdentity()
+	set("rstream.webtty.os_family", compiletime_identity.OS)
+	set("rstream.webtty.arch", runtime_identity.Arch)
 	set("rstream.webtty.os_id", info.id)
 	set("rstream.webtty.os_version_id", info.versionID)
 	set("rstream.webtty.os_version_codename", info.codename)
