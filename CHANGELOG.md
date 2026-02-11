@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.0](https://github.com/rstreamlabs/rstream-go/compare/v1.2.0...v1.3.0) (2026-02-11)
+
+
+### Features
+
+* add login, logout, project, context, run cmds ([44d427a](https://github.com/rstreamlabs/rstream-go/commit/44d427a74a311276cdc4a298f78a55c680c9247f))
+* rstrm protocol 1.3 ([381a0b6](https://github.com/rstreamlabs/rstream-go/commit/381a0b6ae16410301db3acf42cfa7ad8a0c9f4fe))
+
 ## [1.2.0](https://github.com/rstreamlabs/rstream-go/compare/v1.1.0...v1.2.0) (2025-09-12)
 
 
