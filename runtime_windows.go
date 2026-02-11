@@ -5,28 +5,38 @@
 
 package rstream
 
-import "golang.org/x/sys/windows"
+import (
+	"os"
+	"strings"
+)
 
 func runtimeIdentity() Identity {
-	var info windows.SystemInfo
-	windows.GetSystemInfo(&info)
+	arch := runtimeArchFromEnv()
+	if arch == "" {
+		arch = CompiletimeArch()
+	}
 	return Identity{
 		OS:   "windows",
-		Arch: processorArchitecture(info.ProcessorArchitecture),
+		Arch: arch,
 	}
 }
 
-func processorArchitecture(arch uint16) string {
+func runtimeArchFromEnv() string {
+	arch := strings.TrimSpace(os.Getenv("PROCESSOR_ARCHITEW6432"))
+	if arch == "" {
+		arch = strings.TrimSpace(os.Getenv("PROCESSOR_ARCHITECTURE"))
+	}
+	arch = strings.ToLower(arch)
 	switch arch {
-	case windows.PROCESSOR_ARCHITECTURE_AMD64:
+	case "amd64", "x64":
 		return "x86_64"
-	case windows.PROCESSOR_ARCHITECTURE_INTEL:
+	case "x86", "i386", "i686":
 		return "x86"
-	case windows.PROCESSOR_ARCHITECTURE_ARM64:
+	case "arm64", "aarch64":
 		return "arm64"
-	case windows.PROCESSOR_ARCHITECTURE_ARM:
+	case "arm":
 		return "arm"
 	default:
-		return "unknown"
+		return arch
 	}
 }
