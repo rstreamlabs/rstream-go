@@ -90,7 +90,7 @@ func FormatForwardedAddr(addr net.TCPAddr, props TunnelProperties) (string, erro
 	return FormatForwardedHostPort(addr.IP.String(), strconv.Itoa(addr.Port), props)
 }
 
-func toClientDetailsPb(details *clientDetails) *pb.ClientDetails {
+func toClientDetailsPb(details *ClientDetails) *pb.ClientDetails {
 	return &pb.ClientDetails{
 		Agent:           stringPbValueOrNil(details.Agent),
 		Channel:         stringPbValueOrNil(details.Channel),
@@ -173,7 +173,7 @@ func splitHostPort(addr string) (*string, *string, error) {
 	return hostPtr, portPtr, nil
 }
 
-func getClientDetails(token *string) (*clientDetails, error) {
+func getClientDetails(token *string) (*ClientDetails, error) {
 	var protocolVersion *string
 	{
 		fd := (&pb.ClientDetails{}).ProtoReflect().Descriptor().ParentFile()
@@ -199,7 +199,7 @@ func getClientDetails(token *string) (*clientDetails, error) {
 		value := compiletime_identity.Arch
 		archValue = &value
 	}
-	return &clientDetails{
+	return &ClientDetails{
 		Agent:           &Agent,
 		Channel:         &Channel,
 		Version:         &Version,

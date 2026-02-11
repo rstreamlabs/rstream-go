@@ -44,11 +44,11 @@ func (c *Client) apiDo(ctx context.Context, method, path string, query url.Value
 		}
 	}
 	if token == nil {
-		clientDetails, err := c.getClientDetails(engine, nil)
+		ClientDetails, err := c.getClientDetails(engine, nil)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to get client details: %w", err)
 		}
-		token = clientDetails.Token
+		token = ClientDetails.Token
 	}
 	httpc, err := c.apiHttpClient()
 	if err != nil {

@@ -9,14 +9,15 @@
 package pb
 
 import (
+	reflect "reflect"
+	sync "sync"
+	unsafe "unsafe"
+
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	wrapperspb "google.golang.org/protobuf/types/known/wrapperspb"
-	reflect "reflect"
-	sync "sync"
-	unsafe "unsafe"
 )
 
 const (
@@ -550,7 +551,7 @@ func (x *TunnelProperties) GetChallengeMode() *wrapperspb.BoolValue {
 
 type OpenControlChannelReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ClientDetails *ClientDetails         `protobuf:"bytes,1,opt,name=client_details,json=clientDetails,proto3" json:"client_details,omitempty"`
+	ClientDetails *ClientDetails         `protobuf:"bytes,1,opt,name=client_details,json=ClientDetails,proto3" json:"client_details,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1098,7 +1099,7 @@ func (x *ProxyConnRsp) GetError() *Error {
 
 type ProxyReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ClientDetails *ClientDetails         `protobuf:"bytes,1,opt,name=client_details,json=clientDetails,proto3" json:"client_details,omitempty"`
+	ClientDetails *ClientDetails         `protobuf:"bytes,1,opt,name=client_details,json=ClientDetails,proto3" json:"client_details,omitempty"`
 	StreamId      string                 `protobuf:"bytes,2,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
 	ZeroRtt       *wrapperspb.BoolValue  `protobuf:"bytes,3,opt,name=zero_rtt,json=zeroRtt,proto3" json:"zero_rtt,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1202,7 +1203,7 @@ func (x *ProxyRsp) GetError() *Error {
 
 type StreamReq struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	ClientDetails *ClientDetails         `protobuf:"bytes,1,opt,name=client_details,json=clientDetails,proto3" json:"client_details,omitempty"`
+	ClientDetails *ClientDetails         `protobuf:"bytes,1,opt,name=client_details,json=ClientDetails,proto3" json:"client_details,omitempty"`
 	TunnelIdName  string                 `protobuf:"bytes,2,opt,name=tunnel_id_name,json=tunnelIdName,proto3" json:"tunnel_id_name,omitempty"`
 	ZeroRtt       *wrapperspb.BoolValue  `protobuf:"bytes,3,opt,name=zero_rtt,json=zeroRtt,proto3" json:"zero_rtt,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -1890,7 +1891,7 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"h\n" +
 	"\x15OpenControlChannelReq\x12O\n" +
-	"\x0eclient_details\x18\x01 \x01(\v2(.rstream.io_rstrm.protobuf.ClientDetailsR\rclientDetails\"\x97\x02\n" +
+	"\x0eclient_details\x18\x01 \x01(\v2(.rstream.io_rstrm.protobuf.ClientDetailsR\rClientDetails\"\x97\x02\n" +
 	"\x15OpenControlChannelRsp\x12E\n" +
 	"\x02ok\x18\x01 \x01(\v23.rstream.io_rstrm.protobuf.OpenControlChannelRsp.OkH\x00R\x02ok\x128\n" +
 	"\x05error\x18\x02 \x01(\v2 .rstream.io_rstrm.protobuf.ErrorH\x00R\x05error\x1ar\n" +
@@ -1923,13 +1924,13 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\tstream_id\x18\x01 \x01(\tR\bstreamId\x126\n" +
 	"\x05error\x18\x02 \x01(\v2 .rstream.io_rstrm.protobuf.ErrorR\x05error\"\xaf\x01\n" +
 	"\bProxyReq\x12O\n" +
-	"\x0eclient_details\x18\x01 \x01(\v2(.rstream.io_rstrm.protobuf.ClientDetailsR\rclientDetails\x12\x1b\n" +
+	"\x0eclient_details\x18\x01 \x01(\v2(.rstream.io_rstrm.protobuf.ClientDetailsR\rClientDetails\x12\x1b\n" +
 	"\tstream_id\x18\x02 \x01(\tR\bstreamId\x125\n" +
 	"\bzero_rtt\x18\x03 \x01(\v2\x1a.google.protobuf.BoolValueR\azeroRtt\"B\n" +
 	"\bProxyRsp\x126\n" +
 	"\x05error\x18\x01 \x01(\v2 .rstream.io_rstrm.protobuf.ErrorR\x05error\"\xb9\x01\n" +
 	"\tStreamReq\x12O\n" +
-	"\x0eclient_details\x18\x01 \x01(\v2(.rstream.io_rstrm.protobuf.ClientDetailsR\rclientDetails\x12$\n" +
+	"\x0eclient_details\x18\x01 \x01(\v2(.rstream.io_rstrm.protobuf.ClientDetailsR\rClientDetails\x12$\n" +
 	"\x0etunnel_id_name\x18\x02 \x01(\tR\ftunnelIdName\x125\n" +
 	"\bzero_rtt\x18\x03 \x01(\v2\x1a.google.protobuf.BoolValueR\azeroRtt\"o\n" +
 	"\tStreamRsp\x12\x1d\n" +
