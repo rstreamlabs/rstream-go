@@ -189,12 +189,22 @@ func getClientDetails(token *string) (*clientDetails, error) {
 		}
 	}
 	compiletime_identity := CompiletimeIdentity()
+	var osValue *string
+	if compiletime_identity.OS != "" {
+		value := compiletime_identity.OS
+		osValue = &value
+	}
+	var archValue *string
+	if compiletime_identity.Arch != "" {
+		value := compiletime_identity.Arch
+		archValue = &value
+	}
 	return &clientDetails{
 		Agent:           &Agent,
 		Channel:         &Channel,
 		Version:         &Version,
-		OS:              &compiletime_identity.OS,
-		Arch:            &compiletime_identity.Arch,
+		OS:              osValue,
+		Arch:            archValue,
 		Token:           token,
 		ProtocolVersion: protocolVersion,
 	}, nil

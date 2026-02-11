@@ -10,7 +10,7 @@ import "golang.org/x/sys/unix"
 func runtimeIdentity() Identity {
 	var u unix.Utsname
 	if err := unix.Uname(&u); err != nil {
-		return CompiletimeIdentity()
+		return Identity{}
 	}
 	return Identity{
 		OS:   utsString(u.Sysname[:]),
