@@ -252,39 +252,128 @@ func (x *ClientDetails) GetProtocolVersion() *wrapperspb.StringValue {
 	return nil
 }
 
+type ServerDetails struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	Agent         *wrapperspb.StringValue `protobuf:"bytes,1,opt,name=agent,proto3" json:"agent,omitempty"`
+	Channel       *wrapperspb.StringValue `protobuf:"bytes,2,opt,name=channel,proto3" json:"channel,omitempty"`
+	Version       *wrapperspb.StringValue `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`
+	Plan          *wrapperspb.StringValue `protobuf:"bytes,4,opt,name=plan,proto3" json:"plan,omitempty"`
+	Provider      *wrapperspb.StringValue `protobuf:"bytes,5,opt,name=provider,proto3" json:"provider,omitempty"`
+	Region        *wrapperspb.StringValue `protobuf:"bytes,6,opt,name=region,proto3" json:"region,omitempty"`
+	Update        *wrapperspb.StringValue `protobuf:"bytes,7,opt,name=update,proto3" json:"update,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ServerDetails) Reset() {
+	*x = ServerDetails{}
+	mi := &file_pb_rstream_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ServerDetails) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ServerDetails) ProtoMessage() {}
+
+func (x *ServerDetails) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_rstream_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ServerDetails.ProtoReflect.Descriptor instead.
+func (*ServerDetails) Descriptor() ([]byte, []int) {
+	return file_pb_rstream_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ServerDetails) GetAgent() *wrapperspb.StringValue {
+	if x != nil {
+		return x.Agent
+	}
+	return nil
+}
+
+func (x *ServerDetails) GetChannel() *wrapperspb.StringValue {
+	if x != nil {
+		return x.Channel
+	}
+	return nil
+}
+
+func (x *ServerDetails) GetVersion() *wrapperspb.StringValue {
+	if x != nil {
+		return x.Version
+	}
+	return nil
+}
+
+func (x *ServerDetails) GetPlan() *wrapperspb.StringValue {
+	if x != nil {
+		return x.Plan
+	}
+	return nil
+}
+
+func (x *ServerDetails) GetProvider() *wrapperspb.StringValue {
+	if x != nil {
+		return x.Provider
+	}
+	return nil
+}
+
+func (x *ServerDetails) GetRegion() *wrapperspb.StringValue {
+	if x != nil {
+		return x.Region
+	}
+	return nil
+}
+
+func (x *ServerDetails) GetUpdate() *wrapperspb.StringValue {
+	if x != nil {
+		return x.Update
+	}
+	return nil
+}
+
 type TunnelProperties struct {
-	state          protoimpl.MessageState  `protogen:"open.v1"`
-	Id             *wrapperspb.StringValue `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	CreationDate   *timestamppb.Timestamp  `protobuf:"bytes,2,opt,name=creation_date,json=creationDate,proto3" json:"creation_date,omitempty"`
-	Name           *wrapperspb.StringValue `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
-	Type           *wrapperspb.StringValue `protobuf:"bytes,4,opt,name=type,proto3" json:"type,omitempty"`
-	Publish        *wrapperspb.BoolValue   `protobuf:"bytes,5,opt,name=publish,proto3" json:"publish,omitempty"`
-	Protocol       *wrapperspb.StringValue `protobuf:"bytes,6,opt,name=protocol,proto3" json:"protocol,omitempty"`
-	Labels         map[string]string       `protobuf:"bytes,7,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Geoip          []string                `protobuf:"bytes,8,rep,name=geoip,proto3" json:"geoip,omitempty"`
-	TrustedIps     []string                `protobuf:"bytes,9,rep,name=trusted_ips,json=trustedIps,proto3" json:"trusted_ips,omitempty"`
-	Host           *wrapperspb.StringValue `protobuf:"bytes,10,opt,name=host,proto3" json:"host,omitempty"`
-	TlsMode        *wrapperspb.StringValue `protobuf:"bytes,11,opt,name=tls_mode,json=tlsMode,proto3" json:"tls_mode,omitempty"`
-	TlsAlpns       []string                `protobuf:"bytes,12,rep,name=tls_alpns,json=tlsAlpns,proto3" json:"tls_alpns,omitempty"`
-	TlsMinVersion  *wrapperspb.StringValue `protobuf:"bytes,13,opt,name=tls_min_version,json=tlsMinVersion,proto3" json:"tls_min_version,omitempty"`
-	TlsCiphers     []string                `protobuf:"bytes,14,rep,name=tls_ciphers,json=tlsCiphers,proto3" json:"tls_ciphers,omitempty"`
-	Mtls           *wrapperspb.BoolValue   `protobuf:"bytes,15,opt,name=mtls,proto3" json:"mtls,omitempty"`
-	MtlsCacertPem  *wrapperspb.StringValue `protobuf:"bytes,16,opt,name=mtls_cacert_pem,json=mtlsCacertPem,proto3" json:"mtls_cacert_pem,omitempty"`
-	HttpVersion    *wrapperspb.StringValue `protobuf:"bytes,17,opt,name=http_version,json=httpVersion,proto3" json:"http_version,omitempty"`
-	HttpUseTls     *wrapperspb.BoolValue   `protobuf:"bytes,18,opt,name=http_use_tls,json=httpUseTls,proto3" json:"http_use_tls,omitempty"`
-	TokenAuth      *wrapperspb.BoolValue   `protobuf:"bytes,19,opt,name=token_auth,json=tokenAuth,proto3" json:"token_auth,omitempty"`
-	Sso            *wrapperspb.BoolValue   `protobuf:"bytes,20,opt,name=sso,proto3" json:"sso,omitempty"`
-	SsoProviders   []string                `protobuf:"bytes,21,rep,name=sso_providers,json=ssoProviders,proto3" json:"sso_providers,omitempty"`
-	EmailWhitelist []string                `protobuf:"bytes,22,rep,name=email_whitelist,json=emailWhitelist,proto3" json:"email_whitelist,omitempty"`
-	EmailBlacklist []string                `protobuf:"bytes,23,rep,name=email_blacklist,json=emailBlacklist,proto3" json:"email_blacklist,omitempty"`
-	Challenge      *wrapperspb.BoolValue   `protobuf:"bytes,24,opt,name=challenge,proto3" json:"challenge,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	Id            *wrapperspb.StringValue `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	CreationDate  *timestamppb.Timestamp  `protobuf:"bytes,2,opt,name=creation_date,json=creationDate,proto3" json:"creation_date,omitempty"`
+	Name          *wrapperspb.StringValue `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	Type          *wrapperspb.StringValue `protobuf:"bytes,4,opt,name=type,proto3" json:"type,omitempty"`
+	Publish       *wrapperspb.BoolValue   `protobuf:"bytes,5,opt,name=publish,proto3" json:"publish,omitempty"`
+	Protocol      *wrapperspb.StringValue `protobuf:"bytes,6,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	Labels        map[string]string       `protobuf:"bytes,7,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Geoip         []string                `protobuf:"bytes,8,rep,name=geoip,proto3" json:"geoip,omitempty"`
+	TrustedIps    []string                `protobuf:"bytes,9,rep,name=trusted_ips,json=trustedIps,proto3" json:"trusted_ips,omitempty"`
+	Host          *wrapperspb.StringValue `protobuf:"bytes,10,opt,name=host,proto3" json:"host,omitempty"`
+	TlsMode       *wrapperspb.StringValue `protobuf:"bytes,11,opt,name=tls_mode,json=tlsMode,proto3" json:"tls_mode,omitempty"`
+	TlsAlpns      []string                `protobuf:"bytes,12,rep,name=tls_alpns,json=tlsAlpns,proto3" json:"tls_alpns,omitempty"`
+	TlsMinVersion *wrapperspb.StringValue `protobuf:"bytes,13,opt,name=tls_min_version,json=tlsMinVersion,proto3" json:"tls_min_version,omitempty"`
+	TlsCiphers    []string                `protobuf:"bytes,14,rep,name=tls_ciphers,json=tlsCiphers,proto3" json:"tls_ciphers,omitempty"`
+	Mtls          *wrapperspb.BoolValue   `protobuf:"bytes,15,opt,name=mtls,proto3" json:"mtls,omitempty"`
+	MtlsCacertPem *wrapperspb.StringValue `protobuf:"bytes,16,opt,name=mtls_cacert_pem,json=mtlsCacertPem,proto3" json:"mtls_cacert_pem,omitempty"`
+	HttpVersion   *wrapperspb.StringValue `protobuf:"bytes,17,opt,name=http_version,json=httpVersion,proto3" json:"http_version,omitempty"`
+	HttpUseTls    *wrapperspb.BoolValue   `protobuf:"bytes,18,opt,name=http_use_tls,json=httpUseTls,proto3" json:"http_use_tls,omitempty"`
+	TokenAuth     *wrapperspb.BoolValue   `protobuf:"bytes,19,opt,name=token_auth,json=tokenAuth,proto3" json:"token_auth,omitempty"`
+	RstreamAuth   *wrapperspb.BoolValue   `protobuf:"bytes,20,opt,name=rstream_auth,json=rstreamAuth,proto3" json:"rstream_auth,omitempty"`
+	ChallengeMode *wrapperspb.BoolValue   `protobuf:"bytes,21,opt,name=challenge_mode,json=challengeMode,proto3" json:"challenge_mode,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TunnelProperties) Reset() {
 	*x = TunnelProperties{}
-	mi := &file_pb_rstream_proto_msgTypes[3]
+	mi := &file_pb_rstream_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -296,7 +385,7 @@ func (x *TunnelProperties) String() string {
 func (*TunnelProperties) ProtoMessage() {}
 
 func (x *TunnelProperties) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[3]
+	mi := &file_pb_rstream_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -309,7 +398,7 @@ func (x *TunnelProperties) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelProperties.ProtoReflect.Descriptor instead.
 func (*TunnelProperties) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{3}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *TunnelProperties) GetId() *wrapperspb.StringValue {
@@ -445,37 +534,16 @@ func (x *TunnelProperties) GetTokenAuth() *wrapperspb.BoolValue {
 	return nil
 }
 
-func (x *TunnelProperties) GetSso() *wrapperspb.BoolValue {
+func (x *TunnelProperties) GetRstreamAuth() *wrapperspb.BoolValue {
 	if x != nil {
-		return x.Sso
+		return x.RstreamAuth
 	}
 	return nil
 }
 
-func (x *TunnelProperties) GetSsoProviders() []string {
+func (x *TunnelProperties) GetChallengeMode() *wrapperspb.BoolValue {
 	if x != nil {
-		return x.SsoProviders
-	}
-	return nil
-}
-
-func (x *TunnelProperties) GetEmailWhitelist() []string {
-	if x != nil {
-		return x.EmailWhitelist
-	}
-	return nil
-}
-
-func (x *TunnelProperties) GetEmailBlacklist() []string {
-	if x != nil {
-		return x.EmailBlacklist
-	}
-	return nil
-}
-
-func (x *TunnelProperties) GetChallenge() *wrapperspb.BoolValue {
-	if x != nil {
-		return x.Challenge
+		return x.ChallengeMode
 	}
 	return nil
 }
@@ -489,7 +557,7 @@ type OpenControlChannelReq struct {
 
 func (x *OpenControlChannelReq) Reset() {
 	*x = OpenControlChannelReq{}
-	mi := &file_pb_rstream_proto_msgTypes[4]
+	mi := &file_pb_rstream_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -501,7 +569,7 @@ func (x *OpenControlChannelReq) String() string {
 func (*OpenControlChannelReq) ProtoMessage() {}
 
 func (x *OpenControlChannelReq) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[4]
+	mi := &file_pb_rstream_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -514,7 +582,7 @@ func (x *OpenControlChannelReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenControlChannelReq.ProtoReflect.Descriptor instead.
 func (*OpenControlChannelReq) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{4}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *OpenControlChannelReq) GetClientDetails() *ClientDetails {
@@ -537,7 +605,7 @@ type OpenControlChannelRsp struct {
 
 func (x *OpenControlChannelRsp) Reset() {
 	*x = OpenControlChannelRsp{}
-	mi := &file_pb_rstream_proto_msgTypes[5]
+	mi := &file_pb_rstream_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -549,7 +617,7 @@ func (x *OpenControlChannelRsp) String() string {
 func (*OpenControlChannelRsp) ProtoMessage() {}
 
 func (x *OpenControlChannelRsp) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[5]
+	mi := &file_pb_rstream_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -562,7 +630,7 @@ func (x *OpenControlChannelRsp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenControlChannelRsp.ProtoReflect.Descriptor instead.
 func (*OpenControlChannelRsp) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{5}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *OpenControlChannelRsp) GetPayload() isOpenControlChannelRsp_Payload {
@@ -614,7 +682,7 @@ type CloseControlChannelReq struct {
 
 func (x *CloseControlChannelReq) Reset() {
 	*x = CloseControlChannelReq{}
-	mi := &file_pb_rstream_proto_msgTypes[6]
+	mi := &file_pb_rstream_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -626,7 +694,7 @@ func (x *CloseControlChannelReq) String() string {
 func (*CloseControlChannelReq) ProtoMessage() {}
 
 func (x *CloseControlChannelReq) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[6]
+	mi := &file_pb_rstream_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -639,7 +707,7 @@ func (x *CloseControlChannelReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseControlChannelReq.ProtoReflect.Descriptor instead.
 func (*CloseControlChannelReq) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{6}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{7}
 }
 
 type CloseControlChannelRsp struct {
@@ -650,7 +718,7 @@ type CloseControlChannelRsp struct {
 
 func (x *CloseControlChannelRsp) Reset() {
 	*x = CloseControlChannelRsp{}
-	mi := &file_pb_rstream_proto_msgTypes[7]
+	mi := &file_pb_rstream_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -662,7 +730,7 @@ func (x *CloseControlChannelRsp) String() string {
 func (*CloseControlChannelRsp) ProtoMessage() {}
 
 func (x *CloseControlChannelRsp) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[7]
+	mi := &file_pb_rstream_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -675,7 +743,7 @@ func (x *CloseControlChannelRsp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseControlChannelRsp.ProtoReflect.Descriptor instead.
 func (*CloseControlChannelRsp) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{7}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{8}
 }
 
 type OpenTunnelReq struct {
@@ -688,7 +756,7 @@ type OpenTunnelReq struct {
 
 func (x *OpenTunnelReq) Reset() {
 	*x = OpenTunnelReq{}
-	mi := &file_pb_rstream_proto_msgTypes[8]
+	mi := &file_pb_rstream_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -700,7 +768,7 @@ func (x *OpenTunnelReq) String() string {
 func (*OpenTunnelReq) ProtoMessage() {}
 
 func (x *OpenTunnelReq) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[8]
+	mi := &file_pb_rstream_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -713,7 +781,7 @@ func (x *OpenTunnelReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenTunnelReq.ProtoReflect.Descriptor instead.
 func (*OpenTunnelReq) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{8}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *OpenTunnelReq) GetRequestId() string {
@@ -744,7 +812,7 @@ type OpenTunnelRsp struct {
 
 func (x *OpenTunnelRsp) Reset() {
 	*x = OpenTunnelRsp{}
-	mi := &file_pb_rstream_proto_msgTypes[9]
+	mi := &file_pb_rstream_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -756,7 +824,7 @@ func (x *OpenTunnelRsp) String() string {
 func (*OpenTunnelRsp) ProtoMessage() {}
 
 func (x *OpenTunnelRsp) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[9]
+	mi := &file_pb_rstream_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -769,7 +837,7 @@ func (x *OpenTunnelRsp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenTunnelRsp.ProtoReflect.Descriptor instead.
 func (*OpenTunnelRsp) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{9}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *OpenTunnelRsp) GetRequestId() string {
@@ -829,7 +897,7 @@ type CloseTunnelReq struct {
 
 func (x *CloseTunnelReq) Reset() {
 	*x = CloseTunnelReq{}
-	mi := &file_pb_rstream_proto_msgTypes[10]
+	mi := &file_pb_rstream_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -841,7 +909,7 @@ func (x *CloseTunnelReq) String() string {
 func (*CloseTunnelReq) ProtoMessage() {}
 
 func (x *CloseTunnelReq) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[10]
+	mi := &file_pb_rstream_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -854,7 +922,7 @@ func (x *CloseTunnelReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseTunnelReq.ProtoReflect.Descriptor instead.
 func (*CloseTunnelReq) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{10}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *CloseTunnelReq) GetTunnelId() string {
@@ -873,7 +941,7 @@ type CloseTunnelRsp struct {
 
 func (x *CloseTunnelRsp) Reset() {
 	*x = CloseTunnelRsp{}
-	mi := &file_pb_rstream_proto_msgTypes[11]
+	mi := &file_pb_rstream_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -885,7 +953,7 @@ func (x *CloseTunnelRsp) String() string {
 func (*CloseTunnelRsp) ProtoMessage() {}
 
 func (x *CloseTunnelRsp) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[11]
+	mi := &file_pb_rstream_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -898,7 +966,7 @@ func (x *CloseTunnelRsp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseTunnelRsp.ProtoReflect.Descriptor instead.
 func (*CloseTunnelRsp) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{11}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *CloseTunnelRsp) GetTunnelId() string {
@@ -920,7 +988,7 @@ type ProxyConnReq struct {
 
 func (x *ProxyConnReq) Reset() {
 	*x = ProxyConnReq{}
-	mi := &file_pb_rstream_proto_msgTypes[12]
+	mi := &file_pb_rstream_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -932,7 +1000,7 @@ func (x *ProxyConnReq) String() string {
 func (*ProxyConnReq) ProtoMessage() {}
 
 func (x *ProxyConnReq) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[12]
+	mi := &file_pb_rstream_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -945,7 +1013,7 @@ func (x *ProxyConnReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyConnReq.ProtoReflect.Descriptor instead.
 func (*ProxyConnReq) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{12}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ProxyConnReq) GetTunnelId() string {
@@ -986,7 +1054,7 @@ type ProxyConnRsp struct {
 
 func (x *ProxyConnRsp) Reset() {
 	*x = ProxyConnRsp{}
-	mi := &file_pb_rstream_proto_msgTypes[13]
+	mi := &file_pb_rstream_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -998,7 +1066,7 @@ func (x *ProxyConnRsp) String() string {
 func (*ProxyConnRsp) ProtoMessage() {}
 
 func (x *ProxyConnRsp) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[13]
+	mi := &file_pb_rstream_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1011,7 +1079,7 @@ func (x *ProxyConnRsp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyConnRsp.ProtoReflect.Descriptor instead.
 func (*ProxyConnRsp) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{13}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ProxyConnRsp) GetStreamId() string {
@@ -1039,7 +1107,7 @@ type ProxyReq struct {
 
 func (x *ProxyReq) Reset() {
 	*x = ProxyReq{}
-	mi := &file_pb_rstream_proto_msgTypes[14]
+	mi := &file_pb_rstream_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1051,7 +1119,7 @@ func (x *ProxyReq) String() string {
 func (*ProxyReq) ProtoMessage() {}
 
 func (x *ProxyReq) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[14]
+	mi := &file_pb_rstream_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1064,7 +1132,7 @@ func (x *ProxyReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyReq.ProtoReflect.Descriptor instead.
 func (*ProxyReq) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{14}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ProxyReq) GetClientDetails() *ClientDetails {
@@ -1097,7 +1165,7 @@ type ProxyRsp struct {
 
 func (x *ProxyRsp) Reset() {
 	*x = ProxyRsp{}
-	mi := &file_pb_rstream_proto_msgTypes[15]
+	mi := &file_pb_rstream_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1109,7 +1177,7 @@ func (x *ProxyRsp) String() string {
 func (*ProxyRsp) ProtoMessage() {}
 
 func (x *ProxyRsp) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[15]
+	mi := &file_pb_rstream_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1122,7 +1190,7 @@ func (x *ProxyRsp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProxyRsp.ProtoReflect.Descriptor instead.
 func (*ProxyRsp) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{15}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ProxyRsp) GetError() *Error {
@@ -1143,7 +1211,7 @@ type StreamReq struct {
 
 func (x *StreamReq) Reset() {
 	*x = StreamReq{}
-	mi := &file_pb_rstream_proto_msgTypes[16]
+	mi := &file_pb_rstream_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1155,7 +1223,7 @@ func (x *StreamReq) String() string {
 func (*StreamReq) ProtoMessage() {}
 
 func (x *StreamReq) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[16]
+	mi := &file_pb_rstream_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1168,7 +1236,7 @@ func (x *StreamReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamReq.ProtoReflect.Descriptor instead.
 func (*StreamReq) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{16}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *StreamReq) GetClientDetails() *ClientDetails {
@@ -1205,7 +1273,7 @@ type StreamRsp struct {
 
 func (x *StreamRsp) Reset() {
 	*x = StreamRsp{}
-	mi := &file_pb_rstream_proto_msgTypes[17]
+	mi := &file_pb_rstream_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1217,7 +1285,7 @@ func (x *StreamRsp) String() string {
 func (*StreamRsp) ProtoMessage() {}
 
 func (x *StreamRsp) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[17]
+	mi := &file_pb_rstream_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1230,7 +1298,7 @@ func (x *StreamRsp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamRsp.ProtoReflect.Descriptor instead.
 func (*StreamRsp) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{17}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *StreamRsp) GetPayload() isStreamRsp_Payload {
@@ -1282,7 +1350,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_pb_rstream_proto_msgTypes[18]
+	mi := &file_pb_rstream_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1294,7 +1362,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[18]
+	mi := &file_pb_rstream_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1307,7 +1375,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{18}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{19}
 }
 
 // Allows the server to send unsolicited messages to the client
@@ -1320,7 +1388,7 @@ type ServerMessage struct {
 
 func (x *ServerMessage) Reset() {
 	*x = ServerMessage{}
-	mi := &file_pb_rstream_proto_msgTypes[19]
+	mi := &file_pb_rstream_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1332,7 +1400,7 @@ func (x *ServerMessage) String() string {
 func (*ServerMessage) ProtoMessage() {}
 
 func (x *ServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[19]
+	mi := &file_pb_rstream_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1345,7 +1413,7 @@ func (x *ServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerMessage.ProtoReflect.Descriptor instead.
 func (*ServerMessage) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{19}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ServerMessage) GetMessage() string {
@@ -1382,7 +1450,7 @@ type Message struct {
 
 func (x *Message) Reset() {
 	*x = Message{}
-	mi := &file_pb_rstream_proto_msgTypes[20]
+	mi := &file_pb_rstream_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1394,7 +1462,7 @@ func (x *Message) String() string {
 func (*Message) ProtoMessage() {}
 
 func (x *Message) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[20]
+	mi := &file_pb_rstream_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1407,7 +1475,7 @@ func (x *Message) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Message.ProtoReflect.Descriptor instead.
 func (*Message) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{20}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *Message) GetPayload() isMessage_Payload {
@@ -1662,16 +1730,16 @@ func (*Message_Heartbeat) isMessage_Payload() {}
 func (*Message_ServerMessage) isMessage_Payload() {}
 
 type OpenControlChannelRsp_Ok struct {
-	state         protoimpl.MessageState                  `protogen:"open.v1"`
-	ClientId      string                                  `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
-	ServerDetails *OpenControlChannelRsp_Ok_ServerDetails `protobuf:"bytes,2,opt,name=server_details,json=serverDetails,proto3" json:"server_details,omitempty"`
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ClientId      string                 `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	ServerDetails *ServerDetails         `protobuf:"bytes,2,opt,name=server_details,json=serverDetails,proto3" json:"server_details,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *OpenControlChannelRsp_Ok) Reset() {
 	*x = OpenControlChannelRsp_Ok{}
-	mi := &file_pb_rstream_proto_msgTypes[22]
+	mi := &file_pb_rstream_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1683,7 +1751,7 @@ func (x *OpenControlChannelRsp_Ok) String() string {
 func (*OpenControlChannelRsp_Ok) ProtoMessage() {}
 
 func (x *OpenControlChannelRsp_Ok) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[22]
+	mi := &file_pb_rstream_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1696,7 +1764,7 @@ func (x *OpenControlChannelRsp_Ok) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenControlChannelRsp_Ok.ProtoReflect.Descriptor instead.
 func (*OpenControlChannelRsp_Ok) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{5, 0}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{6, 0}
 }
 
 func (x *OpenControlChannelRsp_Ok) GetClientId() string {
@@ -1706,101 +1774,9 @@ func (x *OpenControlChannelRsp_Ok) GetClientId() string {
 	return ""
 }
 
-func (x *OpenControlChannelRsp_Ok) GetServerDetails() *OpenControlChannelRsp_Ok_ServerDetails {
+func (x *OpenControlChannelRsp_Ok) GetServerDetails() *ServerDetails {
 	if x != nil {
 		return x.ServerDetails
-	}
-	return nil
-}
-
-type OpenControlChannelRsp_Ok_ServerDetails struct {
-	state         protoimpl.MessageState  `protogen:"open.v1"`
-	Agent         *wrapperspb.StringValue `protobuf:"bytes,1,opt,name=agent,proto3" json:"agent,omitempty"`
-	Channel       *wrapperspb.StringValue `protobuf:"bytes,2,opt,name=channel,proto3" json:"channel,omitempty"`
-	Version       *wrapperspb.StringValue `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`
-	Plan          *wrapperspb.StringValue `protobuf:"bytes,4,opt,name=plan,proto3" json:"plan,omitempty"`
-	Provider      *wrapperspb.StringValue `protobuf:"bytes,5,opt,name=provider,proto3" json:"provider,omitempty"`
-	Region        *wrapperspb.StringValue `protobuf:"bytes,6,opt,name=region,proto3" json:"region,omitempty"`
-	Update        *wrapperspb.StringValue `protobuf:"bytes,7,opt,name=update,proto3" json:"update,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *OpenControlChannelRsp_Ok_ServerDetails) Reset() {
-	*x = OpenControlChannelRsp_Ok_ServerDetails{}
-	mi := &file_pb_rstream_proto_msgTypes[23]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *OpenControlChannelRsp_Ok_ServerDetails) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*OpenControlChannelRsp_Ok_ServerDetails) ProtoMessage() {}
-
-func (x *OpenControlChannelRsp_Ok_ServerDetails) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[23]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use OpenControlChannelRsp_Ok_ServerDetails.ProtoReflect.Descriptor instead.
-func (*OpenControlChannelRsp_Ok_ServerDetails) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{5, 0, 0}
-}
-
-func (x *OpenControlChannelRsp_Ok_ServerDetails) GetAgent() *wrapperspb.StringValue {
-	if x != nil {
-		return x.Agent
-	}
-	return nil
-}
-
-func (x *OpenControlChannelRsp_Ok_ServerDetails) GetChannel() *wrapperspb.StringValue {
-	if x != nil {
-		return x.Channel
-	}
-	return nil
-}
-
-func (x *OpenControlChannelRsp_Ok_ServerDetails) GetVersion() *wrapperspb.StringValue {
-	if x != nil {
-		return x.Version
-	}
-	return nil
-}
-
-func (x *OpenControlChannelRsp_Ok_ServerDetails) GetPlan() *wrapperspb.StringValue {
-	if x != nil {
-		return x.Plan
-	}
-	return nil
-}
-
-func (x *OpenControlChannelRsp_Ok_ServerDetails) GetProvider() *wrapperspb.StringValue {
-	if x != nil {
-		return x.Provider
-	}
-	return nil
-}
-
-func (x *OpenControlChannelRsp_Ok_ServerDetails) GetRegion() *wrapperspb.StringValue {
-	if x != nil {
-		return x.Region
-	}
-	return nil
-}
-
-func (x *OpenControlChannelRsp_Ok_ServerDetails) GetUpdate() *wrapperspb.StringValue {
-	if x != nil {
-		return x.Update
 	}
 	return nil
 }
@@ -1855,7 +1831,15 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\x02os\x18\x04 \x01(\v2\x1c.google.protobuf.StringValueR\x02os\x120\n" +
 	"\x04arch\x18\x05 \x01(\v2\x1c.google.protobuf.StringValueR\x04arch\x122\n" +
 	"\x05token\x18\x06 \x01(\v2\x1c.google.protobuf.StringValueR\x05token\x12G\n" +
-	"\x10protocol_version\x18\a \x01(\v2\x1c.google.protobuf.StringValueR\x0fprotocolVersion\"\x94\r\n" +
+	"\x10protocol_version\x18\a \x01(\v2\x1c.google.protobuf.StringValueR\x0fprotocolVersion\"\x8b\x03\n" +
+	"\rServerDetails\x122\n" +
+	"\x05agent\x18\x01 \x01(\v2\x1c.google.protobuf.StringValueR\x05agent\x126\n" +
+	"\achannel\x18\x02 \x01(\v2\x1c.google.protobuf.StringValueR\achannel\x126\n" +
+	"\aversion\x18\x03 \x01(\v2\x1c.google.protobuf.StringValueR\aversion\x120\n" +
+	"\x04plan\x18\x04 \x01(\v2\x1c.google.protobuf.StringValueR\x04plan\x128\n" +
+	"\bprovider\x18\x05 \x01(\v2\x1c.google.protobuf.StringValueR\bprovider\x124\n" +
+	"\x06region\x18\x06 \x01(\v2\x1c.google.protobuf.StringValueR\x06region\x124\n" +
+	"\x06update\x18\a \x01(\v2\x1c.google.protobuf.StringValueR\x06update\"\x87\f\n" +
 	"\x10TunnelProperties\x12;\n" +
 	"\x02id\x18\x01 \x01(\v2\x1c.google.protobuf.StringValueB\r\x92\x82\x19\tread-onlyR\x02id\x12N\n" +
 	"\rcreation_date\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampB\r\x92\x82\x19\tread-onlyR\fcreationDate\x12@\n" +
@@ -1897,36 +1881,22 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"httpUseTls\x12I\n" +
 	"\n" +
 	"token_auth\x18\x13 \x01(\v2\x1a.google.protobuf.BoolValueB\x0e\x92\x82\x19\n" +
-	"read-writeR\ttokenAuth\x12<\n" +
-	"\x03sso\x18\x14 \x01(\v2\x1a.google.protobuf.BoolValueB\x0e\x92\x82\x19\n" +
-	"read-writeR\x03sso\x123\n" +
-	"\rsso_providers\x18\x15 \x03(\tB\x0e\x92\x82\x19\n" +
-	"read-writeR\fssoProviders\x127\n" +
-	"\x0femail_whitelist\x18\x16 \x03(\tB\x0e\x92\x82\x19\n" +
-	"read-writeR\x0eemailWhitelist\x127\n" +
-	"\x0femail_blacklist\x18\x17 \x03(\tB\x0e\x92\x82\x19\n" +
-	"read-writeR\x0eemailBlacklist\x12H\n" +
-	"\tchallenge\x18\x18 \x01(\v2\x1a.google.protobuf.BoolValueB\x0e\x92\x82\x19\n" +
-	"read-writeR\tchallenge\x1a9\n" +
+	"read-writeR\ttokenAuth\x12M\n" +
+	"\frstream_auth\x18\x14 \x01(\v2\x1a.google.protobuf.BoolValueB\x0e\x92\x82\x19\n" +
+	"read-writeR\vrstreamAuth\x12Q\n" +
+	"\x0echallenge_mode\x18\x15 \x01(\v2\x1a.google.protobuf.BoolValueB\x0e\x92\x82\x19\n" +
+	"read-writeR\rchallengeMode\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"h\n" +
 	"\x15OpenControlChannelReq\x12O\n" +
-	"\x0eclient_details\x18\x01 \x01(\v2(.rstream.io_rstrm.protobuf.ClientDetailsR\rclientDetails\"\xbf\x05\n" +
+	"\x0eclient_details\x18\x01 \x01(\v2(.rstream.io_rstrm.protobuf.ClientDetailsR\rclientDetails\"\x97\x02\n" +
 	"\x15OpenControlChannelRsp\x12E\n" +
 	"\x02ok\x18\x01 \x01(\v23.rstream.io_rstrm.protobuf.OpenControlChannelRsp.OkH\x00R\x02ok\x128\n" +
-	"\x05error\x18\x02 \x01(\v2 .rstream.io_rstrm.protobuf.ErrorH\x00R\x05error\x1a\x99\x04\n" +
+	"\x05error\x18\x02 \x01(\v2 .rstream.io_rstrm.protobuf.ErrorH\x00R\x05error\x1ar\n" +
 	"\x02Ok\x12\x1b\n" +
-	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12h\n" +
-	"\x0eserver_details\x18\x02 \x01(\v2A.rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.ServerDetailsR\rserverDetails\x1a\x8b\x03\n" +
-	"\rServerDetails\x122\n" +
-	"\x05agent\x18\x01 \x01(\v2\x1c.google.protobuf.StringValueR\x05agent\x126\n" +
-	"\achannel\x18\x02 \x01(\v2\x1c.google.protobuf.StringValueR\achannel\x126\n" +
-	"\aversion\x18\x03 \x01(\v2\x1c.google.protobuf.StringValueR\aversion\x120\n" +
-	"\x04plan\x18\x04 \x01(\v2\x1c.google.protobuf.StringValueR\x04plan\x128\n" +
-	"\bprovider\x18\x05 \x01(\v2\x1c.google.protobuf.StringValueR\bprovider\x124\n" +
-	"\x06region\x18\x06 \x01(\v2\x1c.google.protobuf.StringValueR\x06region\x124\n" +
-	"\x06update\x18\a \x01(\v2\x1c.google.protobuf.StringValueR\x06updateB\t\n" +
+	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12O\n" +
+	"\x0eserver_details\x18\x02 \x01(\v2(.rstream.io_rstrm.protobuf.ServerDetailsR\rserverDetailsB\t\n" +
 	"\apayload\"\x18\n" +
 	"\x16CloseControlChannelReq\"\x18\n" +
 	"\x16CloseControlChannelRsp\"\x88\x01\n" +
@@ -2008,35 +1978,35 @@ func file_pb_rstream_proto_rawDescGZIP() []byte {
 
 var file_pb_rstream_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_pb_rstream_proto_goTypes = []any{
-	(*IpAddress)(nil),                              // 0: rstream.io_rstrm.protobuf.IpAddress
-	(*Error)(nil),                                  // 1: rstream.io_rstrm.protobuf.Error
-	(*ClientDetails)(nil),                          // 2: rstream.io_rstrm.protobuf.ClientDetails
-	(*TunnelProperties)(nil),                       // 3: rstream.io_rstrm.protobuf.TunnelProperties
-	(*OpenControlChannelReq)(nil),                  // 4: rstream.io_rstrm.protobuf.OpenControlChannelReq
-	(*OpenControlChannelRsp)(nil),                  // 5: rstream.io_rstrm.protobuf.OpenControlChannelRsp
-	(*CloseControlChannelReq)(nil),                 // 6: rstream.io_rstrm.protobuf.CloseControlChannelReq
-	(*CloseControlChannelRsp)(nil),                 // 7: rstream.io_rstrm.protobuf.CloseControlChannelRsp
-	(*OpenTunnelReq)(nil),                          // 8: rstream.io_rstrm.protobuf.OpenTunnelReq
-	(*OpenTunnelRsp)(nil),                          // 9: rstream.io_rstrm.protobuf.OpenTunnelRsp
-	(*CloseTunnelReq)(nil),                         // 10: rstream.io_rstrm.protobuf.CloseTunnelReq
-	(*CloseTunnelRsp)(nil),                         // 11: rstream.io_rstrm.protobuf.CloseTunnelRsp
-	(*ProxyConnReq)(nil),                           // 12: rstream.io_rstrm.protobuf.ProxyConnReq
-	(*ProxyConnRsp)(nil),                           // 13: rstream.io_rstrm.protobuf.ProxyConnRsp
-	(*ProxyReq)(nil),                               // 14: rstream.io_rstrm.protobuf.ProxyReq
-	(*ProxyRsp)(nil),                               // 15: rstream.io_rstrm.protobuf.ProxyRsp
-	(*StreamReq)(nil),                              // 16: rstream.io_rstrm.protobuf.StreamReq
-	(*StreamRsp)(nil),                              // 17: rstream.io_rstrm.protobuf.StreamRsp
-	(*Heartbeat)(nil),                              // 18: rstream.io_rstrm.protobuf.Heartbeat
-	(*ServerMessage)(nil),                          // 19: rstream.io_rstrm.protobuf.ServerMessage
-	(*Message)(nil),                                // 20: rstream.io_rstrm.protobuf.Message
-	nil,                                            // 21: rstream.io_rstrm.protobuf.TunnelProperties.LabelsEntry
-	(*OpenControlChannelRsp_Ok)(nil),               // 22: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok
-	(*OpenControlChannelRsp_Ok_ServerDetails)(nil), // 23: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.ServerDetails
-	(*wrapperspb.StringValue)(nil),                 // 24: google.protobuf.StringValue
-	(*timestamppb.Timestamp)(nil),                  // 25: google.protobuf.Timestamp
-	(*wrapperspb.BoolValue)(nil),                   // 26: google.protobuf.BoolValue
-	(*descriptorpb.FileOptions)(nil),               // 27: google.protobuf.FileOptions
-	(*descriptorpb.FieldOptions)(nil),              // 28: google.protobuf.FieldOptions
+	(*IpAddress)(nil),                 // 0: rstream.io_rstrm.protobuf.IpAddress
+	(*Error)(nil),                     // 1: rstream.io_rstrm.protobuf.Error
+	(*ClientDetails)(nil),             // 2: rstream.io_rstrm.protobuf.ClientDetails
+	(*ServerDetails)(nil),             // 3: rstream.io_rstrm.protobuf.ServerDetails
+	(*TunnelProperties)(nil),          // 4: rstream.io_rstrm.protobuf.TunnelProperties
+	(*OpenControlChannelReq)(nil),     // 5: rstream.io_rstrm.protobuf.OpenControlChannelReq
+	(*OpenControlChannelRsp)(nil),     // 6: rstream.io_rstrm.protobuf.OpenControlChannelRsp
+	(*CloseControlChannelReq)(nil),    // 7: rstream.io_rstrm.protobuf.CloseControlChannelReq
+	(*CloseControlChannelRsp)(nil),    // 8: rstream.io_rstrm.protobuf.CloseControlChannelRsp
+	(*OpenTunnelReq)(nil),             // 9: rstream.io_rstrm.protobuf.OpenTunnelReq
+	(*OpenTunnelRsp)(nil),             // 10: rstream.io_rstrm.protobuf.OpenTunnelRsp
+	(*CloseTunnelReq)(nil),            // 11: rstream.io_rstrm.protobuf.CloseTunnelReq
+	(*CloseTunnelRsp)(nil),            // 12: rstream.io_rstrm.protobuf.CloseTunnelRsp
+	(*ProxyConnReq)(nil),              // 13: rstream.io_rstrm.protobuf.ProxyConnReq
+	(*ProxyConnRsp)(nil),              // 14: rstream.io_rstrm.protobuf.ProxyConnRsp
+	(*ProxyReq)(nil),                  // 15: rstream.io_rstrm.protobuf.ProxyReq
+	(*ProxyRsp)(nil),                  // 16: rstream.io_rstrm.protobuf.ProxyRsp
+	(*StreamReq)(nil),                 // 17: rstream.io_rstrm.protobuf.StreamReq
+	(*StreamRsp)(nil),                 // 18: rstream.io_rstrm.protobuf.StreamRsp
+	(*Heartbeat)(nil),                 // 19: rstream.io_rstrm.protobuf.Heartbeat
+	(*ServerMessage)(nil),             // 20: rstream.io_rstrm.protobuf.ServerMessage
+	(*Message)(nil),                   // 21: rstream.io_rstrm.protobuf.Message
+	nil,                               // 22: rstream.io_rstrm.protobuf.TunnelProperties.LabelsEntry
+	(*OpenControlChannelRsp_Ok)(nil),  // 23: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok
+	(*wrapperspb.StringValue)(nil),    // 24: google.protobuf.StringValue
+	(*timestamppb.Timestamp)(nil),     // 25: google.protobuf.Timestamp
+	(*wrapperspb.BoolValue)(nil),      // 26: google.protobuf.BoolValue
+	(*descriptorpb.FileOptions)(nil),  // 27: google.protobuf.FileOptions
+	(*descriptorpb.FieldOptions)(nil), // 28: google.protobuf.FieldOptions
 }
 var file_pb_rstream_proto_depIdxs = []int32{
 	24, // 0: rstream.io_rstrm.protobuf.Error.message:type_name -> google.protobuf.StringValue
@@ -2047,62 +2017,62 @@ var file_pb_rstream_proto_depIdxs = []int32{
 	24, // 5: rstream.io_rstrm.protobuf.ClientDetails.arch:type_name -> google.protobuf.StringValue
 	24, // 6: rstream.io_rstrm.protobuf.ClientDetails.token:type_name -> google.protobuf.StringValue
 	24, // 7: rstream.io_rstrm.protobuf.ClientDetails.protocol_version:type_name -> google.protobuf.StringValue
-	24, // 8: rstream.io_rstrm.protobuf.TunnelProperties.id:type_name -> google.protobuf.StringValue
-	25, // 9: rstream.io_rstrm.protobuf.TunnelProperties.creation_date:type_name -> google.protobuf.Timestamp
-	24, // 10: rstream.io_rstrm.protobuf.TunnelProperties.name:type_name -> google.protobuf.StringValue
-	24, // 11: rstream.io_rstrm.protobuf.TunnelProperties.type:type_name -> google.protobuf.StringValue
-	26, // 12: rstream.io_rstrm.protobuf.TunnelProperties.publish:type_name -> google.protobuf.BoolValue
-	24, // 13: rstream.io_rstrm.protobuf.TunnelProperties.protocol:type_name -> google.protobuf.StringValue
-	21, // 14: rstream.io_rstrm.protobuf.TunnelProperties.labels:type_name -> rstream.io_rstrm.protobuf.TunnelProperties.LabelsEntry
-	24, // 15: rstream.io_rstrm.protobuf.TunnelProperties.host:type_name -> google.protobuf.StringValue
-	24, // 16: rstream.io_rstrm.protobuf.TunnelProperties.tls_mode:type_name -> google.protobuf.StringValue
-	24, // 17: rstream.io_rstrm.protobuf.TunnelProperties.tls_min_version:type_name -> google.protobuf.StringValue
-	26, // 18: rstream.io_rstrm.protobuf.TunnelProperties.mtls:type_name -> google.protobuf.BoolValue
-	24, // 19: rstream.io_rstrm.protobuf.TunnelProperties.mtls_cacert_pem:type_name -> google.protobuf.StringValue
-	24, // 20: rstream.io_rstrm.protobuf.TunnelProperties.http_version:type_name -> google.protobuf.StringValue
-	26, // 21: rstream.io_rstrm.protobuf.TunnelProperties.http_use_tls:type_name -> google.protobuf.BoolValue
-	26, // 22: rstream.io_rstrm.protobuf.TunnelProperties.token_auth:type_name -> google.protobuf.BoolValue
-	26, // 23: rstream.io_rstrm.protobuf.TunnelProperties.sso:type_name -> google.protobuf.BoolValue
-	26, // 24: rstream.io_rstrm.protobuf.TunnelProperties.challenge:type_name -> google.protobuf.BoolValue
-	2,  // 25: rstream.io_rstrm.protobuf.OpenControlChannelReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
-	22, // 26: rstream.io_rstrm.protobuf.OpenControlChannelRsp.ok:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok
-	1,  // 27: rstream.io_rstrm.protobuf.OpenControlChannelRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
-	3,  // 28: rstream.io_rstrm.protobuf.OpenTunnelReq.tunnel_properties:type_name -> rstream.io_rstrm.protobuf.TunnelProperties
-	3,  // 29: rstream.io_rstrm.protobuf.OpenTunnelRsp.tunnel_properties:type_name -> rstream.io_rstrm.protobuf.TunnelProperties
-	1,  // 30: rstream.io_rstrm.protobuf.OpenTunnelRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
-	24, // 31: rstream.io_rstrm.protobuf.ProxyConnReq.secret:type_name -> google.protobuf.StringValue
-	0,  // 32: rstream.io_rstrm.protobuf.ProxyConnReq.source_ip:type_name -> rstream.io_rstrm.protobuf.IpAddress
-	1,  // 33: rstream.io_rstrm.protobuf.ProxyConnRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
-	2,  // 34: rstream.io_rstrm.protobuf.ProxyReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
-	26, // 35: rstream.io_rstrm.protobuf.ProxyReq.zero_rtt:type_name -> google.protobuf.BoolValue
-	1,  // 36: rstream.io_rstrm.protobuf.ProxyRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
-	2,  // 37: rstream.io_rstrm.protobuf.StreamReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
-	26, // 38: rstream.io_rstrm.protobuf.StreamReq.zero_rtt:type_name -> google.protobuf.BoolValue
-	1,  // 39: rstream.io_rstrm.protobuf.StreamRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
-	4,  // 40: rstream.io_rstrm.protobuf.Message.open_control_channel_req:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelReq
-	5,  // 41: rstream.io_rstrm.protobuf.Message.open_control_channel_rsp:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelRsp
-	6,  // 42: rstream.io_rstrm.protobuf.Message.close_control_channel_req:type_name -> rstream.io_rstrm.protobuf.CloseControlChannelReq
-	7,  // 43: rstream.io_rstrm.protobuf.Message.close_control_channel_rsp:type_name -> rstream.io_rstrm.protobuf.CloseControlChannelRsp
-	8,  // 44: rstream.io_rstrm.protobuf.Message.open_tunnel_req:type_name -> rstream.io_rstrm.protobuf.OpenTunnelReq
-	9,  // 45: rstream.io_rstrm.protobuf.Message.open_tunnel_rsp:type_name -> rstream.io_rstrm.protobuf.OpenTunnelRsp
-	10, // 46: rstream.io_rstrm.protobuf.Message.close_tunnel_req:type_name -> rstream.io_rstrm.protobuf.CloseTunnelReq
-	11, // 47: rstream.io_rstrm.protobuf.Message.close_tunnel_rsp:type_name -> rstream.io_rstrm.protobuf.CloseTunnelRsp
-	12, // 48: rstream.io_rstrm.protobuf.Message.proxy_conn_req:type_name -> rstream.io_rstrm.protobuf.ProxyConnReq
-	13, // 49: rstream.io_rstrm.protobuf.Message.proxy_conn_rsp:type_name -> rstream.io_rstrm.protobuf.ProxyConnRsp
-	14, // 50: rstream.io_rstrm.protobuf.Message.proxy_req:type_name -> rstream.io_rstrm.protobuf.ProxyReq
-	15, // 51: rstream.io_rstrm.protobuf.Message.proxy_rsp:type_name -> rstream.io_rstrm.protobuf.ProxyRsp
-	16, // 52: rstream.io_rstrm.protobuf.Message.stream_req:type_name -> rstream.io_rstrm.protobuf.StreamReq
-	17, // 53: rstream.io_rstrm.protobuf.Message.stream_rsp:type_name -> rstream.io_rstrm.protobuf.StreamRsp
-	18, // 54: rstream.io_rstrm.protobuf.Message.heartbeat:type_name -> rstream.io_rstrm.protobuf.Heartbeat
-	19, // 55: rstream.io_rstrm.protobuf.Message.server_message:type_name -> rstream.io_rstrm.protobuf.ServerMessage
-	23, // 56: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.server_details:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.ServerDetails
-	24, // 57: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.ServerDetails.agent:type_name -> google.protobuf.StringValue
-	24, // 58: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.ServerDetails.channel:type_name -> google.protobuf.StringValue
-	24, // 59: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.ServerDetails.version:type_name -> google.protobuf.StringValue
-	24, // 60: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.ServerDetails.plan:type_name -> google.protobuf.StringValue
-	24, // 61: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.ServerDetails.provider:type_name -> google.protobuf.StringValue
-	24, // 62: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.ServerDetails.region:type_name -> google.protobuf.StringValue
-	24, // 63: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.ServerDetails.update:type_name -> google.protobuf.StringValue
+	24, // 8: rstream.io_rstrm.protobuf.ServerDetails.agent:type_name -> google.protobuf.StringValue
+	24, // 9: rstream.io_rstrm.protobuf.ServerDetails.channel:type_name -> google.protobuf.StringValue
+	24, // 10: rstream.io_rstrm.protobuf.ServerDetails.version:type_name -> google.protobuf.StringValue
+	24, // 11: rstream.io_rstrm.protobuf.ServerDetails.plan:type_name -> google.protobuf.StringValue
+	24, // 12: rstream.io_rstrm.protobuf.ServerDetails.provider:type_name -> google.protobuf.StringValue
+	24, // 13: rstream.io_rstrm.protobuf.ServerDetails.region:type_name -> google.protobuf.StringValue
+	24, // 14: rstream.io_rstrm.protobuf.ServerDetails.update:type_name -> google.protobuf.StringValue
+	24, // 15: rstream.io_rstrm.protobuf.TunnelProperties.id:type_name -> google.protobuf.StringValue
+	25, // 16: rstream.io_rstrm.protobuf.TunnelProperties.creation_date:type_name -> google.protobuf.Timestamp
+	24, // 17: rstream.io_rstrm.protobuf.TunnelProperties.name:type_name -> google.protobuf.StringValue
+	24, // 18: rstream.io_rstrm.protobuf.TunnelProperties.type:type_name -> google.protobuf.StringValue
+	26, // 19: rstream.io_rstrm.protobuf.TunnelProperties.publish:type_name -> google.protobuf.BoolValue
+	24, // 20: rstream.io_rstrm.protobuf.TunnelProperties.protocol:type_name -> google.protobuf.StringValue
+	22, // 21: rstream.io_rstrm.protobuf.TunnelProperties.labels:type_name -> rstream.io_rstrm.protobuf.TunnelProperties.LabelsEntry
+	24, // 22: rstream.io_rstrm.protobuf.TunnelProperties.host:type_name -> google.protobuf.StringValue
+	24, // 23: rstream.io_rstrm.protobuf.TunnelProperties.tls_mode:type_name -> google.protobuf.StringValue
+	24, // 24: rstream.io_rstrm.protobuf.TunnelProperties.tls_min_version:type_name -> google.protobuf.StringValue
+	26, // 25: rstream.io_rstrm.protobuf.TunnelProperties.mtls:type_name -> google.protobuf.BoolValue
+	24, // 26: rstream.io_rstrm.protobuf.TunnelProperties.mtls_cacert_pem:type_name -> google.protobuf.StringValue
+	24, // 27: rstream.io_rstrm.protobuf.TunnelProperties.http_version:type_name -> google.protobuf.StringValue
+	26, // 28: rstream.io_rstrm.protobuf.TunnelProperties.http_use_tls:type_name -> google.protobuf.BoolValue
+	26, // 29: rstream.io_rstrm.protobuf.TunnelProperties.token_auth:type_name -> google.protobuf.BoolValue
+	26, // 30: rstream.io_rstrm.protobuf.TunnelProperties.rstream_auth:type_name -> google.protobuf.BoolValue
+	26, // 31: rstream.io_rstrm.protobuf.TunnelProperties.challenge_mode:type_name -> google.protobuf.BoolValue
+	2,  // 32: rstream.io_rstrm.protobuf.OpenControlChannelReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
+	23, // 33: rstream.io_rstrm.protobuf.OpenControlChannelRsp.ok:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok
+	1,  // 34: rstream.io_rstrm.protobuf.OpenControlChannelRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
+	4,  // 35: rstream.io_rstrm.protobuf.OpenTunnelReq.tunnel_properties:type_name -> rstream.io_rstrm.protobuf.TunnelProperties
+	4,  // 36: rstream.io_rstrm.protobuf.OpenTunnelRsp.tunnel_properties:type_name -> rstream.io_rstrm.protobuf.TunnelProperties
+	1,  // 37: rstream.io_rstrm.protobuf.OpenTunnelRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
+	24, // 38: rstream.io_rstrm.protobuf.ProxyConnReq.secret:type_name -> google.protobuf.StringValue
+	0,  // 39: rstream.io_rstrm.protobuf.ProxyConnReq.source_ip:type_name -> rstream.io_rstrm.protobuf.IpAddress
+	1,  // 40: rstream.io_rstrm.protobuf.ProxyConnRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
+	2,  // 41: rstream.io_rstrm.protobuf.ProxyReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
+	26, // 42: rstream.io_rstrm.protobuf.ProxyReq.zero_rtt:type_name -> google.protobuf.BoolValue
+	1,  // 43: rstream.io_rstrm.protobuf.ProxyRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
+	2,  // 44: rstream.io_rstrm.protobuf.StreamReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
+	26, // 45: rstream.io_rstrm.protobuf.StreamReq.zero_rtt:type_name -> google.protobuf.BoolValue
+	1,  // 46: rstream.io_rstrm.protobuf.StreamRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
+	5,  // 47: rstream.io_rstrm.protobuf.Message.open_control_channel_req:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelReq
+	6,  // 48: rstream.io_rstrm.protobuf.Message.open_control_channel_rsp:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelRsp
+	7,  // 49: rstream.io_rstrm.protobuf.Message.close_control_channel_req:type_name -> rstream.io_rstrm.protobuf.CloseControlChannelReq
+	8,  // 50: rstream.io_rstrm.protobuf.Message.close_control_channel_rsp:type_name -> rstream.io_rstrm.protobuf.CloseControlChannelRsp
+	9,  // 51: rstream.io_rstrm.protobuf.Message.open_tunnel_req:type_name -> rstream.io_rstrm.protobuf.OpenTunnelReq
+	10, // 52: rstream.io_rstrm.protobuf.Message.open_tunnel_rsp:type_name -> rstream.io_rstrm.protobuf.OpenTunnelRsp
+	11, // 53: rstream.io_rstrm.protobuf.Message.close_tunnel_req:type_name -> rstream.io_rstrm.protobuf.CloseTunnelReq
+	12, // 54: rstream.io_rstrm.protobuf.Message.close_tunnel_rsp:type_name -> rstream.io_rstrm.protobuf.CloseTunnelRsp
+	13, // 55: rstream.io_rstrm.protobuf.Message.proxy_conn_req:type_name -> rstream.io_rstrm.protobuf.ProxyConnReq
+	14, // 56: rstream.io_rstrm.protobuf.Message.proxy_conn_rsp:type_name -> rstream.io_rstrm.protobuf.ProxyConnRsp
+	15, // 57: rstream.io_rstrm.protobuf.Message.proxy_req:type_name -> rstream.io_rstrm.protobuf.ProxyReq
+	16, // 58: rstream.io_rstrm.protobuf.Message.proxy_rsp:type_name -> rstream.io_rstrm.protobuf.ProxyRsp
+	17, // 59: rstream.io_rstrm.protobuf.Message.stream_req:type_name -> rstream.io_rstrm.protobuf.StreamReq
+	18, // 60: rstream.io_rstrm.protobuf.Message.stream_rsp:type_name -> rstream.io_rstrm.protobuf.StreamRsp
+	19, // 61: rstream.io_rstrm.protobuf.Message.heartbeat:type_name -> rstream.io_rstrm.protobuf.Heartbeat
+	20, // 62: rstream.io_rstrm.protobuf.Message.server_message:type_name -> rstream.io_rstrm.protobuf.ServerMessage
+	3,  // 63: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.server_details:type_name -> rstream.io_rstrm.protobuf.ServerDetails
 	27, // 64: rstream.io_rstrm.protobuf.protocol_version:extendee -> google.protobuf.FileOptions
 	28, // 65: rstream.io_rstrm.protobuf.access:extendee -> google.protobuf.FieldOptions
 	66, // [66:66] is the sub-list for method output_type
@@ -2121,19 +2091,19 @@ func file_pb_rstream_proto_init() {
 		(*IpAddress_V4)(nil),
 		(*IpAddress_V6)(nil),
 	}
-	file_pb_rstream_proto_msgTypes[5].OneofWrappers = []any{
+	file_pb_rstream_proto_msgTypes[6].OneofWrappers = []any{
 		(*OpenControlChannelRsp_Ok_)(nil),
 		(*OpenControlChannelRsp_Error)(nil),
 	}
-	file_pb_rstream_proto_msgTypes[9].OneofWrappers = []any{
+	file_pb_rstream_proto_msgTypes[10].OneofWrappers = []any{
 		(*OpenTunnelRsp_TunnelProperties)(nil),
 		(*OpenTunnelRsp_Error)(nil),
 	}
-	file_pb_rstream_proto_msgTypes[17].OneofWrappers = []any{
+	file_pb_rstream_proto_msgTypes[18].OneofWrappers = []any{
 		(*StreamRsp_StreamId)(nil),
 		(*StreamRsp_Error)(nil),
 	}
-	file_pb_rstream_proto_msgTypes[20].OneofWrappers = []any{
+	file_pb_rstream_proto_msgTypes[21].OneofWrappers = []any{
 		(*Message_OpenControlChannelReq)(nil),
 		(*Message_OpenControlChannelRsp)(nil),
 		(*Message_CloseControlChannelReq)(nil),

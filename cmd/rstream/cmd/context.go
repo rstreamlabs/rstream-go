@@ -10,7 +10,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/config"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/controlplane"
+	"github.com/rstreamlabs/rstream-go/config"
 	"github.com/spf13/cobra"
 )
 
@@ -36,27 +37,31 @@ var contextListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		apiURL, err := resolveAPIURL(cmd, cfg)
-		if err != nil {
-			return err
-		}
-		env, _ := cfg.FindEnvironment(apiURL)
-		contexts := []config.Context{}
-		if env != nil {
-			contexts = append(contexts, env.Contexts...)
-		}
+		contexts := append([]config.Context(nil), cfg.Contexts...)
 		sort.SliceStable(contexts, func(i, j int) bool {
+			if contexts[i].Name == contexts[j].Name {
+				return contexts[i].APIURL < contexts[j].APIURL
+			}
 			return contexts[i].Name < contexts[j].Name
 		})
+		defaultCtx := cfg.Defaults.Context
 		output, _ := cmd.Flags().GetString("output")
 		switch output {
 		case "table":
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			_, _ = fmt.Fprintln(w, "NAME\tENGINE\tPROJECT ENDPOINT")
+			_, _ = fmt.Fprintln(w, "DEFAULT\tNAME\tAPI URL\tENGINE\tPROJECT ENDPOINT")
 			for _, ctx := range contexts {
 				engine := ctx.Engine
 				project := ctx.ProjectEndpoint
-				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n", ctx.Name, engine, project)
+				apiURL := ctx.APIURL
+				if apiURL == "" {
+					apiURL = "-"
+				}
+				isDefault := ""
+				if defaultCtx != nil && defaultCtx.Name == ctx.Name {
+					isDefault = "*"
+				}
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", isDefault, ctx.Name, apiURL, engine, project)
 			}
 			return w.Flush()
 		case "json", "yaml":
@@ -81,17 +86,9 @@ var contextGetCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		apiURL, err := resolveAPIURL(cmd, cfg)
+		ctx, _, err := selectContext(cmd, cfg, args[0])
 		if err != nil {
 			return err
-		}
-		env, _ := cfg.FindEnvironment(apiURL)
-		if env == nil {
-			return fmt.Errorf("no environment found for apiUrl %q", apiURL)
-		}
-		ctx, _ := env.FindContext(args[0])
-		if ctx == nil {
-			return fmt.Errorf("context %q not found", args[0])
 		}
 		output, _ := cmd.Flags().GetString("output")
 		if output == "json" || output == "yaml" {
@@ -111,19 +108,11 @@ var contextUseCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		apiURL, err := resolveAPIURL(cmd, cfg)
+		ctx, _, err := selectContext(cmd, cfg, args[0])
 		if err != nil {
 			return err
 		}
-		env, _ := cfg.FindEnvironment(apiURL)
-		if env == nil {
-			return fmt.Errorf("no environment found for apiUrl %q", apiURL)
-		}
-		ctx, _ := env.FindContext(args[0])
-		if ctx == nil {
-			return fmt.Errorf("context %q not found", args[0])
-		}
-		cfg.Defaults.Context = &config.DefaultContext{APIURL: apiURL, Name: ctx.Name}
+		cfg.Defaults.Context = &config.DefaultContext{Name: ctx.Name}
 		return config.WriteAtomic(path, cfg)
 	},
 }
@@ -139,20 +128,12 @@ var contextDeleteCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		apiURL, err := resolveAPIURL(cmd, cfg)
+		ctx, idx, err := selectContext(cmd, cfg, args[0])
 		if err != nil {
 			return err
 		}
-		env, _ := cfg.FindEnvironment(apiURL)
-		if env == nil {
-			return fmt.Errorf("no environment found for apiUrl %q", apiURL)
-		}
-		_, idx := env.FindContext(args[0])
-		if idx < 0 {
-			return fmt.Errorf("context %q not found", args[0])
-		}
-		env.Contexts = append(env.Contexts[:idx], env.Contexts[idx+1:]...)
-		if cfg.Defaults.Context != nil && cfg.Defaults.Context.APIURL == apiURL && cfg.Defaults.Context.Name == args[0] {
+		cfg.Contexts = append(cfg.Contexts[:idx], cfg.Contexts[idx+1:]...)
+		if cfg.Defaults.Context != nil && cfg.Defaults.Context.Name == ctx.Name {
 			cfg.Defaults.Context = nil
 		}
 		return config.WriteAtomic(path, cfg)
@@ -169,24 +150,46 @@ var contextCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		apiURL, err := resolveAPIURL(cmd, cfg)
+		selection, err := resolveContextSelection(cmd, cfg)
 		if err != nil {
 			return err
 		}
-		env := cfg.EnsureEnvironment(apiURL)
-		if existing, _ := env.FindContext(args[0]); existing != nil {
+		apiURL := ""
+		if selection.useAPIURL {
+			apiURL = selection.apiURL
+		}
+		if existing, _, err := cfg.FindContextByName(args[0]); err != nil {
+			return err
+		} else if existing != nil {
 			return fmt.Errorf("context %q already exists", args[0])
 		}
 		engine, _ := cmd.Flags().GetString("engine")
 		projectEndpoint, _ := cmd.Flags().GetString("project-endpoint")
 		if engine == "" {
-			if projectEndpoint != "" {
-				return errors.New("project endpoint lookup is not implemented; use --engine")
+			if projectEndpoint == "" {
+				return errors.New("--engine is required")
 			}
-			return errors.New("--engine is required")
+			if selection.unlinked || apiURL == "" {
+				return errors.New("project endpoint lookup requires --api-url and authentication")
+			}
+			token, err := resolveControlPlaneToken(cfg, apiURL)
+			if err != nil {
+				return err
+			}
+			client := controlplane.NewClient(apiURL, token)
+			if err := client.RequireToken(); err != nil {
+				return err
+			}
+			project, err := client.ResolveProjectByEndpoint(cmd.Context(), projectEndpoint)
+			if err != nil {
+				return mapControlPlaneError(err)
+			}
+			projectEndpoint = project.Endpoint
+			engine = project.URL
 		}
 		newCtx := config.Context{
 			Name:            args[0],
+			APIURL:          apiURL,
 			Engine:          engine,
 			ProjectEndpoint: projectEndpoint,
 		}
@@ -207,9 +210,9 @@ var contextCreateCmd = &cobra.Command{
 			}
 			setContextToken(&newCtx, token)
 		}
-		env.Contexts = append(env.Contexts, newCtx)
+		cfg.Contexts = append(cfg.Contexts, newCtx)
 		if setDefault, _ := cmd.Flags().GetBool("default"); setDefault {
-			cfg.Defaults.Context = &config.DefaultContext{APIURL: apiURL, Name: newCtx.Name}
+			cfg.Defaults.Context = &config.DefaultContext{Name: newCtx.Name}
 		}
 		return config.WriteAtomic(path, cfg)
 	},
@@ -225,18 +228,54 @@ var contextUpdateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		apiURL, err := resolveAPIURL(cmd, cfg)
-		if err != nil {
-			return err
+		apiURLFlagSet := cmd.Flags().Changed("api-url")
+		apiURLValue, _ := cmd.Flags().GetString("api-url")
+		noAPIURL, _ := cmd.Flags().GetBool("no-api-url")
+		if apiURLFlagSet && noAPIURL {
+			return errors.New("cannot use --api-url with --no-api-url")
 		}
-		env, _ := cfg.FindEnvironment(apiURL)
-		if env == nil {
-			return fmt.Errorf("no environment found for apiUrl %q", apiURL)
+		applyAPIURL := false
+		var ctx *config.Context
+		var idx int
+		switch {
+		case apiURLFlagSet && apiURLValue != "":
+			ctx, idx, err = cfg.FindContextByNameAndAPIURL(args[0], apiURLValue)
+			if err != nil {
+				return err
+			}
+			if ctx == nil {
+				ctx, idx, err = cfg.FindContextByName(args[0])
+				if err != nil {
+					return err
+				}
+				if ctx == nil {
+					return fmt.Errorf("context %q not found", args[0])
+				}
+				applyAPIURL = true
+			}
+		case apiURLFlagSet && apiURLValue == "":
+			ctx, idx, err = cfg.FindContextByName(args[0])
+			if err != nil {
+				return err
+			}
+			if ctx == nil {
+				return fmt.Errorf("context %q not found", args[0])
+			}
+		case noAPIURL:
+			ctx, idx, err = cfg.FindContextByName(args[0])
+			if err != nil {
+				return err
+			}
+			if ctx == nil {
+				return fmt.Errorf("context %q not found", args[0])
+			}
+		default:
+			ctx, idx, err = selectContext(cmd, cfg, args[0])
+			if err != nil {
+				return err
+			}
 		}
-		ctx, _ := env.FindContext(args[0])
-		if ctx == nil {
-			return fmt.Errorf("context %q not found", args[0])
-		}
+		_ = idx
 		if cmd.Flags().Changed("engine") {
 			engine, _ := cmd.Flags().GetString("engine")
 			if engine != "" {
@@ -258,6 +297,11 @@ var contextUpdateCmd = &cobra.Command{
 				return errors.New("token is empty")
 			}
 			setContextToken(ctx, token)
+		}
+		if noAPIURL || (apiURLFlagSet && apiURLValue == "") {
+			ctx.APIURL = ""
+		} else if applyAPIURL {
+			ctx.APIURL = apiURLValue
 		}
 		transport, err := transportFromFlags(cmd)
 		if err != nil {
@@ -290,6 +334,11 @@ func init() {
 	contextCreateCmd.Flags().Bool("default", false, "set created context as default")
 	contextCreateCmd.Flags().String("project-endpoint", "", "associate a project endpoint with this context (optional)")
 	contextUpdateCmd.Flags().String("project-endpoint", "", "associate a project endpoint with this context (optional)")
+	contextCreateCmd.Flags().Bool("no-api-url", false, "do not associate this context with a control-plane apiUrl")
+	contextGetCmd.Flags().Bool("no-api-url", false, "select an unlinked context")
+	contextUseCmd.Flags().Bool("no-api-url", false, "select an unlinked context")
+	contextDeleteCmd.Flags().Bool("no-api-url", false, "select an unlinked context")
+	contextUpdateCmd.Flags().Bool("no-api-url", false, "clear the context apiUrl association")
 	rootCmd.AddCommand(contextCmd)
 }
 
@@ -374,4 +423,68 @@ func setContextToken(ctx *config.Context, token string) {
 func redactContext(ctx config.Context) config.Context {
 	ctx.Auth = nil
 	return ctx
+}
+
+type contextSelection struct {
+	apiURL    string
+	useAPIURL bool
+	unlinked  bool
+}
+
+func resolveContextSelection(cmd *cobra.Command, cfg config.Config) (contextSelection, error) {
+	noAPIURL, _ := cmd.Flags().GetBool("no-api-url")
+	if cmd.Flags().Changed("api-url") && noAPIURL {
+		return contextSelection{}, errors.New("cannot use --api-url with --no-api-url")
+	}
+	if cmd.Flags().Changed("api-url") {
+		value, _ := cmd.Flags().GetString("api-url")
+		if value == "" {
+			return contextSelection{unlinked: true}, nil
+		}
+		return contextSelection{apiURL: value, useAPIURL: true}, nil
+	}
+	if noAPIURL {
+		return contextSelection{unlinked: true}, nil
+	}
+	if env := config.ReadEnv().APIURL; env != "" {
+		return contextSelection{apiURL: env, useAPIURL: true}, nil
+	}
+	_ = cfg
+	return contextSelection{}, nil
+}
+
+func selectContext(cmd *cobra.Command, cfg config.Config, name string) (*config.Context, int, error) {
+	selection, err := resolveContextSelection(cmd, cfg)
+	if err != nil {
+		return nil, -1, err
+	}
+	switch {
+	case selection.useAPIURL:
+		ctx, idx, err := cfg.FindContextByNameAndAPIURL(name, selection.apiURL)
+		if err != nil {
+			return nil, -1, err
+		}
+		if ctx == nil {
+			return nil, -1, fmt.Errorf("context %q not found for apiUrl %q", name, selection.apiURL)
+		}
+		return ctx, idx, nil
+	case selection.unlinked:
+		ctx, idx, err := cfg.FindContextUnlinked(name)
+		if err != nil {
+			return nil, -1, err
+		}
+		if ctx == nil {
+			return nil, -1, fmt.Errorf("context %q not found", name)
+		}
+		return ctx, idx, nil
+	default:
+		ctx, idx, err := cfg.FindContextByName(name)
+		if err != nil {
+			return nil, -1, err
+		}
+		if ctx == nil {
+			return nil, -1, fmt.Errorf("context %q not found", name)
+		}
+		return ctx, idx, nil
+	}
 }

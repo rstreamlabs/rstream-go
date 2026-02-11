@@ -80,7 +80,6 @@ func (u *forwardUITCell) Start(ctx context.Context) <-chan struct{} {
 }
 
 func (u *forwardUITCell) Stop() error { u.screen.Fini(); return nil }
-
 func (u *forwardUITCell) SetStatus(s forwardStatus) {
 	u.mu.Lock()
 	defer u.mu.Unlock()

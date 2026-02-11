@@ -14,6 +14,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/webtransport-go"
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/config"
 )
 
 func handleConnection(ctx context.Context, sess *webtransport.Session) error {
@@ -36,13 +37,13 @@ func handleConnection(ctx context.Context, sess *webtransport.Session) error {
 	return nil
 }
 
-func run(ctx context.Context, publish bool) error {
+func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	dialer := webtransport.Dialer{}
 	name := "wt-example"
 	var url *string = nil
 	if publish {
 		// List tunnels to find the published host using rstream API (data plane)
-		tunnels, err := (&rstream.Client{}).ListTunnels(context.Background(), nil)
+		tunnels, err := client.ListTunnels(context.Background(), nil)
 		if err != nil {
 			log.Fatalf("failed to list tunnels: %v", err)
 		}
@@ -56,12 +57,12 @@ func run(ctx context.Context, publish bool) error {
 			log.Fatalf("tunnel %q not found or not published", name)
 		}
 	} else {
+		// Dial the tunnel using rstream dialer (WebTransport)
 		url = rstream.StringPtr("https://" + name + "/webtransport")
-		// Dial the tunnel using rstream dialer (HTTP/3)
 		os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 		dialer.DialAddr = func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
 			raddr := rstream.Addr{IdOrName: addr}
-			conn, err := (&rstream.Client{}).PacketDial(ctx, raddr)
+			conn, err := client.PacketDial(ctx, raddr)
 			if err != nil {
 				return nil, err
 			}
@@ -83,9 +84,13 @@ func run(ctx context.Context, publish bool) error {
 func main() {
 	publish := flag.Bool("publish", false, "connect to published host instead of using rstream dialer")
 	flag.Parse()
+	client, err := config.NewClientFromEnv()
+	if err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := run(ctx, *publish); err != nil {
+	if err := run(ctx, client, *publish); err != nil {
 		log.Fatalf("Client error: %v", err)
 	}
 }

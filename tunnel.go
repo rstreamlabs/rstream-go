@@ -66,14 +66,11 @@ type TunnelProperties struct {
 	MTLS          *bool    `json:"mtls,omitempty"`
 	MTLSCACertPEM *string  `json:"mtls_ca_cert_pem,omitempty"`
 	// HTTP tunnel options (http tunnels only)
-	HTTPVersion    *HTTPVersion `json:"http_version,omitempty"`
-	HTTPUseTLS     *bool        `json:"http_use_tls,omitempty"`
-	TokenAuth      *bool        `json:"token_auth,omitempty"`
-	SSO            *bool        `json:"sso,omitempty"`
-	SSOProviders   []string     `json:"sso_providers,omitempty"`
-	EmailWhitelist []string     `json:"email_whitelist,omitempty"`
-	EmailBlacklist []string     `json:"email_blacklist,omitempty"`
-	Challenge      *bool        `json:"challenge,omitempty"`
+	HTTPVersion   *HTTPVersion `json:"http_version,omitempty"`
+	HTTPUseTLS    *bool        `json:"http_use_tls,omitempty"`
+	TokenAuth     *bool        `json:"token_auth,omitempty"`
+	RstreamAuth   *bool        `json:"rstream_auth,omitempty"`
+	ChallengeMode *bool        `json:"challenge_mode,omitempty"`
 }
 
 type ListTunnelsFilters struct {

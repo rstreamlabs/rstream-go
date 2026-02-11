@@ -47,21 +47,52 @@ type Resolved struct {
 
 func Resolve(input ResolveInput) (Resolved, error) {
 	cfg := input.Config
-	apiURL := firstNonEmpty(input.FlagAPIURL, input.EnvAPIURL, cfg.Defaults.APIURL, defaultAPIURL)
+	apiURLExplicit := firstNonEmpty(input.FlagAPIURL, input.EnvAPIURL)
 	contextName := firstNonEmpty(input.FlagContext, input.EnvContext)
-	if contextName == "" && cfg.Defaults.Context != nil && cfg.Defaults.Context.APIURL == apiURL {
+	if contextName == "" && cfg.Defaults.Context != nil {
 		contextName = cfg.Defaults.Context.Name
 	}
-	env, _ := cfg.FindEnvironment(apiURL)
 	var ctx *Context
 	if contextName != "" {
-		if env == nil {
-			return Resolved{}, fmt.Errorf("no environment found for apiUrl %q", apiURL)
+		var err error
+		switch {
+		case apiURLExplicit != "":
+			ctx, _, err = cfg.FindContextByNameAndAPIURL(contextName, apiURLExplicit)
+			if err != nil {
+				return Resolved{}, err
+			}
+			if ctx == nil {
+				ctx, _, err = cfg.FindContextUnlinked(contextName)
+				if err != nil {
+					return Resolved{}, err
+				}
+			}
+		default:
+			ctx, _, err = cfg.FindContextByName(contextName)
 		}
-		ctx, _ = env.FindContext(contextName)
+		if err != nil {
+			return Resolved{}, err
+		}
 		if ctx == nil {
-			return Resolved{}, fmt.Errorf("context %q not found for apiUrl %q", contextName, apiURL)
+			if apiURLExplicit != "" {
+				return Resolved{}, fmt.Errorf("context %q not found for apiUrl %q", contextName, apiURLExplicit)
+			}
+			return Resolved{}, fmt.Errorf("context %q not found", contextName)
 		}
+		if apiURLExplicit != "" && ctx.APIURL != "" && ctx.APIURL != apiURLExplicit {
+			return Resolved{}, fmt.Errorf("context %q belongs to apiUrl %q (selected apiUrl %q)", contextName, ctx.APIURL, apiURLExplicit)
+		}
+		if apiURLExplicit == "" && ctx.APIURL != "" {
+			apiURLExplicit = ctx.APIURL
+		}
+	}
+	apiURL := apiURLExplicit
+	if apiURL == "" {
+		apiURL = defaultAPIURL
+	}
+	env, _ := cfg.FindEnvironment(apiURL)
+	if ctx != nil && ctx.APIURL == "" {
+		env = nil
 	}
 	engine := firstNonEmpty(input.FlagEngine, input.EnvEngine)
 	if engine == "" && ctx != nil {
@@ -80,14 +111,19 @@ func Resolve(input ResolveInput) (Resolved, error) {
 		}
 	}
 	if input.RequireEngine && engine == "" {
-		return Resolved{}, errors.New("engine is required but not configured")
+		return Resolved{}, errors.New("engine is required but not configured (set --engine or RSTREAM_ENGINE, or select a context via --context, RSTREAM_CONTEXT, or `rstream context use`)")
 	}
 	if input.RequireToken && token == "" {
-		return Resolved{}, errors.New("token is required but not configured")
+		return Resolved{}, errors.New("token is required but not configured (run rstream login or set RSTREAM_AUTHENTICATION_TOKEN)")
 	}
 	var transport *rstream.Transport
-	if env != nil || ctx != nil {
-		merged := MergeTransport(envTransport(env), ctxTransport(ctx))
+	if ctx != nil {
+		var merged *TransportConfig
+		if env != nil && ctx.APIURL != "" && ctx.APIURL == env.APIURL {
+			merged = MergeTransport(envTransport(env), ctxTransport(ctx))
+		} else {
+			merged = MergeTransport(nil, ctxTransport(ctx))
+		}
 		transport = FlattenTransport(merged)
 	}
 	return Resolved{
@@ -103,14 +139,14 @@ func Resolve(input ResolveInput) (Resolved, error) {
 
 func resolveToken(ctx *Context, env *Environment) (string, error) {
 	if ctx != nil {
-		if token, ok, err := tokenFromAuth(ctx.Auth); err != nil {
+		if token, ok, err := TokenFromAuth(ctx.Auth); err != nil {
 			return "", err
 		} else if ok {
 			return token, nil
 		}
 	}
-	if env != nil {
-		if token, ok, err := tokenFromAuth(env.Auth); err != nil {
+	if env != nil && (ctx == nil || ctx.APIURL == env.APIURL) {
+		if token, ok, err := TokenFromAuth(env.Auth); err != nil {
 			return "", err
 		} else if ok {
 			return token, nil
@@ -119,7 +155,7 @@ func resolveToken(ctx *Context, env *Environment) (string, error) {
 	return "", nil
 }
 
-func tokenFromAuth(auth *Auth) (string, bool, error) {
+func TokenFromAuth(auth *Auth) (string, bool, error) {
 	if auth == nil || auth.Token == nil {
 		return "", false, nil
 	}

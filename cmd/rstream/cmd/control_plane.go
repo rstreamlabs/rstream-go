@@ -5,33 +5,45 @@ package cmd
 import (
 	"context"
 	"errors"
-	"fmt"
-	"net/http"
+	"log/slog"
 	"strings"
-	"time"
+
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/controlplane"
+	"github.com/rstreamlabs/rstream-go/config"
 )
 
 func validateToken(ctx context.Context, apiURL, token string) error {
 	if strings.TrimSpace(token) == "" {
 		return errors.New("token is required")
 	}
-	apiURL = strings.TrimRight(strings.TrimSpace(apiURL), "/")
-	if apiURL == "" {
-		return errors.New("apiUrl is required")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL+"/api/auth", nil)
+	client := controlplane.NewClient(apiURL, token)
+	whoami, err := client.Whoami(ctx)
 	if err != nil {
+		if errors.Is(err, controlplane.ErrUnauthorized) {
+			return errors.New("token validation failed: not authenticated")
+		}
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("token validation failed: %s", resp.Status)
+	if flagVerbose {
+		slog.Debug("token validated", "id", whoami.ID, "role", whoami.Role)
 	}
 	return nil
+}
+
+func resolveControlPlaneToken(cfg config.Config, apiURL string) (string, error) {
+	if token := config.ReadEnv().Token; token != "" {
+		return token, nil
+	}
+	env, _ := cfg.FindEnvironment(apiURL)
+	if env == nil {
+		return "", nil
+	}
+	token, ok, err := config.TokenFromAuth(env.Auth)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		return token, nil
+	}
+	return "", nil
 }

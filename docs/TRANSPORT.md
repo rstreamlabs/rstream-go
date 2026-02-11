@@ -4,6 +4,42 @@ Transport settings define how an rstream client establishes its upstream session
 
 Transport configuration is independent from tunnel properties. Tunnel properties control how traffic is exposed and forwarded once an upstream session exists; transport controls how that upstream session is created in the first place.
 
+## Configuration
+
+Transport settings live in the YAML config file and can be defined at:
+- **Environment level** (`environments[].transport`) for defaults tied to a control-plane `apiUrl`
+- **Context level** (`contexts[].transport`) for overrides on a specific runtime profile
+
+The effective transport used by the CLI is a safe merge: start from the environment transport (if the
+context is linked to that `apiUrl`), then merge the context transport over it. Override values are applied
+only when explicitly set (non-empty strings, non-nil pointers, non-empty maps). Proxy headers are merged
+by key and never cleared unless explicitly overridden.
+
+Example:
+
+```yaml
+environments:
+  - apiUrl: "https://rstream.io"
+    transport:
+      dns:
+        override: "1.1.1.1:53"
+      proxy:
+        http: "http://proxy.corp:3128"
+        headers:
+          X-Company: "acme"
+contexts:
+  - name: "acme"
+    apiUrl: "https://rstream.io"
+    engine: "e7e8a732.aws-eu-west-3-1.c.rstream.io:8443"
+    transport:
+      bind:
+        mode: "interface"
+        interface: "en0"
+      proxy:
+        headers:
+          X-Env: "ci"
+```
+
 ## Security Invariant
 
 The client-to-edge session is always negotiated over TLS 1.3. Transport settings never downgrade this requirement and do not change the cryptographic guarantees; they only influence which network path carries the TLS 1.3 session.
