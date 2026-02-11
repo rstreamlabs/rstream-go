@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2](https://github.com/rstreamlabs/rstream-go/compare/v1.3.1...v1.3.2) (2026-02-11)
+
+
+### Bug Fixes
+
+* fix client details / labels ([be8de3d](https://github.com/rstreamlabs/rstream-go/commit/be8de3dabe833452cb51f3bb8626074295e03eff))
+
 ## [1.3.1](https://github.com/rstreamlabs/rstream-go/compare/v1.3.0...v1.3.1) (2026-02-11)
 
 
