@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/config"
 )
 
 func handleConnection(conn net.Conn) error {
@@ -35,11 +36,11 @@ func handleConnection(conn net.Conn) error {
 	return nil
 }
 
-func run(ctx context.Context, publish bool) error {
+func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	name := "stream-echo"
 	if publish {
-		// List tunnels to find the published host using rstream control API
-		tunnels, err := (&rstream.Client{}).ListTunnels(ctx, nil)
+		// List tunnels to find the published host using rstream API (data plane)
+		tunnels, err := client.ListTunnels(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("failed to list tunnels: %w", err)
 		}
@@ -60,8 +61,8 @@ func run(ctx context.Context, publish bool) error {
 		}
 		return fmt.Errorf("tunnel %q not found or not published", name)
 	} else {
-		// Dial the tunnel using custom rstream dialer
-		conn, err := (&rstream.Client{}).Dial(ctx, rstream.Addr{IdOrName: name})
+		// Dial the tunnel using rstream dialer
+		conn, err := client.Dial(ctx, rstream.Addr{IdOrName: name})
 		if err != nil {
 			return fmt.Errorf("failed to dial tunnel: %w", err)
 		}
@@ -72,6 +73,10 @@ func run(ctx context.Context, publish bool) error {
 func main() {
 	publish := flag.Bool("publish", false, "connect to published host instead of using rstream dialer")
 	flag.Parse()
+	client, err := config.NewClientFromEnv()
+	if err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigChan := make(chan os.Signal, 1)
@@ -81,7 +86,7 @@ func main() {
 		log.Println("Got signal, exiting...")
 		cancel()
 	}()
-	if err := run(ctx, *publish); err != nil {
+	if err := run(ctx, client, *publish); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }

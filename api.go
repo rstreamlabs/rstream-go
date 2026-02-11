@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -97,23 +96,14 @@ func (c *Client) Login(ctx context.Context) (*string, error) {
 	var token *string
 	if c.Token != nil {
 		token = c.Token
-	} else if envToken := os.Getenv("RSTREAM_DEFAULT_AUTHENTICATION_TOKEN"); envToken != "" {
-		token = &envToken
 	}
 	if token == nil {
-		return nil, errors.New("no token provided: set token explicitly (--token) or through environment variable (RSTREAM_DEFAULT_AUTHENTICATION_TOKEN)")
+		return nil, errors.New("no token provided")
 	}
-	if _, _, err := c.apiDo(ctx, http.MethodGet, "/login", nil, nil, engine, token); err != nil {
+	if _, _, err := c.apiDo(ctx, http.MethodGet, "/auth", nil, nil, engine, token); err != nil {
 		return nil, fmt.Errorf("login failed: %w", err)
 	}
-	host, _, err := splitHostPort(*engine)
-	if err != nil || host == nil {
-		return nil, errors.New("failed to extract host from address")
-	}
-	if err := upsertTokenInConfig(c.ConfigFilePath, *host, *token); err != nil {
-		return nil, err
-	}
-	return host, nil
+	return engine, nil
 }
 
 func (c *Client) Logout(ctx context.Context) (*string, error) {
@@ -121,14 +111,7 @@ func (c *Client) Logout(ctx context.Context) (*string, error) {
 	if err != nil {
 		return nil, err
 	}
-	host, _, err := splitHostPort(*engine)
-	if err != nil || host == nil {
-		return nil, errors.New("failed to extract host from address")
-	}
-	if err := deleteTokenInConfig(c.ConfigFilePath, *host); err != nil {
-		return nil, err
-	}
-	return host, nil
+	return engine, nil
 }
 
 func (c *Client) ListTunnels(ctx context.Context, params *ListTunnelsParams) (*ListTunnelsResponse, error) {

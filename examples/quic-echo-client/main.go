@@ -15,6 +15,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/config"
 )
 
 func handleConnection(conn *quic.Conn) error {
@@ -42,11 +43,11 @@ func handleConnection(conn *quic.Conn) error {
 	return nil
 }
 
-func run(ctx context.Context, publish bool) error {
+func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	name := "quic-echo"
 	if publish {
-		// List tunnels to find the published host using rstream control API
-		tunnels, err := (&rstream.Client{}).ListTunnels(ctx, nil)
+		// List tunnels to find the published host using rstream API (data plane)
+		tunnels, err := client.ListTunnels(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("failed to list tunnels: %w", err)
 		}
@@ -57,7 +58,6 @@ func run(ctx context.Context, publish bool) error {
 				if err != nil {
 					return fmt.Errorf("failed to split host and port: %w", err)
 				}
-				// Connect to the published host using standard QUIC dialer
 				conn, err := quic.DialAddr(ctx, host, &tls.Config{ServerName: hostname}, nil)
 				if err != nil {
 					return fmt.Errorf("failed to dial published host: %w", err)
@@ -67,9 +67,9 @@ func run(ctx context.Context, publish bool) error {
 		}
 		return fmt.Errorf("tunnel %q not found or not published", name)
 	} else {
-		// Dial the tunnel using custom rstream dialer
+		// Dial the tunnel using rstream dialer
 		raddr := rstream.Addr{IdOrName: name}
-		packetConn, err := (&rstream.Client{}).PacketDial(ctx, raddr)
+		packetConn, err := client.PacketDial(ctx, raddr)
 		if err != nil {
 			return fmt.Errorf("failed to dial tunnel: %w", err)
 		}
@@ -91,6 +91,10 @@ func run(ctx context.Context, publish bool) error {
 func main() {
 	publish := flag.Bool("publish", false, "connect to published host instead of using rstream dialer")
 	flag.Parse()
+	client, err := config.NewClientFromEnv()
+	if err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigChan := make(chan os.Signal, 1)
@@ -100,7 +104,7 @@ func main() {
 		log.Println("Got signal, exiting...")
 		cancel()
 	}()
-	if err := run(ctx, *publish); err != nil {
+	if err := run(ctx, client, *publish); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }

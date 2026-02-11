@@ -1,0 +1,12 @@
+version: 1
+tunnels:
+  - name: "whoami"
+    forward: "127.0.0.1:8080"
+    tunnel:
+      publish: true
+      protocol: "http"
+      http:
+        upstreamTLS: false
+        version: "http/1.1"
+      labels:
+        app: "whoami"

@@ -27,13 +27,17 @@ var (
 )
 
 var eventsCmd = &cobra.Command{
-	GroupID:      "management",
+	GroupID:      "common",
 	Use:          "events",
 	Short:        "Watches and forwards webhook events",
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
-		client, err := newClientFromFlags(cmd)
+		runtime, err := resolveRuntime(cmd, true, true)
+		if err != nil {
+			return err
+		}
+		client, err := newClientFromResolved(runtime.Resolved)
 		if err != nil {
 			return err
 		}

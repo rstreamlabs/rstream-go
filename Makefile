@@ -1,8 +1,8 @@
 #!make
 
--include .env.local
-ifeq ($(wildcard .env.local),.env.local)
-export $(shell sed 's/=.*//' .env.local)
+-include .env.makefile
+ifeq ($(wildcard .env.makefile),.env.makefile)
+export $(shell sed 's/=.*//' .env.makefile)
 endif
 
 .DEFAULT_GOAL := all
@@ -11,7 +11,7 @@ endif
 BINARIES := $(shell find cmd -mindepth 1 -maxdepth 1 -type d -exec basename {} \;)
 
 # Examples
-EXAMPLES := $(shell find examples -mindepth 1 -maxdepth 1 -type d -exec basename {} \;)
+EXAMPLES := $(shell find examples -mindepth 2 -maxdepth 2 -name '*.go' -print 2>/dev/null | awk -F/ '{print $$(NF-1)}' | sort -u)
 
 # Detect git tag and branch
 GIT_TAG := $(shell git describe --tags --exact-match 2>/dev/null | sed 's/^v//')
@@ -36,6 +36,9 @@ X86_64_VARIANTS := v1 v2 v3 v4
 
 # Go Module
 GO_MODULE := $(shell go list -m)
+
+# Path to goimports
+GOIMPORTS ?= $(shell go env GOPATH)/bin/goimports
 
 # All platforms
 ALL_PLATFORMS := $(foreach dist,$(shell go tool dist list),\
@@ -85,7 +88,7 @@ NUGET_PLATFORMS := $(filter $(WINDOWS_PLATFORMS),windows/x86_i686 windows/x86_64
 MAINTAINER := support@rstream.io
 
 # Debian description
-DESCRIPTION := Powerful Tunnels for Modern Applications.
+DESCRIPTION := Go SDK for rstream - serverless networking
 
 # rstream repository
 RSTREAM_URL ?= https://rstream.io
@@ -96,14 +99,14 @@ RSTREAM_STORAGE_TYPE ?= s3
 # aptly repository
 APTLY_URL ?= https://aptly.rstream.io
 
+# Nuget source
+NUGET_SOURCE ?= https://nexus.rstream.io/repository/windows/
+
 # Docker repository
-DOCKER_REPO := rstream
+DOCKER_REPO ?= rstream
 
 # List of docker platforms
 DOCKER_PLATFORMS := $(if $(filter $(CHANNEL),stable),$(filter $(PLATFORMS),linux/arm64 linux/x86_64 linux/x86_64_v2 linux/ppc64le linux/x86_i686 linux/armv7hf linux/armv6hf),linux/$(CURRENT_ARCH))
-
-# Nuget source
-NUGET_SOURCE := https://nexus.rstream.io/repository/windows/
 
 comma:= ,
 
@@ -177,12 +180,22 @@ define nupkg_path
 $(call base_dir_cmd,$1)/windows/$1.$(VERSION).nupkg
 endef
 
+define cmd_tags
+$(strip $(shell if [ -f cmd/$1/tags ]; then awk '!/^[[:space:]]*(#|$$)/{print}' cmd/$1/tags | paste -sd, -; fi))
+endef
+
+$(foreach bin,$(BINARIES),$(eval CMD_TAGS_$(bin):=$(call cmd_tags,$(bin))))
+
+define go_build_tags
+$(if $(CMD_TAGS_$1),-tags=$(CMD_TAGS_$1))
+endef
+
 define build
 set -e ;\
 echo "Building $1/$2 for $3/$4" ;\
 $(eval GOARCH=$(if $(findstring armv,$(word 1,$(subst /, ,$4))),arm,$(if $(findstring x86_i,$4),386,$(if $(findstring x86_64,$4),amd64,$(word 1,$(subst /, ,$4)))))) \
 $(eval GOAMD64=$(if $(findstring x86_64,$4),$(if $(findstring _v,$4),$(lastword $(subst _, ,$4)),v1),)) \
-CGO_ENABLED=0 GOPRIVATE=github.com/rstreamlabs GOOS=$(subst macos,darwin,$3) GOARCH=$(GOARCH) $(if $(filter $(GOARCH),arm),GOARM=$(word 1,$(subst armv, ,$(word 1,$(subst hf, ,$4))))$(shell echo ,)$(if $(findstring hf,$4),hardfloat,softfloat),) $(if $(filter amd64,$(GOARCH)),GOAMD64=$(GOAMD64),) $(if $(findstring x86_i386,$4),GO386=softfloat,) go build -v -ldflags="-X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).OS=$3' -X '$(GO_MODULE).Arch=$4'" -o $$@ ./$1/$2
+CGO_ENABLED=0 GOPRIVATE=github.com/rstreamlabs GOOS=$(subst macos,darwin,$3) GOARCH=$(GOARCH) $(if $(filter $(GOARCH),arm),GOARM=$(word 1,$(subst armv, ,$(word 1,$(subst hf, ,$4))))$(shell echo ,)$(if $(findstring hf,$4),hardfloat,softfloat),) $(if $(filter amd64,$(GOARCH)),GOAMD64=$(GOAMD64),) $(if $(findstring x86_i386,$4),GO386=softfloat,) go build -v $(if $(filter cmd,$1),$(call go_build_tags,$2),) -ldflags="-X '$(GO_MODULE).Agent=$(notdir $(GO_MODULE))' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).OS=$3' -X '$(GO_MODULE).Arch=$4'" -o $$@ ./$1/$2
 endef
 
 define build_pkg
@@ -359,6 +372,14 @@ clean:
 tests:
 	@echo "==> Running tests..."
 	go test -v ./...
+
+$(GOIMPORTS):
+	@go install golang.org/x/tools/cmd/goimports@latest
+
+.PHONY: format
+
+format: $(GOIMPORTS)
+	@find . -type f -name '*.go' ! -name '*.pb.go' -print0 | xargs -0 $(GOIMPORTS) -w
 
 .SECONDARY: $(call sources_proto)
 

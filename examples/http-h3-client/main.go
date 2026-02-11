@@ -17,6 +17,7 @@ import (
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/config"
 )
 
 // NB : Any HTTP version can be used (HTTP/1.1, HTTP/2, HTTP/3) on client side for published tunnels.
@@ -24,6 +25,10 @@ import (
 func main() {
 	publish := flag.Bool("publish", false, "connect to published host instead of using rstream dialer")
 	flag.Parse()
+	client, err := config.NewClientFromEnv()
+	if err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
 	// Create the HTTP client
 	httpClient := &http.Client{
 		Timeout: 5 * time.Second,
@@ -31,8 +36,8 @@ func main() {
 	name := "h3-example"
 	var url *string = nil
 	if *publish {
-		// List tunnels to find the published host using rstream control API
-		tunnels, err := (&rstream.Client{}).ListTunnels(context.Background(), nil)
+		// List tunnels to find the published host using rstream API (data plane)
+		tunnels, err := client.ListTunnels(context.Background(), nil)
 		if err != nil {
 			log.Fatalf("failed to list tunnels: %v", err)
 		}
@@ -47,7 +52,7 @@ func main() {
 		}
 	} else {
 		url = rstream.StringPtr("https://" + name + "/")
-		// Dial the tunnel using custom rstream dialer (HTTP/3)
+		// Dial the tunnel using rstream dialer (HTTP/3)
 		os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 		httpClient.Transport = &http3.Transport{
 			Dial: func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
@@ -58,7 +63,7 @@ func main() {
 				raddr := rstream.Addr{
 					IdOrName: host,
 				}
-				conn, err := (&rstream.Client{}).PacketDial(ctx, raddr)
+				conn, err := client.PacketDial(ctx, raddr)
 				if err != nil {
 					return nil, err
 				}

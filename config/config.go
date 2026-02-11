@@ -1,0 +1,209 @@
+// See LICENSE file in the project root for license information.
+
+package config
+
+import (
+	"fmt"
+	"strings"
+)
+
+type Config struct {
+	Version      int           `yaml:"version,omitempty"`
+	Defaults     Defaults      `yaml:"defaults,omitempty"`
+	Environments []Environment `yaml:"environments,omitempty"`
+	Contexts     []Context     `yaml:"contexts,omitempty"`
+}
+
+type Defaults struct {
+	Context *DefaultContext `yaml:"context,omitempty"`
+}
+
+type DefaultContext struct {
+	Name string `yaml:"name,omitempty"`
+}
+
+type Environment struct {
+	APIURL    string           `yaml:"apiUrl"`
+	Auth      *Auth            `yaml:"auth,omitempty"`
+	Transport *TransportConfig `yaml:"transport,omitempty"`
+}
+
+type Context struct {
+	Name            string           `yaml:"name"`
+	APIURL          string           `yaml:"apiUrl,omitempty"`
+	ProjectEndpoint string           `yaml:"projectEndpoint,omitempty"`
+	Engine          string           `yaml:"engine,omitempty"`
+	Auth            *Auth            `yaml:"auth,omitempty"`
+	Transport       *TransportConfig `yaml:"transport,omitempty"`
+}
+
+type Auth struct {
+	Token *Token `yaml:"token,omitempty"`
+}
+
+type Token struct {
+	Storage *TokenStorage `yaml:"storage,omitempty"`
+}
+
+type TokenStorage struct {
+	Kind  string `yaml:"kind,omitempty"`
+	Value string `yaml:"value,omitempty"`
+}
+
+func (c *Config) EnsureVersion() {
+	if c.Version == 0 {
+		c.Version = 1
+	}
+}
+
+func (c *Config) Normalize() {
+	c.EnsureVersion()
+	if c.Defaults.Context == nil {
+		return
+	}
+	if strings.TrimSpace(c.Defaults.Context.Name) == "" {
+		c.Defaults.Context = nil
+	}
+}
+
+func (c *Config) FindEnvironment(apiURL string) (*Environment, int) {
+	for i := range c.Environments {
+		if c.Environments[i].APIURL == apiURL {
+			return &c.Environments[i], i
+		}
+	}
+	return nil, -1
+}
+
+func (c *Config) EnsureEnvironment(apiURL string) *Environment {
+	if env, _ := c.FindEnvironment(apiURL); env != nil {
+		return env
+	}
+	c.Environments = append(c.Environments, Environment{APIURL: apiURL})
+	return &c.Environments[len(c.Environments)-1]
+}
+
+func (c *Config) FindContextByName(name string) (*Context, int, error) {
+	matches := c.contextMatches(name)
+	if len(matches) == 0 {
+		return nil, -1, nil
+	}
+	if len(matches) > 1 {
+		return nil, -1, contextAmbiguousError(name)
+	}
+	idx := matches[0]
+	return &c.Contexts[idx], idx, nil
+}
+
+func (c *Config) FindContextByNameAndAPIURL(name, apiURL string) (*Context, int, error) {
+	matches := c.contextMatches(name)
+	if len(matches) == 0 {
+		return nil, -1, nil
+	}
+	var exact []int
+	for _, idx := range matches {
+		if c.Contexts[idx].APIURL == apiURL {
+			exact = append(exact, idx)
+		}
+	}
+	switch len(exact) {
+	case 1:
+		return &c.Contexts[exact[0]], exact[0], nil
+	case 0:
+		return nil, -1, contextNotFoundForAPIURLError(name, apiURL, matches, c)
+	default:
+		return nil, -1, contextDuplicateError(name, apiURL)
+	}
+}
+
+func (c *Config) FindContextForAPIURL(name, apiURL string) (*Context, int, error) {
+	matches := c.contextMatches(name)
+	if len(matches) == 0 {
+		return nil, -1, nil
+	}
+	var exact []int
+	for _, idx := range matches {
+		if c.Contexts[idx].APIURL == apiURL {
+			exact = append(exact, idx)
+		}
+	}
+	switch len(exact) {
+	case 1:
+		return &c.Contexts[exact[0]], exact[0], nil
+	case 0:
+		// fall through to unlinked selection
+	default:
+		return nil, -1, contextDuplicateError(name, apiURL)
+	}
+	var unlinked []int
+	for _, idx := range matches {
+		if c.Contexts[idx].APIURL == "" {
+			unlinked = append(unlinked, idx)
+		}
+	}
+	switch len(unlinked) {
+	case 1:
+		if len(matches) > 1 {
+			return nil, -1, contextAmbiguousError(name)
+		}
+		return &c.Contexts[unlinked[0]], unlinked[0], nil
+	case 0:
+		return nil, -1, contextNotFoundForAPIURLError(name, apiURL, matches, c)
+	default:
+		return nil, -1, contextAmbiguousError(name)
+	}
+}
+
+func (c *Config) FindContextUnlinked(name string) (*Context, int, error) {
+	matches := c.contextMatches(name)
+	if len(matches) == 0 {
+		return nil, -1, nil
+	}
+	var unlinked []int
+	for _, idx := range matches {
+		if c.Contexts[idx].APIURL == "" {
+			unlinked = append(unlinked, idx)
+		}
+	}
+	switch len(unlinked) {
+	case 1:
+		return &c.Contexts[unlinked[0]], unlinked[0], nil
+	case 0:
+		return nil, -1, contextNotFoundForAPIURLError(name, "", matches, c)
+	default:
+		return nil, -1, contextAmbiguousError(name)
+	}
+}
+
+func (c *Config) contextMatches(name string) []int {
+	var matches []int
+	for i := range c.Contexts {
+		if c.Contexts[i].Name == name {
+			matches = append(matches, i)
+		}
+	}
+	return matches
+}
+
+func contextAmbiguousError(name string) error {
+	return fmt.Errorf("context %q is ambiguous; specify --api-url or set RSTREAM_API_URL", name)
+}
+
+func contextDuplicateError(name, apiURL string) error {
+	return fmt.Errorf("multiple contexts named %q exist for apiUrl %q", name, apiURL)
+}
+
+func contextNotFoundForAPIURLError(name, apiURL string, matches []int, cfg *Config) error {
+	if len(matches) == 0 {
+		return nil
+	}
+	for _, idx := range matches {
+		if cfg.Contexts[idx].APIURL != "" && apiURL != "" {
+			return fmt.Errorf("context %q not found for apiUrl %q", name, apiURL)
+		}
+	}
+	if apiURL == "" {
+		return fmt.Errorf("context %q not found", name)
+	}
+	return fmt.Errorf("context %q not found for apiUrl %q", name, apiURL)
+}
