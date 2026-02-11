@@ -19,6 +19,10 @@ env:
   PACKAGE_NAME: "rstream"
   RSTREAM_URL: "${{ github.ref_type == 'tag' && 'https://rstream.io' || 'https://dev.rstream.io' }}"
   VERSION: "${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref || github.ref_name }}"
+permissions:
+  contents: write
+  id-token: write
+  pull-requests: write
 jobs:
   build:
     runs-on: ["self-hosted", "Linux"]
@@ -151,7 +155,6 @@ jobs:
           git -C npm commit -m "update ${NPM_PACKAGE_NAME} version to ${{ env.VERSION }}"
           git -C npm push
           cd ./npm/${NPM_PACKAGE_NAME}
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > .npmrc
           npm install --ignore-scripts
           npm publish
       - name: Cleanup git config
