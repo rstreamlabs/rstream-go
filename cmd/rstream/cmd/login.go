@@ -3,7 +3,7 @@
 package cmd
 
 import (
-	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/config"
+	"github.com/rstreamlabs/rstream-go/config"
 	"github.com/spf13/cobra"
 )
 

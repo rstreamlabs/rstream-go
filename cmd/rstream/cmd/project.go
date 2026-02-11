@@ -4,7 +4,13 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
+	"sort"
+	"strings"
+	"text/tabwriter"
 
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/controlplane"
+	"github.com/rstreamlabs/rstream-go/config"
 	"github.com/spf13/cobra"
 )
 
@@ -23,11 +29,60 @@ var projectListCmd = &cobra.Command{
 	SilenceUsage: true,
 	Args:         cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := resolveControlPlane(cmd, true)
+		runtime, err := resolveControlPlane(cmd, false)
 		if err != nil {
 			return err
 		}
-		return errors.New("project list is not implemented")
+		client := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+		if err := client.RequireToken(); err != nil {
+			return err
+		}
+		params, sortRequested, err := listProjectsParamsFromFlags(cmd)
+		if err != nil {
+			return err
+		}
+		resp, err := client.ListProjects(cmd.Context(), params)
+		if err != nil {
+			return mapControlPlaneError(err)
+		}
+		output, _ := cmd.Flags().GetString("output")
+		switch output {
+		case "table":
+			projects := append([]controlplane.Project(nil), resp.Projects...)
+			if !sortRequested {
+				sort.SliceStable(projects, func(i, j int) bool {
+					if projects[i].Name == projects[j].Name {
+						return projects[i].Endpoint < projects[j].Endpoint
+					}
+					return projects[i].Name < projects[j].Name
+				})
+			}
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			_, _ = fmt.Fprintln(w, "NAME\tENDPOINT\tSTATUS\tPLAN\tDEPLOYMENT\tPROVIDER\tREGION\tID")
+			for _, project := range projects {
+				region := project.Region
+				if region == "" {
+					region = "-"
+				}
+				_, _ = fmt.Fprintf(
+					w,
+					"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					project.Name,
+					project.Endpoint,
+					project.Status,
+					project.Plan,
+					project.Deployment,
+					project.Provider,
+					region,
+					project.ID,
+				)
+			}
+			return w.Flush()
+		case "json", "yaml":
+			return writeStructuredOutput(output, resp)
+		default:
+			return validateOutputMode(output, "table", "json", "yaml")
+		}
 	},
 }
 
@@ -37,11 +92,67 @@ var projectUseCmd = &cobra.Command{
 	SilenceUsage: true,
 	Args:         cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := resolveControlPlane(cmd, true)
+		runtime, err := resolveControlPlane(cmd, false)
 		if err != nil {
 			return err
 		}
-		return errors.New("project use is not implemented")
+		client := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+		if err := client.RequireToken(); err != nil {
+			return err
+		}
+		if _, err := client.Whoami(cmd.Context()); err != nil {
+			return mapControlPlaneError(err)
+		}
+		project, err := client.ResolveProjectByEndpoint(cmd.Context(), args[0])
+		if err != nil {
+			return mapControlPlaneError(err)
+		}
+		apiURL := runtime.Resolved.APIURL
+		cfg := runtime.Config
+		cfg.EnsureEnvironment(apiURL)
+		nameFlag, _ := cmd.Flags().GetString("name")
+		setDefault, _ := cmd.Flags().GetBool("default")
+		var ctx *config.Context
+		if nameFlag != "" {
+			existing, _, err := cfg.FindContextByName(nameFlag)
+			if err != nil {
+				return err
+			}
+			if existing != nil {
+				if existing.APIURL != "" && existing.APIURL != apiURL {
+					return fmt.Errorf("context %q already exists for apiUrl %q", nameFlag, existing.APIURL)
+				}
+				if existing.APIURL == "" {
+					return fmt.Errorf("context %q already exists (unlinked)", nameFlag)
+				}
+				ctx = existing
+			} else {
+				newCtx := config.Context{Name: nameFlag, APIURL: apiURL}
+				cfg.Contexts = append(cfg.Contexts, newCtx)
+				ctx = &cfg.Contexts[len(cfg.Contexts)-1]
+			}
+		} else if existing := findContextByProjectEndpoint(&cfg, apiURL, project.Endpoint); existing != nil {
+			ctx = existing
+		} else {
+			baseName := slugifyName(project.Name)
+			if baseName == "" {
+				baseName = slugifyName(endpointPrefix(project.Endpoint))
+			}
+			if baseName == "" {
+				baseName = "project"
+			}
+			uniqueName := uniqueContextName(baseName, &cfg)
+			newCtx := config.Context{Name: uniqueName, APIURL: apiURL}
+			cfg.Contexts = append(cfg.Contexts, newCtx)
+			ctx = &cfg.Contexts[len(cfg.Contexts)-1]
+		}
+		ctx.APIURL = apiURL
+		ctx.ProjectEndpoint = project.Endpoint
+		ctx.Engine = project.URL
+		if setDefault {
+			cfg.Defaults.Context = &config.DefaultContext{Name: ctx.Name}
+		}
+		return config.WriteAtomic(runtime.ConfigPath, cfg)
 	},
 }
 
@@ -51,12 +162,131 @@ func init() {
 	projectCmd.AddCommand(projectListCmd)
 	projectCmd.AddCommand(projectUseCmd)
 	projectListCmd.Flags().SortFlags = false
-	projectListCmd.Flags().String("filter", "", "filter output")
+	projectListCmd.Flags().String("q", "", "search query")
+	projectListCmd.Flags().Int("page", 0, "page number (>= 1)")
+	projectListCmd.Flags().Int("page-size", 0, "page size (1-100)")
+	projectListCmd.Flags().String("sort", "", "sort by (id, name, endpoint, status, plan, deployment)")
+	projectListCmd.Flags().String("order", "", "sort order (asc, desc)")
 	projectListCmd.Flags().StringP("output", "o", "table", "output mode (table, json, yaml)")
-	projectListCmd.Flags().BoolP("quiet", "q", false, "only display project endpoints")
 	projectUseCmd.Flags().SortFlags = false
 	projectUseCmd.Flags().String("name", "", "context name (defaults to a derived name)")
 	projectUseCmd.Flags().Bool("default", false, "set context as default")
-	projectUseCmd.Flags().String("engine", "", "override engine URL (host:port)")
 	rootCmd.AddCommand(projectCmd)
+}
+
+func listProjectsParamsFromFlags(cmd *cobra.Command) (controlplane.ListProjectsParams, bool, error) {
+	var params controlplane.ListProjectsParams
+	if q, _ := cmd.Flags().GetString("q"); q != "" {
+		params.Query = q
+	}
+	sortRequested := cmd.Flags().Changed("sort")
+	if cmd.Flags().Changed("page") {
+		page, _ := cmd.Flags().GetInt("page")
+		if page < 1 {
+			return params, sortRequested, errors.New("--page must be >= 1")
+		}
+		params.Page = &page
+	}
+	if cmd.Flags().Changed("page-size") {
+		pageSize, _ := cmd.Flags().GetInt("page-size")
+		if pageSize < 1 || pageSize > 100 {
+			return params, sortRequested, errors.New("--page-size must be between 1 and 100")
+		}
+		params.PageSize = &pageSize
+	}
+	if cmd.Flags().Changed("sort") {
+		value, _ := cmd.Flags().GetString("sort")
+		if !isAllowed(value, "id", "name", "endpoint", "status", "plan", "deployment") {
+			return params, sortRequested, fmt.Errorf("invalid --sort %q", value)
+		}
+		params.Sort = value
+	}
+	if cmd.Flags().Changed("order") {
+		value, _ := cmd.Flags().GetString("order")
+		if !isAllowed(value, "asc", "desc") {
+			return params, sortRequested, fmt.Errorf("invalid --order %q", value)
+		}
+		params.Order = value
+	}
+	return params, sortRequested, nil
+}
+
+func isAllowed(value string, allowed ...string) bool {
+	for _, v := range allowed {
+		if value == v {
+			return true
+		}
+	}
+	return false
+}
+
+func mapControlPlaneError(err error) error {
+	if errors.Is(err, controlplane.ErrUnauthorized) {
+		return errors.New("not authenticated (run rstream login or set RSTREAM_AUTHENTICATION_TOKEN)")
+	}
+	return err
+}
+
+func findContextByProjectEndpoint(cfg *config.Config, apiURL, endpoint string) *config.Context {
+	for i := range cfg.Contexts {
+		ctx := &cfg.Contexts[i]
+		if ctx.APIURL == apiURL && ctx.ProjectEndpoint == endpoint {
+			return ctx
+		}
+	}
+	return nil
+}
+
+func uniqueContextName(base string, cfg *config.Config) string {
+	if base == "" {
+		base = "context"
+	}
+	if !contextNameExists(cfg, base) {
+		return base
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s-%d", base, i)
+		if !contextNameExists(cfg, candidate) {
+			return candidate
+		}
+	}
+}
+
+func contextNameExists(cfg *config.Config, name string) bool {
+	for i := range cfg.Contexts {
+		ctx := cfg.Contexts[i]
+		if ctx.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func slugifyName(value string) string {
+	lower := strings.ToLower(value)
+	var b strings.Builder
+	lastDash := false
+	for _, r := range lower {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func endpointPrefix(endpoint string) string {
+	if endpoint == "" {
+		return ""
+	}
+	idx := strings.IndexAny(endpoint, ".:")
+	if idx == -1 {
+		return endpoint
+	}
+	return endpoint[:idx]
 }

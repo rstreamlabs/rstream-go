@@ -15,23 +15,26 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/config"
 )
 
 var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 
-func run(ctx context.Context, publish bool) error {
+func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	// Open control channel
-	ctrl, err := (&rstream.Client{}).Connect(ctx, nil)
+	ctrl, err := client.Connect(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect to rstream engine server: %w", err)
 	}
 	defer ctrl.Close()
 	// Create the tunnel
 	tunnelProps := rstream.TunnelProperties{
-		Name:        rstream.StringPtr("ws-example"),
-		Publish:     rstream.BoolPtr(publish),
-		Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
-		HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP1_1),
+		Name:    rstream.StringPtr("ws-example"),
+		Publish: rstream.BoolPtr(publish),
+	}
+	if publish {
+		tunnelProps.Protocol = rstream.ProtocolPtr(rstream.ProtocolHTTP)
+		tunnelProps.HTTPVersion = rstream.HTTPVersionPtr(rstream.HTTP1_1)
 	}
 	tunnel, err := ctrl.CreateTunnel(ctx, tunnelProps)
 	if err != nil {
@@ -91,6 +94,10 @@ func run(ctx context.Context, publish bool) error {
 func main() {
 	publish := flag.Bool("publish", false, "publish the tunnel")
 	flag.Parse()
+	client, err := config.NewClientFromEnv()
+	if err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigChan := make(chan os.Signal, 1)
@@ -100,7 +107,7 @@ func main() {
 		log.Println("Received shutdown signal, exiting...")
 		cancel()
 	}()
-	if err := run(ctx, *publish); err != nil && err != http.ErrServerClosed {
+	if err := run(ctx, client, *publish); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
 }

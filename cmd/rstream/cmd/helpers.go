@@ -149,43 +149,28 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 	}
 	httpUseTLSPtr := getBoolPtr(cmd, "http-use-tls")
 	tokenAuthPtr := getBoolPtr(cmd, "token-auth")
-	ssoPtr := getBoolPtr(cmd, "sso")
-	var ssoProviders []string
-	if cmd.Flags().Lookup("sso-provider").Changed {
-		val, _ := cmd.Flags().GetString("sso-provider")
-		if val != "" {
-			ssoProviders = strings.Split(val, ",")
-		}
-		if len(ssoProviders) == 0 {
-			ssoProviders = nil
-		}
-	}
-	emailWhitelist := getStringSlice(cmd, "email-whitelist")
-	emailBlacklist := getStringSlice(cmd, "email-blacklist")
-	challengePtr := getBoolPtr(cmd, "challenge")
+	rstreamAuthPtr := getBoolPtr(cmd, "rstream-auth")
+	challengeModePtr := getBoolPtr(cmd, "challenge-mode")
 	tunnelProperties := &rstream.TunnelProperties{
-		Name:           namePtr,
-		Type:           typePtr,
-		Publish:        publishFinalPtr,
-		Protocol:       protocol,
-		Labels:         labels,
-		GeoIP:          geoipSlice,
-		TrustedIPs:     trustedIPsSlice,
-		Host:           hostPtr,
-		TLSMode:        tlsModePtr,
-		TLSALPNs:       tlsALPNSlice,
-		TLSMinVersion:  tlsMinVersionPtr,
-		TLSCiphers:     tlsCipherIDs,
-		MTLS:           mtlsPtr,
-		MTLSCACertPEM:  mtlsCACertPtr,
-		HTTPVersion:    httpVersionPtr,
-		HTTPUseTLS:     httpUseTLSPtr,
-		TokenAuth:      tokenAuthPtr,
-		SSO:            ssoPtr,
-		SSOProviders:   ssoProviders,
-		EmailWhitelist: emailWhitelist,
-		EmailBlacklist: emailBlacklist,
-		Challenge:      challengePtr,
+		Name:          namePtr,
+		Type:          typePtr,
+		Publish:       publishFinalPtr,
+		Protocol:      protocol,
+		Labels:        labels,
+		GeoIP:         geoipSlice,
+		TrustedIPs:    trustedIPsSlice,
+		Host:          hostPtr,
+		TLSMode:       tlsModePtr,
+		TLSALPNs:      tlsALPNSlice,
+		TLSMinVersion: tlsMinVersionPtr,
+		TLSCiphers:    tlsCipherIDs,
+		MTLS:          mtlsPtr,
+		MTLSCACertPEM: mtlsCACertPtr,
+		HTTPVersion:   httpVersionPtr,
+		HTTPUseTLS:    httpUseTLSPtr,
+		TokenAuth:     tokenAuthPtr,
+		RstreamAuth:   rstreamAuthPtr,
+		ChallengeMode: challengeModePtr,
 	}
 	return tunnelProperties, nil
 }
