@@ -6,6 +6,14 @@ Tunnel creation is documented separately.
 
 ## Concepts
 
+### Environment
+
+An **environment** represents a control-plane API URL. It stores:
+- the account-wide token for that control plane
+- transport defaults for data-plane connections
+
+Environments are identified by `apiUrl`.
+
 ### Project
 
 A **project** is managed in rstream. It defines where tunnels live and which engine endpoint is used.
@@ -21,6 +29,13 @@ A **context** is a local, named configuration used by the CLI at runtime. It def
 
 A single machine can store multiple contexts and switch between them.
 
+Contexts are stored independently from environments. A context may optionally reference an environment via
+`apiUrl` to inherit the environment token and transport defaults. Contexts without an `apiUrl` are unlinked
+and do not inherit control-plane tokens.
+
+The default context stores only the context name. If duplicate names exist, use `--api-url` to disambiguate
+or ensure context names are unique.
+
 One context is selected as the **default context**. Most commands use it automatically unless a specific context is selected explicitly.
 
 ## Authentication modes
@@ -31,13 +46,12 @@ Two modes exist, depending on where the CLI runs.
 
 Appropriate for installations tied to a physical user (laptops, workstations).
 
-- `rstream login` stores an **account-wide token** locally.
+- `rstream login` stores an **account-wide token** locally for the selected `apiUrl`.
 - The same token is reused across projects and contexts.
 - `rstream project use <project-endpoint>` derives a context from the selected project.
 - Switching projects is typically done by running `rstream project use` again.
 
 The account-wide token can be obtained via:
-- browser login flow (default)
 - token generated from the rstream dashboard
 - token generated via the rstream API
 
@@ -56,16 +70,13 @@ Appropriate for servers, CI runners, and embedded systems that must not rely on 
 
 ### 1) Login
 
-Default behavior: browser login flow, then the resulting account-wide token is stored locally.
-
 ```bash
-rstream login
+rstream login <token>
 ```
 
 Alternative token inputs:
 
 ```bash
-rstream login <token>
 rstream login --stdin
 rstream login --token-file /path/to/token
 ```
@@ -97,7 +108,7 @@ rstream forward 8080
 ### 1) Create a context with a project-scoped token
 
 ```bash
-rstream context create <name> --engine <host:port> --token <project-scoped-token> --default
+rstream context create <name> --engine <host:port> --token <project-scoped-token> --default --no-api-url
 ```
 
 Alternative token inputs:
@@ -178,7 +189,7 @@ Logout does not delete contexts. Contexts created for remote devices may remain 
 ## Summary
 
 - **Projects** are managed in rstream and selected via **project endpoint**.
-- **Contexts** are local and define engine endpoint selection and authentication.
-- **Developer machine**: `rstream login` then `rstream project use <project-endpoint>`.
-- **Remote device**: `rstream context create ... --engine ... --token ...` with a project-scoped token.
+- **Contexts** are local and define engine endpoint selection and authentication; they can be linked (by `apiUrl`) or unlinked.
+- **Developer machine**: `rstream login` then `rstream project use <project-endpoint>` (linked contexts).
+- **Remote device**: `rstream context create ... --engine ... --token ...` with a project-scoped token (unlinked context).
 - Once a default context exists: `rstream forward <port>` creates a tunnel and forwards traffic to `localhost:<port>`.

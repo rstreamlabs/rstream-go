@@ -21,6 +21,7 @@ import (
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/webtransport-go"
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/config"
 )
 
 func generateTLSConfig() (*tls.Config, error) {
@@ -42,20 +43,22 @@ func generateTLSConfig() (*tls.Config, error) {
 	return &tls.Config{Certificates: []tls.Certificate{tlsCert}, NextProtos: []string{"h3"}}, nil
 }
 
-func run(ctx context.Context, publish bool) error {
+func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	// Open control channel
-	ctrl, err := (&rstream.Client{}).Connect(ctx, nil)
+	ctrl, err := client.Connect(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect to rstream engine server: %w", err)
 	}
 	defer ctrl.Close()
 	// Create the tunnel
 	tunnelProps := rstream.TunnelProperties{
-		Name:        rstream.StringPtr("wt-example"),
-		Type:        rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
-		Publish:     rstream.BoolPtr(publish),
-		Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
-		HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP3),
+		Name:    rstream.StringPtr("wt-example"),
+		Type:    rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
+		Publish: rstream.BoolPtr(publish),
+	}
+	if publish {
+		tunnelProps.Protocol = rstream.ProtocolPtr(rstream.ProtocolHTTP)
+		tunnelProps.HTTPVersion = rstream.HTTPVersionPtr(rstream.HTTP3)
 	}
 	tunnel, err := ctrl.CreateTunnel(ctx, tunnelProps)
 	if err != nil {
@@ -71,7 +74,7 @@ func run(ctx context.Context, publish bool) error {
 		return fmt.Errorf("tunnel does not implement rstream.PacketListener")
 	}
 	fmt.Printf("Server listening on %s\n", forwardingAddr)
-	// Start a WebTransport server using the tunnel as a packet listener (HTTP/3)
+	// Start a WebTransport server using the tunnel as a listener (HTTP/3)
 	tlsCfg, err := generateTLSConfig()
 	if err != nil {
 		return fmt.Errorf("failed to generate TLS config: %w", err)
@@ -126,6 +129,10 @@ func run(ctx context.Context, publish bool) error {
 func main() {
 	publish := flag.Bool("publish", false, "publish the tunnel")
 	flag.Parse()
+	client, err := config.NewClientFromEnv()
+	if err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigChan := make(chan os.Signal, 1)
@@ -135,7 +142,7 @@ func main() {
 		log.Println("Received shutdown signal, exiting...")
 		cancel()
 	}()
-	if err := run(ctx, *publish); err != nil && err != http.ErrServerClosed {
+	if err := run(ctx, client, *publish); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
 }

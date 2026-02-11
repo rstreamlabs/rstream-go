@@ -43,7 +43,7 @@ func Load(path string) (Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("invalid config YAML: %w", err)
 	}
-	cfg.EnsureVersion()
+	cfg.Normalize()
 	return cfg, nil
 }
 
@@ -56,7 +56,7 @@ func WriteAtomic(path string, cfg Config) error {
 		return err
 	}
 	defer lock.Unlock()
-	cfg.EnsureVersion()
+	cfg.Normalize()
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)

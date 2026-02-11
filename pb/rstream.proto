@@ -49,6 +49,18 @@ message ClientDetails {
   google.protobuf.StringValue protocol_version = 7;
 }
 
+// Informations returned by server
+
+message ServerDetails {
+  google.protobuf.StringValue agent = 1;
+  google.protobuf.StringValue channel = 2;
+  google.protobuf.StringValue version = 3;
+  google.protobuf.StringValue plan = 4;
+  google.protobuf.StringValue provider = 5;
+  google.protobuf.StringValue region = 6;
+  google.protobuf.StringValue update = 7;
+}
+
 // Tunnel message structure used for creating and managing tunnels
 
 message TunnelProperties {
@@ -71,11 +83,8 @@ message TunnelProperties {
   google.protobuf.StringValue http_version = 17 [(access) = "read-write"];
   google.protobuf.BoolValue http_use_tls = 18 [(access) = "read-write"];
   google.protobuf.BoolValue token_auth = 19 [(access) = "read-write"];
-  google.protobuf.BoolValue sso = 20 [(access) = "read-write"];
-  repeated string sso_providers = 21 [(access) = "read-write"];
-  repeated string email_whitelist = 22 [(access) = "read-write"];
-  repeated string email_blacklist = 23 [(access) = "read-write"];
-  google.protobuf.BoolValue challenge = 24 [(access) = "read-write"];
+  google.protobuf.BoolValue rstream_auth = 20 [(access) = "read-write"];
+  google.protobuf.BoolValue challenge_mode = 21 [(access) = "read-write"];
 }
 
 // When a client opens a new control channel to the server
@@ -93,15 +102,6 @@ message OpenControlChannelReq {
 
 message OpenControlChannelRsp {
   message Ok {
-    message ServerDetails {
-      google.protobuf.StringValue agent = 1;
-      google.protobuf.StringValue channel = 2;
-      google.protobuf.StringValue version = 3;
-      google.protobuf.StringValue plan = 4;
-      google.protobuf.StringValue provider = 5;
-      google.protobuf.StringValue region = 6;
-      google.protobuf.StringValue update = 7;
-    }
     string client_id = 1;
     ServerDetails server_details = 2;
   }

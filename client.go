@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"reflect"
 	"sync"
 	"time"
 
@@ -91,7 +92,7 @@ func (c *Client) getClientDetails(engine *string, token *string) (*clientDetails
 	return getClientDetails(token)
 }
 
-func toServerDetails(details *pb.OpenControlChannelRsp_Ok_ServerDetails) *ServerDetails {
+func toServerDetails(details *pb.ServerDetails) *ServerDetails {
 	if details == nil {
 		return nil
 	}
@@ -106,6 +107,19 @@ func toServerDetails(details *pb.OpenControlChannelRsp_Ok_ServerDetails) *Server
 	}
 }
 
+func isNilDialer(d Dialer) bool {
+	if d == nil {
+		return true
+	}
+	v := reflect.ValueOf(d)
+	switch v.Kind() {
+	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map, reflect.Func, reflect.Chan:
+		return v.IsNil()
+	default:
+		return false
+	}
+}
+
 func (c *Client) dialEngine(ctx context.Context, engine *string, nextProtos *[]string) (net.Conn, error) {
 	var err error
 	if engine == nil {
@@ -115,7 +129,7 @@ func (c *Client) dialEngine(ctx context.Context, engine *string, nextProtos *[]s
 		}
 	}
 	transport := c.Transport
-	if transport == nil {
+	if isNilDialer(transport) {
 		transport = &Transport{} // default transport
 	}
 	tlsCfg := c.TLSClientConfig

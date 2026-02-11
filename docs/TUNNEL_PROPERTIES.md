@@ -76,4 +76,4 @@ Access policy is evaluated at the edge before forwarding.
 
 Network-level restrictions apply to the connection itself. `trusted_ips` restricts access by source IP range (CIDR notation). `geoip` restricts access by country (ISO 3166-1 alpha-2 codes).
 
-Request-level controls apply to HTTP tunnels. `sso` and `sso_providers` enforce end-user authentication. `email_whitelist` and `email_blacklist` refine access policy after authentication. `challenge` introduces an interactive step before requests are forwarded upstream.
+Request-level controls apply to HTTP tunnels. `rstream_auth` requires end-user authentication via an rstream account before requests are forwarded. `challenge_mode` introduces an interactive step (challenge/captcha) before requests reach the upstream.

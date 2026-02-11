@@ -5,10 +5,9 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"os"
 
 	"github.com/rstreamlabs/rstream-go"
-	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/config"
+	"github.com/rstreamlabs/rstream-go/config"
 	"github.com/spf13/cobra"
 )
 
@@ -23,7 +22,7 @@ func resolveConfigPath(cmd *cobra.Command) (string, error) {
 	if flagPath != "" {
 		return flagPath, nil
 	}
-	if envPath := os.Getenv("RSTREAM_CONFIG"); envPath != "" {
+	if envPath := config.ReadEnv().ConfigPath; envPath != "" {
 		return envPath, nil
 	}
 	return config.DefaultConfigPath()
@@ -46,13 +45,21 @@ func resolveAPIURL(cmd *cobra.Command, cfg config.Config) (string, error) {
 	if flagAPIURL != "" {
 		return flagAPIURL, nil
 	}
-	if env := os.Getenv("RSTREAM_API_URL"); env != "" {
+	if env := config.ReadEnv().APIURL; env != "" {
 		return env, nil
 	}
-	if cfg.Defaults.APIURL != "" {
-		return cfg.Defaults.APIURL, nil
-	}
 	return config.DefaultAPIURL(), nil
+}
+
+func resolveAPIURLSelection(cmd *cobra.Command, cfg config.Config) (string, bool, error) {
+	if cmd.Flags().Changed("api-url") {
+		val, _ := cmd.Flags().GetString("api-url")
+		return val, true, nil
+	}
+	if env := config.ReadEnv().APIURL; env != "" {
+		return env, true, nil
+	}
+	return config.DefaultAPIURL(), false, nil
 }
 
 func resolveRuntime(cmd *cobra.Command, requireEngine, requireToken bool) (*resolvedRuntime, error) {
@@ -62,14 +69,15 @@ func resolveRuntime(cmd *cobra.Command, requireEngine, requireToken bool) (*reso
 	}
 	flagAPIURL, _ := cmd.Flags().GetString("api-url")
 	flagContext, _ := cmd.Flags().GetString("context")
+	env := config.ReadEnv()
 	input := config.ResolveInput{
 		Config:        cfg,
 		FlagAPIURL:    flagAPIURL,
 		FlagContext:   flagContext,
-		EnvAPIURL:     os.Getenv("RSTREAM_API_URL"),
-		EnvContext:    os.Getenv("RSTREAM_CONTEXT"),
-		EnvEngine:     os.Getenv("RSTREAM_ENGINE"),
-		EnvToken:      os.Getenv("RSTREAM_TOKEN"),
+		EnvAPIURL:     env.APIURL,
+		EnvContext:    env.Context,
+		EnvEngine:     env.Engine,
+		EnvToken:      env.Token,
 		RequireEngine: requireEngine,
 		RequireToken:  requireToken,
 		ResolveToken:  true,
@@ -87,16 +95,14 @@ func resolveControlPlane(cmd *cobra.Command, requireToken bool) (*resolvedRuntim
 		return nil, err
 	}
 	flagAPIURL, _ := cmd.Flags().GetString("api-url")
-	flagContext, _ := cmd.Flags().GetString("context")
+	env := config.ReadEnv()
 	input := config.ResolveInput{
 		Config:       cfg,
 		FlagAPIURL:   flagAPIURL,
-		FlagContext:  flagContext,
-		EnvAPIURL:    os.Getenv("RSTREAM_API_URL"),
-		EnvContext:   os.Getenv("RSTREAM_CONTEXT"),
-		EnvToken:     os.Getenv("RSTREAM_TOKEN"),
+		EnvAPIURL:    env.APIURL,
+		EnvToken:     env.Token,
 		RequireToken: requireToken,
-		ResolveToken: requireToken,
+		ResolveToken: true,
 	}
 	resolved, err := config.Resolve(input)
 	if err != nil {
@@ -106,15 +112,7 @@ func resolveControlPlane(cmd *cobra.Command, requireToken bool) (*resolvedRuntim
 }
 
 func newClientFromResolved(resolved config.Resolved) (*rstream.Client, error) {
-	options := rstream.ClientOptions{
-		Engine:    resolved.Engine,
-		Token:     resolved.Token,
-		Transport: resolved.Transport,
-	}
-	if resolved.Token == "" {
-		options.NoToken = true
-	}
-	return rstream.NewClient(options)
+	return config.NewClientFromResolved(resolved)
 }
 
 func setEnvironmentToken(env *config.Environment, token string) error {
