@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/config"
 	"golang.org/x/net/http2"
 )
 
@@ -22,6 +23,10 @@ import (
 func main() {
 	publish := flag.Bool("publish", false, "connect to published host instead of using rstream dialer")
 	flag.Parse()
+	client, err := config.NewClientFromEnv()
+	if err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
 	// Create the HTTP client
 	httpClient := &http.Client{
 		Timeout: 5 * time.Second,
@@ -29,8 +34,8 @@ func main() {
 	name := "h2c-example"
 	var url *string = nil
 	if *publish {
-		// List tunnels to find the published host using rstream control API
-		tunnels, err := (&rstream.Client{}).ListTunnels(context.Background(), nil)
+		// List tunnels to find the published host using rstream API (data plane)
+		tunnels, err := client.ListTunnels(context.Background(), nil)
 		if err != nil {
 			log.Fatalf("failed to list tunnels: %v", err)
 		}
@@ -45,7 +50,7 @@ func main() {
 		}
 	} else {
 		url = rstream.StringPtr("http://" + name + "/")
-		// Dial the tunnel using custom rstream dialer (HTTP/2, h2c)
+		// Dial the tunnel using rstream dialer (HTTP/2, h2c)
 		httpClient.Transport = &http2.Transport{
 			AllowHTTP: true,
 			DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
@@ -53,7 +58,7 @@ func main() {
 				if err != nil || host == "" {
 					return nil, fmt.Errorf("failed to extract host from address: %v", err)
 				}
-				return (&rstream.Client{}).Dial(ctx, rstream.Addr{IdOrName: host})
+				return client.Dial(ctx, rstream.Addr{IdOrName: host})
 			},
 		}
 	}

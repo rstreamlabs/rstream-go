@@ -3,28 +3,30 @@
 package cmd
 
 import (
-	"fmt"
-	"os"
-
+	"github.com/rstreamlabs/rstream-go/config"
 	"github.com/spf13/cobra"
 )
 
 var logoutCmd = &cobra.Command{
 	GroupID:      "common",
 	Use:          "logout",
-	Short:        "Log out from the rstream engine",
+	Short:        "Logout of rstream",
 	SilenceUsage: true,
+	Args:         cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		client, err := newClientFromFlags(cmd)
+		path, cfg, err := loadConfig(cmd)
 		if err != nil {
 			return err
 		}
-		host, err := client.Logout(cmd.Context())
+		apiURL, err := resolveAPIURL(cmd, cfg)
 		if err != nil {
-			return fmt.Errorf("logout failed: %w", err)
+			return err
 		}
-		fmt.Fprintf(os.Stdout, "Logged out from host %s\n", *host)
-		return nil
+		env, _ := cfg.FindEnvironment(apiURL)
+		if env != nil {
+			clearEnvironmentToken(env)
+		}
+		return config.WriteAtomic(path, cfg)
 	},
 }
 

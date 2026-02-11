@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/config"
 )
 
 func handleConnection(conn net.PacketConn) {
@@ -35,19 +36,20 @@ func handleConnection(conn net.PacketConn) {
 	}
 }
 
-func run(ctx context.Context, publish bool) error {
+func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	// Open control channel
-	ctrl, err := (&rstream.Client{}).Connect(ctx, nil)
+	ctrl, err := client.Connect(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect to rstream engine server: %w", err)
 	}
 	defer ctrl.Close()
 	// Create the tunnel
 	tunnelProps := rstream.TunnelProperties{
-		Name:     rstream.StringPtr("datagram-echo"),
-		Type:     rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
-		Publish:  rstream.BoolPtr(publish),
-		Protocol: rstream.ProtocolPtr(rstream.ProtocolDTLS),
+		Name:    rstream.StringPtr("datagram-echo"),
+		Publish: rstream.BoolPtr(publish),
+	}
+	if publish {
+		tunnelProps.Protocol = rstream.ProtocolPtr(rstream.ProtocolDTLS)
 	}
 	tunnel, err := ctrl.CreateTunnel(ctx, tunnelProps)
 	if err != nil {
@@ -79,6 +81,10 @@ func run(ctx context.Context, publish bool) error {
 func main() {
 	publish := flag.Bool("publish", false, "publish the tunnel")
 	flag.Parse()
+	client, err := config.NewClientFromEnv()
+	if err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigChan := make(chan os.Signal, 1)
@@ -88,7 +94,7 @@ func main() {
 		log.Println("Got signal, exiting...")
 		cancel()
 	}()
-	if err := run(ctx, *publish); err != nil {
+	if err := run(ctx, client, *publish); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }

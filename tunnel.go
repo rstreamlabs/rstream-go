@@ -43,41 +43,34 @@ const (
 )
 
 type TunnelProperties struct {
-	// Basic tunnel properties
+	// Tunnel properties
 	ID           *string    `json:"id,omitempty"`
-	Name         *string    `json:"name,omitempty"`
 	CreationDate *time.Time `json:"creation_date,omitempty"`
-
+	Name         *string    `json:"name,omitempty"`
 	// Tunnel options
 	Type     *TunnelType       `json:"type,omitempty"`
 	Publish  *bool             `json:"publish,omitempty"`
 	Protocol *Protocol         `json:"protocol,omitempty"`
 	Labels   map[string]string `json:"labels,omitempty"`
-	Host     *string           `json:"host,omitempty"`
-	Path     *string           `json:"path,omitempty"`
-
 	// Security options
 	GeoIP      []string `json:"geo_ip,omitempty"`
 	TrustedIPs []string `json:"trusted_ips,omitempty"`
-	Domain     *string  `json:"domain,omitempty"`
-
+	// Publishing options
+	Host *string `json:"host,omitempty"`
 	// TLS options
-	TLSMode       *TLSMode `json:"tls_mode,omitempty"`
-	TLSALPNs      []string `json:"tls_alpns,omitempty"`
+	TLSMode  *TLSMode `json:"tls_mode,omitempty"`
+	TLSALPNs []string `json:"tls_alpns,omitempty"`
+	// Publishing options (terminated tunnels only)
 	TLSMinVersion *string  `json:"tls_min_version,omitempty"`
 	TLSCiphers    []string `json:"tls_ciphers,omitempty"`
 	MTLS          *bool    `json:"mtls,omitempty"`
 	MTLSCACertPEM *string  `json:"mtls_ca_cert_pem,omitempty"`
-
-	// HTTP tunnel options (only for HTTP tunnels)
-	HTTPVersion    *HTTPVersion `json:"http_version,omitempty"`
-	HTTPUseTLS     *bool        `json:"http_use_tls,omitempty"`
-	TokenAuth      *bool        `json:"token_auth,omitempty"`
-	SSO            *bool        `json:"sso,omitempty"`
-	SSOProviders   []string     `json:"sso_providers,omitempty"`
-	EmailWhitelist []string     `json:"email_whitelist,omitempty"`
-	EmailBlacklist []string     `json:"email_blacklist,omitempty"`
-	Challenge      *bool        `json:"challenge,omitempty"`
+	// HTTP tunnel options (http tunnels only)
+	HTTPVersion   *HTTPVersion `json:"http_version,omitempty"`
+	HTTPUseTLS    *bool        `json:"http_use_tls,omitempty"`
+	TokenAuth     *bool        `json:"token_auth,omitempty"`
+	RstreamAuth   *bool        `json:"rstream_auth,omitempty"`
+	ChallengeMode *bool        `json:"challenge_mode,omitempty"`
 }
 
 type ListTunnelsFilters struct {
