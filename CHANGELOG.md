@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/rstreamlabs/rstream-go/compare/v1.3.0...v1.3.1) (2026-02-11)
+
+
+### Bug Fixes
+
+* fix CI (npm publish) ([9f1738f](https://github.com/rstreamlabs/rstream-go/commit/9f1738f9a7d48a482bf690a4bfa04709c39b37ed))
+
 ## [1.3.0](https://github.com/rstreamlabs/rstream-go/compare/v1.2.0...v1.3.0) (2026-02-11)
 
 
