@@ -40,7 +40,7 @@ type ControlChannel interface {
 	ServerDetails() *ServerDetails
 }
 
-type clientDetails struct {
+type ClientDetails struct {
 	Agent           *string
 	Channel         *string
 	Version         *string
@@ -68,7 +68,7 @@ func (c *Client) getEngine() (*string, error) {
 	return engine, nil
 }
 
-func (c *Client) getClientDetails(engine *string, token *string) (*clientDetails, error) {
+func (c *Client) getClientDetails(engine *string, token *string) (*ClientDetails, error) {
 	var err error
 	if engine == nil {
 		engine, err = c.getEngine()
@@ -175,7 +175,7 @@ func (c *Client) dial(ctx context.Context, dialType dialType, raddr Addr, token 
 	if zeroRTT == nil {
 		zeroRTT = BoolPtr(true) // default to true
 	}
-	clientDetails, cause := c.getClientDetails(engine, token)
+	ClientDetails, cause := c.getClientDetails(engine, token)
 	if cause != nil {
 		err = fmt.Errorf("failed to get client details: %w", cause)
 	}
@@ -184,7 +184,7 @@ func (c *Client) dial(ctx context.Context, dialType dialType, raddr Addr, token 
 			msg := &pb.Message{
 				Payload: &pb.Message_ProxyReq{
 					ProxyReq: &pb.ProxyReq{
-						ClientDetails: toClientDetailsPb(clientDetails),
+						ClientDetails: toClientDetailsPb(ClientDetails),
 						StreamId:      raddr.IdOrName,
 						ZeroRtt:       boolPbValueOrNil(zeroRTT),
 					},
@@ -197,7 +197,7 @@ func (c *Client) dial(ctx context.Context, dialType dialType, raddr Addr, token 
 			msg := &pb.Message{
 				Payload: &pb.Message_StreamReq{
 					StreamReq: &pb.StreamReq{
-						ClientDetails: toClientDetailsPb(clientDetails),
+						ClientDetails: toClientDetailsPb(ClientDetails),
 						TunnelIdName:  raddr.IdOrName,
 						ZeroRtt:       boolPbValueOrNil(zeroRTT),
 					},
@@ -291,7 +291,7 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial engine: %w", err)
 	}
-	clientDetails, cause := c.getClientDetails(engine, nil)
+	ClientDetails, cause := c.getClientDetails(engine, nil)
 	if cause != nil {
 		err = fmt.Errorf("failed to get client details: %w", cause)
 	} else {
@@ -323,7 +323,7 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 		msg := &pb.Message{
 			Payload: &pb.Message_OpenControlChannelReq{
 				OpenControlChannelReq: &pb.OpenControlChannelReq{
-					ClientDetails: toClientDetailsPb(clientDetails),
+					ClientDetails: toClientDetailsPb(ClientDetails),
 				},
 			},
 		}
