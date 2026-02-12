@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0](https://github.com/rstreamlabs/rstream-go/compare/v1.3.2...v1.4.0) (2026-02-12)
+
+
+### Features
+
+* rstrm protocol 1.4 (error codes) ([5e4a243](https://github.com/rstreamlabs/rstream-go/commit/5e4a24349045c9086df36ae12397f5daa11f9220))
+
 ## [1.3.2](https://github.com/rstreamlabs/rstream-go/compare/v1.3.1...v1.3.2) (2026-02-11)
 
 
