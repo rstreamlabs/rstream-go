@@ -60,6 +60,18 @@ type forwardCtx struct {
 	UI               forwardUI
 }
 
+type statusReportedError struct {
+	err error
+}
+
+func (e statusReportedError) Error() string {
+	return e.err.Error()
+}
+
+func (e statusReportedError) Unwrap() error {
+	return e.err
+}
+
 var forwardCmd = &cobra.Command{
 	GroupID:      "common",
 	Use:          "forward [[host:]port]",
@@ -245,9 +257,12 @@ func (s *forwardCtx) run(ctx context.Context) error {
 			return err
 		}
 		err := s.runOnce(ctx)
-		status := newForwardStatus(nil)
-		status.Status = rstream.StringPtr("disconnected")
-		s.setStatus(status)
+		var reported statusReportedError
+		if err != nil && !errors.As(err, &reported) {
+			status := newForwardStatus(nil)
+			status.Status = rstream.StringPtr("disconnected")
+			s.setStatus(status)
+		}
 		if err == nil {
 			return nil
 		}
@@ -266,31 +281,49 @@ func (s *forwardCtx) run(ctx context.Context) error {
 }
 
 func (s *forwardCtx) runOnce(ctx context.Context) error {
+	connectingStatus := newForwardStatus(nil)
+	connectingStatus.Status = rstream.StringPtr("connecting")
+	s.setStatus(connectingStatus)
 	ctrl, err := s.Client.Connect(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("failed to connect to rstream engine server: %w", err)
+		status := newForwardStatus(nil)
+		status.Status = rstream.StringPtr(formatStatusError("connection failed", err))
+		s.setStatus(status)
+		return statusReportedError{err: fmt.Errorf("failed to connect to rstream engine server: %w", err)}
 	}
 	defer ctrl.Close()
 	baseStatus := newForwardStatus(ctrl.ServerDetails())
-	connectingStatus := baseStatus
-	connectingStatus.Status = rstream.StringPtr("connecting")
-	s.setStatus(connectingStatus)
+	connectedStatus := baseStatus
+	connectedStatus.Status = rstream.StringPtr("connected")
+	s.setStatus(connectedStatus)
 	tunnel, err := ctrl.CreateTunnel(ctx, *s.Props)
 	if err != nil {
-		return fmt.Errorf("failed to create tunnel: %w", err)
+		status := baseStatus
+		status.Status = rstream.StringPtr(formatStatusError("tunnel creation failed", err))
+		s.setStatus(status)
+		return statusReportedError{err: fmt.Errorf("failed to create tunnel: %w", err)}
 	}
 	defer tunnel.Close()
 	props, err := tunnel.Properties()
 	if err != nil {
-		return fmt.Errorf("failed to get tunnel properties: %w", err)
+		status := baseStatus
+		status.Status = rstream.StringPtr(formatStatusError("tunnel creation failed", err))
+		s.setStatus(status)
+		return statusReportedError{err: fmt.Errorf("failed to get tunnel properties: %w", err)}
 	}
 	forwarding, err := tunnel.ForwardingAddress()
 	if err != nil {
-		return fmt.Errorf("failed to get forwarding address: %w", err)
+		status := baseStatus
+		status.Status = rstream.StringPtr(formatStatusError("tunnel creation failed", err))
+		s.setStatus(status)
+		return statusReportedError{err: fmt.Errorf("failed to get forwarding address: %w", err)}
 	}
 	forwarded, err := rstream.FormatForwardedHostPort(s.Host, s.Port, props)
 	if err != nil {
-		return fmt.Errorf("failed to format forwarded address: %w", err)
+		status := baseStatus
+		status.Status = rstream.StringPtr(formatStatusError("tunnel creation failed", err))
+		s.setStatus(status)
+		return statusReportedError{err: fmt.Errorf("failed to format forwarded address: %w", err)}
 	}
 	onlineStatus := baseStatus
 	onlineStatus.Status = rstream.StringPtr("online")
@@ -305,6 +338,17 @@ func (s *forwardCtx) runOnce(ctx context.Context) error {
 		return s.serveWithCtx(ctx, pl.Close, func() error { return s.serveUDP(pl) })
 	}
 	return fmt.Errorf("tunnel does not implement net.Listener or rstream.PacketListener")
+}
+
+func formatStatusError(prefix string, err error) string {
+	if err == nil {
+		return prefix
+	}
+	msg := strings.TrimSpace(err.Error())
+	if msg == "" {
+		return prefix
+	}
+	return fmt.Sprintf("%s (%s)", prefix, msg)
 }
 
 func (s *forwardCtx) serveWithCtx(ctx context.Context, closeFn func() error, fn func() error) error {
