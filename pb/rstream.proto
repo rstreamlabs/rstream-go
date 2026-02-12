@@ -14,7 +14,7 @@ extend google.protobuf.FieldOptions {
   string access = 51234;
 }
 
-option (protocol_version) = "1.3.0";
+option (protocol_version) = "1.4.0";
 
 package rstream.io_rstrm.protobuf;
 
@@ -30,10 +30,46 @@ message IpAddress {
   }
 }
 
+// Error codes grouped by class
+//   1000-1999: Authentication / authorization
+//   2000-2999: Request validation / protocol
+//   3000-3999: Not found
+//   4000-4999: Invalid state / stream
+//   5000-5999: Feature / plan / config not available
+//   6000-6999: Service dependency unavailable
+//   9000-9999: Internal errors
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+
+  // 1000-1999: Authentication / authorization
+  ERROR_CODE_UNAUTHORIZED = 1000;
+
+  // 2000-2999: Request validation / protocol
+  ERROR_CODE_INVALID_REQUEST = 2000;
+  ERROR_CODE_PROTOCOL_VERSION_MISSING = 2010;
+  ERROR_CODE_PROTOCOL_VERSION_INVALID = 2020;
+  ERROR_CODE_PROTOCOL_VERSION_INCOMPATIBLE = 2030;
+
+  // 3000-3999: Not found
+  ERROR_CODE_TUNNEL_NOT_FOUND = 3000;
+
+  // 4000-4999: Invalid state / stream
+  ERROR_CODE_INVALID_STREAM = 4000;
+
+  // 5000-5999: Feature / plan / config not available
+  ERROR_CODE_FEATURE_NOT_AVAILABLE = 5000;
+
+  // 6000-6999: Service dependency unavailable
+  ERROR_CODE_SERVICE_UNAVAILABLE = 6000;
+
+  // 9000-9999: Internal errors
+  ERROR_CODE_INTERNAL = 9000;
+}
+
 // Error message structure used for reporting issues.
 
 message Error {
-  int32 code = 1;
+  ErrorCode code = 1;
   google.protobuf.StringValue message = 2;
 }
 
