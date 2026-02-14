@@ -9,15 +9,15 @@ import (
 	"time"
 )
 
-type RstreamLoginLabel struct {
+type RstreamLabel struct {
 	Key   string `json:"key"`
 	Value string `json:"value"`
 	Label string `json:"label,omitempty"`
 }
 
 type RstreamLoginRequest struct {
-	Permissions []string            `json:"permissions"`
-	Source      []RstreamLoginLabel `json:"source,omitempty"`
+	Permissions []string       `json:"permissions"`
+	Source      []RstreamLabel `json:"source,omitempty"`
 }
 
 type RstreamLoginResponse struct {
