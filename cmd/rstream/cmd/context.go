@@ -119,7 +119,7 @@ var contextUseCmd = &cobra.Command{
 
 var contextDeleteCmd = &cobra.Command{
 	Use:          "delete <name>",
-	Aliases:      []string{"rm"},
+	Aliases:      []string{"rm", "del"},
 	Short:        "Delete a context",
 	SilenceUsage: true,
 	Args:         cobra.ExactArgs(1),

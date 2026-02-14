@@ -3,6 +3,7 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -88,6 +89,10 @@ func (c *Client) ResolveProjectByEndpoint(ctx context.Context, endpoint string) 
 }
 
 func (c *Client) doJSON(ctx context.Context, method, path string, query url.Values, out any) (int, error) {
+	return c.doJSONBody(ctx, method, path, query, nil, out)
+}
+
+func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.Values, body any, out any) (int, error) {
 	if c.apiURL == "" {
 		return 0, errors.New("apiUrl is required")
 	}
@@ -100,9 +105,22 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 		fullURL += "?" + query.Encode()
 	}
 	slog.Debug("control-plane request", "method", method, "url", fullURL)
-	req, err := http.NewRequestWithContext(ctx, method, fullURL, nil)
+	var reader *bytes.Reader
+	if body != nil {
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return 0, err
+		}
+		reader = bytes.NewReader(payload)
+	} else {
+		reader = bytes.NewReader(nil)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, reader)
 	if err != nil {
 		return 0, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
