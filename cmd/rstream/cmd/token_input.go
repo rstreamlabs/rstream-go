@@ -35,6 +35,46 @@ func readTokenInput(cmd *cobra.Command, args []string) (string, error) {
 	return "", errors.New("token is required")
 }
 
+func readTokenInputOptional(cmd *cobra.Command, args []string) (string, bool, error) {
+	if len(args) > 0 {
+		token := strings.TrimSpace(args[0])
+		if token == "" {
+			return "", false, errors.New("token is empty")
+		}
+		return token, true, nil
+	}
+	token, _ := cmd.Flags().GetString("token")
+	if strings.TrimSpace(token) != "" {
+		return strings.TrimSpace(token), true, nil
+	}
+	stdin, _ := cmd.Flags().GetBool("stdin")
+	tokenStdin, _ := cmd.Flags().GetBool("token-stdin")
+	file, _ := cmd.Flags().GetString("token-file")
+	if stdin || tokenStdin {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return "", false, err
+		}
+		token := strings.TrimSpace(string(data))
+		if token == "" {
+			return "", false, errors.New("token is empty")
+		}
+		return token, true, nil
+	}
+	if file != "" {
+		data, err := os.ReadFile(file)
+		if err != nil {
+			return "", false, fmt.Errorf("failed to read token file: %w", err)
+		}
+		token := strings.TrimSpace(string(data))
+		if token == "" {
+			return "", false, errors.New("token is empty")
+		}
+		return token, true, nil
+	}
+	return "", false, nil
+}
+
 func readTokenFromFlags(cmd *cobra.Command) (string, bool, error) {
 	token, _ := cmd.Flags().GetString("token")
 	if strings.TrimSpace(token) != "" {

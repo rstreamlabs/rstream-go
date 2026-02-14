@@ -2,20 +2,17 @@
 
 package cmd
 
-import (
-	"github.com/rstreamlabs/rstream-go/config"
-	"github.com/spf13/cobra"
-)
+import "github.com/spf13/cobra"
 
 var loginCmd = &cobra.Command{
 	GroupID:      "common",
 	Use:          "login [token]",
 	Short:        "Login to rstream",
-	Long:         "Provide a token via argument, stdin, or token file to authenticate and store it in the config.",
+	Long:         "Authenticate using a token or complete a browser-based login flow.",
 	SilenceUsage: true,
 	Args:         cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		token, err := readTokenInput(cmd, args)
+		token, tokenProvided, err := readTokenInputOptional(cmd, args)
 		if err != nil {
 			return err
 		}
@@ -27,22 +24,22 @@ var loginCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if err := validateToken(cmd.Context(), apiURL, token); err != nil {
-			return err
+		if tokenProvided {
+			return storeToken(cmd.Context(), path, cfg, apiURL, token)
 		}
-		env := cfg.EnsureEnvironment(apiURL)
-		if err := setEnvironmentToken(env, token); err != nil {
-			return err
-		}
-		return config.WriteAtomic(path, cfg)
+		return runRstreamLogin(cmd, path, cfg, apiURL)
 	},
 }
 
 func init() {
 	loginCmd.Flags().SortFlags = false
 	loginCmd.PersistentFlags().SortFlags = false
-	loginCmd.Flags().Bool("stdin", false, "read token from stdin")
+	loginCmd.Flags().String("token", "", "authentication token")
+	loginCmd.Flags().Bool("token-stdin", false, "read token from stdin")
 	loginCmd.Flags().String("token-file", "", "read token from file")
-	loginCmd.MarkFlagsMutuallyExclusive("stdin", "token-file")
+	loginCmd.Flags().Bool("stdin", false, "read token from stdin (deprecated)")
+	loginCmd.MarkFlagsMutuallyExclusive("token", "token-stdin", "token-file", "stdin")
+	loginCmd.MarkFlagFilename("token-file")
+	loginCmd.Flags().MarkDeprecated("stdin", "use --token-stdin")
 	rootCmd.AddCommand(loginCmd)
 }
