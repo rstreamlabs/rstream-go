@@ -95,7 +95,7 @@ func waitForRstreamLoginToken(ctx context.Context, client *controlplane.Client, 
 				continue
 			}
 		case "denied":
-			return "", errors.New("login request was canceled")
+			return "", errors.New("login request was denied")
 		case "expired":
 			return "", errors.New("login expired")
 		case "consumed":
@@ -106,16 +106,16 @@ func waitForRstreamLoginToken(ctx context.Context, client *controlplane.Client, 
 	}
 }
 
-func resolveRstreamLoginSource() []controlplane.RstreamLoginLabel {
-	labels := make([]controlplane.RstreamLoginLabel, 0, 6)
+func resolveRstreamLoginSource() []controlplane.RstreamLabel {
+	labels := make([]controlplane.RstreamLabel, 0, 6)
 	if rstream.Agent != "" {
-		labels = append(labels, controlplane.RstreamLoginLabel{Key: "agent", Value: rstream.Agent, Label: "Agent"})
+		labels = append(labels, controlplane.RstreamLabel{Key: "agent", Value: rstream.Agent, Label: "Agent"})
 	}
 	if rstream.Channel != "" {
-		labels = append(labels, controlplane.RstreamLoginLabel{Key: "channel", Value: rstream.Channel, Label: "Channel"})
+		labels = append(labels, controlplane.RstreamLabel{Key: "channel", Value: rstream.Channel, Label: "Channel"})
 	}
 	if rstream.Version != "" {
-		labels = append(labels, controlplane.RstreamLoginLabel{Key: "version", Value: rstream.Version, Label: "CLI version"})
+		labels = append(labels, controlplane.RstreamLabel{Key: "version", Value: rstream.Version, Label: "CLI version"})
 	}
 	identity := rstream.CompiletimeIdentity()
 	if identity.OS == "" || identity.Arch == "" {
@@ -128,13 +128,13 @@ func resolveRstreamLoginSource() []controlplane.RstreamLoginLabel {
 		}
 	}
 	if identity.OS != "" {
-		labels = append(labels, controlplane.RstreamLoginLabel{Key: "os", Value: identity.OS, Label: "OS"})
+		labels = append(labels, controlplane.RstreamLabel{Key: "os", Value: identity.OS, Label: "OS"})
 	}
 	if identity.Arch != "" {
-		labels = append(labels, controlplane.RstreamLoginLabel{Key: "arch", Value: identity.Arch, Label: "Arch"})
+		labels = append(labels, controlplane.RstreamLabel{Key: "arch", Value: identity.Arch, Label: "Arch"})
 	}
 	if hostname, err := os.Hostname(); err == nil && hostname != "" {
-		labels = append(labels, controlplane.RstreamLoginLabel{Key: "hostname", Value: hostname, Label: "Hostname"})
+		labels = append(labels, controlplane.RstreamLabel{Key: "hostname", Value: hostname, Label: "Hostname"})
 	}
 	if len(labels) == 0 {
 		return nil
