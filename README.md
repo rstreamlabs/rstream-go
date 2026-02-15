@@ -202,7 +202,21 @@ make nupkg       # Create Windows NuGet packages
 
 rstream includes a comprehensive Go SDK enabling developers to create secure tunnels programmatically. The client-side code is fully open source and inspectable, ensuring transparency and security. Additional examples are available in the `examples/` directory of this repository.
 
-Examples use `config.NewClientFromEnv()` and read the same config/env settings as the CLI. Ensure a default context (or `RSTREAM_ENGINE`) is set, and provide `RSTREAM_AUTHENTICATION_TOKEN` if your engine requires authentication.
+Examples use `config.NewClientFromEnv()` and read the same config/env settings as the CLI. Ensure a default context (or `RSTREAM_ENGINE`) is set, and provide `RSTREAM_AUTHENTICATION_TOKEN` if your engine requires authentication. Manually specifying engine/token is the exception, not the default.
+
+### Manual Client Options (Exception)
+
+Use this only when you need to bypass config/env resolution.
+
+```go
+client, err := rstream.NewClient(rstream.ClientOptions{
+	Engine: "engine.example:443",
+	Token:  "authentication_token",
+})
+if err != nil {
+	panic(err)
+}
+```
 
 ### HTTP Server (Published Tunnel)
 
@@ -218,13 +232,11 @@ import (
 	"net/http"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/config"
 )
 
 func main() {
-	client, err := rstream.NewClient(rstream.ClientOptions{
-		Engine: "engine.example:443",
-		Token:  "authentication_token",
-	})
+	client, err := config.NewClientFromEnv()
 	if err != nil {
 		panic(err)
 	}
@@ -266,13 +278,11 @@ import (
 	"net"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/config"
 )
 
 func main() {
-	client, err := rstream.NewClient(rstream.ClientOptions{
-		Engine: "engine.example:443",
-		Token:  "authentication_token",
-	})
+	client, err := config.NewClientFromEnv()
 	if err != nil {
 		panic(err)
 	}
@@ -318,13 +328,11 @@ import (
 	"fmt"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/config"
 )
 
 func main() {
-	client, err := rstream.NewClient(rstream.ClientOptions{
-		Engine: "engine.example:443",
-		Token:  "authentication_token",
-	})
+	client, err := config.NewClientFromEnv()
 	if err != nil {
 		panic(err)
 	}
@@ -356,13 +364,11 @@ import (
 	"log"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/config"
 )
 
 func main() {
-	client, err := rstream.NewClient(rstream.ClientOptions{
-		Engine: "engine.example:443",
-		Token:  "authentication_token",
-	})
+	client, err := config.NewClientFromEnv()
 	if err != nil {
 		panic(err)
 	}
@@ -429,6 +435,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/config"
 )
 
 func generateTLSConfig() (*tls.Config, error) {
@@ -453,10 +460,7 @@ func generateTLSConfig() (*tls.Config, error) {
 }
 
 func main() {
-	client, err := rstream.NewClient(rstream.ClientOptions{
-		Engine: "engine.example:443",
-		Token:  "authentication_token",
-	})
+	client, err := config.NewClientFromEnv()
 	if err != nil {
 		panic(err)
 	}
