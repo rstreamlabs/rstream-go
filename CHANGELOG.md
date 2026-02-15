@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.0](https://github.com/rstreamlabs/rstream-go/compare/v1.4.0...v1.5.0) (2026-02-15)
+
+
+### Features
+
+* browser based login workflow ([bef8933](https://github.com/rstreamlabs/rstream-go/commit/bef89336762330678459ab90855131dd1d00f200))
+
 ## [1.4.0](https://github.com/rstreamlabs/rstream-go/compare/v1.3.2...v1.4.0) (2026-02-12)
 
 
