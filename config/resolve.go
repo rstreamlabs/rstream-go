@@ -3,8 +3,12 @@
 package config
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/rstreamlabs/rstream-go"
 )
@@ -110,6 +114,15 @@ func Resolve(input ResolveInput) (Resolved, error) {
 			}
 		}
 	}
+	if token != "" {
+		expired, err := isTokenExpired(token, time.Now())
+		if err != nil {
+			return Resolved{}, err
+		}
+		if expired {
+			return Resolved{}, errors.New("token has expired (run rstream login or set RSTREAM_AUTHENTICATION_TOKEN)")
+		}
+	}
 	if input.RequireEngine && engine == "" {
 		return Resolved{}, errors.New("engine is required but not configured (set --engine or RSTREAM_ENGINE, or select a context via --context, RSTREAM_CONTEXT, or `rstream context use`)")
 	}
@@ -197,4 +210,39 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func isTokenExpired(token string, now time.Time) (bool, error) {
+	claims, err := parseJWTClaims(token)
+	if err != nil {
+		return false, err
+	}
+	if claims == nil || claims.Exp == nil {
+		return false, nil
+	}
+	exp, err := claims.Exp.Float64()
+	if err != nil {
+		return false, nil
+	}
+	return now.After(time.Unix(int64(exp), 0)), nil
+}
+
+type jwtClaims struct {
+	Exp *json.Number `json:"exp"`
+}
+
+func parseJWTClaims(token string) (*jwtClaims, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return nil, nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, nil
+	}
+	var claims jwtClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil, nil
+	}
+	return &claims, nil
 }
