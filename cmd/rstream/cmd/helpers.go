@@ -59,8 +59,39 @@ func getStringArrayMap(cmd *cobra.Command, name string) map[string]string {
 func getStringSlice(cmd *cobra.Command, name string) []string {
 	f := cmd.Flags().Lookup(name)
 	if f != nil && f.Changed {
-		val, _ := cmd.Flags().GetStringSlice(name)
-		return val
+		val, err := cmd.Flags().GetStringSlice(name)
+		if err == nil {
+			out := make([]string, 0, len(val))
+			for _, item := range val {
+				item = strings.TrimSpace(item)
+				if item != "" {
+					out = append(out, item)
+				}
+			}
+			if len(out) > 0 {
+				return out
+			}
+			return nil
+		}
+		raw, err := cmd.Flags().GetString(name)
+		if err != nil {
+			return nil
+		}
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return nil
+		}
+		parts := strings.Split(raw, ",")
+		out := make([]string, 0, len(parts))
+		for _, item := range parts {
+			item = strings.TrimSpace(item)
+			if item != "" {
+				out = append(out, item)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
 	}
 	return nil
 }
