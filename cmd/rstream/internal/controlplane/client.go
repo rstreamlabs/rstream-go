@@ -77,14 +77,14 @@ func (c *Client) ListProjects(ctx context.Context, params ListProjectsParams) (L
 	if params.Order != "" {
 		query.Set("order", params.Order)
 	}
-	_, err := c.doJSON(ctx, http.MethodGet, "/api/projects", query, &out)
+	_, err := c.doJSON(ctx, http.MethodGet, "/api/projects/tunnels", query, &out)
 	return out, err
 }
 
 func (c *Client) ResolveProjectByEndpoint(ctx context.Context, endpoint string) (Project, error) {
 	var out Project
 	escaped := url.PathEscape(endpoint)
-	_, err := c.doJSON(ctx, http.MethodGet, "/api/projects/resolve/"+escaped, nil, &out)
+	_, err := c.doJSON(ctx, http.MethodGet, "/api/projects/tunnels/resolve/"+escaped, nil, &out)
 	return out, err
 }
 
