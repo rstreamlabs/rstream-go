@@ -13,7 +13,7 @@ import (
 
 func TestResolveProjectByEndpointEscapesPath(t *testing.T) {
 	endpoint := "e7e8a732.aws-eu-west-3-1.c.rstream.io:8443"
-	expectedPath := "/api/projects/resolve/" + url.PathEscape(endpoint)
+	expectedPath := "/api/projects/tunnels/resolve/" + url.PathEscape(endpoint)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.EscapedPath(); got != expectedPath {
 			http.Error(w, "unexpected path", http.StatusBadRequest)
