@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/rstreamlabs/rstream-go/compare/v1.5.0...v1.5.1) (2026-02-18)
+
+
+### Bug Fixes
+
+* control plane api update ([d6febd8](https://github.com/rstreamlabs/rstream-go/commit/d6febd8c1347d917c6f1b39d81378225c7199e6e))
+
 ## [1.5.0](https://github.com/rstreamlabs/rstream-go/compare/v1.4.0...v1.5.0) (2026-02-15)
 
 
