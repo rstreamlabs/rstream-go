@@ -13,10 +13,11 @@ import (
 )
 
 func validateToken(ctx context.Context, apiURL, token string) error {
+	logger := slog.With("component", "control-plane.validate-token")
 	if strings.TrimSpace(token) == "" {
 		return errors.New("token is required")
 	}
-	client := controlplane.NewClient(apiURL, token)
+	client := controlplane.NewClient(apiURL, token, controlplane.WithLogger(logger))
 	whoami, err := client.Whoami(ctx)
 	if err != nil {
 		if errors.Is(err, controlplane.ErrUnauthorized) {
@@ -25,7 +26,7 @@ func validateToken(ctx context.Context, apiURL, token string) error {
 		return err
 	}
 	if flagVerbose {
-		slog.Debug("token validated", "id", whoami.ID, "role", whoami.Role)
+		logger.Debug("token validated", "id", whoami.ID, "role", whoami.Role)
 	}
 	return nil
 }
