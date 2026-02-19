@@ -117,6 +117,9 @@ func DefaultShellDarwin(usr *user.User) (string, error) {
 }
 
 func DefaultShellWindows() (string, error) {
+	if s := os.Getenv("COMSPEC"); s != "" {
+		return s, nil
+	}
 	if s := os.Getenv("ComSpec"); s != "" {
 		return s, nil
 	}

@@ -69,6 +69,9 @@ func initLogger(cmd *cobra.Command) error {
 
 func ExecuteContext(ctx context.Context) {
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
+		if ex, ok := err.(interface{ ExitCode() int }); ok {
+			os.Exit(ex.ExitCode())
+		}
 		os.Exit(1)
 	}
 }

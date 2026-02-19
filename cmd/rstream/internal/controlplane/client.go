@@ -22,6 +22,7 @@ type Client struct {
 	apiURL     string
 	token      string
 	httpClient *http.Client
+	logger     *slog.Logger
 }
 
 type Option func(*Client)
@@ -34,11 +35,20 @@ func WithHTTPClient(client *http.Client) Option {
 	}
 }
 
+func WithLogger(logger *slog.Logger) Option {
+	return func(c *Client) {
+		if logger != nil {
+			c.logger = logger
+		}
+	}
+}
+
 func NewClient(apiURL, token string, opts ...Option) *Client {
 	client := &Client{
 		apiURL:     strings.TrimRight(strings.TrimSpace(apiURL), "/"),
 		token:      strings.TrimSpace(token),
 		httpClient: &http.Client{Timeout: 10 * time.Second},
+		logger:     slog.With("component", "control-plane.client"),
 	}
 	for _, opt := range opts {
 		opt(client)
@@ -104,7 +114,7 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 	if len(query) > 0 {
 		fullURL += "?" + query.Encode()
 	}
-	slog.Debug("control-plane request", "method", method, "url", fullURL)
+	c.logger.Debug("control-plane request", "method", method, "url", fullURL)
 	var reader *bytes.Reader
 	if body != nil {
 		payload, err := json.Marshal(body)
@@ -134,10 +144,10 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 			return resp.StatusCode, fmt.Errorf("%w: %s", ErrUnauthorized, resp.Status)
 		}
-		slog.Debug("control-plane response", "status", resp.StatusCode, "statusText", resp.Status)
+		c.logger.Debug("control-plane response", "status", resp.StatusCode, "statusText", resp.Status)
 		return resp.StatusCode, fmt.Errorf("control-plane request failed: %s", resp.Status)
 	}
-	slog.Debug("control-plane response", "status", resp.StatusCode)
+	c.logger.Debug("control-plane response", "status", resp.StatusCode)
 	if out == nil {
 		return resp.StatusCode, nil
 	}
