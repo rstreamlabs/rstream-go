@@ -70,45 +70,51 @@ rstream supports two fundamental tunnel types:
 
 rstream is compatible with Linux, macOS and Windows. Additionally, rstream supports other UNIX systems such as FreeBSD, OpenBSD and NetBSD through manual installation.
 
-## Installation
+## Installation (rstream CLI)
+
+The installation paths in this section install the `rstream` CLI binary and its runtime dependencies. They do not install the Go SDK as a library dependency.
 
 ### Local build
-For a local source build on the current platform, run:
+To build the CLI locally from this repository on the current platform, run:
 ```bash
 make
 ```
 
 ### Debian/Ubuntu
-For Debian-based distributions, the installation script installs packaged binaries and dependencies:
+For Debian-based distributions, the installer deploys packaged CLI binaries and dependencies:
 ```bash
 sudo /bin/bash -i -c "$(curl -fsSL https://rstream.io/scripts/install-debian.sh)"
 ```
 
 ### macOS
-On macOS, the Homebrew tap provides the standard installation path:
+On macOS, the Homebrew tap provides the standard CLI installation path:
 ```bash
 brew tap rstreamlabs/rstream && brew install rstream
 ```
 
 ### Manual installation
-For generic environments, use the manual installer script:
+For generic environments, use the manual installer script for the CLI binary:
 ```bash
 /bin/bash -i -c "$(curl -fsSL https://rstream.io/scripts/install.sh)"
 ```
 
 ### Docker
-If you run rstream in containers, pull the public image:
+If you run the CLI in containers, pull the public image:
 ```bash
 docker pull rstream/rstream:latest
 ```
 
 ## Authentication
 
-To function properly, rstream requires an authentication token. Create an account on https://rstream.io, generate a token, then register it on your machine:
+The standard developer-machine path is browser-based login:
 
 ```bash
-rstream login ${AUTHENTICATION_TOKEN}
+rstream login
 ```
+
+For advanced authentication modes (token-based login, remote device flows, and project-scoped contexts), see [docs/CLI_WORKFLOW.md](docs/CLI_WORKFLOW.md).
+
+Before running SDK examples, ensure a project context is set up with the CLI (`rstream project use <project-endpoint>`). The SDK and CLI share the same configuration model and config file.
 
 ## Environment variables
 
@@ -541,6 +547,13 @@ func main() {
 - Documentation: https://rstream.io/docs
 - Go SDK (reference implementation): https://github.com/rstreamlabs/rstream-go
 - C++ SDK: https://github.com/rstreamlabs/rstream-cpp
+
+Operational and advanced CLI/SDK workflows:
+
+- CLI workflow and authentication: [docs/CLI_WORKFLOW.md](docs/CLI_WORKFLOW.md)
+- Declarative run workflows: [docs/CMD_RUN.md](docs/CMD_RUN.md)
+- Transport configuration: [docs/TRANSPORT.md](docs/TRANSPORT.md)
+- Tunnel property reference: [docs/TUNNEL_PROPERTIES.md](docs/TUNNEL_PROPERTIES.md)
 
 ## Contributing
 
