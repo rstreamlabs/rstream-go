@@ -1,14 +1,18 @@
-# rstream
+# rstream-go
 
 Transform localhost into global reach through secure tunneling.
 
-rstream is a secure connectivity platform built around a globally distributed edge network and lightweight agents. Agents maintain outbound-only tunnels from local and private environments, while the edge network authenticates traffic, enforces access policy, and routes requests to upstream services. rstream supports HTTP and non-HTTP workloads and provides end-to-end visibility through connection logs and metrics.
+`rstream-go` is the Go SDK for **rstream**, a secure connectivity platform built around a globally distributed edge network and lightweight agents. Agents maintain outbound-only tunnels from local and private environments, while the edge network authenticates traffic, enforces access policy, and routes requests to upstream services. rstream supports HTTP and non-HTTP workloads and provides end-to-end visibility through connection logs and metrics.
+
+The Go SDK is the **reference implementation**. It covers the broadest rstream API surface and is the most complete SDK in terms of protocol support and tunnel lifecycle features. The rstream CLI is implemented in Go and lives in this repository, so the SDK and CLI share the same configuration model and operational behavior.
+
+Looking for native integration? The C++ SDK is available at https://github.com/rstreamlabs/rstream-cpp.
 
 ## What is a tunnel?
 
-A tunnel is a secure way to expose services without requiring inbound ports, public IPs, or NAT changes. A tunnel is established outbound to an edge network, reducing exposure while keeping access controllable and observable.
+A tunnel is a secure way to expose services without requiring inbound ports, public IPs, or NAT changes. In rstream, tunnels are established **outbound** to the edge network, reducing exposure while keeping access controllable and observable.
 
-When you create a published tunnel with rstream, you get a forwarding address that routes inbound traffic to a local service. For example, a tunnel for `localhost:8080` provides a forwarding address like `https://abc123.rstream.io` that forwards HTTP requests to local port 8080.
+When you create a **published** tunnel with rstream, you get a forwarding address that routes inbound traffic to a local service. For example, a tunnel for `localhost:8080` provides a forwarding address like `https://abc123.rstream.io` that forwards HTTP requests to local port 8080.
 
 ## How rstream works
 
@@ -16,53 +20,53 @@ rstream establishes outbound tunnels between environments running services or de
 
 Tunnel transports are encrypted, and edge enforcement decisions are surfaced through logs and metrics.
 
-## Tunnel Types
+## Tunnel types
 
 rstream supports two fundamental tunnel types:
 
-**Bytestream Tunnels** (TCP-like): Reliable, ordered transmission for protocols such as HTTP and TLS, as well as custom bytestream services.
+**Bytestream tunnels** (TCP-like) provide reliable, ordered transmission for protocols such as HTTP and TLS, as well as custom bytestream services.
 
-**Datagram Tunnels** (UDP-like): Low-latency, message-oriented communication for protocols such as QUIC and DTLS, as well as custom datagram services.
+**Datagram tunnels** (UDP-like) provide low-latency, message-oriented communication for protocols such as QUIC and DTLS, as well as custom datagram services.
 
-## Published vs Private Tunnels
+## Published vs private tunnels
 
-**Published Tunnels**: Accessible via standard clients (browsers, curl, etc.) through forwarding addresses. Published tunnels can be configured with edge authentication and access policies depending on protocol and deployment.
+**Published tunnels** are accessible via standard clients (browsers, curl, etc.) through forwarding addresses. Published tunnels can be configured with edge authentication and access policies depending on protocol and deployment.
 
-**Private Tunnels**: Require an rstream client to connect. Private tunnels are accessed by name (if specified) or by ID through the rstream dialer instead of a public forwarding address.
+**Private tunnels** require an rstream client to connect. Private tunnels are accessed by name (if specified) or by ID through the rstream dialer instead of a public forwarding address.
 
-## Use Cases
+## Use cases
 
-**Local Development**: Expose a local service for testing, demos, and collaboration without changing network configuration.
+**Local development**: Expose a local service for testing, demos, and collaboration without changing network configuration.
 
-**Fleet Operations**: Provide controlled access to devices and machines across environments with consistent identity, policy, and observability.
+**Fleet operations**: Provide controlled access to devices and machines across environments with consistent identity, policy, and observability.
 
-**Infrastructure and Platforms**: Use rstream as a connectivity layer for internal tools, CI workflows, and production access paths.
+**Infrastructure and platforms**: Use rstream as a connectivity layer for internal tools, CI workflows, and production access paths.
 
-**Generative AI Workflows**: Distribute work across fleets of runners or machines while keeping access scoped and auditable.
+**Generative AI workflows**: Distribute work across fleets of runners or machines while keeping access scoped and auditable.
 
-**Real-Time Systems**: Support low-latency traffic patterns for telemetry, streaming, and datagram workloads.
+**Real-time systems**: Support low-latency traffic patterns for telemetry, streaming, and datagram workloads.
 
-## Supported Features
+## Supported features
 
-**Core Tunneling**: Create tunnels for TCP-like and UDP-like workloads with outbound-only connectivity.
+**Core tunneling**: Create tunnels for TCP-like and UDP-like workloads with outbound-only connectivity.
 
-**Multi-Protocol Support**: HTTP (1.1, 2, 3), TLS, DTLS, QUIC, plus WebSocket and WebTransport in HTTP tunnels.
+**Multi-protocol support**: HTTP (1.1, 2, 3), TLS, DTLS, QUIC, plus WebSocket and WebTransport in HTTP tunnels.
 
-**Access Control**: IP restrictions, GeoIP policies, mutual TLS, token-based access, and account-based access depending on tunnel configuration.
+**Access control**: IP restrictions, GeoIP policies, mutual TLS, token-based access, and account-based access depending on tunnel configuration.
 
-**Operational Visibility**: Connection logs and metrics for traffic, enforcement decisions, and performance signals.
+**Operational visibility**: Connection logs and metrics for traffic, enforcement decisions, and performance signals.
 
-**Transport Configuration**: IPv4/IPv6 selection, DNS override, interface binding, and proxy support.
+**Transport configuration**: IPv4/IPv6 selection, DNS override, interface binding, and proxy support.
 
 **Resilience**: Long-lived agents, reconnect behavior, and transport-level multiplexing for stable connectivity.
 
-## Supported Protocols
+## Supported protocols
 
-**HTTP Protocols**: HTTP/1.1, HTTP/2 (H2C), HTTP/3 with WebSocket and WebTransport support.
+**HTTP protocols**: HTTP/1.1, HTTP/2 (H2C), HTTP/3 with WebSocket and WebTransport support.
 
-**Secure Transports**: TLS and QUIC-based transports for agent-to-edge connectivity, plus DTLS and QUIC as published tunnel protocols when enabled by the deployment.
+**Secure transports**: TLS- and QUIC-based transports for agent-to-edge connectivity, plus DTLS and QUIC as published tunnel protocols when enabled by the deployment.
 
-**Network Options**: IPv4/IPv6, MPTCP, proxy support, and custom DNS resolution.
+**Network options**: IPv4/IPv6, MPTCP, proxy support, and custom DNS resolution.
 
 ## Compatibility
 
@@ -70,7 +74,7 @@ rstream is compatible with Linux, macOS and Windows. Additionally, rstream suppo
 
 ## Installation
 
-### Local Build
+### Local build
 ```bash
 make
 ```
@@ -85,7 +89,7 @@ sudo /bin/bash -i -c "$(curl -fsSL https://rstream.io/scripts/install-debian.sh)
 brew tap rstreamlabs/rstream && brew install rstream
 ```
 
-### Manual Installation
+### Manual installation
 ```bash
 /bin/bash -i -c "$(curl -fsSL https://rstream.io/scripts/install.sh)"
 ```
@@ -103,7 +107,9 @@ To function properly, rstream requires an authentication token. Create an accoun
 rstream login ${AUTHENTICATION_TOKEN}
 ```
 
-## Environment Variables
+## Environment variables
+
+These variables are shared across CLI and SDK configuration resolution. Prefer configuration contexts for regular usage, and use overrides for automation or constrained environments.
 
 - `RSTREAM_CONFIG`: Override the CLI config file path.
 - `RSTREAM_CONTEXT`: Select the context by name.
@@ -113,7 +119,7 @@ rstream login ${AUTHENTICATION_TOKEN}
 
 ## Usage
 
-### Basic HTTP Tunnel
+### Basic HTTP tunnel
 
 ```bash
 # Create an HTTP tunnel for local port 8080 (default: HTTP protocol, published)
@@ -122,7 +128,7 @@ rstream forward 8080
 
 This command creates a public HTTP tunnel and displays the forwarding address (e.g., `https://abc123.rstream.io`). Any HTTP request sent to this URL will be redirected to `localhost:8080`. The tunnel remains active until you stop the command.
 
-### TLS Tunnel
+### TLS tunnel
 
 ```bash
 # Create a secure TLS tunnel for local port 8080
@@ -131,7 +137,7 @@ rstream forward 8080 --tls
 
 Creates a secure TLS-encrypted tunnel accessible through the rstream network. Standard TLS clients can connect to the tunnel's forwarding address.
 
-### Private Tunnels
+### Private tunnels
 
 ```bash
 # Create a private tunnel (not publicly accessible)
@@ -140,7 +146,7 @@ rstream forward 22 --tls --no-publish --name ssh-tunnel
 
 Private tunnels require rstream clients to connect and are identified by name or ID rather than public URLs.
 
-### UDP/Datagram Tunnels
+### UDP/datagram tunnels
 
 ```bash
 # Create a DTLS tunnel for UDP traffic on port 5000
@@ -149,7 +155,7 @@ rstream forward 5000 --dtls
 
 DTLS tunnels automatically handle datagram traffic. The `--datagram` flag is implied with `--dtls`.
 
-### Run (Declarative Tunnels)
+### Run (declarative tunnels)
 
 `rstream run` keeps tunnels in sync from a YAML file or Docker labels, with optional watch/reconcile.
 
@@ -170,9 +176,9 @@ rstream -v run --docker --watch
 
 See `docs/CMD_RUN.md` for the full YAML schema, Docker label reference, and reconciliation details.
 
-## Build and Compilation
+## Build and compilation
 
-rstream includes a comprehensive Makefile supporting multiple platforms and packaging formats:
+rstream includes a comprehensive Makefile supporting multiple platforms and packaging formats.
 
 ### Development
 ```bash
@@ -182,7 +188,7 @@ make tests    # Run test suite
 make examples # Build example applications
 ```
 
-### Cross-Platform Compilation
+### Cross-platform compilation
 ```bash
 make cross    # Build for all supported platforms
 ```
@@ -198,15 +204,13 @@ make docker      # Build Docker images
 make nupkg       # Create Windows NuGet packages
 ```
 
-## Code Examples
+## Code examples
 
-rstream includes a comprehensive Go SDK enabling developers to create secure tunnels programmatically. The client-side code is fully open source and inspectable, ensuring transparency and security. Additional examples are available in the `examples/` directory of this repository.
+The Go SDK enables applications to create and manage tunnels programmatically. The examples below use `config.NewClientFromEnv()` to read the same config and environment settings as the CLI. Ensure a default context (or `RSTREAM_ENGINE`) is set, and provide `RSTREAM_AUTHENTICATION_TOKEN` if the selected engine requires authentication.
 
-Examples use `config.NewClientFromEnv()` and read the same config/env settings as the CLI. Ensure a default context (or `RSTREAM_ENGINE`) is set, and provide `RSTREAM_AUTHENTICATION_TOKEN` if your engine requires authentication. Manually specifying engine/token is the exception, not the default.
+### Manual client options (exception)
 
-### Manual Client Options (Exception)
-
-Use this only when you need to bypass config/env resolution.
+Use this only when bypassing config and environment resolution is required.
 
 ```go
 client, err := rstream.NewClient(rstream.ClientOptions{
@@ -218,9 +222,9 @@ if err != nil {
 }
 ```
 
-### HTTP Server (Published Tunnel)
+### HTTP server (published tunnel)
 
-This example demonstrates how to create a public HTTP server accessible via standard web browsers. The server will be available through a public rstream URL.
+This example creates a published HTTP tunnel and serves requests through the tunnel listener. The forwarding address printed by `ForwardingAddress()` is the public URL that can be used from a browser or `curl`.
 
 ```go
 package main
@@ -263,11 +267,11 @@ func main() {
 }
 ```
 
-### TLS Echo (Private Tunnel)
+### TLS echo (private tunnel)
 
-This example shows how to create a private TLS tunnel for secure internal communications. It includes both server and client code to demonstrate the complete workflow.
+This example shows a private tunnel workflow. The server creates a non-published tunnel named `echo` and accepts inbound tunnel connections. The client dials the private tunnel by name and exchanges data over the resulting stream.
 
-**Server Code:**
+**Server code:**
 ```go
 package main
 
@@ -319,7 +323,7 @@ func main() {
 }
 ```
 
-**Client Code:**
+**Client code:**
 ```go
 package main
 
@@ -351,9 +355,9 @@ func main() {
 }
 ```
 
-### DTLS Datagram Server
+### DTLS datagram server
 
-This example demonstrates creating a DTLS tunnel for secure UDP communication, ideal for real-time applications requiring both security and low latency.
+This example creates a published DTLS datagram tunnel. The forwarding address is where datagram clients connect. The server uses the packet listener API to accept datagram sessions and echo packets.
 
 ```go
 package main
@@ -415,9 +419,9 @@ func main() {
 }
 ```
 
-### QUIC Server
+### QUIC server
 
-This example demonstrates creating a QUIC tunnel for low-latency datagram communication with modern transport features.
+This example creates a published QUIC datagram tunnel. QUIC is a modern transport designed for low latency and resilience to network changes. The sample generates a local TLS configuration and serves QUIC streams over the tunnel packet listener.
 
 ```go
 package main
