@@ -70,7 +70,7 @@ jobs:
       #   if: ${{ github.ref_type == 'tag' }}
       #   shell: bash
       #   env:
-      #     APPLE_CODESIGN_VERSION: "0.27.0"
+      #     APPLE_CODESIGN_VERSION: "0.29.0"
       #     MACOS_APP_STORE_API_KEY: ${{ secrets.MACOS_APP_STORE_API_KEY }}
       #     MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
       #     MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
