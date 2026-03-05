@@ -2,67 +2,67 @@
 
 Transform localhost into global reach through secure tunneling.
 
-rstream tackles the complexities of crafting and overseeing secure, scalable network infrastructures. Our tunneling approach simplifies infrastructure-as-a-service deployment, enabling the exposure of previously unreachable resources.
+rstream is a secure connectivity platform built around a globally distributed edge network and lightweight agents. Agents maintain outbound-only tunnels from local and private environments, while the edge network authenticates traffic, enforces access policy, and routes requests to upstream services. rstream supports HTTP and non-HTTP workloads and provides end-to-end visibility through connection logs and metrics.
 
 ## What is a tunnel?
 
-A tunnel is a secure method for connecting network resources without needing a publicly routable IP address. It uses outbound-only connections to an edge network, enhancing security and minimizing exposure to external threats. Tunnels transmit encrypted data securely, prevent DDoS attacks, conceal IP addresses, and integrate legacy protocols.
+A tunnel is a secure way to expose services without requiring inbound ports, public IPs, or NAT changes. A tunnel is established outbound to an edge network, reducing exposure while keeping access controllable and observable.
 
-When you create a tunnel with rstream, you get a public URL (the forwarding address) that automatically redirects all incoming traffic to your local service. For example, a tunnel for `localhost:8080` provides a public URL like `https://abc123.rstream.io` that forwards all requests to your local port 8080.
+When you create a published tunnel with rstream, you get a forwarding address that routes inbound traffic to a local service. For example, a tunnel for `localhost:8080` provides a forwarding address like `https://abc123.rstream.io` that forwards HTTP requests to local port 8080.
 
 ## How rstream works
 
-rstream establishes secure outbound connections (tunnels) between your resources and rstream's edge network. When a client wants to access your resources, they establish an incoming connection to rstream's servers. The connection is authenticated and is then redirected to your resources using the previously established secure tunnel as a signaling channel.
+rstream establishes outbound tunnels between environments running services or devices and the rstream edge network. Clients connect to the edge using a forwarding address for published tunnels or a tunnel identifier for private tunnels. The edge authenticates the connection, applies policy, and forwards traffic through the existing tunnel path to the upstream service.
 
-All data streams are encrypted with rstream, ensuring complete security for your communications.
+Tunnel transports are encrypted, and edge enforcement decisions are surfaced through logs and metrics.
 
 ## Tunnel Types
 
 rstream supports two fundamental tunnel types:
 
-**Bytestream Tunnels** (TCP-like): Reliable, ordered data transmission for protocols like HTTP, TLS, SSH, and database connections.
+**Bytestream Tunnels** (TCP-like): Reliable, ordered transmission for protocols such as HTTP and TLS, as well as custom bytestream services.
 
-**Datagram Tunnels** (UDP-like): Low-latency, connectionless communication for protocols like DTLS, QUIC, DNS, and real-time applications.
+**Datagram Tunnels** (UDP-like): Low-latency, message-oriented communication for protocols such as QUIC and DTLS, as well as custom datagram services.
 
 ## Published vs Private Tunnels
 
-**Published Tunnels**: Accessible via standard clients (browsers, curl, etc.) through public URLs. All protocols (HTTP, TLS, DTLS, QUIC) can be published and support various authentication mechanisms including token-based auth, rstream account authentication, and challenge/captcha systems.
+**Published Tunnels**: Accessible via standard clients (browsers, curl, etc.) through forwarding addresses. Published tunnels can be configured with edge authentication and access policies depending on protocol and deployment.
 
-**Private Tunnels**: Require an rstream client to connect. These provide enhanced security for internal services and are accessed by name (if specified) or by ID using the rstream dialer instead of public URLs.
+**Private Tunnels**: Require an rstream client to connect. Private tunnels are accessed by name (if specified) or by ID through the rstream dialer instead of a public forwarding address.
 
 ## Use Cases
 
-**Local Development**: With rstream, transition from localhost to globally reachable setups effortlessly, simplifying development workflows and deployment processes.
+**Local Development**: Expose a local service for testing, demos, and collaboration without changing network configuration.
 
-**Network Protection**: rstream boosts network security by managing access, preventing DDoS, hiding IPs, and encapsulating legacy protocols within a secure environment.
+**Fleet Operations**: Provide controlled access to devices and machines across environments with consistent identity, policy, and observability.
 
-**Fleet Management**: rstream enhances fleet management by controlling resource access and acting as a signaling layer through its API, enabling advanced middleware solutions.
+**Infrastructure and Platforms**: Use rstream as a connectivity layer for internal tools, CI workflows, and production access paths.
 
-**Generative AI Solutions**: Utilize rstream for generative AI, distributing workloads across GPU instances and authenticating users for secure, scalable AI deployments.
+**Generative AI Workflows**: Distribute work across fleets of runners or machines while keeping access scoped and auditable.
 
-**Real-Time Communications**: Enable low-latency streaming and real-time communications. Ideal for telemetry, metrics, and video streaming, ensuring swift data transfer and immediate response.
+**Real-Time Systems**: Support low-latency traffic patterns for telemetry, streaming, and datagram workloads.
 
 ## Supported Features
 
-**Core Tunneling**: Create secure tunnels for any TCP or UDP application with zero network configuration. Supports both published (public URL) and private (client-only) tunnel modes.
+**Core Tunneling**: Create tunnels for TCP-like and UDP-like workloads with outbound-only connectivity.
 
-**Multi-Protocol Support**: HTTP (1.1, 2, 3), TLS, DTLS, QUIC, WebSockets, and WebTransport protocols with automatic protocol detection and optimization.
+**Multi-Protocol Support**: HTTP (1.1, 2, 3), TLS, DTLS, QUIC, plus WebSocket and WebTransport in HTTP tunnels.
 
-**Enterprise Security**: Geographic restrictions, IP whitelisting, mutual TLS authentication, token-based auth, rstream account authentication, and challenge/captcha protection.
+**Access Control**: IP restrictions, GeoIP policies, mutual TLS, token-based access, and account-based access depending on tunnel configuration.
 
-**Zero Configuration**: No firewall rules, port forwarding, or NAT configuration required. Works behind corporate firewalls and restrictive network environments.
+**Operational Visibility**: Connection logs and metrics for traffic, enforcement decisions, and performance signals.
 
-**High Availability**: Automatic reconnection, connection multiplexing, and load balancing across multiple edge nodes.
+**Transport Configuration**: IPv4/IPv6 selection, DNS override, interface binding, and proxy support.
 
-**Developer Experience**: Native Go SDK, comprehensive CLI, real-time connection monitoring, and multiple output formats (JSON, interactive UI).
+**Resilience**: Long-lived agents, reconnect behavior, and transport-level multiplexing for stable connectivity.
 
 ## Supported Protocols
 
-**HTTP Protocols**: HTTP/1.1, HTTP/2 (H2C), HTTP/3 with WebSocket and WebTransport support. Includes automatic HTTPS termination.
+**HTTP Protocols**: HTTP/1.1, HTTP/2 (H2C), HTTP/3 with WebSocket and WebTransport support.
 
-**Secure Transport**: TLS 1.2/1.3 with custom cipher suites, DTLS for UDP traffic, QUIC with 0-RTT support, and mutual TLS (mTLS) client authentication.
+**Secure Transports**: TLS and QUIC-based transports for agent-to-edge connectivity, plus DTLS and QUIC as published tunnel protocols when enabled by the deployment.
 
-**Network Protocols**: IPv4/IPv6 dual-stack, MPTCP for enhanced reliability, HTTP/SOCKS proxy support, and custom DNS resolution.
+**Network Options**: IPv4/IPv6, MPTCP, proxy support, and custom DNS resolution.
 
 ## Compatibility
 
@@ -292,8 +292,8 @@ func main() {
 	}
 	defer ctrl.Close()
 	tunnel, err := ctrl.CreateTunnel(context.Background(), rstream.TunnelProperties{
-		Name:     rstream.StringPtr("echo"),
-		Publish:  rstream.BoolPtr(false),
+		Name:    rstream.StringPtr("echo"),
+		Publish: rstream.BoolPtr(false),
 	})
 	if err != nil {
 		panic(err)
@@ -522,7 +522,7 @@ func main() {
 
 ## Contributing
 
-We welcome contributions to rstream! Pull requests are encouraged and appreciated. Whether you're fixing bugs, adding features, improving documentation, or suggesting enhancements, your contributions help make rstream better for everyone.
+Pull requests are encouraged and appreciated. Whether you're fixing bugs, adding features, improving documentation, or suggesting enhancements, your contributions help make rstream better for everyone.
 
 ## Support
 
