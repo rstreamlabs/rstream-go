@@ -1,7 +1,5 @@
 # rstream-go
 
-Transform localhost into global reach through secure tunneling.
-
 `rstream-go` is the Go SDK for **rstream**, a secure connectivity platform built around a globally distributed edge network and lightweight agents. Agents maintain outbound-only tunnels from local and private environments, while the edge network authenticates traffic, enforces access policy, and routes requests to upstream services. rstream supports HTTP and non-HTTP workloads and provides end-to-end visibility through connection logs and metrics.
 
 The Go SDK is the **reference implementation**. It covers the broadest rstream API surface and is the most complete SDK in terms of protocol support and tunnel lifecycle features. The rstream CLI is implemented in Go and lives in this repository, so the SDK and CLI share the same configuration model and operational behavior.
