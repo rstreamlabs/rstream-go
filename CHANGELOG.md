@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.6.0](https://github.com/rstreamlabs/rstream-go/compare/v1.5.1...v1.6.0) (2026-03-05)
+
+
+### Features
+
+* add webtty client ([d7a76d3](https://github.com/rstreamlabs/rstream-go/commit/d7a76d3460eec51e5280387829bd561285bd84b9))
+
+
+### Bug Fixes
+
+* fix declarative tunnels yaml format ([9c328d6](https://github.com/rstreamlabs/rstream-go/commit/9c328d66c89e2732355c4f4c1003446a478f66cb))
+* fix trusted-ips and geoip CLI args parsing ([19f0371](https://github.com/rstreamlabs/rstream-go/commit/19f03716921e7b506c2ee9c380434b59f24efcd5))
+
 ## [1.5.1](https://github.com/rstreamlabs/rstream-go/compare/v1.5.0...v1.5.1) (2026-02-18)
 
 
