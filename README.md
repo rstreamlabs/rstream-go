@@ -159,10 +159,10 @@ DTLS tunnels automatically handle datagram traffic. The `--datagram` flag is imp
 
 ```bash
 # Apply a YAML spec once
-rstream -v run --apply examples/run-apply/tunnels.yaml
+rstream -v run --apply examples/run-yaml/tunnels.yaml
 
 # Watch the YAML for changes and reconcile
-rstream -v run --apply examples/run-apply/tunnels.yaml --watch
+rstream -v run --apply examples/run-yaml/tunnels.yaml --watch
 
 # Discover tunnels from Docker labels
 rstream -v run --docker --watch

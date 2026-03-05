@@ -5,8 +5,10 @@ package rundocker
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
 )
 
@@ -124,5 +126,85 @@ func TestTLSCACertFileParsing(t *testing.T) {
 	}
 	if desired[0].Props.MTLSCACertPEM == nil || *desired[0].Props.MTLSCACertPEM != "PEM-DATA" {
 		t.Fatalf("expected PEM data to be loaded")
+	}
+}
+
+func TestParseDesiredTunnelsHTTPAuthAndGate(t *testing.T) {
+	info := ContainerInfo{
+		ID:   "abc",
+		Name: "web",
+		Labels: map[string]string{
+			"rstream.tunnel.app.forward":               "8080",
+			"rstream.tunnel.app.protocol":              "http",
+			"rstream.tunnel.app.http.auth.token":       "true",
+			"rstream.tunnel.app.http.auth.rstream":     "false",
+			"rstream.tunnel.app.http.gate.challenge":   "true",
+			"rstream.tunnel.app.http.upstreamTLS":      "false",
+			"rstream.tunnel.app.http.version":          "http/1.1",
+			"rstream.tunnel.app.label.environment":     "dev",
+			"rstream.tunnel.app.label.service-version": "v1",
+		},
+		Networks: map[string]string{"default": "10.0.0.2"},
+	}
+	desired, err := ParseDesiredTunnels(info, "default", runmodel.ResolvedContext{Engine: "engine", Token: "token"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(desired) != 1 {
+		t.Fatalf("expected 1 tunnel, got %d", len(desired))
+	}
+	props := desired[0].Props
+	if props.Protocol == nil || *props.Protocol != rstream.ProtocolHTTP {
+		t.Fatalf("expected protocol http")
+	}
+	if props.TokenAuth == nil || *props.TokenAuth != true {
+		t.Fatalf("expected token auth to be enabled")
+	}
+	if props.RstreamAuth == nil || *props.RstreamAuth != false {
+		t.Fatalf("expected rstream auth to be disabled")
+	}
+	if props.ChallengeMode == nil || *props.ChallengeMode != true {
+		t.Fatalf("expected challenge mode to be enabled")
+	}
+}
+
+func TestParseDesiredTunnelsRejectsHTTPSettingsOnNonHTTPProtocol(t *testing.T) {
+	info := ContainerInfo{
+		ID:   "abc",
+		Name: "web",
+		Labels: map[string]string{
+			"rstream.tunnel.app.forward":             "8080",
+			"rstream.tunnel.app.protocol":            "tls",
+			"rstream.tunnel.app.http.auth.token":     "true",
+			"rstream.tunnel.app.http.gate.challenge": "true",
+		},
+		Networks: map[string]string{"default": "10.0.0.2"},
+	}
+	_, err := ParseDesiredTunnels(info, "default", runmodel.ResolvedContext{Engine: "engine", Token: "token"})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), "http labels require protocol") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestParseDesiredTunnelsRejectsLegacyAuthLabels(t *testing.T) {
+	info := ContainerInfo{
+		ID:   "abc",
+		Name: "web",
+		Labels: map[string]string{
+			"rstream.tunnel.app.forward":      "8080",
+			"rstream.tunnel.app.auth.token":   "true",
+			"rstream.tunnel.app.auth.rstream": "true",
+		},
+		Networks: map[string]string{"default": "10.0.0.2"},
+	}
+	_, err := ParseDesiredTunnels(info, "default", runmodel.ResolvedContext{Engine: "engine", Token: "token"})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), `unknown label "auth.`) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

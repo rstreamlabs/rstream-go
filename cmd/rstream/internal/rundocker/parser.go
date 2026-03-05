@@ -76,6 +76,9 @@ func ParseDesiredTunnels(info ContainerInfo, network string, ctx runmodel.Resolv
 			proto := rstream.ProtocolHTTP
 			props.Protocol = &proto
 		}
+		if err := validateHTTPSettings(props); err != nil {
+			return nil, fmt.Errorf("tunnel %q: %w", name, err)
+		}
 		forward, err := resolveForward(spec.forward, info, network)
 		if err != nil {
 			return nil, fmt.Errorf("tunnel %q forward: %w", name, err)
@@ -101,13 +104,9 @@ func ParseDesiredTunnels(info ContainerInfo, network string, ctx runmodel.Resolv
 type labelSpec struct {
 	forward string
 	props   rstream.TunnelProperties
-	seen    map[string]bool
 }
 
 func (l *labelSpec) apply(key, value string) error {
-	if l.seen == nil {
-		l.seen = make(map[string]bool)
-	}
 	switch {
 	case key == "forward":
 		l.forward = strings.TrimSpace(value)
@@ -159,35 +158,31 @@ func (l *labelSpec) apply(key, value string) error {
 		return l.applyHTTP(strings.TrimPrefix(key, "http."), value)
 	case strings.HasPrefix(key, "tls."):
 		return l.applyTLS(strings.TrimPrefix(key, "tls."), value)
-	case strings.HasPrefix(key, "auth."):
-		return l.applyAuth(strings.TrimPrefix(key, "auth."), value)
 	default:
 		return fmt.Errorf("unknown label %q", key)
 	}
 }
 
 func (l *labelSpec) applyHTTP(key, value string) error {
-	switch key {
-	case "version":
+	switch {
+	case key == "version":
 		val, err := parseHTTPVersion(value)
 		if err != nil {
 			return err
 		}
 		l.props.HTTPVersion = &val
 		return nil
-	case "upstreamTLS":
+	case key == "upstreamTLS":
 		v, err := parseBool(value)
 		if err != nil {
 			return err
 		}
 		l.props.HTTPUseTLS = &v
 		return nil
-	case "tokenAuth":
-		v, err := parseBool(value)
-		if err != nil {
-			return err
-		}
-		return l.setTokenAuth(v)
+	case strings.HasPrefix(key, "auth."):
+		return l.applyHTTPAuth(strings.TrimPrefix(key, "auth."), value)
+	case strings.HasPrefix(key, "gate."):
+		return l.applyHTTPGate(strings.TrimPrefix(key, "gate."), value)
 	default:
 		return fmt.Errorf("unknown http label %q", key)
 	}
@@ -232,14 +227,15 @@ func (l *labelSpec) applyTLS(key, value string) error {
 	}
 }
 
-func (l *labelSpec) applyAuth(key, value string) error {
+func (l *labelSpec) applyHTTPAuth(key, value string) error {
 	switch key {
 	case "token":
 		v, err := parseBool(value)
 		if err != nil {
 			return err
 		}
-		return l.setTokenAuth(v)
+		l.props.TokenAuth = &v
+		return nil
 	case "rstream":
 		v, err := parseBool(value)
 		if err != nil {
@@ -247,6 +243,13 @@ func (l *labelSpec) applyAuth(key, value string) error {
 		}
 		l.props.RstreamAuth = &v
 		return nil
+	default:
+		return fmt.Errorf("unknown http.auth label %q", key)
+	}
+}
+
+func (l *labelSpec) applyHTTPGate(key, value string) error {
+	switch key {
 	case "challenge":
 		v, err := parseBool(value)
 		if err != nil {
@@ -255,20 +258,8 @@ func (l *labelSpec) applyAuth(key, value string) error {
 		l.props.ChallengeMode = &v
 		return nil
 	default:
-		return fmt.Errorf("unknown auth label %q", key)
+		return fmt.Errorf("unknown http.gate label %q", key)
 	}
-}
-
-func (l *labelSpec) setTokenAuth(v bool) error {
-	if l.seen["tokenAuth"] {
-		if l.props.TokenAuth != nil && *l.props.TokenAuth != v {
-			return fmt.Errorf("conflicting token auth labels")
-		}
-		return nil
-	}
-	l.seen["tokenAuth"] = true
-	l.props.TokenAuth = &v
-	return nil
 }
 
 func resolveForward(raw string, info ContainerInfo, network string) (runmodel.ForwardTarget, error) {
@@ -328,6 +319,16 @@ func splitCSV(val string) []string {
 		return nil
 	}
 	return out
+}
+
+func validateHTTPSettings(props rstream.TunnelProperties) error {
+	if props.Protocol == nil || *props.Protocol == rstream.ProtocolHTTP {
+		return nil
+	}
+	if props.HTTPVersion != nil || props.HTTPUseTLS != nil || props.TokenAuth != nil || props.RstreamAuth != nil || props.ChallengeMode != nil {
+		return fmt.Errorf("http labels require protocol %q", rstream.ProtocolHTTP)
+	}
+	return nil
 }
 
 func parseBool(val string) (bool, error) {
