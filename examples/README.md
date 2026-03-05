@@ -29,5 +29,5 @@ Run an example:
 
 ## CLI Run Examples
 
-- `examples/run-apply`: YAML-based `rstream -v run --apply` example with a whoami container.
+- `examples/run-yaml`: YAML-based `rstream -v run --apply` example with a whoami container.
 - `examples/run-docker`: Docker-label-based `rstream -v run --docker` example with a whoami container.

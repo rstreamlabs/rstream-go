@@ -50,17 +50,17 @@ tunnels:
       http:
         upstreamTLS: true
         version: "http/1.1"      # http/1.1|h2c|h3
-        tokenAuth: true
+        auth:
+          token: true
+          rstream: false
+        gate:
+          challenge: false
       tls:
         mode: "terminated"       # terminated|passthrough
         minVersion: "tls1.2"     # tls1.2|tls1.3
         alpns: ["postgres"]
         mtls: true
         mtlsCACertFile: "/path/to/ca.pem"
-      auth:
-        token: true
-        rstream: false
-        challenge: false
 contexts:
   prod:
     external: true
@@ -121,15 +121,16 @@ labels:
 - `rstream.tunnel.<name>.geoip` (comma-separated)
 - `rstream.tunnel.<name>.http.version` (http/1.1|h2c|h3)
 - `rstream.tunnel.<name>.http.upstreamTLS` (true|false)
-- `rstream.tunnel.<name>.http.tokenAuth` (true|false)
+- `rstream.tunnel.<name>.http.auth.token` (true|false)
+- `rstream.tunnel.<name>.http.auth.rstream` (true|false)
+- `rstream.tunnel.<name>.http.gate.challenge` (true|false)
 - `rstream.tunnel.<name>.tls.mode` (terminated|passthrough)
 - `rstream.tunnel.<name>.tls.minVersion` (tls1.2|tls1.3)
 - `rstream.tunnel.<name>.tls.alpns` (comma-separated)
 - `rstream.tunnel.<name>.tls.mtls` (true|false)
 - `rstream.tunnel.<name>.tls.mtlsCACertFile` (path to PEM file)
-- `rstream.tunnel.<name>.auth.token` (true|false)
-- `rstream.tunnel.<name>.auth.rstream` (true|false)
-- `rstream.tunnel.<name>.auth.challenge` (true|false)
+
+`http.auth.*` and `http.gate.*` are valid only for HTTP tunnels (`protocol=http`).
 
 ### Forward Target Resolution (Docker)
 
@@ -150,4 +151,4 @@ labels:
 See the example folders:
 
 - `examples/run-docker`
-- `examples/run-apply`
+- `examples/run-yaml`

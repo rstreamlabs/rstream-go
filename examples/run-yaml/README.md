@@ -17,7 +17,7 @@ go run ./cmd/whoami --listen :8080
 Terminal 2 (rstream -v run):
 
 ```bash
-rstream -v run --apply examples/run-apply/tunnels.yaml --watch
+rstream -v run --apply examples/run-yaml/tunnels.yaml --watch
 ```
 
 ## tunnels.yaml
