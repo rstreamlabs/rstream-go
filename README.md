@@ -75,26 +75,31 @@ rstream is compatible with Linux, macOS and Windows. Additionally, rstream suppo
 ## Installation
 
 ### Local build
+For a local source build on the current platform, run:
 ```bash
 make
 ```
 
 ### Debian/Ubuntu
+For Debian-based distributions, the installation script installs packaged binaries and dependencies:
 ```bash
 sudo /bin/bash -i -c "$(curl -fsSL https://rstream.io/scripts/install-debian.sh)"
 ```
 
 ### macOS
+On macOS, the Homebrew tap provides the standard installation path:
 ```bash
 brew tap rstreamlabs/rstream && brew install rstream
 ```
 
 ### Manual installation
+For generic environments, use the manual installer script:
 ```bash
 /bin/bash -i -c "$(curl -fsSL https://rstream.io/scripts/install.sh)"
 ```
 
 ### Docker
+If you run rstream in containers, pull the public image:
 ```bash
 docker pull rstream/rstream:latest
 ```
@@ -117,9 +122,12 @@ These variables are shared across CLI and SDK configuration resolution. Prefer c
 - `RSTREAM_AUTHENTICATION_TOKEN`: Override the authentication token.
 - `RSTREAM_API_URL`: Override the control-plane API URL (mostly for internal or advanced usage).
 
+Resolution behavior follows the same model used by `config.NewClientFromEnv()`: explicit SDK options are evaluated first, then environment overrides, then context/environment values from the config file. `RSTREAM_CONFIG` selects the config file path before fallback to the default config location.
+
 ## Usage
 
 ### Basic HTTP tunnel
+Use this command to publish a local HTTP service with default protocol and publication settings.
 
 ```bash
 # Create an HTTP tunnel for local port 8080 (default: HTTP protocol, published)
@@ -129,6 +137,7 @@ rstream forward 8080
 This command creates a public HTTP tunnel and displays the forwarding address (e.g., `https://abc123.rstream.io`). Any HTTP request sent to this URL will be redirected to `localhost:8080`. The tunnel remains active until you stop the command.
 
 ### TLS tunnel
+Use `--tls` when the exposed tunnel endpoint must terminate TLS.
 
 ```bash
 # Create a secure TLS tunnel for local port 8080
@@ -138,6 +147,7 @@ rstream forward 8080 --tls
 Creates a secure TLS-encrypted tunnel accessible through the rstream network. Standard TLS clients can connect to the tunnel's forwarding address.
 
 ### Private tunnels
+Use `--no-publish` to create private tunnels that are reachable only through rstream clients.
 
 ```bash
 # Create a private tunnel (not publicly accessible)
@@ -147,6 +157,7 @@ rstream forward 22 --tls --no-publish --name ssh-tunnel
 Private tunnels require rstream clients to connect and are identified by name or ID rather than public URLs.
 
 ### UDP/datagram tunnels
+For datagram transport, choose DTLS mode when you need encrypted UDP-style traffic.
 
 ```bash
 # Create a DTLS tunnel for UDP traffic on port 5000
@@ -181,6 +192,7 @@ See `docs/CMD_RUN.md` for the full YAML schema, Docker label reference, and reco
 rstream includes a comprehensive Makefile supporting multiple platforms and packaging formats.
 
 ### Development
+For daily development loops, these targets build, test, and clean local artifacts.
 ```bash
 make          # Build for current platform
 make clean    # Clean build artifacts
@@ -189,6 +201,7 @@ make examples # Build example applications
 ```
 
 ### Cross-platform compilation
+When producing binaries for multiple targets, use:
 ```bash
 make cross    # Build for all supported platforms
 ```
@@ -196,6 +209,7 @@ make cross    # Build for all supported platforms
 Supports Linux, macOS, Windows, and BSD systems across multiple architectures including x86, ARM, MIPS, PowerPC, and RISC-V.
 
 ### Packaging
+For release packaging workflows, these targets build archives and platform packages:
 ```bash
 make pkg         # Create packages for current platform
 make pkg-cross   # Create packages for all platforms
@@ -524,9 +538,15 @@ func main() {
 }
 ```
 
+## References
+
+- Documentation: https://rstream.io/docs
+- Go SDK (reference implementation): https://github.com/rstreamlabs/rstream-go
+- C++ SDK: https://github.com/rstreamlabs/rstream-cpp
+
 ## Contributing
 
-Pull requests are encouraged and appreciated. Whether you're fixing bugs, adding features, improving documentation, or suggesting enhancements, your contributions help make rstream better for everyone.
+Pull requests are encouraged and appreciated. Whether you're fixing bugs, adding features, improving documentation, or suggesting enhancements, your contributions help make rstream better for everyone. Build locally, run checks, and submit focused pull requests with clear validation notes.
 
 ## Support
 
@@ -535,3 +555,7 @@ support@rstream.io
 
 **Report security concerns:**  
 reports@rstream.io
+
+## License
+
+See `LICENSE` in the repository root.
