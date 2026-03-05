@@ -38,13 +38,22 @@ type TunnelSpec struct {
 	GeoIP      []string          `yaml:"geoip,omitempty"`
 	HTTP       *HTTPSpec         `yaml:"http,omitempty"`
 	TLS        *TLSSpec          `yaml:"tls,omitempty"`
-	Auth       *AuthSpec         `yaml:"auth,omitempty"`
 }
 
 type HTTPSpec struct {
-	UpstreamTLS *bool  `yaml:"upstreamTLS,omitempty"`
-	Version     string `yaml:"version,omitempty"`
-	TokenAuth   *bool  `yaml:"tokenAuth,omitempty"`
+	UpstreamTLS *bool         `yaml:"upstreamTLS,omitempty"`
+	Version     string        `yaml:"version,omitempty"`
+	Auth        *HTTPAuthSpec `yaml:"auth,omitempty"`
+	Gate        *HTTPGateSpec `yaml:"gate,omitempty"`
+}
+
+type HTTPAuthSpec struct {
+	Token   *bool `yaml:"token,omitempty"`
+	Rstream *bool `yaml:"rstream,omitempty"`
+}
+
+type HTTPGateSpec struct {
+	Challenge *bool `yaml:"challenge,omitempty"`
 }
 
 type TLSSpec struct {
@@ -54,12 +63,6 @@ type TLSSpec struct {
 	MTLS             *bool    `yaml:"mtls,omitempty"`
 	MTLSCACertFile   string   `yaml:"mtlsCACertFile,omitempty"`
 	MTLSCACertInline string   `yaml:"mtlsCACertPEM,omitempty"`
-}
-
-type AuthSpec struct {
-	Token     *bool `yaml:"token,omitempty"`
-	Rstream   *bool `yaml:"rstream,omitempty"`
-	Challenge *bool `yaml:"challenge,omitempty"`
 }
 
 type ContextEntry struct {
@@ -299,11 +302,11 @@ func tunnelPropertiesFromSpec(spec *TunnelSpec) (rstream.TunnelProperties, error
 		props.Host = &host
 	}
 	if spec.HTTP != nil {
+		if props.Protocol != nil && *props.Protocol != rstream.ProtocolHTTP {
+			return props, fmt.Errorf("http settings require protocol %q", rstream.ProtocolHTTP)
+		}
 		if spec.HTTP.UpstreamTLS != nil {
 			props.HTTPUseTLS = spec.HTTP.UpstreamTLS
-		}
-		if spec.HTTP.TokenAuth != nil {
-			props.TokenAuth = spec.HTTP.TokenAuth
 		}
 		if spec.HTTP.Version != "" {
 			val, err := parseHTTPVersion(spec.HTTP.Version)
@@ -311,6 +314,17 @@ func tunnelPropertiesFromSpec(spec *TunnelSpec) (rstream.TunnelProperties, error
 				return props, err
 			}
 			props.HTTPVersion = &val
+		}
+		if spec.HTTP.Auth != nil {
+			if spec.HTTP.Auth.Token != nil {
+				props.TokenAuth = spec.HTTP.Auth.Token
+			}
+			if spec.HTTP.Auth.Rstream != nil {
+				props.RstreamAuth = spec.HTTP.Auth.Rstream
+			}
+		}
+		if spec.HTTP.Gate != nil && spec.HTTP.Gate.Challenge != nil {
+			props.ChallengeMode = spec.HTTP.Gate.Challenge
 		}
 	}
 	if spec.TLS != nil {
@@ -344,17 +358,6 @@ func tunnelPropertiesFromSpec(spec *TunnelSpec) (rstream.TunnelProperties, error
 			}
 			val := string(pem)
 			props.MTLSCACertPEM = &val
-		}
-	}
-	if spec.Auth != nil {
-		if spec.Auth.Token != nil {
-			props.TokenAuth = spec.Auth.Token
-		}
-		if spec.Auth.Rstream != nil {
-			props.RstreamAuth = spec.Auth.Rstream
-		}
-		if spec.Auth.Challenge != nil {
-			props.ChallengeMode = spec.Auth.Challenge
 		}
 	}
 	return props, nil

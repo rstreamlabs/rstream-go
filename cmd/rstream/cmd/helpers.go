@@ -182,6 +182,11 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 	tokenAuthPtr := getBoolPtr(cmd, "token-auth")
 	rstreamAuthPtr := getBoolPtr(cmd, "rstream-auth")
 	challengeModePtr := getBoolPtr(cmd, "challenge-mode")
+	if protocol != nil && *protocol != rstream.ProtocolHTTP {
+		if tokenAuthPtr != nil || rstreamAuthPtr != nil || challengeModePtr != nil {
+			return nil, fmt.Errorf("--token-auth, --rstream-auth and --challenge-mode require --http")
+		}
+	}
 	tunnelProperties := &rstream.TunnelProperties{
 		Name:          namePtr,
 		Type:          typePtr,
