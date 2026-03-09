@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.6.1](https://github.com/rstreamlabs/rstream-go/compare/v1.6.0...v1.6.1) (2026-03-09)
+
+
+### Bug Fixes
+
+* fix agent name ([b44c771](https://github.com/rstreamlabs/rstream-go/commit/b44c771d4cc6fc0ebd548677411ffe908ecda3d7))
+
 ## [1.6.0](https://github.com/rstreamlabs/rstream-go/compare/v1.5.1...v1.6.0) (2026-03-05)
 
 
