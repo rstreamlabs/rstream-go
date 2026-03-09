@@ -46,7 +46,7 @@ func runRstreamLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL 
 	req := controlplane.RstreamLoginRequest{Permissions: rstreamLoginPermissions, Source: resolveRstreamLoginSource()}
 	res, err := client.CreateRstreamLogin(ctx, req)
 	if err != nil {
-		return err
+		return rstreamLoginCommandError(err)
 	}
 	if res.RequestID == "" || res.RequestSecret == "" || res.URL == "" {
 		return errors.New("rstream login response is invalid")
@@ -59,9 +59,9 @@ func runRstreamLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL 
 	fmt.Fprintln(os.Stdout, "Waiting for approval...")
 	token, err := waitForRstreamLoginToken(ctx, client, res)
 	if err != nil {
-		return err
+		return rstreamLoginCommandError(err)
 	}
-	return storeToken(ctx, path, cfg, apiURL, token)
+	return rstreamLoginCommandError(storeToken(ctx, path, cfg, apiURL, token))
 }
 
 func waitForRstreamLoginToken(ctx context.Context, client *controlplane.Client, res controlplane.RstreamLoginResponse) (string, error) {
@@ -79,6 +79,9 @@ func waitForRstreamLoginToken(ctx context.Context, client *controlplane.Client, 
 	for {
 		resp, err := client.ExchangeRstreamLoginToken(pollCtx, res.RequestID, controlplane.RstreamLoginTokenRequest{RequestSecret: res.RequestSecret})
 		if err != nil {
+			if pollCtx.Err() != nil {
+				return "", rstreamLoginPollError(pollCtx.Err())
+			}
 			return "", err
 		}
 		switch resp.Status {
@@ -90,7 +93,7 @@ func waitForRstreamLoginToken(ctx context.Context, client *controlplane.Client, 
 		case "pending":
 			select {
 			case <-pollCtx.Done():
-				return "", errors.New("login expired")
+				return "", rstreamLoginPollError(pollCtx.Err())
 			case <-ticker.C:
 				continue
 			}
@@ -104,6 +107,21 @@ func waitForRstreamLoginToken(ctx context.Context, client *controlplane.Client, 
 			return "", fmt.Errorf("unexpected login status: %s", resp.Status)
 		}
 	}
+}
+
+func rstreamLoginPollError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return errors.New("login expired")
+	}
+	return err
+}
+
+func rstreamLoginCommandError(err error) error {
+	if errors.Is(err, context.Canceled) {
+		fmt.Fprintln(os.Stderr)
+		return errors.New("login canceled")
+	}
+	return err
 }
 
 func resolveRstreamLoginSource() []controlplane.RstreamLabel {
