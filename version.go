@@ -3,7 +3,7 @@
 package rstream
 
 var (
-	Agent   = "rstream"
+	Agent   = "rstream-go"
 	Channel = "dev"
 	Version = "development"
 	OS      = ""

@@ -42,7 +42,7 @@ func storeToken(ctx context.Context, path string, cfg config.Config, apiURL, tok
 
 func runRstreamLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL string) error {
 	ctx := cmd.Context()
-	client := controlplane.NewClient(apiURL, "")
+	client := controlplane.NewClient(apiURL, "") // TODO : use nil for empty token
 	req := controlplane.RstreamLoginRequest{Permissions: rstreamLoginPermissions, Source: resolveRstreamLoginSource()}
 	res, err := client.CreateRstreamLogin(ctx, req)
 	if err != nil {
