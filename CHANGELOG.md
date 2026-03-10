@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.0](https://github.com/rstreamlabs/rstream-go/compare/v1.6.1...v1.7.0) (2026-03-10)
+
+
+### Features
+
+* add ad hoc signature on binaries (macos) ([d9f2c31](https://github.com/rstreamlabs/rstream-go/commit/d9f2c31d09cad7564bb63f17afb1c134689ce926))
+
 ## [1.6.1](https://github.com/rstreamlabs/rstream-go/compare/v1.6.0...v1.6.1) (2026-03-09)
 
 
