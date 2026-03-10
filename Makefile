@@ -68,6 +68,7 @@ $(if $(filter $(os),$(OS_WHITELIST)),$(if $(filter $(arch),$(ARCH_WHITELIST)),$(
 LINUX_PLATFORMS := $(filter linux/%,$(PLATFORMS))
 
 # MacOS platforms
+MACOS_CODESIGN_MODE ?= adhoc
 MACOS_PLATFORMS := $(filter macos/%,$(PLATFORMS))
 
 # Windows platforms
@@ -302,6 +303,25 @@ endef
 
 define macos_apple_codesign
 set -e ;\
+case "$(MACOS_CODESIGN_MODE)" in \
+adhoc|certificate) ;; \
+*) \
+echo "Error: MACOS_CODESIGN_MODE must be one of: adhoc, certificate" >&2 ;\
+exit 1 ;; \
+esac ;\
+if [ "$(MACOS_CODESIGN_MODE)" = "adhoc" ]; then \
+echo "Signing $(call binary_path,$1,$2,$3) ..." ;\
+codesign \
+-f \
+-i "io.rstream" \
+-s "-" \
+-v \
+$(call binary_path,$1,$2,$3) ;\
+else \
+[ -n "$(MACOS_CERTIFICATE_NAME)" ] || { echo "Error: MACOS_CERTIFICATE_NAME is required when MACOS_CODESIGN_MODE=certificate" >&2 ; exit 1 ; } ;\
+[ -n "$(MACOS_NOTARIZATION_APPLE_ID)" ] || { echo "Error: MACOS_NOTARIZATION_APPLE_ID is required when MACOS_CODESIGN_MODE=certificate" >&2 ; exit 1 ; } ;\
+[ -n "$(MACOS_NOTARIZATION_TEAM_ID)" ] || { echo "Error: MACOS_NOTARIZATION_TEAM_ID is required when MACOS_CODESIGN_MODE=certificate" >&2 ; exit 1 ; } ;\
+[ -n "$(MACOS_NOTARIZATION_PWD)" ] || { echo "Error: MACOS_NOTARIZATION_PWD is required when MACOS_CODESIGN_MODE=certificate" >&2 ; exit 1 ; } ;\
 TMP_FILE=$$$$(mktemp).zip ;\
 echo "Signing $(call binary_path,$1,$2,$3) ..." ;\
 codesign \
@@ -315,11 +335,25 @@ $(call binary_path,$1,$2,$3) ;\
 echo "Notarizing $(call binary_path,$1,$2,$3) ..." ;\
 ditto -c -k --keepParent $(call binary_path,$1,$2,$3) $$$$TMP_FILE ;\
 xcrun notarytool submit --apple-id "$(MACOS_NOTARIZATION_APPLE_ID)" --team-id "$(MACOS_NOTARIZATION_TEAM_ID)" --password "$(MACOS_NOTARIZATION_PWD)" --wait $$$$TMP_FILE ;\
-rm -rf $$$$TMP_FILE
+rm -rf $$$$TMP_FILE ;\
+fi
 endef
 
 define macos_rcodesign
 set -e ;\
+case "$(MACOS_CODESIGN_MODE)" in \
+adhoc|certificate) ;; \
+*) \
+echo "Error: MACOS_CODESIGN_MODE must be one of: adhoc, certificate" >&2 ;\
+exit 1 ;; \
+esac ;\
+if [ "$(MACOS_CODESIGN_MODE)" = "adhoc" ]; then \
+echo "Signing $(call binary_path,$1,$2,$3) ..." ;\
+rcodesign sign $(call binary_path,$1,$2,$3) ;\
+else \
+[ -n "$(MACOS_CERTIFICATE)" ] || { echo "Error: MACOS_CERTIFICATE is required when MACOS_CODESIGN_MODE=certificate" >&2 ; exit 1 ; } ;\
+[ -n "$(MACOS_CERTIFICATE_PWD)" ] || { echo "Error: MACOS_CERTIFICATE_PWD is required when MACOS_CODESIGN_MODE=certificate" >&2 ; exit 1 ; } ;\
+[ -n "$(MACOS_APP_STORE_API_KEY)" ] || { echo "Error: MACOS_APP_STORE_API_KEY is required when MACOS_CODESIGN_MODE=certificate" >&2 ; exit 1 ; } ;\
 BINARY_ARCHIVE=$$$$(mktemp).zip ;\
 MACOS_CERTIFICATE_FILE=$$$$(mktemp).p12 ;\
 MACOS_APP_STORE_API_KEY_FILE=$$$$(mktemp).json ;\
@@ -332,7 +366,8 @@ echo ${MACOS_APP_STORE_API_KEY} | base64 --decode > $$$$MACOS_APP_STORE_API_KEY_
 rcodesign notary-submit -v --api-key-file $$$$MACOS_APP_STORE_API_KEY_FILE --wait $$$$BINARY_ARCHIVE ;\
 rm -rf $$$$BINARY_ARCHIVE ;\
 rm -rf $$$$MACOS_CERTIFICATE_FILE ;\
-rm -rf $$$$MACOS_APP_STORE_API_KEY_FILE
+rm -rf $$$$MACOS_APP_STORE_API_KEY_FILE ;\
+fi
 endef
 
 define build_nupkg
