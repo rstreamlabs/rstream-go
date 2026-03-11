@@ -68,7 +68,7 @@ $(if $(filter $(os),$(OS_WHITELIST)),$(if $(filter $(arch),$(ARCH_WHITELIST)),$(
 LINUX_PLATFORMS := $(filter linux/%,$(PLATFORMS))
 
 # MacOS platforms
-MACOS_CODESIGN_MODE ?= adhoc
+MACOS_CODESIGN_MODE ?= certificate
 MACOS_PLATFORMS := $(filter macos/%,$(PLATFORMS))
 
 # Windows platforms
