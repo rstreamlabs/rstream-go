@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.1](https://github.com/rstreamlabs/rstream-go/compare/v1.7.0...v1.7.1) (2026-03-11)
+
+
+### Bug Fixes
+
+* fix signature of binaries (macos) ([03a643f](https://github.com/rstreamlabs/rstream-go/commit/03a643fb161956ef40e8322b9de1debfb0dee693))
+
 ## [1.7.0](https://github.com/rstreamlabs/rstream-go/compare/v1.6.1...v1.7.0) (2026-03-10)
 
 
