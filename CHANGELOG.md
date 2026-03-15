@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.7.2](https://github.com/rstreamlabs/rstream-go/compare/v1.7.1...v1.7.2) (2026-03-15)
+
+
+### Bug Fixes
+
+* fix webtty server on windows ([648ad22](https://github.com/rstreamlabs/rstream-go/commit/648ad22ac6d12490f9a5ecf86c0fe2423c9d6d04))
+
 ## [1.7.1](https://github.com/rstreamlabs/rstream-go/compare/v1.7.0...v1.7.1) (2026-03-11)
 
 
