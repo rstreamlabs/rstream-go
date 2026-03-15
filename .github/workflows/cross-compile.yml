@@ -115,6 +115,12 @@ jobs:
           repository: rstreamlabs/homebrew
           token: ${{ secrets.GIT_TOKEN }}
           path: homebrew
+      - uses: actions/checkout@v6
+        if: ${{ github.ref_type == 'tag' }}
+        with:
+          repository: rstreamlabs/winget
+          token: ${{ secrets.GIT_TOKEN }}
+          path: winget
       - name: Update homebrew cask file
         if: ${{ github.ref_type == 'tag' }}
         shell: bash
@@ -136,6 +142,26 @@ jobs:
           git -C homebrew add Formula/${PACKAGE_NAME}${{ env.CHANNEL != 'stable' && '-dev' || '' }}.rb
           git -C homebrew commit -m "update ${PACKAGE_NAME}${{ env.CHANNEL != 'stable' && '-dev' || '' }} formula to ${{ env.VERSION }}"
           git -C homebrew push
+      - name: Update winget manifests
+        if: ${{ github.ref_type == 'tag' }}
+        shell: bash
+        run: |
+          X64_FILEPATH="out/cmd/${PACKAGE_NAME}/${{ env.CHANNEL }}/${{ env.VERSION }}/windows/x86_64/${PACKAGE_NAME}-${{ env.VERSION }}-windows-x86_64.zip.info"
+          ARM64_FILEPATH="out/cmd/${PACKAGE_NAME}/${{ env.CHANNEL }}/${{ env.VERSION }}/windows/arm64/${PACKAGE_NAME}-${{ env.VERSION }}-windows-arm64.zip.info"
+          X64_PACKAGE_ID=$(grep "id:" ${X64_FILEPATH} | cut -d ':' -f2 | xargs)
+          X64_PACKAGE_URL="${RSTREAM_URL}/api/packages/${X64_PACKAGE_ID}/download"
+          X64_CHECKSUM=$(grep "checksum:" ${X64_FILEPATH} | cut -d ':' -f2 | xargs)
+          ARM64_PACKAGE_ID=$(grep "id:" ${ARM64_FILEPATH} | cut -d ':' -f2 | xargs)
+          ARM64_PACKAGE_URL="${RSTREAM_URL}/api/packages/${ARM64_PACKAGE_ID}/download"
+          ARM64_CHECKSUM=$(grep "checksum:" ${ARM64_FILEPATH} | cut -d ':' -f2 | xargs)
+          ./.github/scripts/write-winget-manifests.sh winget "${{ env.VERSION }}" "${X64_PACKAGE_URL}" "${X64_CHECKSUM}" "${ARM64_PACKAGE_URL}" "${ARM64_CHECKSUM}"
+          git -C winget config user.name 'CI automation'
+          git -C winget config user.email 'ci@rstream.io'
+          git -C winget add manifests/r/rstream/rstream/${{ env.VERSION }}
+          if ! git -C winget diff --cached --quiet; then
+            git -C winget commit -m "add ${PACKAGE_NAME} winget manifests for ${{ env.VERSION }}"
+            git -C winget push
+          fi
       - uses: actions/checkout@v6
         if: ${{ github.ref_type == 'tag' }}
         with:

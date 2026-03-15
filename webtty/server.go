@@ -16,10 +16,12 @@ import (
 )
 
 const (
+	defaultHeartbeatInterval    time.Duration = 5 * time.Second
 	defaultMaxMessageSize       int64         = 1024 * 1024
 	defaultReadBufferSize       int           = 1024
+	defaultSessionCloseDeadline time.Duration = 5 * time.Second
+	defaultSessionOpenDeadline  time.Duration = 5 * time.Second
 	defaultWriteBufferSize      int           = 1024
-	defaultSessionCloseDeadline time.Duration = 8 * time.Second
 )
 
 type ServerConfig struct {
@@ -27,18 +29,20 @@ type ServerConfig struct {
 	ReadBufferSize       *int
 	WriteBufferSize      *int
 	EnvVars              *map[string]string
+	SessionOpenDeadline  *time.Duration
 	SessionCloseDeadline *time.Duration
+	HeartbeatInterval    *time.Duration
 	Logger               *slog.Logger
 }
 
 type Handler struct {
-	cfg         *ServerConfig
-	upgrader    websocket.Upgrader
-	logger      *slog.Logger
-	sessionsMu  sync.Mutex
-	sessions    map[*session]struct{}
-	draining    atomic.Bool
-	nextSession uint64
+	cfg        *ServerConfig
+	upgrader   websocket.Upgrader
+	logger     *slog.Logger
+	sessionsMu sync.Mutex
+	sessions   map[*session]struct{}
+	sessionIDs *sessionIDGenerator
+	draining   atomic.Bool
 }
 
 func NewWebTTYHandler(cfg *ServerConfig) *Handler {
@@ -51,10 +55,11 @@ func NewWebTTYHandler(cfg *ServerConfig) *Handler {
 		},
 	}
 	return &Handler{
-		cfg:      resolved,
-		upgrader: upgrader,
-		logger:   resolved.Logger.With("component", "webtty.server"),
-		sessions: make(map[*session]struct{}),
+		cfg:        resolved,
+		upgrader:   upgrader,
+		logger:     resolved.Logger.With("component", "webtty.server"),
+		sessions:   make(map[*session]struct{}),
+		sessionIDs: newSessionIDGenerator(),
 	}
 }
 
@@ -78,9 +83,17 @@ func resolveServerConfig(cfg *ServerConfig) *ServerConfig {
 		value := map[string]string{}
 		cfg.EnvVars = &value
 	}
+	if cfg.SessionOpenDeadline == nil {
+		value := defaultSessionOpenDeadline
+		cfg.SessionOpenDeadline = &value
+	}
 	if cfg.SessionCloseDeadline == nil {
 		value := defaultSessionCloseDeadline
 		cfg.SessionCloseDeadline = &value
+	}
+	if cfg.HeartbeatInterval == nil {
+		value := defaultHeartbeatInterval
+		cfg.HeartbeatInterval = &value
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -98,7 +111,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.logger.Warn("failed to upgrade websocket connection", "error", err)
 		return
 	}
-	sessionID := atomic.AddUint64(&h.nextSession, 1)
+	sessionID := h.sessionIDs.Generate()
+	h.logger.Debug("websocket connection accepted", "session_id", sessionID)
 	s := newSession(conn, h.cfg, h.logger.With("session_id", sessionID))
 	if !h.registerSession(s) {
 		h.logger.Info("rejecting websocket connection during shutdown", "session_id", sessionID)

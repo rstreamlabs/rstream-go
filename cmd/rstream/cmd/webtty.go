@@ -195,11 +195,12 @@ var webttyClientCmd = &cobra.Command{
 		envVars, _ := cmd.Flags().GetStringArray("env")
 		workdir := getStringPtr(cmd, "workdir")
 		username := getStringPtr(cmd, "user")
+		noHeartbeat, _ := cmd.Flags().GetBool("no-heartbeat")
 		exitCode, err := webtty.RunClient(ctx, &webtty.ClientConfig{
 			URL:           urlValue,
 			Interactive:   interactive,
 			AllocateTTY:   allocateTTY,
-			SendHeartbeat: true,
+			SendHeartbeat: !noHeartbeat,
 			EnvVars:       envVars,
 			Workdir:       workdir,
 			Username:      username,
@@ -232,7 +233,7 @@ func init() {
 	webttyServerCmd.Flags().Bool("no-retry", false, "disable automatic reconnection on disconnect")
 	webttyServerCmd.MarkFlagsMutuallyExclusive("retry", "no-retry")
 	webttyServerCmd.Flags().Int64("retry-interval", 0, "retry interval in ms")
-	webttyServerCmd.Flags().Int64("shutdown-timeout", 8000, "graceful shutdown timeout in ms")
+	webttyServerCmd.Flags().Int64("shutdown-timeout", 5000, "graceful shutdown timeout in ms")
 	webttyCmd.AddCommand(webttyServerCmd)
 }
 
@@ -246,6 +247,7 @@ func init() {
 	webttyClientCmd.Flags().BoolP("tty", "t", false, "enable TTY allocation")
 	webttyClientCmd.Flags().BoolP("no-tty", "T", false, "disable TTY allocation")
 	webttyClientCmd.MarkFlagsMutuallyExclusive("tty", "no-tty")
+	webttyClientCmd.Flags().BoolP("no-heartbeat", "H", false, "disable heartbeat mechanism")
 	webttyClientCmd.Flags().StringArrayP("env", "e", nil, "pass environment variable (KEY or KEY=VALUE)")
 	webttyClientCmd.Flags().StringP("workdir", "w", "", "set the working directory")
 	webttyClientCmd.Flags().StringP("user", "u", "", "username or UID")
