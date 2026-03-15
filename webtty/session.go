@@ -32,16 +32,22 @@ type session struct {
 	mu              sync.Mutex
 	closed          bool
 	shutdownReq     bool
-	waitStarted     bool
 	cmd             *exec.Cmd
 	ptyFile         *os.File
 	stdinPipe       io.WriteCloser
 	doneCh          chan struct{}
+	openTimer       *time.Timer
+	closeTimer      *time.Timer
 	heartbeatTicker *time.Ticker
 	streamsActive   int
 	childDone       bool
 	childExitCode   int
+	opened          bool
+	disconnecting   bool
+	closeErr        error
 }
+
+var errSessionOperationTimeout = errors.New("operation timeout")
 
 func newSession(conn *websocket.Conn, cfg *ServerConfig, logger *slog.Logger) *session {
 	if logger == nil {
@@ -50,14 +56,24 @@ func newSession(conn *websocket.Conn, cfg *ServerConfig, logger *slog.Logger) *s
 	if cfg.MaxMessageSize != nil && *cfg.MaxMessageSize > 0 {
 		conn.SetReadLimit(*cfg.MaxMessageSize)
 	}
-	return &session{
-		conn:            conn,
-		cfg:             cfg,
-		logger:          logger,
-		logProto:        strings.EqualFold(strings.TrimSpace(rstream.Channel), "dev"),
-		doneCh:          make(chan struct{}),
-		heartbeatTicker: time.NewTicker(20 * time.Second),
+	s := &session{
+		conn:     conn,
+		cfg:      cfg,
+		logger:   logger,
+		logProto: strings.EqualFold(strings.TrimSpace(rstream.Channel), "dev"),
+		doneCh:   make(chan struct{}),
 	}
+	if cfg.HeartbeatInterval != nil && *cfg.HeartbeatInterval > 0 {
+		s.heartbeatTicker = time.NewTicker(*cfg.HeartbeatInterval)
+	}
+	if cfg.SessionOpenDeadline != nil && *cfg.SessionOpenDeadline > 0 {
+		s.openTimer = time.AfterFunc(*cfg.SessionOpenDeadline, func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.onOpenTimeout()
+		})
+	}
+	return s
 }
 
 func (s *session) run() {
@@ -123,6 +139,9 @@ func (s *session) readLoop() {
 }
 
 func (s *session) heartbeatLoop() {
+	if s.heartbeatTicker == nil {
+		return
+	}
 	defer s.heartbeatTicker.Stop()
 	for {
 		select {
@@ -178,6 +197,10 @@ func (s *session) onIncomingMessage(messageType int, p []byte, err error) bool {
 	if s.closed {
 		return false
 	}
+	if err != nil && (errors.Is(err, io.EOF) || websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway)) {
+		s.close()
+		return false
+	}
 	if err == nil && messageType != websocket.BinaryMessage {
 		err = fmt.Errorf("unexpected message type: %d", messageType)
 	}
@@ -212,19 +235,18 @@ func (s *session) onReadStream(t pb.Data_Type, p []byte, err error) bool {
 	if s.closed {
 		return false
 	}
-	eos := err == io.EOF
+	eos := isStreamEOS(err, s.ptyFile != nil)
+	if err != nil {
+		s.logger.Debug("stream closed", "stream", t.String(), "eos", eos, "error", err)
+	}
 	if eos {
 		err = s.sendEOS(t)
 		if err == nil {
 			if s.streamsActive > 0 {
 				s.streamsActive--
 			}
-			if s.streamsActive == 0 {
-				if s.childDone {
-					err = s.doClose()
-				} else {
-					s.startWaitLoopLocked()
-				}
+			if s.streamsActive == 0 && s.childDone {
+				err = s.doClose()
 			}
 		}
 	} else if err == nil {
@@ -244,7 +266,7 @@ func (s *session) onChildExit(exitCode int, err error) bool {
 	if err == nil {
 		s.childDone = true
 		s.childExitCode = exitCode
-		s.logger.Info("child process exited", "exit_code", exitCode)
+		s.logger.Info("child process exited", "exit_code", exitCode, "error", err)
 		if s.streamsActive == 0 {
 			err = s.doClose()
 		}
@@ -301,24 +323,30 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 				uv = &UsernameVariant{UID: &id}
 			}
 		}
-		if runtime.GOOS == "windows" && uv != nil {
-			return fmt.Errorf("changing user is not supported on Windows")
-		}
 		ui, err := GetUserInfo(uv)
 		if err != nil {
 			return fmt.Errorf("failed to get user info: %w", err)
+		}
+		workdir := ui.Home
+		if wd := openCfg.Config.Workdir; wd != nil && wd.Value != "" {
+			workdir = wd.Value
 		}
 		cmdArgs := openCfg.Config.CmdArgs
 		if len(cmdArgs) == 0 {
 			cmdArgs = []string{ui.Shell}
 		}
 		exe, args := cmdArgs[0], cmdArgs[1:]
-		cmd := exec.Command(exe, args...)
-		if wd := openCfg.Config.Workdir; wd != nil && wd.Value != "" {
-			cmd.Dir = wd.Value
-		} else {
-			cmd.Dir = ui.Home
+		backend := "pipe"
+		if openCfg.Config.Options.GetAllocateTty() {
+			backend = "tty"
 		}
+		s.logger.Debug("starting child process", "backend", backend, "exe", exe, "args", args, "workdir", workdir)
+		exePath, err := resolveExecutable(exe, workdir)
+		if err != nil {
+			return err
+		}
+		cmd := exec.Command(exePath, args...)
+		cmd.Dir = workdir
 		env := BuildEnvironment(openCfg.Config.EnvVars)
 		if p := os.Getenv("PATH"); p != "" {
 			AddEnvironmentVariable(&env, "PATH", p, false)
@@ -352,7 +380,7 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 			s.ptyFile = ptmx
 			s.cmd = cmd
 			s.streamsActive = 1
-			s.startWaitLoopLocked()
+			go s.waitProcessLoop(cmd)
 			if s.shutdownReq {
 				if err := s.signalChildInterruptLocked(); err != nil {
 					s.logger.Debug("failed to send child interrupt", "error", err)
@@ -378,7 +406,7 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 				return err
 			}
 			s.streamsActive = 2
-			s.startWaitLoopLocked()
+			go s.waitProcessLoop(cmd)
 			if s.shutdownReq {
 				if err := s.signalChildInterruptLocked(); err != nil {
 					s.logger.Debug("failed to send child interrupt", "error", err)
@@ -394,7 +422,14 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 		_ = s.sendError(err)
 		return err
 	}
-	go s.heartbeatLoop()
+	s.opened = true
+	if s.openTimer != nil {
+		s.openTimer.Stop()
+		s.openTimer = nil
+	}
+	if s.heartbeatTicker != nil {
+		go s.heartbeatLoop()
+	}
 	return s.sendAck()
 }
 
@@ -411,6 +446,7 @@ func (s *session) handleData(d *pb.Data) error {
 			return nil
 		}
 		if s.stdinPipe != nil {
+			s.logger.Debug("closing stdin after receiving eos from peer")
 			return s.stdinPipe.Close()
 		}
 	case *pb.Data_Data:
@@ -450,7 +486,7 @@ func (s *session) doClose() error {
 	}
 	err := s.sendClose(s.childExitCode)
 	if err == nil {
-		s.close()
+		s.startCloseHandshake()
 	}
 	return err
 }
@@ -458,6 +494,9 @@ func (s *session) doClose() error {
 func (s *session) error(err error) {
 	if s.closed {
 		return
+	}
+	if s.closeErr == nil {
+		s.closeErr = err
 	}
 	s.logger.Warn("session error", "error", err)
 	s.close()
@@ -468,6 +507,12 @@ func (s *session) close() {
 		return
 	}
 	s.closed = true
+	if s.openTimer != nil {
+		s.openTimer.Stop()
+	}
+	if s.closeTimer != nil {
+		s.closeTimer.Stop()
+	}
 	if s.heartbeatTicker != nil {
 		s.heartbeatTicker.Stop()
 	}
@@ -489,29 +534,61 @@ func (s *session) close() {
 	default:
 		close(s.doneCh)
 	}
-	s.logger.Info("session closed")
+	s.logger.Info("session closed", "error", s.closeErr)
+}
+
+func (s *session) onOpenTimeout() {
+	if s.closed || s.opened {
+		return
+	}
+	if s.closeErr == nil {
+		s.closeErr = errSessionOperationTimeout
+	}
+	s.logger.Warn("session open timeout", "error", s.closeErr)
+	s.close()
+}
+
+func (s *session) onCloseTimeout() {
+	if s.closed {
+		return
+	}
+	if s.closeErr == nil {
+		s.closeErr = errSessionOperationTimeout
+	}
+	s.logger.Warn("session close timeout", "error", s.closeErr)
+	s.close()
 }
 
 func (s *session) signalChildInterruptLocked() error {
 	if s.cmd == nil || s.cmd.Process == nil || s.childDone {
 		return nil
 	}
-	err := s.cmd.Process.Signal(os.Interrupt)
-	if err != nil && errors.Is(err, os.ErrProcessDone) {
-		return nil
-	}
+	err := interruptChildProcess(s.cmd)
 	if err == nil {
-		s.logger.Debug("sent interrupt signal to child process")
+		s.logger.Debug("requested child process shutdown")
 	}
 	return err
 }
 
-func (s *session) startWaitLoopLocked() {
-	if s.waitStarted || s.cmd == nil {
+func (s *session) startCloseHandshake() {
+	if s.closed || s.disconnecting {
 		return
 	}
-	s.waitStarted = true
-	go s.waitProcessLoop(s.cmd)
+	s.disconnecting = true
+	if s.cfg.SessionCloseDeadline != nil && *s.cfg.SessionCloseDeadline > 0 {
+		s.closeTimer = time.AfterFunc(*s.cfg.SessionCloseDeadline, func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			s.onCloseTimeout()
+		})
+	}
+	deadline := time.Now().Add(time.Second)
+	if s.cfg.SessionCloseDeadline != nil && *s.cfg.SessionCloseDeadline > 0 {
+		deadline = time.Now().Add(*s.cfg.SessionCloseDeadline)
+	}
+	if err := s.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "finished"), deadline); err != nil {
+		s.close()
+	}
 }
 
 func (s *session) sendAck() error {

@@ -3,7 +3,11 @@
 package webtty
 
 import (
+	"bytes"
 	"testing"
+	"time"
+
+	"github.com/rstreamlabs/rstream-go/webtty/pb"
 )
 
 func TestNormalizeWebTTYURL(t *testing.T) {
@@ -74,5 +78,68 @@ func TestParseClientUsername(t *testing.T) {
 	}
 	if name.GetName() != "alice" {
 		t.Fatalf("unexpected username: got %q want %q", name.GetName(), "alice")
+	}
+}
+
+func TestResolveClientConfigDefaults(t *testing.T) {
+	cfg, err := resolveClientConfig(nil)
+	if err != nil {
+		t.Fatalf("resolveClientConfig returned error: %v", err)
+	}
+	if got, want := cfg.URL, "ws://127.0.0.1:8080"; got != want {
+		t.Fatalf("unexpected default url: got %q want %q", got, want)
+	}
+	if got, want := *cfg.OpenDeadline, 5*time.Second; got != want {
+		t.Fatalf("unexpected open deadline: got %s want %s", got, want)
+	}
+	if got, want := *cfg.CloseDeadline, 5*time.Second; got != want {
+		t.Fatalf("unexpected close deadline: got %s want %s", got, want)
+	}
+	if got, want := *cfg.HeartbeatInterval, 5*time.Second; got != want {
+		t.Fatalf("unexpected heartbeat interval: got %s want %s", got, want)
+	}
+}
+
+func TestHandleOpenMessage(t *testing.T) {
+	runtime := &clientRuntime{}
+	if err := runtime.handleOpenMessage(&pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}}); err != nil {
+		t.Fatalf("handleOpenMessage(ack) returned error: %v", err)
+	}
+	if err := runtime.handleOpenMessage(&pb.Message{Payload: &pb.Message_Error{Error: &pb.Error{Msg: "server error"}}}); err == nil {
+		t.Fatalf("handleOpenMessage(error) returned nil")
+	}
+	if err := runtime.handleOpenMessage(&pb.Message{Payload: &pb.Message_Close{Close: &pb.Close{ReturnCode: 0}}}); err == nil {
+		t.Fatalf("handleOpenMessage(close) returned nil")
+	}
+}
+
+func TestHandleSessionMessage(t *testing.T) {
+	var stdout bytes.Buffer
+	runtime := &clientRuntime{cfg: &ClientConfig{Stdout: &stdout, Stderr: &bytes.Buffer{}}}
+	exitCode, done, err := runtime.handleSessionMessage(&pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{Type: pb.Data_TYPE_STDOUT, Payload: &pb.Data_Data{Data: []byte("ok")}}}})
+	if err != nil {
+		t.Fatalf("handleSessionMessage(data) returned error: %v", err)
+	}
+	if done {
+		t.Fatalf("handleSessionMessage(data) unexpectedly finished the session")
+	}
+	if exitCode != -1 {
+		t.Fatalf("unexpected exit code for data: got %d want -1", exitCode)
+	}
+	if got := stdout.String(); got != "ok" {
+		t.Fatalf("unexpected stdout payload: got %q want %q", got, "ok")
+	}
+	exitCode, done, err = runtime.handleSessionMessage(&pb.Message{Payload: &pb.Message_Close{Close: &pb.Close{ReturnCode: 7}}})
+	if err != nil {
+		t.Fatalf("handleSessionMessage(close) returned error: %v", err)
+	}
+	if !done {
+		t.Fatalf("handleSessionMessage(close) did not finish the session")
+	}
+	if exitCode != 7 {
+		t.Fatalf("unexpected exit code for close: got %d want 7", exitCode)
+	}
+	if _, done, err := runtime.handleSessionMessage(&pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}}); err == nil || !done {
+		t.Fatalf("handleSessionMessage(ack) should fail and finish the session")
 	}
 }
