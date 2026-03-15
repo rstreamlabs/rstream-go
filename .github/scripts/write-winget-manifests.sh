@@ -21,6 +21,8 @@ manifest_dir="${repo_root}/manifests/r/rstream/rstream/${version}"
 mkdir -p "${manifest_dir}"
 
 cat >"${manifest_dir}/${package_identifier}.yaml" <<EOF
+# yaml-language-server: \$schema=https://aka.ms/winget-manifest.version.${manifest_version}.schema.json
+
 PackageIdentifier: ${package_identifier}
 PackageVersion: ${version}
 DefaultLocale: en-US
@@ -29,6 +31,8 @@ ManifestVersion: ${manifest_version}
 EOF
 
 cat >"${manifest_dir}/${package_identifier}.installer.yaml" <<EOF
+# yaml-language-server: \$schema=https://aka.ms/winget-manifest.installer.${manifest_version}.schema.json
+
 PackageIdentifier: ${package_identifier}
 PackageVersion: ${version}
 InstallerType: zip
@@ -48,6 +52,8 @@ ManifestVersion: ${manifest_version}
 EOF
 
 cat >"${manifest_dir}/${package_identifier}.locale.en-US.yaml" <<EOF
+# yaml-language-server: \$schema=https://aka.ms/winget-manifest.defaultLocale.${manifest_version}.schema.json
+
 PackageIdentifier: ${package_identifier}
 PackageVersion: ${version}
 PackageLocale: en-US
@@ -61,7 +67,7 @@ License: Apache-2.0
 LicenseUrl: https://github.com/uartnet/rstream-go-v2/blob/main/LICENSE
 ShortDescription: Command-line client for rstream.
 Description: rstream is a developer-first platform for zero-trust networking.
-AppMoniker: rstream
+Moniker: rstream
 ManifestType: defaultLocale
 ManifestVersion: ${manifest_version}
 EOF
