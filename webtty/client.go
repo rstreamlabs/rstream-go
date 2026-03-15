@@ -37,6 +37,8 @@ type ClientConfig struct {
 	MaxMessageSize    *int64
 	ReadBufferSize    *int
 	WriteBufferSize   *int
+	OpenDeadline      *time.Duration
+	CloseDeadline     *time.Duration
 	HeartbeatInterval *time.Duration
 	Stdin             io.Reader
 	Stdout            io.Writer
@@ -54,6 +56,24 @@ type clientRuntime struct {
 	stdinFD     int
 	hasTerminal bool
 }
+
+type clientEvent struct {
+	msg *pb.Message
+	err error
+}
+
+const (
+	defaultClientCloseDeadline      time.Duration = 5 * time.Second
+	defaultClientOpenDeadline       time.Duration = 5 * time.Second
+	defaultTerminalResizePollPeriod time.Duration = 300 * time.Millisecond
+)
+
+var (
+	errClientOperationTimeout = errors.New("operation timeout")
+	errClientProtocol         = errors.New("protocol error")
+	errClientServer           = errors.New("server error")
+	errClientUnexpected       = errors.New("unexpected message")
+)
 
 func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 	resolved, err := resolveClientConfig(cfg)
@@ -109,54 +129,95 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 	if err != nil {
 		return -1, err
 	}
+	doneCh := make(chan struct{})
+	defer close(doneCh)
+	eventCh := make(chan clientEvent, 1)
+	go runtime.readLoop(doneCh, eventCh)
 	if err := runtime.writeMessage(openMessage); err != nil {
 		return -1, fmt.Errorf("failed to send open message: %w", err)
 	}
-	ackCh := make(chan struct{})
-	closeCodeCh := make(chan int, 1)
-	readErrCh := make(chan error, 1)
-	go runtime.readLoop(ackCh, closeCodeCh, readErrCh)
-	select {
-	case <-ackCh:
-		runtime.logger.Debug("webtty session acknowledged")
-	case code := <-closeCodeCh:
-		return code, nil
-	case err := <-readErrCh:
+	if err := runtime.waitForOpen(ctx, eventCh); err != nil {
 		return -1, err
-	case <-ctx.Done():
-		_ = runtime.sendClientError(ctx.Err())
-		return -1, ctx.Err()
 	}
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	loopErrCh := make(chan error, 3)
+	runtime.logger.Debug("webtty session acknowledged")
+	loopCtx, stopLoops := context.WithCancel(context.Background())
+	defer stopLoops()
+	loopErrCh := make(chan error, 1)
 	if resolved.Interactive {
-		go runtime.stdinLoop(runCtx, loopErrCh)
+		go runtime.stdinLoop(loopCtx, loopErrCh)
 	}
 	if resolved.AllocateTTY {
-		go runtime.resizeLoop(runCtx, loopErrCh)
+		go runtime.resizeLoop(loopCtx, loopErrCh)
 	}
 	if resolved.SendHeartbeat {
-		go runtime.heartbeatLoop(runCtx, loopErrCh)
+		go runtime.heartbeatLoop(loopCtx, loopErrCh)
 	}
+	var pendingErr error
+	var closeTimer *time.Timer
+	var closeTimeout <-chan time.Time
+	defer func() {
+		if closeTimer == nil {
+			return
+		}
+		if !closeTimer.Stop() {
+			select {
+			case <-closeTimer.C:
+			default:
+			}
+		}
+	}()
+	ctxDone := ctx.Done()
 	for {
 		select {
-		case code := <-closeCodeCh:
-			cancel()
-			return code, nil
-		case err := <-readErrCh:
-			cancel()
-			return -1, err
-		case err := <-loopErrCh:
+		case event := <-eventCh:
+			if event.err != nil {
+				if pendingErr != nil {
+					return -1, pendingErr
+				}
+				return -1, event.err
+			}
+			exitCode, done, err := runtime.handleSessionMessage(event.msg)
+			if done {
+				if pendingErr != nil {
+					return -1, pendingErr
+				}
+				return exitCode, err
+			}
 			if err != nil {
-				cancel()
-				_ = runtime.sendClientError(err)
 				return -1, err
 			}
-		case <-ctx.Done():
-			cancel()
-			_ = runtime.sendClientError(ctx.Err())
-			return -1, ctx.Err()
+		case err := <-loopErrCh:
+			if err == nil || pendingErr != nil {
+				continue
+			}
+			pendingErr = err
+			stopLoops()
+			if err := runtime.sendClientError(err); err != nil {
+				return -1, pendingErr
+			}
+			if resolved.CloseDeadline != nil && *resolved.CloseDeadline > 0 {
+				closeTimer = time.NewTimer(*resolved.CloseDeadline)
+				closeTimeout = closeTimer.C
+			}
+		case <-ctxDone:
+			ctxDone = nil
+			if pendingErr != nil {
+				continue
+			}
+			pendingErr = ctx.Err()
+			stopLoops()
+			if err := runtime.sendClientError(pendingErr); err != nil {
+				return -1, pendingErr
+			}
+			if resolved.CloseDeadline != nil && *resolved.CloseDeadline > 0 {
+				closeTimer = time.NewTimer(*resolved.CloseDeadline)
+				closeTimeout = closeTimer.C
+			}
+		case <-closeTimeout:
+			if pendingErr != nil {
+				return -1, pendingErr
+			}
+			return -1, errClientOperationTimeout
 		}
 	}
 }
@@ -180,8 +241,16 @@ func resolveClientConfig(cfg *ClientConfig) (*ClientConfig, error) {
 		value := defaultWriteBufferSize
 		cfg.WriteBufferSize = &value
 	}
+	if cfg.OpenDeadline == nil {
+		value := defaultClientOpenDeadline
+		cfg.OpenDeadline = &value
+	}
+	if cfg.CloseDeadline == nil {
+		value := defaultClientCloseDeadline
+		cfg.CloseDeadline = &value
+	}
 	if cfg.HeartbeatInterval == nil {
-		value := 20 * time.Second
+		value := defaultHeartbeatInterval
 		cfg.HeartbeatInterval = &value
 	}
 	if cfg.Stdin == nil {
@@ -321,49 +390,113 @@ func (c *clientRuntime) buildOpenMessage() (*pb.Message, error) {
 	return &pb.Message{Payload: &pb.Message_Open{Open: &pb.Open{Config: config}}}, nil
 }
 
-func (c *clientRuntime) readLoop(ackCh chan<- struct{}, closeCodeCh chan<- int, errCh chan<- error) {
-	ackSent := false
+func (c *clientRuntime) waitForOpen(ctx context.Context, eventCh <-chan clientEvent) error {
+	var timer *time.Timer
+	var timeout <-chan time.Time
+	if c.cfg.OpenDeadline != nil && *c.cfg.OpenDeadline > 0 {
+		timer = time.NewTimer(*c.cfg.OpenDeadline)
+		timeout = timer.C
+		defer func() {
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+		}()
+	}
+	for {
+		select {
+		case event := <-eventCh:
+			if event.err != nil {
+				return event.err
+			}
+			return c.handleOpenMessage(event.msg)
+		case <-timeout:
+			return errClientOperationTimeout
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func (c *clientRuntime) handleOpenMessage(msg *pb.Message) error {
+	if msg == nil {
+		return errClientProtocol
+	}
+	switch payload := msg.Payload.(type) {
+	case *pb.Message_Ack:
+		return nil
+	case *pb.Message_Error:
+		if strings.TrimSpace(payload.Error.Msg) != "" {
+			return fmt.Errorf("%w: %s", errClientServer, payload.Error.Msg)
+		}
+		return errClientServer
+	default:
+		return fmt.Errorf("%w: %T", errClientUnexpected, payload)
+	}
+}
+
+func (c *clientRuntime) handleSessionMessage(msg *pb.Message) (int, bool, error) {
+	if msg == nil {
+		return -1, true, errClientProtocol
+	}
+	switch payload := msg.Payload.(type) {
+	case *pb.Message_Data:
+		if err := c.handleData(payload.Data); err != nil {
+			return -1, true, err
+		}
+		return -1, false, nil
+	case *pb.Message_Close:
+		return int(payload.Close.ReturnCode), true, nil
+	case *pb.Message_Heartbeat:
+		return -1, false, nil
+	case *pb.Message_Error:
+		if strings.TrimSpace(payload.Error.Msg) != "" {
+			return -1, true, fmt.Errorf("%w: %s", errClientServer, payload.Error.Msg)
+		}
+		return -1, true, errClientServer
+	default:
+		return -1, true, fmt.Errorf("%w: %T", errClientUnexpected, payload)
+	}
+}
+
+func (c *clientRuntime) readLoop(done <-chan struct{}, eventCh chan<- clientEvent) {
 	for {
 		messageType, payload, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				errCh <- io.EOF
-				return
+				select {
+				case eventCh <- clientEvent{err: io.EOF}:
+				case <-done:
+				}
+			} else {
+				select {
+				case eventCh <- clientEvent{err: fmt.Errorf("failed to read websocket message: %w", err)}:
+				case <-done:
+				}
 			}
-			errCh <- fmt.Errorf("failed to read websocket message: %w", err)
 			return
 		}
 		if messageType != websocket.BinaryMessage {
-			errCh <- fmt.Errorf("unexpected websocket message type: %d", messageType)
+			select {
+			case eventCh <- clientEvent{err: fmt.Errorf("%w: websocket message type %d", errClientUnexpected, messageType)}:
+			case <-done:
+			}
 			return
 		}
 		msg := &pb.Message{}
 		if err := proto.Unmarshal(payload, msg); err != nil {
-			errCh <- fmt.Errorf("failed to decode protobuf message: %w", err)
+			select {
+			case eventCh <- clientEvent{err: fmt.Errorf("%w: failed to decode protobuf message: %v", errClientProtocol, err)}:
+			case <-done:
+			}
 			return
 		}
 		c.logProtoMessage("received", msg)
-		switch body := msg.Payload.(type) {
-		case *pb.Message_Ack:
-			if !ackSent {
-				ackSent = true
-				ackCh <- struct{}{}
-			}
-		case *pb.Message_Data:
-			if err := c.handleData(body.Data); err != nil {
-				errCh <- err
-				return
-			}
-		case *pb.Message_Close:
-			closeCodeCh <- int(body.Close.ReturnCode)
-			return
-		case *pb.Message_Error:
-			errCh <- fmt.Errorf("server error: %s", body.Error.Msg)
-			return
-		case *pb.Message_Heartbeat:
-			continue
-		default:
-			errCh <- fmt.Errorf("unexpected protobuf message type: %T", body)
+		select {
+		case eventCh <- clientEvent{msg: msg}:
+		case <-done:
 			return
 		}
 	}
@@ -408,7 +541,10 @@ func (c *clientRuntime) stdinLoop(ctx context.Context, errCh chan<- error) {
 			chunk := append([]byte(nil), buffer[:n]...)
 			msg := &pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{Type: pb.Data_TYPE_STDIN, Payload: &pb.Data_Data{Data: chunk}}}}
 			if werr := c.writeMessage(msg); werr != nil {
-				errCh <- fmt.Errorf("failed to send stdin payload: %w", werr)
+				select {
+				case errCh <- fmt.Errorf("failed to send stdin payload: %w", werr):
+				default:
+				}
 				return
 			}
 		}
@@ -416,11 +552,17 @@ func (c *clientRuntime) stdinLoop(ctx context.Context, errCh chan<- error) {
 			if errors.Is(err, io.EOF) {
 				eos := &pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{Type: pb.Data_TYPE_STDIN, Payload: &pb.Data_Eos{Eos: &pb.EndOfStream{}}}}}
 				if werr := c.writeMessage(eos); werr != nil {
-					errCh <- fmt.Errorf("failed to send stdin eos: %w", werr)
+					select {
+					case errCh <- fmt.Errorf("failed to send stdin eos: %w", werr):
+					default:
+					}
 				}
 				return
 			}
-			errCh <- fmt.Errorf("failed to read stdin: %w", err)
+			select {
+			case errCh <- fmt.Errorf("failed to read stdin: %w", err):
+			default:
+			}
 			return
 		}
 	}
@@ -449,10 +591,13 @@ func (c *clientRuntime) resizeLoop(ctx context.Context, errCh chan<- error) {
 		return nil
 	}
 	if err := sendSize(); err != nil {
-		errCh <- err
+		select {
+		case errCh <- err:
+		default:
+		}
 		return
 	}
-	notifier := newTerminalResizeNotifier(300 * time.Millisecond)
+	notifier := newTerminalResizeNotifier(defaultTerminalResizePollPeriod)
 	defer notifier.Close()
 	for {
 		select {
@@ -460,7 +605,10 @@ func (c *clientRuntime) resizeLoop(ctx context.Context, errCh chan<- error) {
 			return
 		case <-notifier.C():
 			if err := sendSize(); err != nil {
-				errCh <- err
+				select {
+				case errCh <- err:
+				default:
+				}
 				return
 			}
 		}
@@ -481,7 +629,10 @@ func (c *clientRuntime) heartbeatLoop(ctx context.Context, errCh chan<- error) {
 		case <-ticker.C:
 			msg := &pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: &pb.Heartbeat{}}}
 			if err := c.writeMessage(msg); err != nil {
-				errCh <- fmt.Errorf("failed to send heartbeat: %w", err)
+				select {
+				case errCh <- fmt.Errorf("failed to send heartbeat: %w", err):
+				default:
+				}
 				return
 			}
 		}

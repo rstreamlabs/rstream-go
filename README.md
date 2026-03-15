@@ -92,6 +92,18 @@ On macOS, the Homebrew tap provides the standard CLI installation path:
 brew tap rstreamlabs/rstream && brew install rstream
 ```
 
+### Windows
+On Windows, add the `rstream` source once from an elevated terminal and install with `winget`:
+```powershell
+winget source add -n rstream -a https://winget.rstream.io/api -t Microsoft.Rest
+winget install rstream
+```
+
+If `winget` is not available, use the PowerShell installer:
+```powershell
+& { Invoke-Expression ([System.Text.Encoding]::UTF8.GetString((Invoke-WebRequest -Uri 'https://rstream.io/scripts/install.ps1' -UseBasicParsing).Content)) }
+```
+
 ### Manual installation
 For generic environments, use the manual installer script for the CLI binary:
 ```bash
