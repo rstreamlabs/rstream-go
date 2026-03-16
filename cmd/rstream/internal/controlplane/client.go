@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -17,6 +18,10 @@ import (
 )
 
 var ErrUnauthorized = errors.New("not authenticated")
+
+type apiErrorResponse struct {
+	Error string `json:"error"`
+}
 
 type Client struct {
 	apiURL     string
@@ -141,11 +146,13 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		responseBody, _ := io.ReadAll(resp.Body)
+		message := controlPlaneErrorMessage(resp.Status, responseBody)
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			return resp.StatusCode, fmt.Errorf("%w: %s", ErrUnauthorized, resp.Status)
+			return resp.StatusCode, fmt.Errorf("%w: %s", ErrUnauthorized, message)
 		}
 		c.logger.Debug("control-plane response", "status", resp.StatusCode, "statusText", resp.Status)
-		return resp.StatusCode, fmt.Errorf("control-plane request failed: %s", resp.Status)
+		return resp.StatusCode, errors.New(message)
 	}
 	c.logger.Debug("control-plane response", "status", resp.StatusCode)
 	if out == nil {
@@ -156,4 +163,14 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 		return resp.StatusCode, err
 	}
 	return resp.StatusCode, nil
+}
+
+func controlPlaneErrorMessage(status string, body []byte) string {
+	var payload apiErrorResponse
+	if err := json.Unmarshal(body, &payload); err == nil {
+		if message := strings.TrimSpace(payload.Error); message != "" {
+			return message
+		}
+	}
+	return fmt.Sprintf("control-plane request failed: %s", status)
 }

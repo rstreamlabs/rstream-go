@@ -86,3 +86,37 @@ func TestListProjectsQueryParamsAndParsing(t *testing.T) {
 		t.Fatalf("unexpected project: %+v", resp.Projects[0])
 	}
 }
+
+func TestDoJSONBodyPropagatesAPIErrorMessage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"error": "Credential \"rstream Login\" already exists and cannot be replaced automatically.",
+		})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "token")
+	_, err := client.CreateRstreamLogin(context.Background(), RstreamLoginRequest{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := err.Error(); got != "Credential \"rstream Login\" already exists and cannot be replaced automatically." {
+		t.Fatalf("unexpected error message: %q", got)
+	}
+}
+
+func TestDoJSONBodyFallsBackToGenericMessage(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "plain failure", http.StatusBadGateway)
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "token")
+	_, err := client.CreateRstreamLogin(context.Background(), RstreamLoginRequest{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if got := err.Error(); got != "control-plane request failed: 502 Bad Gateway" {
+		t.Fatalf("unexpected fallback error message: %q", got)
+	}
+}
