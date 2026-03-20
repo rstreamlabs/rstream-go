@@ -20,6 +20,7 @@ func TestNormalizeWebTTYURL(t *testing.T) {
 		{name: "default scheme", input: "127.0.0.1:8080", want: "ws://127.0.0.1:8080/"},
 		{name: "ws scheme", input: "ws://localhost:8080/path", want: "ws://localhost:8080/path"},
 		{name: "wss scheme", input: "wss://example.com", want: "wss://example.com/"},
+		{name: "rstrm scheme", input: "rstrm://shell", want: "ws://shell/"},
 		{name: "invalid scheme", input: "http://localhost", wantErr: true},
 		{name: "missing host", input: "ws:///path", wantErr: true},
 	}
@@ -37,6 +38,42 @@ func TestNormalizeWebTTYURL(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Fatalf("unexpected normalized url: got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveWebTTYEndpoint(t *testing.T) {
+	tests := []struct {
+		name               string
+		input              string
+		wantURL            string
+		wantRequiresCustom bool
+		wantErr            bool
+	}{
+		{name: "ws endpoint", input: "ws://localhost:8080/path", wantURL: "ws://localhost:8080/path", wantRequiresCustom: false},
+		{name: "wss endpoint", input: "wss://example.com", wantURL: "wss://example.com/", wantRequiresCustom: false},
+		{name: "rstrm endpoint", input: "rstrm://shell", wantURL: "ws://shell/", wantRequiresCustom: true},
+		{name: "rstrm path", input: "rstrm://shell/session?mode=ro", wantURL: "ws://shell/session?mode=ro", wantRequiresCustom: true},
+		{name: "invalid endpoint", input: "http://localhost", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveWebTTYEndpoint(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveWebTTYEndpoint returned error: %v", err)
+			}
+			if got.URL != tt.wantURL {
+				t.Fatalf("unexpected normalized url: got %q want %q", got.URL, tt.wantURL)
+			}
+			if got.RequiresCustomDial != tt.wantRequiresCustom {
+				t.Fatalf("unexpected custom dial requirement: got %t want %t", got.RequiresCustomDial, tt.wantRequiresCustom)
 			}
 		})
 	}

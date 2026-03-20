@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,6 +49,9 @@ var webttyServerCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		ctx := cmd.Context()
 		logger := slog.With("cmd", "webtty", "subcmd", "server")
+		if err := validateWebTTYServerFlags(cmd); err != nil {
+			return err
+		}
 		retryPtr := getBoolPtr(cmd, "retry")
 		noRetryPtr := getBoolPtr(cmd, "no-retry")
 		var autoReconnect *bool
@@ -89,7 +93,8 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{SessionCloseDeadline: &shutdownTimeout, Logger: logger})
 	server := &http.Server{Handler: handler}
 	var listener net.Listener
-	if useWeb, _ := cmd.Flags().GetBool("web"); useWeb {
+	address := ""
+	if webttyServerUsesRstream(cmd) {
 		runtime, err := resolveRuntime(cmd, true, true)
 		if err != nil {
 			return fmt.Errorf("failed to resolve runtime: %w", err)
@@ -103,18 +108,16 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 			return fmt.Errorf("failed to connect to rstream engine server: %w", err)
 		}
 		defer ctrl.Close()
-		props := rstream.TunnelProperties{
-			Publish:     rstream.BoolPtr(true),
-			Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
-			HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP1_1),
-			TokenAuth:   rstream.BoolPtr(true),
-			Labels:      webtty.DefaultLabels(),
-		}
+		props := newWebTTYServerTunnelProperties(cmd)
 		tunnel, err := ctrl.CreateTunnel(ctx, props)
 		if err != nil {
 			return fmt.Errorf("failed to create tunnel: %w", err)
 		}
 		defer tunnel.Close()
+		address, err = tunnel.ForwardingAddress()
+		if err != nil {
+			return fmt.Errorf("failed to get forwarding address: %w", err)
+		}
 		nl, ok := tunnel.(interface{ net.Listener })
 		if !ok {
 			return fmt.Errorf("tunnel does not implement net.Listener")
@@ -127,8 +130,9 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 			return fmt.Errorf("failed to listen on %s: %w", addr, err)
 		}
 		listener = netListener
+		address = listener.Addr().String()
 	}
-	logger.Info("webtty server started", "address", listener.Addr().String())
+	logger.Info("webtty server started", "address", address)
 	shutdownOnce := sync.Once{}
 	shutdown := func(reason string) {
 		shutdownOnce.Do(func() {
@@ -196,7 +200,7 @@ var webttyClientCmd = &cobra.Command{
 		workdir := getStringPtr(cmd, "workdir")
 		username := getStringPtr(cmd, "user")
 		noHeartbeat, _ := cmd.Flags().GetBool("no-heartbeat")
-		exitCode, err := webtty.RunClient(ctx, &webtty.ClientConfig{
+		clientCfg := &webtty.ClientConfig{
 			URL:           urlValue,
 			Interactive:   interactive,
 			AllocateTTY:   allocateTTY,
@@ -206,7 +210,19 @@ var webttyClientCmd = &cobra.Command{
 			Username:      username,
 			CmdArgs:       args,
 			Logger:        logger,
-		})
+		}
+		if webttyClientUsesRstream(urlValue) {
+			runtime, err := resolveRuntime(cmd, true, true)
+			if err != nil {
+				return fmt.Errorf("failed to resolve runtime: %w", err)
+			}
+			client, err := newClientFromResolved(runtime.Resolved)
+			if err != nil {
+				return fmt.Errorf("failed to create rstream client: %w", err)
+			}
+			clientCfg.DialContext = newWebTTYClientDialContext(client)
+		}
+		exitCode, err := webtty.RunClient(ctx, clientCfg)
 		if err != nil {
 			return err
 		}
@@ -227,8 +243,14 @@ func init() {
 	webttyServerCmd.Flags().SortFlags = false
 	webttyServerCmd.PersistentFlags().SortFlags = false
 	webttyServerCmd.Flags().String("listen", ":8080", "listen address (e.g. :8080 or 0.0.0.0:8080)")
-	webttyServerCmd.Flags().BoolP("web", "w", false, "publish the server on the web via rstream tunnel")
-	webttyServerCmd.MarkFlagsMutuallyExclusive("listen", "web")
+	webttyServerCmd.Flags().Bool("rstream", false, "serve over an rstream tunnel")
+	webttyServerCmd.MarkFlagsMutuallyExclusive("listen", "rstream")
+	webttyServerCmd.Flags().BoolP("web", "w", false, "serve over an rstream tunnel")
+	webttyServerCmd.Flags().MarkHidden("web")
+	webttyServerCmd.Flags().String("name", "", "tunnel name when using --rstream")
+	webttyServerCmd.Flags().Bool("publish", false, "publish the tunnel when using --rstream")
+	webttyServerCmd.Flags().Bool("no-publish", false, "do not publish the tunnel when using --rstream")
+	webttyServerCmd.MarkFlagsMutuallyExclusive("publish", "no-publish")
 	webttyServerCmd.Flags().Bool("retry", false, "enable automatic reconnection on disconnect")
 	webttyServerCmd.Flags().Bool("no-retry", false, "disable automatic reconnection on disconnect")
 	webttyServerCmd.MarkFlagsMutuallyExclusive("retry", "no-retry")
@@ -240,7 +262,7 @@ func init() {
 func init() {
 	webttyClientCmd.Flags().SortFlags = false
 	webttyClientCmd.PersistentFlags().SortFlags = false
-	webttyClientCmd.Flags().String("url", "ws://127.0.0.1:8080", "websocket endpoint URL (ws:// or wss://)")
+	webttyClientCmd.Flags().String("url", "ws://127.0.0.1:8080", "websocket endpoint URL (ws://, wss://, or rstrm://<tunnel-id-or-name>)")
 	webttyClientCmd.Flags().BoolP("interactive", "i", false, "enable interactive mode")
 	webttyClientCmd.Flags().BoolP("no-interactive", "I", false, "disable interactive mode")
 	webttyClientCmd.MarkFlagsMutuallyExclusive("interactive", "no-interactive")
@@ -252,4 +274,75 @@ func init() {
 	webttyClientCmd.Flags().StringP("workdir", "w", "", "set the working directory")
 	webttyClientCmd.Flags().StringP("user", "u", "", "username or UID")
 	webttyCmd.AddCommand(webttyClientCmd)
+}
+
+func webttyServerUsesRstream(cmd *cobra.Command) bool {
+	useRstream, _ := cmd.Flags().GetBool("rstream")
+	if useRstream {
+		return true
+	}
+	useWeb, _ := cmd.Flags().GetBool("web")
+	return useWeb
+}
+
+func validateWebTTYServerFlags(cmd *cobra.Command) error {
+	useRstream := webttyServerUsesRstream(cmd)
+	if useRstream && cmd.Flags().Changed("listen") {
+		return fmt.Errorf("--listen cannot be used with --rstream")
+	}
+	if useRstream {
+		return nil
+	}
+	if cmd.Flags().Changed("name") || cmd.Flags().Changed("publish") || cmd.Flags().Changed("no-publish") {
+		return fmt.Errorf("--name, --publish and --no-publish require --rstream")
+	}
+	return nil
+}
+
+func newWebTTYServerTunnelProperties(cmd *cobra.Command) rstream.TunnelProperties {
+	publish := true
+	if noPublishPtr := getBoolPtr(cmd, "no-publish"); noPublishPtr != nil && *noPublishPtr {
+		publish = false
+	}
+	props := rstream.TunnelProperties{
+		Name:    getStringPtr(cmd, "name"),
+		Publish: rstream.BoolPtr(publish),
+		Labels:  webtty.DefaultLabels(),
+	}
+	if publish {
+		props.Protocol = rstream.ProtocolPtr(rstream.ProtocolHTTP)
+		props.HTTPVersion = rstream.HTTPVersionPtr(rstream.HTTP1_1)
+		props.TokenAuth = rstream.BoolPtr(true)
+	}
+	return props
+}
+
+func webttyClientUsesRstream(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	return strings.HasPrefix(strings.ToLower(raw), "rstrm://")
+}
+
+func newWebTTYClientDialContext(client *rstream.Client) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		target, err := extractWebTTYTunnelTarget(addr)
+		if err != nil {
+			return nil, err
+		}
+		return client.Dial(ctx, rstream.Addr{IdOrName: target})
+	}
+}
+
+func extractWebTTYTunnelTarget(addr string) (string, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		if strings.Contains(addr, ":") {
+			return "", fmt.Errorf("failed to extract tunnel id or name from address %q: %w", addr, err)
+		}
+		host = addr
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return "", fmt.Errorf("websocket target is missing tunnel id or name")
+	}
+	return host, nil
 }
