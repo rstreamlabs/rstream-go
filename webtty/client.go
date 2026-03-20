@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -27,6 +28,7 @@ import (
 
 type ClientConfig struct {
 	URL               string
+	DialContext       func(context.Context, string, string) (net.Conn, error)
 	Interactive       bool
 	AllocateTTY       bool
 	SendHeartbeat     bool
@@ -57,6 +59,11 @@ type clientRuntime struct {
 	hasTerminal bool
 }
 
+type clientEndpoint struct {
+	URL                string
+	RequiresCustomDial bool
+}
+
 type clientEvent struct {
 	msg *pb.Message
 	err error
@@ -80,7 +87,7 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	endpoint, err := normalizeWebTTYURL(resolved.URL)
+	endpoint, err := resolveWebTTYEndpoint(resolved.URL)
 	if err != nil {
 		return -1, err
 	}
@@ -91,7 +98,13 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 		EnableCompression: false,
 		Proxy:             http.ProxyFromEnvironment,
 	}
-	conn, resp, err := dialer.DialContext(ctx, endpoint, nil)
+	if endpoint.RequiresCustomDial {
+		if resolved.DialContext == nil {
+			return -1, fmt.Errorf("websocket url scheme %q requires a custom dialer", "rstrm")
+		}
+		dialer.NetDialContext = resolved.DialContext
+	}
+	conn, resp, err := dialer.DialContext(ctx, endpoint.URL, nil)
 	if err != nil {
 		if resp != nil {
 			return -1, fmt.Errorf("websocket dial failed with status %d", resp.StatusCode)
@@ -268,29 +281,48 @@ func resolveClientConfig(cfg *ClientConfig) (*ClientConfig, error) {
 	return cfg, nil
 }
 
-func normalizeWebTTYURL(raw string) (string, error) {
+func resolveWebTTYEndpoint(raw string) (*clientEndpoint, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", fmt.Errorf("websocket url is required")
+		return nil, fmt.Errorf("websocket url is required")
 	}
 	if !strings.Contains(raw, "://") {
 		raw = "ws://" + raw
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", fmt.Errorf("invalid websocket url: %w", err)
+		return nil, fmt.Errorf("invalid websocket url: %w", err)
 	}
 	scheme := strings.ToLower(strings.TrimSpace(u.Scheme))
-	if scheme != "ws" && scheme != "wss" {
-		return "", fmt.Errorf("invalid websocket scheme %q (expected ws or wss)", u.Scheme)
+	switch scheme {
+	case "ws", "wss":
+		if u.Host == "" {
+			return nil, fmt.Errorf("websocket host is required")
+		}
+		if u.Path == "" {
+			u.Path = "/"
+		}
+		return &clientEndpoint{URL: u.String()}, nil
+	case "rstrm":
+		if u.Host == "" {
+			return nil, fmt.Errorf("websocket host is required")
+		}
+		if u.Path == "" {
+			u.Path = "/"
+		}
+		u.Scheme = "ws"
+		return &clientEndpoint{URL: u.String(), RequiresCustomDial: true}, nil
+	default:
+		return nil, fmt.Errorf("invalid websocket scheme %q (expected ws, wss, or rstrm)", u.Scheme)
 	}
-	if u.Host == "" {
-		return "", fmt.Errorf("websocket host is required")
+}
+
+func normalizeWebTTYURL(raw string) (string, error) {
+	endpoint, err := resolveWebTTYEndpoint(raw)
+	if err != nil {
+		return "", err
 	}
-	if u.Path == "" {
-		u.Path = "/"
-	}
-	return u.String(), nil
+	return endpoint.URL, nil
 }
 
 func parseClientEnvVars(specs []string) ([]*pb.Environment, error) {

@@ -172,6 +172,25 @@ rstream forward 22 --tls --no-publish --name ssh-tunnel
 
 Private tunnels require rstream clients to connect and are identified by name or ID rather than public URLs.
 
+### WebTTY remote terminal
+Use `rstream webtty server --rstream` to expose a remote shell through rstream. In rstream mode, WebTTY defaults to a published HTTP/WebSocket tunnel with the standard WebTTY labels. Add `--no-publish` to create a private tunnel instead.
+
+```bash
+# Start a published WebTTY server over rstream
+rstream webtty server --rstream --name shell
+
+# Start a private WebTTY server over rstream
+rstream webtty server --rstream --name shell --no-publish
+
+# Connect through a standard websocket endpoint
+rstream webtty client --url wss://example.rstream.io/ -- whoami
+
+# Connect through the native rstream dialer using a tunnel name or ID
+rstream webtty client --url rstrm://shell -- whoami
+```
+
+Published WebTTY tunnels can be reached either through their forwarding `wss://` address or through the native `rstrm://<tunnel-id-or-name>` form. Private WebTTY tunnels are reachable only through the native `rstrm://` form.
+
 ### UDP/datagram tunnels
 For datagram transport, choose DTLS mode when you need encrypted UDP-style traffic.
 
