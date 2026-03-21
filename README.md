@@ -191,6 +191,48 @@ rstream webtty client --url rstrm://shell -- whoami
 
 Published WebTTY tunnels can be reached either through their forwarding `wss://` address or through the native `rstrm://<tunnel-id-or-name>` form. Private WebTTY tunnels are reachable only through the native `rstrm://` form.
 
+### Netcat-style TCP and rstream streams
+Use `rstream netcat` for bytestream sessions over plain TCP or native rstream tunnels. The command is also available as `rstream ncat` and `rstream nc`.
+
+```bash
+# Connect to a plain TCP service
+rstream nc 127.0.0.1:1234
+
+# Expose a command over TCP
+rstream nc -L 127.0.0.1:1234 -c "date"
+
+# Expose a local SSH daemon through a private rstream tunnel
+rstream nc -L rstrm://ssh-server -R 127.0.0.1:22
+
+# Connect to that private rstream tunnel by name or ID
+rstream nc rstrm://ssh-server
+```
+
+When `--listen` uses `rstrm://[name]`, the CLI creates a private unpublished bytestream tunnel. If no name is provided, the generated tunnel identifier is printed on startup so another rstream client can dial it.
+
+For SSH access to a private machine, `rstream forward` is usually the simpler server-side entrypoint. Start it on the remote machine that has access to the local SSH daemon:
+
+```bash
+rstream forward 22 --bytestream --no-publish --name ssh-server
+```
+
+On the client machine, validate the path with a one-off SSH command:
+
+```bash
+ssh -o 'ProxyCommand rstream nc rstrm://ssh-server' admin@ssh-server hostname
+```
+
+For regular use, move the client-side configuration into SSH `ProxyCommand`:
+
+```sshconfig
+Host ssh-server
+  HostName ssh-server
+  User admin
+  ProxyCommand rstream nc rstrm://%h
+```
+
+This keeps the tunnel private while SSH still performs its normal host key verification and user authentication.
+
 ### UDP/datagram tunnels
 For datagram transport, choose DTLS mode when you need encrypted UDP-style traffic.
 

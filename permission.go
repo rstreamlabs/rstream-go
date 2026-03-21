@@ -136,6 +136,21 @@ func matchValue(raw json.RawMessage, prop any) (bool, error) {
 		switch v := prop.(type) {
 		case float64:
 			return v == num, nil
+		case string:
+			parsed, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return false, nil
+			}
+			return parsed == num, nil
+		case *string:
+			if v == nil {
+				return false, nil
+			}
+			parsed, err := strconv.ParseFloat(*v, 64)
+			if err != nil {
+				return false, nil
+			}
+			return parsed == num, nil
 		case uint16:
 			return float64(v) == num, nil
 		case *uint16:
