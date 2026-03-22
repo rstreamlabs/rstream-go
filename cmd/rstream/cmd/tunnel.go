@@ -46,7 +46,7 @@ var tunnelListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		params, err := buildListParams(tunnelListFilter)
+		params, err := buildTunnelListParams(tunnelListFilter)
 		if err != nil {
 			return fmt.Errorf("invalid --filter: %w", err)
 		}
@@ -78,81 +78,11 @@ func init() {
 	tunnelCmd.PersistentFlags().SortFlags = false
 	tunnelCmd.AddCommand(tunnelListCmd)
 	tunnelListCmd.Flags().SortFlags = false
-	tunnelListCmd.Flags().StringVar(&tunnelListFilter, "filter", "", "Filter output, e.g. \"status=online,protocol=http,labels.env=prod\"")
+	tunnelListCmd.Flags().StringVar(&tunnelListFilter, "filter", "", "Filter output, e.g. \"name=ssh-prod-01,status=online,labels.env=prod\"")
 	tunnelListCmd.Flags().StringVarP(&tunnelListOutput, "output", "o", "table", "output mode (table, json)")
 	tunnelListCmd.Flags().BoolVarP(&tunnelListQuiet, "quiet", "q", false, "Only display tunnel IDs")
 	tunnelListCmd.MarkFlagsMutuallyExclusive("output", "quiet")
 	rootCmd.AddCommand(tunnelCmd)
-}
-
-func buildListParams(filter string) (*rstream.ListTunnelsParams, error) {
-	if strings.TrimSpace(filter) == "" {
-		return nil, nil
-	}
-	parts := splitCSV(filter)
-	if len(parts) == 0 {
-		return nil, nil
-	}
-	fp := &rstream.ListTunnelsFilters{Labels: make(map[string]*string)}
-	for _, p := range parts {
-		kv := strings.SplitN(p, "=", 2)
-		if len(kv) != 2 {
-			return nil, fmt.Errorf("expected key=value, got %q", p)
-		}
-		key := strings.TrimSpace(kv[0])
-		val := strings.TrimSpace(kv[1])
-		switch {
-		case key == "status":
-			fp.Status = &val
-		case key == "client_id":
-			fp.ClientID = &val
-		case key == "protocol":
-			fp.Protocol = &val
-		case key == "publish":
-			b, err := parseBool(val)
-			if err != nil {
-				return nil, fmt.Errorf("publish: %w", err)
-			}
-			fp.Publish = &b
-		case strings.HasPrefix(key, "labels.") || strings.HasPrefix(key, "label."):
-			labelKey := strings.TrimPrefix(strings.TrimPrefix(key, "labels."), "label.")
-			if labelKey == "" {
-				return nil, fmt.Errorf("invalid label filter key %q", key)
-			}
-			if val == "" || val == "*" {
-				fp.Labels[labelKey] = nil
-			} else {
-				v := val
-				fp.Labels[labelKey] = &v
-			}
-		default:
-			return nil, fmt.Errorf("unknown filter key %q", key)
-		}
-	}
-	return &rstream.ListTunnelsParams{Filters: fp}, nil
-}
-
-func parseBool(s string) (bool, error) {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "1", "t", "true", "yes", "y":
-		return true, nil
-	case "0", "f", "false", "no", "n":
-		return false, nil
-	default:
-		return false, fmt.Errorf("invalid boolean %q", s)
-	}
-}
-
-func splitCSV(s string) []string {
-	raw := strings.Split(s, ",")
-	out := make([]string, 0, len(raw))
-	for _, r := range raw {
-		r = strings.TrimSpace(r)
-		if r != "" {
-			out = append(out, r)
-		}
-	}
-	return out
 }
 
 func printTunnelsJSON(w io.Writer, list *rstream.ListTunnelsResponse) error {
