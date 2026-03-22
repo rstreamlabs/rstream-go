@@ -97,12 +97,13 @@ func resolveControlPlane(cmd *cobra.Command, requireToken bool) (*resolvedRuntim
 	flagAPIURL, _ := cmd.Flags().GetString("api-url")
 	env := config.ReadEnv()
 	input := config.ResolveInput{
-		Config:       cfg,
-		FlagAPIURL:   flagAPIURL,
-		EnvAPIURL:    env.APIURL,
-		EnvToken:     env.Token,
-		RequireToken: requireToken,
-		ResolveToken: true,
+		Config:               cfg,
+		FlagAPIURL:           flagAPIURL,
+		EnvAPIURL:            env.APIURL,
+		EnvToken:             env.Token,
+		IgnoreDefaultContext: true,
+		RequireToken:         requireToken,
+		ResolveToken:         true,
 	}
 	resolved, err := config.Resolve(input)
 	if err != nil {

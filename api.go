@@ -88,6 +88,18 @@ func (c *Client) apiDo(ctx context.Context, method, path string, query url.Value
 	return b, resp.StatusCode, nil
 }
 
+func setQueryJSON(q url.Values, key string, value any) error {
+	if value == nil {
+		return nil
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("encode %s: %w", key, err)
+	}
+	q.Set(key, string(raw))
+	return nil
+}
+
 func (c *Client) Login(ctx context.Context) (*string, error) {
 	engine, err := c.getEngine()
 	if err != nil {
@@ -114,14 +126,26 @@ func (c *Client) Logout(ctx context.Context) (*string, error) {
 	return engine, nil
 }
 
+func (c *Client) ListClients(ctx context.Context, params *ListClientsParams) (*ListClientsResponse, error) {
+	q := url.Values{}
+	if err := setQueryJSON(q, "params", params); err != nil {
+		return nil, err
+	}
+	b, _, err := c.apiDo(ctx, http.MethodGet, "/clients", q, nil, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out ListClientsResponse
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &out, nil
+}
+
 func (c *Client) ListTunnels(ctx context.Context, params *ListTunnelsParams) (*ListTunnelsResponse, error) {
 	q := url.Values{}
-	if params != nil {
-		raw, err := json.Marshal(params)
-		if err != nil {
-			return nil, fmt.Errorf("encode params: %w", err)
-		}
-		q.Set("params", string(raw))
+	if err := setQueryJSON(q, "params", params); err != nil {
+		return nil, err
 	}
 	b, _, err := c.apiDo(ctx, http.MethodGet, "/tunnels", q, nil, nil, nil)
 	if err != nil {
@@ -149,21 +173,21 @@ func (c *Client) GetTunnel(ctx context.Context, id string) (*TunnelProperties, e
 	return &t, nil
 }
 
-func (c *Client) WatchSSE(ctx context.Context, handler func(Event) error) error {
-	return c.Watch(ctx, "sse", handler)
-}
-
-func (c *Client) WatchWS(ctx context.Context, handler func(Event) error) error {
-	return c.Watch(ctx, "websocket", handler)
-}
-
 type eventConn interface {
 	Read(ctx context.Context) ([]byte, error)
 	Close() error
 }
 
-func (c *Client) Watch(ctx context.Context, transport string, handler func(Event) error) error {
-	ec, err := c.openEventConn(ctx, transport)
+func (c *Client) WatchSSE(ctx context.Context, params *WatchParams, handler func(Event) error) error {
+	return c.Watch(ctx, "sse", params, handler)
+}
+
+func (c *Client) WatchWS(ctx context.Context, params *WatchParams, handler func(Event) error) error {
+	return c.Watch(ctx, "websocket", params, handler)
+}
+
+func (c *Client) Watch(ctx context.Context, transport string, params *WatchParams, handler func(Event) error) error {
+	ec, err := c.openEventConn(ctx, transport, params)
 	if err != nil {
 		return err
 	}
@@ -208,7 +232,7 @@ func (c *Client) Watch(ctx context.Context, transport string, handler func(Event
 	}
 }
 
-func (c *Client) openEventConn(ctx context.Context, transport string) (eventConn, error) {
+func (c *Client) openEventConn(ctx context.Context, transport string, params *WatchParams) (eventConn, error) {
 	engine, err := c.getEngine()
 	if err != nil {
 		return nil, err
@@ -222,9 +246,9 @@ func (c *Client) openEventConn(ctx context.Context, transport string) (eventConn
 	}
 	switch strings.ToLower(strings.TrimSpace(transport)) {
 	case "sse":
-		return c.openSSE(ctx, *engine, *cd.Token)
+		return c.openSSE(ctx, *engine, *cd.Token, params)
 	case "websocket", "ws":
-		return c.openWS(ctx, *engine, *cd.Token)
+		return c.openWS(ctx, *engine, *cd.Token, params)
 	default:
 		return nil, fmt.Errorf("invalid transport %q (valid: sse, websocket)", transport)
 	}
@@ -272,7 +296,7 @@ func (s *sseConn) Read(_ context.Context) ([]byte, error) {
 	}
 }
 
-func (c *Client) openSSE(ctx context.Context, engine, token string) (eventConn, error) {
+func (c *Client) openSSE(ctx context.Context, engine, token string, params *WatchParams) (eventConn, error) {
 	httpc, err := c.apiHttpClient()
 	if err != nil {
 		return nil, err
@@ -282,6 +306,9 @@ func (c *Client) openSSE(ctx context.Context, engine, token string) (eventConn, 
 	u := base + "/api/sse"
 	q := url.Values{}
 	q.Set("rstream.token", token)
+	if err := setQueryJSON(q, "params", params); err != nil {
+		return nil, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u+"?"+q.Encode(), nil)
 	if err != nil {
 		return nil, err
@@ -317,7 +344,7 @@ func (w *wsConn) Read(ctx context.Context) ([]byte, error) {
 	}
 }
 
-func (c *Client) openWS(ctx context.Context, engine, token string) (eventConn, error) {
+func (c *Client) openWS(ctx context.Context, engine, token string, params *WatchParams) (eventConn, error) {
 	u := url.URL{
 		Scheme: "wss",
 		Host:   engine,
@@ -325,6 +352,9 @@ func (c *Client) openWS(ctx context.Context, engine, token string) (eventConn, e
 	}
 	q := u.Query()
 	q.Set("rstream.token", token)
+	if err := setQueryJSON(q, "params", params); err != nil {
+		return nil, err
+	}
 	u.RawQuery = q.Encode()
 	dialer := &websocket.Dialer{
 		NetDialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
