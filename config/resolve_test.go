@@ -160,3 +160,47 @@ func TestResolveDefaultContextUsesContextAPIURL(t *testing.T) {
 		t.Fatalf("expected env token inherited, got %q", resolved.Token)
 	}
 }
+
+func TestResolveIgnoreDefaultContext(t *testing.T) {
+	cfg := Config{
+		Defaults: Defaults{
+			Context: &DefaultContext{
+				Name: "prod",
+			},
+		},
+		Environments: []Environment{
+			{
+				APIURL: "http://localhost:3000",
+				Auth: &Auth{
+					Token: &Token{Storage: &TokenStorage{Kind: TokenStorageInline, Value: "env-token"}},
+				},
+			},
+		},
+		Contexts: []Context{
+			{
+				Name:   "prod",
+				APIURL: "https://rstream.io",
+				Engine: "engine.prod:443",
+			},
+		},
+	}
+	resolved, err := Resolve(ResolveInput{
+		Config:               cfg,
+		FlagAPIURL:           "http://localhost:3000",
+		IgnoreDefaultContext: true,
+		RequireToken:         true,
+		ResolveToken:         true,
+	})
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if resolved.APIURL != "http://localhost:3000" {
+		t.Fatalf("expected selected apiUrl, got %q", resolved.APIURL)
+	}
+	if resolved.Context != nil {
+		t.Fatalf("expected no context, got %#v", resolved.Context)
+	}
+	if resolved.Token != "env-token" {
+		t.Fatalf("expected token inherited from selected environment, got %q", resolved.Token)
+	}
+}

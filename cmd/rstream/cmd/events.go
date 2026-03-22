@@ -22,6 +22,8 @@ import (
 var (
 	eventsFilter             []string
 	eventsTransport          string // sse | websocket
+	eventsClientFilter       string
+	eventsTunnelFilter       string
 	eventsForwardTo          string
 	eventsForwardInsecureTLS bool
 )
@@ -47,6 +49,24 @@ var eventsCmd = &cobra.Command{
 				if s = strings.TrimSpace(s); s != "" {
 					typeFilter[s] = struct{}{}
 				}
+			}
+		}
+		clientParams, err := buildClientListParams(eventsClientFilter)
+		if err != nil {
+			return fmt.Errorf("invalid --client-filter: %w", err)
+		}
+		tunnelParams, err := buildTunnelListParams(eventsTunnelFilter)
+		if err != nil {
+			return fmt.Errorf("invalid --tunnel-filter: %w", err)
+		}
+		var watchParams *rstream.WatchParams
+		if clientParams != nil || tunnelParams != nil {
+			watchParams = &rstream.WatchParams{}
+			if clientParams != nil {
+				watchParams.Clients = clientParams.Filters
+			}
+			if tunnelParams != nil {
+				watchParams.Tunnels = tunnelParams.Filters
 			}
 		}
 		var forward func(ctx context.Context, body []byte) error
@@ -95,7 +115,7 @@ var eventsCmd = &cobra.Command{
 			_, err = os.Stdout.Write(append(b, '\n'))
 			return err
 		}
-		err = client.Watch(ctx, strings.ToLower(strings.TrimSpace(eventsTransport)), handler)
+		err = client.Watch(ctx, strings.ToLower(strings.TrimSpace(eventsTransport)), watchParams, handler)
 		if err != nil && errors.Is(err, context.Canceled) {
 			return nil
 		}
@@ -106,8 +126,10 @@ var eventsCmd = &cobra.Command{
 func init() {
 	eventsCmd.Flags().SortFlags = false
 	eventsCmd.PersistentFlags().SortFlags = false
-	eventsCmd.Flags().StringSlice("events", []string{}, "Comma-separated list of events to listen for (e.g. tunnel.created,tunnel.updated)")
+	eventsCmd.Flags().StringSliceVar(&eventsFilter, "events", []string{}, "Comma-separated list of events to listen for (e.g. tunnel.created,tunnel.updated)")
 	eventsCmd.Flags().StringVar(&eventsTransport, "transport", "websocket", "Transport to use (sse, websocket)")
+	eventsCmd.Flags().StringVar(&eventsClientFilter, "client-filter", "", "Server-side client filters, e.g. \"status=online,agent=rstream\"")
+	eventsCmd.Flags().StringVar(&eventsTunnelFilter, "tunnel-filter", "", "Server-side tunnel filters, e.g. \"name=ssh-prod-01,labels.env=prod\"")
 	eventsCmd.Flags().StringVar(&eventsForwardTo, "forward-to", "", "URL to forward the webhook events to")
 	eventsCmd.Flags().BoolVar(&eventsForwardInsecureTLS, "forward-insecure-tls", false, "Skip TLS verification when forwarding events")
 	rootCmd.AddCommand(eventsCmd)

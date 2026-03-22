@@ -25,18 +25,19 @@ const (
 )
 
 type ResolveInput struct {
-	Config        Config
-	FlagAPIURL    string
-	FlagContext   string
-	FlagEngine    string
-	FlagToken     string
-	EnvAPIURL     string
-	EnvContext    string
-	EnvEngine     string
-	EnvToken      string
-	RequireToken  bool
-	RequireEngine bool
-	ResolveToken  bool
+	Config               Config
+	FlagAPIURL           string
+	FlagContext          string
+	FlagEngine           string
+	FlagToken            string
+	EnvAPIURL            string
+	EnvContext           string
+	EnvEngine            string
+	EnvToken             string
+	IgnoreDefaultContext bool
+	RequireToken         bool
+	RequireEngine        bool
+	ResolveToken         bool
 }
 
 type Resolved struct {
@@ -53,7 +54,7 @@ func Resolve(input ResolveInput) (Resolved, error) {
 	cfg := input.Config
 	apiURLExplicit := firstNonEmpty(input.FlagAPIURL, input.EnvAPIURL)
 	contextName := firstNonEmpty(input.FlagContext, input.EnvContext)
-	if contextName == "" && cfg.Defaults.Context != nil {
+	if !input.IgnoreDefaultContext && contextName == "" && cfg.Defaults.Context != nil {
 		contextName = cfg.Defaults.Context.Name
 	}
 	var ctx *Context
