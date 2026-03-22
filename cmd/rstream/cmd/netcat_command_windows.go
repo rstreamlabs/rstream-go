@@ -36,9 +36,8 @@ func splitNetcatCommand(command string) []string {
 	}
 	defer windows.LocalFree(windows.Handle(unsafe.Pointer(argv)))
 	args := make([]string, 0, argc)
-	values := unsafe.Slice(argv, argc)
-	for _, value := range values {
-		args = append(args, windows.UTF16PtrToString(&value[0]))
+	for i := int32(0); i < argc; i++ {
+		args = append(args, windows.UTF16ToString(argv[i][:]))
 	}
 	return args
 }
