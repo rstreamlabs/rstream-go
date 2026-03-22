@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.8.0](https://github.com/rstreamlabs/rstream-go/compare/v1.7.2...v1.8.0) (2026-03-22)
+
+
+### Features
+
+* add filtered inventory and signaling APIs ([1ccf7b3](https://github.com/rstreamlabs/rstream-go/commit/1ccf7b3f2d462d36ae7ed50fd087d465c012f9a9))
+* add netcat cli command ([06b32b3](https://github.com/rstreamlabs/rstream-go/commit/06b32b39fa5e94721e9a9c93c3d939fde5e7626b))
+* support rstream transport in webtty cli ([f3e1364](https://github.com/rstreamlabs/rstream-go/commit/f3e13642e115e1dab7c8ffb63ea6ef367e97917e))
+
+
+### Bug Fixes
+
+* fix error parsing in HTTP responses ([7e221f7](https://github.com/rstreamlabs/rstream-go/commit/7e221f794d69dd7feef4b1813f4c48ce625c618a))
+* restore windows netcat cross-build ([19b6621](https://github.com/rstreamlabs/rstream-go/commit/19b6621480609f97e2472d9189e32b08a1a55034))
+
 ## [1.7.2](https://github.com/rstreamlabs/rstream-go/compare/v1.7.1...v1.7.2) (2026-03-15)
 
 
