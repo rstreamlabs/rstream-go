@@ -4,7 +4,6 @@ package cmd
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/rstreamlabs/rstream-go"
@@ -209,19 +208,4 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 		ChallengeMode: challengeModePtr,
 	}
 	return tunnelProperties, nil
-}
-
-func parseTLSCipher(cipherName string) (uint16, error) {
-	if strings.HasPrefix(cipherName, "0x") {
-		val, err := strconv.ParseUint(strings.TrimPrefix(cipherName, "0x"), 16, 16)
-		if err != nil {
-			return 0, err
-		}
-		return uint16(val), nil
-	}
-	val, err := strconv.ParseUint(cipherName, 10, 16)
-	if err != nil {
-		return 0, fmt.Errorf("unable to parse cipher: %q", cipherName)
-	}
-	return uint16(val), nil
 }

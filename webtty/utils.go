@@ -42,7 +42,7 @@ func AddEnvironmentVariable(env *[]string, key, value string, force bool) {
 func DefaultLabels() map[string]string {
 	info := getOSDetails()
 	labels := map[string]string{
-		"application-protocol": "rstream.webtty",
+		webTTYApplicationProtocolKey: WebTTYApplicationProtocol,
 	}
 	set := func(k, v string) {
 		if v != "" {
@@ -50,14 +50,14 @@ func DefaultLabels() map[string]string {
 		}
 	}
 	runtime_identity := rstream.RuntimeIdentity()
-	set("rstream.webtty.os_family", runtime_identity.OS)
-	set("rstream.webtty.arch", runtime_identity.Arch)
-	set("rstream.webtty.os_id", info.id)
-	set("rstream.webtty.os_version_id", info.versionID)
-	set("rstream.webtty.os_version_codename", info.codename)
-	set("rstream.webtty.os_pretty_name", info.prettyName)
-	set("rstream.webtty.kernel_release", info.kernel)
-	set("rstream.webtty.hostname", info.hostname)
+	set(webTTYOSFamilyLabel, runtime_identity.OS)
+	set(webTTYArchLabel, runtime_identity.Arch)
+	set(webTTYOSIDLabel, info.id)
+	set(webTTYOSVersionIDLabel, info.versionID)
+	set(webTTYOSVersionCodenameLabel, info.codename)
+	set(webTTYOSPrettyNameLabel, info.prettyName)
+	set(webTTYKernelReleaseLabel, info.kernel)
+	set(webTTYHostnameLabel, info.hostname)
 	return labels
 }
 

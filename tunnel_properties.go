@@ -59,6 +59,12 @@ type TunnelProperties struct {
 	ChallengeMode *bool             `json:"challenge_mode,omitempty"`
 }
 
+type TunnelInventory struct {
+	TunnelProperties
+	Status   string `json:"status"`
+	ClientID string `json:"client_id,omitempty"`
+}
+
 type ListTunnelsFilters struct {
 	ID          *string            `json:"id,omitempty"`
 	Name        *string            `json:"name,omitempty"`
@@ -77,4 +83,4 @@ type ListTunnelsParams struct {
 	Filters *ListTunnelsFilters `json:"filters,omitempty"`
 }
 
-type ListTunnelsResponse = []TunnelProperties
+type ListTunnelsResponse = []TunnelInventory

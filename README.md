@@ -187,6 +187,12 @@ rstream webtty client --url wss://example.rstream.io/ -- whoami
 
 # Connect through the native rstream dialer using a tunnel name or ID
 rstream webtty client --url rstrm://shell -- whoami
+
+# List the available WebTTY servers
+rstream webtty list
+
+# Open the live terminal UI for clients, tunnels, and WebTTY servers
+rstream ui
 ```
 
 Published WebTTY tunnels can be reached either through their forwarding `wss://` address or through the native `rstrm://<tunnel-id-or-name>` form. Private WebTTY tunnels are reachable only through the native `rstrm://` form.
