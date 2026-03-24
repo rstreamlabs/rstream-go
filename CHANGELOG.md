@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.0](https://github.com/rstreamlabs/rstream-go/compare/v1.8.0...v1.9.0) (2026-03-24)
+
+
+### Features
+
+* add webtty inventory and interactive ui ([2897ed9](https://github.com/rstreamlabs/rstream-go/commit/2897ed9dc2de26efb29649a9d848785743c48c5a))
+
 ## [1.8.0](https://github.com/rstreamlabs/rstream-go/compare/v1.7.2...v1.8.0) (2026-03-22)
 
 
