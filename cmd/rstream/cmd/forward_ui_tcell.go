@@ -116,7 +116,7 @@ func (u *forwardUITCell) draw() {
 	}
 	maxRow := foot - 1
 	row := top
-	row = printWrappedLine(s, row, left, right, "rstream - (https://rstream.io/) - serverless networking", maxRow)
+	row = printWrappedLine(s, row, left, right, "rstream - https://rstream.io/ - serverless networking", maxRow)
 	row++
 	row = printWrappedLine(s, row, left, right, "this program is part of rstream (https://rstream.io/download) and was created using rstream Go SDK", maxRow)
 	row++

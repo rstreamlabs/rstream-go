@@ -51,17 +51,6 @@ func resolveAPIURL(cmd *cobra.Command, cfg config.Config) (string, error) {
 	return config.DefaultAPIURL(), nil
 }
 
-func resolveAPIURLSelection(cmd *cobra.Command, cfg config.Config) (string, bool, error) {
-	if cmd.Flags().Changed("api-url") {
-		val, _ := cmd.Flags().GetString("api-url")
-		return val, true, nil
-	}
-	if env := config.ReadEnv().APIURL; env != "" {
-		return env, true, nil
-	}
-	return config.DefaultAPIURL(), false, nil
-}
-
 func resolveRuntime(cmd *cobra.Command, requireEngine, requireToken bool) (*resolvedRuntime, error) {
 	path, cfg, err := loadConfig(cmd)
 	if err != nil {

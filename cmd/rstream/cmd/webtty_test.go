@@ -5,6 +5,7 @@ package cmd
 import (
 	"testing"
 
+	"github.com/rstreamlabs/rstream-go/webtty"
 	"github.com/spf13/cobra"
 )
 
@@ -120,8 +121,8 @@ func TestNewWebTTYServerTunnelProperties(t *testing.T) {
 		if props.TokenAuth == nil || !*props.TokenAuth {
 			t.Fatalf("expected token auth for published tunnel")
 		}
-		if got := props.Labels["application-protocol"]; got != "rstream.webtty" {
-			t.Fatalf("unexpected application-protocol label: got %q want %q", got, "rstream.webtty")
+		if got := props.Labels[webtty.WebTTYApplicationProtocolKey]; got != webtty.WebTTYApplicationProtocol {
+			t.Fatalf("unexpected application-protocol label: got %q want %q", got, webtty.WebTTYApplicationProtocol)
 		}
 	})
 	t.Run("private tunnel omits HTTP edge settings", func(t *testing.T) {

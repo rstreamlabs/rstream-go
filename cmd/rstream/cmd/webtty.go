@@ -171,65 +171,7 @@ var webttyClientCmd = &cobra.Command{
 	SilenceUsage: true,
 	Args:         cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		ctx := cmd.Context()
-		logger := slog.With("cmd", "webtty", "subcmd", "client")
-		urlValue, _ := cmd.Flags().GetString("url")
-		interactivePtr := getBoolPtr(cmd, "interactive")
-		noInteractivePtr := getBoolPtr(cmd, "no-interactive")
-		interactive := false
-		switch {
-		case interactivePtr != nil && *interactivePtr:
-			interactive = true
-		case noInteractivePtr != nil && *noInteractivePtr:
-			interactive = false
-		default:
-			interactive = len(args) == 0
-		}
-		ttyPtr := getBoolPtr(cmd, "tty")
-		noTTYPtr := getBoolPtr(cmd, "no-tty")
-		allocateTTY := false
-		switch {
-		case ttyPtr != nil && *ttyPtr:
-			allocateTTY = true
-		case noTTYPtr != nil && *noTTYPtr:
-			allocateTTY = false
-		default:
-			allocateTTY = len(args) == 0
-		}
-		envVars, _ := cmd.Flags().GetStringArray("env")
-		workdir := getStringPtr(cmd, "workdir")
-		username := getStringPtr(cmd, "user")
-		noHeartbeat, _ := cmd.Flags().GetBool("no-heartbeat")
-		clientCfg := &webtty.ClientConfig{
-			URL:           urlValue,
-			Interactive:   interactive,
-			AllocateTTY:   allocateTTY,
-			SendHeartbeat: !noHeartbeat,
-			EnvVars:       envVars,
-			Workdir:       workdir,
-			Username:      username,
-			CmdArgs:       args,
-			Logger:        logger,
-		}
-		if webttyClientUsesRstream(urlValue) {
-			runtime, err := resolveRuntime(cmd, true, true)
-			if err != nil {
-				return fmt.Errorf("failed to resolve runtime: %w", err)
-			}
-			client, err := newClientFromResolved(runtime.Resolved)
-			if err != nil {
-				return fmt.Errorf("failed to create rstream client: %w", err)
-			}
-			clientCfg.DialContext = newWebTTYClientDialContext(client)
-		}
-		exitCode, err := webtty.RunClient(ctx, clientCfg)
-		if err != nil {
-			return err
-		}
-		if exitCode != 0 {
-			return &commandExitError{code: exitCode}
-		}
-		return nil
+		return runWebTTYClient(cmd, "", args)
 	},
 }
 
@@ -345,4 +287,72 @@ func extractWebTTYTunnelTarget(addr string) (string, error) {
 		return "", fmt.Errorf("websocket target is missing tunnel id or name")
 	}
 	return host, nil
+}
+
+func runWebTTYClient(cmd *cobra.Command, urlOverride string, args []string) error {
+	ctx := cmd.Context()
+	logger := slog.With("cmd", "webtty", "subcmd", "client")
+	urlValue := strings.TrimSpace(urlOverride)
+	if urlValue == "" {
+		urlValue, _ = cmd.Flags().GetString("url")
+	}
+	if urlValue == "" {
+		urlValue = "ws://127.0.0.1:8080"
+	}
+	interactivePtr := getBoolPtr(cmd, "interactive")
+	noInteractivePtr := getBoolPtr(cmd, "no-interactive")
+	interactive := false
+	switch {
+	case interactivePtr != nil && *interactivePtr:
+		interactive = true
+	case noInteractivePtr != nil && *noInteractivePtr:
+		interactive = false
+	default:
+		interactive = len(args) == 0
+	}
+	ttyPtr := getBoolPtr(cmd, "tty")
+	noTTYPtr := getBoolPtr(cmd, "no-tty")
+	allocateTTY := false
+	switch {
+	case ttyPtr != nil && *ttyPtr:
+		allocateTTY = true
+	case noTTYPtr != nil && *noTTYPtr:
+		allocateTTY = false
+	default:
+		allocateTTY = len(args) == 0
+	}
+	envVars, _ := cmd.Flags().GetStringArray("env")
+	workdir := getStringPtr(cmd, "workdir")
+	username := getStringPtr(cmd, "user")
+	noHeartbeat, _ := cmd.Flags().GetBool("no-heartbeat")
+	clientCfg := &webtty.ClientConfig{
+		URL:           urlValue,
+		Interactive:   interactive,
+		AllocateTTY:   allocateTTY,
+		SendHeartbeat: !noHeartbeat,
+		EnvVars:       envVars,
+		Workdir:       workdir,
+		Username:      username,
+		CmdArgs:       args,
+		Logger:        logger,
+	}
+	if webttyClientUsesRstream(urlValue) {
+		runtime, err := resolveRuntime(cmd, true, true)
+		if err != nil {
+			return fmt.Errorf("failed to resolve runtime: %w", err)
+		}
+		client, err := newClientFromResolved(runtime.Resolved)
+		if err != nil {
+			return fmt.Errorf("failed to create rstream client: %w", err)
+		}
+		clientCfg.DialContext = newWebTTYClientDialContext(client)
+	}
+	exitCode, err := webtty.RunClient(ctx, clientCfg)
+	if err != nil {
+		return err
+	}
+	if exitCode != 0 {
+		return &commandExitError{code: exitCode}
+	}
+	return nil
 }
