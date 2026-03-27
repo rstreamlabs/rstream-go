@@ -61,6 +61,28 @@ func TestUICaptureInputSessionSendsCtrlCToTerminal(t *testing.T) {
 	}
 }
 
+func TestUICaptureInputSessionDoesNotInterceptMetaC(t *testing.T) {
+	t.Parallel()
+	handle := newUITestSessionHandle()
+	app := &uiApp{app: tview.NewApplication(), activePage: uiPageSession, session: handle}
+	event := tcell.NewEventKey(tcell.KeyRune, 'c', tcell.ModMeta)
+	got := app.captureInput(event)
+	if got != nil {
+		t.Fatalf("captureInput() = %#v, want nil", got)
+	}
+}
+
+func TestUICaptureInputSessionDoesNotForwardMetaV(t *testing.T) {
+	t.Parallel()
+	handle := newUITestSessionHandle()
+	app := &uiApp{app: tview.NewApplication(), activePage: uiPageSession, session: handle}
+	event := tcell.NewEventKey(tcell.KeyRune, 'v', tcell.ModMeta)
+	got := app.captureInput(event)
+	if got != nil {
+		t.Fatalf("captureInput() = %#v, want nil", got)
+	}
+}
+
 func TestUICaptureInputSessionTogglesDetailsOnLeaderD(t *testing.T) {
 	t.Parallel()
 	handle := newUITestSessionHandle()
