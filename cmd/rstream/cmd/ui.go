@@ -62,6 +62,6 @@ var uiCmd = &cobra.Command{
 func init() {
 	uiCmd.Flags().SortFlags = false
 	uiCmd.PersistentFlags().SortFlags = false
-	uiCmd.Flags().StringVar(&uiTransport, "transport", "websocket", "watch transport (websocket, sse)")
+	uiCmd.Flags().StringVar(&uiTransport, "transport", "sse", "watch transport (sse, websocket)")
 	rootCmd.AddCommand(uiCmd)
 }

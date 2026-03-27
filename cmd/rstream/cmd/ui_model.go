@@ -80,10 +80,12 @@ func (s *uiStore) run(ctx context.Context, client *rstream.Client) {
 			return
 		}
 		s.setConnectionState(false, "")
+		connectedOnce := false
 		err := client.Watch(ctx, s.transport, nil, func(event rstream.Event) error {
 			if err := s.applyEvent(event); err != nil {
 				return err
 			}
+			connectedOnce = true
 			s.setConnectionState(true, "")
 			return nil
 		})
@@ -94,6 +96,9 @@ func (s *uiStore) run(ctx context.Context, client *rstream.Client) {
 			s.setConnectionState(false, err.Error())
 		} else {
 			s.setConnectionState(false, "")
+		}
+		if connectedOnce {
+			backoff = time.Second
 		}
 		select {
 		case <-time.After(backoff):

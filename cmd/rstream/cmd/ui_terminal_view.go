@@ -22,26 +22,36 @@ import (
 type uiTerminalView struct {
 	*tview.Box
 
-	app     *tview.Application
-	session *webtty.ClientSession
-	term    *vt.SafeEmulator
-	onClose func()
+	app      *tview.Application
+	session  *webtty.ClientSession
+	term     *vt.SafeEmulator
+	copyText func(string) bool
 
-	mu     sync.Mutex
-	width  int
-	height int
-	closed bool
-	scroll int
-	redraw bool
+	mu              sync.Mutex
+	width           int
+	height          int
+	closed          bool
+	scroll          int
+	redraw          bool
+	selecting       bool
+	selectionMoved  bool
+	selectionStart  uiTerminalPoint
+	selectionEnd    uiTerminalPoint
+	selectionActive bool
 }
 
-func newUITerminalView(app *tview.Application, session *webtty.ClientSession, onClose func()) *uiTerminalView {
+type uiTerminalPoint struct {
+	Line   int
+	Column int
+}
+
+func newUITerminalView(app *tview.Application, session *webtty.ClientSession, copyText func(string) bool) *uiTerminalView {
 	view := &uiTerminalView{
-		Box:     tview.NewBox(),
-		app:     app,
-		session: session,
-		term:    vt.NewSafeEmulator(80, 24),
-		onClose: onClose,
+		Box:      tview.NewBox(),
+		app:      app,
+		session:  session,
+		term:     vt.NewSafeEmulator(80, 24),
+		copyText: copyText,
 	}
 	view.term.SetScrollbackSize(5000)
 	view.term.SetDefaultForegroundColor(color.NRGBA{R: 0xf3, G: 0xf4, B: 0xf6, A: 0xff})
@@ -110,17 +120,20 @@ func (v *uiTerminalView) Draw(screen tcell.Screen) {
 				column++
 				continue
 			}
+			step := cell.Width
+			if step <= 0 {
+				step = 1
+			}
 			style := styleFromUVCell(cell, defaultForeground, defaultBackground)
+			if v.isCellSelected(uiTerminalPoint{Line: startLine + row, Column: column}, step) {
+				style = tcell.StyleDefault.Foreground(uiColorText).Background(uiColorSelection)
+			}
 			if scroll == 0 && v.HasFocus() && cursor.X == column && cursor.Y == row {
 				style = style.Reverse(true)
 				screen.ShowCursor(x+column, y+row)
 			}
 			main, combining := graphemeToTCell(cell.Content)
 			screen.SetContent(x+column, y+row, main, combining, style)
-			step := cell.Width
-			if step <= 0 {
-				step = 1
-			}
 			column += step
 		}
 	}
@@ -135,8 +148,20 @@ func (v *uiTerminalView) InputHandler() func(event *tcell.EventKey, setFocus fun
 	})
 }
 
+func (v *uiTerminalView) PasteHandler() func(text string, setFocus func(p tview.Primitive)) {
+	return v.Box.WrapPasteHandler(func(text string, setFocus func(p tview.Primitive)) {
+		if text == "" {
+			return
+		}
+		v.resetScroll()
+		v.clearSelection()
+		v.term.Paste(text)
+	})
+}
+
 func (v *uiTerminalView) SendKey(event *tcell.EventKey) bool {
 	v.resetScroll()
+	v.clearSelection()
 	key, ok := keyFromTCell(event)
 	if !ok {
 		return false
@@ -157,12 +182,49 @@ func (v *uiTerminalView) MouseHandler() func(action tview.MouseAction, event *tc
 	return v.Box.WrapMouseHandler(func(action tview.MouseAction, event *tcell.EventMouse, setFocus func(p tview.Primitive)) (consumed bool, capture tview.Primitive) {
 		if action == tview.MouseLeftDown && v.InRect(event.Position()) {
 			setFocus(v)
-			return true, nil
 		}
 		if !v.InInnerRect(event.Position()) {
+			if action == tview.MouseLeftUp && v.selecting {
+				v.finishSelection()
+				return true, nil
+			}
 			return false, nil
 		}
+		localSelection := v.localSelectionEnabled(event)
 		switch action {
+		case tview.MouseLeftDown:
+			if !localSelection {
+				v.clearSelection()
+				return v.sendRemoteMouseClick(event), nil
+			}
+			v.beginSelectionFromMouse(event)
+			return true, nil
+		case tview.MouseLeftDoubleClick:
+			if !localSelection {
+				v.clearSelection()
+				return v.sendRemoteMouseClick(event), nil
+			}
+			v.selectWordFromMouse(event)
+			return true, nil
+		case tview.MouseMove:
+			if v.selecting {
+				v.updateSelectionFromMouse(event)
+				return true, nil
+			}
+			if !localSelection {
+				return v.sendRemoteMouseMotion(event), nil
+			}
+			return false, nil
+		case tview.MouseLeftUp:
+			if v.selecting {
+				v.updateSelectionFromMouse(event)
+				v.finishSelection()
+				return true, nil
+			}
+			if !localSelection {
+				return v.sendRemoteMouseRelease(event), nil
+			}
+			return false, nil
 		case tview.MouseScrollUp:
 			return v.handleMouseWheel(event, true), nil
 		case tview.MouseScrollDown:
@@ -310,6 +372,7 @@ func (v *uiTerminalView) scrollBy(delta int) {
 	if !v.localScrollEnabled() {
 		return
 	}
+	v.clearSelection()
 	v.mu.Lock()
 	maxScroll := v.term.ScrollbackLen()
 	next := v.scroll + delta
@@ -329,6 +392,17 @@ func (v *uiTerminalView) scrollBy(delta int) {
 
 func (v *uiTerminalView) localScrollEnabled() bool {
 	return !v.term.IsAltScreen()
+}
+
+func (v *uiTerminalView) localSelectionEnabled(event *tcell.EventMouse) bool {
+	if event == nil {
+		return false
+	}
+	if !v.term.IsAltScreen() {
+		return true
+	}
+	modifiers := event.Modifiers()
+	return modifiers&tcell.ModShift != 0 || modifiers&tcell.ModAlt != 0
 }
 
 func (v *uiTerminalView) lineScrollStep() int {
@@ -387,8 +461,10 @@ func (v *uiTerminalView) handleMouseWheel(event *tcell.EventMouse, up bool) bool
 		return false
 	}
 	if !v.localScrollEnabled() {
+		v.clearSelection()
 		return v.sendRemoteMouseWheel(event, up)
 	}
+	v.clearSelection()
 	step := v.mouseScrollStep(event.Modifiers())
 	if !up {
 		step = -step
@@ -407,24 +483,296 @@ func (v *uiTerminalView) mouseScrollStep(modifiers tcell.ModMask) int {
 	return v.wheelScrollStep()
 }
 
+func (v *uiTerminalView) beginSelectionFromMouse(event *tcell.EventMouse) {
+	point, ok := v.selectionPointFromMouse(event)
+	if !ok {
+		return
+	}
+	v.selecting = true
+	v.selectionMoved = false
+	v.selectionStart = point
+	v.selectionEnd = point
+	v.selectionActive = true
+	v.scheduleDraw()
+}
+
+func (v *uiTerminalView) selectWordFromMouse(event *tcell.EventMouse) {
+	point, ok := v.selectionPointFromMouse(event)
+	if !ok {
+		v.clearSelection()
+		return
+	}
+	start, end, ok := v.wordBoundsAtPoint(point)
+	if !ok {
+		v.clearSelection()
+		return
+	}
+	v.selecting = false
+	v.selectionMoved = true
+	v.selectionStart = start
+	v.selectionEnd = end
+	v.selectionActive = true
+	v.copySelection()
+	v.scheduleDraw()
+}
+
+func (v *uiTerminalView) updateSelectionFromMouse(event *tcell.EventMouse) {
+	point, ok := v.selectionPointFromMouse(event)
+	if !ok {
+		return
+	}
+	if point != v.selectionEnd {
+		v.selectionMoved = true
+	}
+	v.selectionEnd = point
+	v.scheduleDraw()
+}
+
+func (v *uiTerminalView) finishSelection() {
+	if !v.selecting {
+		return
+	}
+	v.selecting = false
+	if !v.selectionActive || !v.selectionMoved {
+		v.clearSelection()
+		return
+	}
+	v.copySelection()
+	v.scheduleDraw()
+}
+
+func (v *uiTerminalView) clearSelection() {
+	if !v.selectionActive && !v.selecting {
+		return
+	}
+	v.selecting = false
+	v.selectionMoved = false
+	v.selectionActive = false
+	v.selectionStart = uiTerminalPoint{}
+	v.selectionEnd = uiTerminalPoint{}
+	v.scheduleDraw()
+}
+
+func (v *uiTerminalView) selectionPointFromMouse(event *tcell.EventMouse) (uiTerminalPoint, bool) {
+	if event == nil {
+		return uiTerminalPoint{}, false
+	}
+	x, y := event.Position()
+	innerX, innerY, width, height := v.GetInnerRect()
+	if width <= 0 || height <= 0 {
+		return uiTerminalPoint{}, false
+	}
+	if x < innerX || x >= innerX+width || y < innerY || y >= innerY+height {
+		return uiTerminalPoint{}, false
+	}
+	return uiTerminalPoint{
+		Line:   v.term.ScrollbackLen() - v.currentScroll() + (y - innerY),
+		Column: x - innerX,
+	}, true
+}
+
+func (v *uiTerminalView) wordBoundsAtPoint(point uiTerminalPoint) (uiTerminalPoint, uiTerminalPoint, bool) {
+	scrollbackLen := v.term.ScrollbackLen()
+	cell := v.cellAt(point.Column, point.Line, scrollbackLen)
+	if !isUIWordSelectionCell(cell) {
+		return uiTerminalPoint{}, uiTerminalPoint{}, false
+	}
+	start := point.Column
+	for column := point.Column - 1; column >= 0; column-- {
+		if !isUIWordSelectionCell(v.cellAt(column, point.Line, scrollbackLen)) {
+			break
+		}
+		start = column
+	}
+	end := point.Column
+	for column := point.Column + 1; column < v.width; column++ {
+		if !isUIWordSelectionCell(v.cellAt(column, point.Line, scrollbackLen)) {
+			break
+		}
+		end = column
+	}
+	return uiTerminalPoint{Line: point.Line, Column: start}, uiTerminalPoint{Line: point.Line, Column: end}, true
+}
+
+func isUIWordSelectionCell(cell *uv.Cell) bool {
+	if cell == nil {
+		return false
+	}
+	return strings.TrimSpace(cell.Content) != ""
+}
+
+func (v *uiTerminalView) copySelection() {
+	if !v.selectionActive || v.copyText == nil {
+		return
+	}
+	text := strings.TrimRight(v.selectedText(), "\n")
+	if text == "" {
+		return
+	}
+	_ = v.copyText(text)
+}
+
+func (v *uiTerminalView) isCellSelected(point uiTerminalPoint, width int) bool {
+	if !v.selectionActive {
+		return false
+	}
+	start, end := v.normalizedSelection()
+	if point.Line < start.Line || point.Line > end.Line {
+		return false
+	}
+	cellStart := point.Column
+	cellEnd := point.Column + width - 1
+	if cellEnd < cellStart {
+		cellEnd = cellStart
+	}
+	lineStart := 0
+	lineEnd := maxInt(v.width-1, 0)
+	if point.Line == start.Line {
+		lineStart = start.Column
+	}
+	if point.Line == end.Line {
+		lineEnd = end.Column
+	}
+	return cellEnd >= lineStart && cellStart <= lineEnd
+}
+
+func (v *uiTerminalView) normalizedSelection() (uiTerminalPoint, uiTerminalPoint) {
+	start := v.selectionStart
+	end := v.selectionEnd
+	if end.Line < start.Line || (end.Line == start.Line && end.Column < start.Column) {
+		start, end = end, start
+	}
+	return start, end
+}
+
+func (v *uiTerminalView) selectedText() string {
+	if !v.selectionActive {
+		return ""
+	}
+	start, end := v.normalizedSelection()
+	scrollbackLen := v.term.ScrollbackLen()
+	lines := make([]string, 0, end.Line-start.Line+1)
+	for line := start.Line; line <= end.Line; line++ {
+		lineStart := 0
+		lineEnd := maxInt(v.width-1, 0)
+		if line == start.Line {
+			lineStart = start.Column
+		}
+		if line == end.Line {
+			lineEnd = end.Column
+		}
+		lines = append(lines, v.selectedLineText(line, lineStart, lineEnd, scrollbackLen))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (v *uiTerminalView) selectedLineText(line, startColumn, endColumn, scrollbackLen int) string {
+	if endColumn < startColumn {
+		return ""
+	}
+	var builder strings.Builder
+	for column := 0; column < v.width; {
+		cell := v.cellAt(column, line, scrollbackLen)
+		step := 1
+		content := " "
+		if cell != nil {
+			if cell.Width > 0 {
+				step = cell.Width
+			}
+			if cell.Content != "" {
+				content = cell.Content
+			}
+		}
+		cellStart := column
+		cellEnd := column + step - 1
+		if cellEnd >= startColumn && cellStart <= endColumn {
+			builder.WriteString(content)
+		}
+		column += step
+	}
+	return strings.TrimRight(builder.String(), " ")
+}
+
+func maxInt(left, right int) int {
+	if left > right {
+		return left
+	}
+	return right
+}
+
 func (v *uiTerminalView) sendRemoteMouseWheel(event *tcell.EventMouse, up bool) bool {
 	button := vt.MouseWheelDown
 	if up {
 		button = vt.MouseWheelUp
 	}
-	x, y := event.Position()
-	innerX, innerY, _, _ := v.GetInnerRect()
-	mouse := vt.MouseWheel{
-		X:      x - innerX,
-		Y:      y - innerY,
+	x, y, ok := v.remoteMousePosition(event)
+	if !ok {
+		return false
+	}
+	v.term.SendMouse(vt.MouseWheel{
+		X:      x,
+		Y:      y,
 		Button: button,
 		Mod:    vtKeyModFromTCell(event.Modifiers()),
-	}
-	v.term.SendMouse(mouse)
+	})
 	return true
 }
 
+func (v *uiTerminalView) sendRemoteMouseClick(event *tcell.EventMouse) bool {
+	x, y, ok := v.remoteMousePosition(event)
+	if !ok {
+		return false
+	}
+	v.term.SendMouse(vt.MouseClick{
+		X:      x,
+		Y:      y,
+		Button: vt.MouseLeft,
+		Mod:    vtKeyModFromTCell(event.Modifiers()),
+	})
+	return true
+}
+
+func (v *uiTerminalView) sendRemoteMouseRelease(event *tcell.EventMouse) bool {
+	x, y, ok := v.remoteMousePosition(event)
+	if !ok {
+		return false
+	}
+	v.term.SendMouse(vt.MouseRelease{
+		X:      x,
+		Y:      y,
+		Button: vt.MouseLeft,
+		Mod:    vtKeyModFromTCell(event.Modifiers()),
+	})
+	return true
+}
+
+func (v *uiTerminalView) sendRemoteMouseMotion(event *tcell.EventMouse) bool {
+	x, y, ok := v.remoteMousePosition(event)
+	if !ok {
+		return false
+	}
+	v.term.SendMouse(vt.MouseMotion{
+		X:      x,
+		Y:      y,
+		Button: vt.MouseLeft,
+		Mod:    vtKeyModFromTCell(event.Modifiers()),
+	})
+	return true
+}
+
+func (v *uiTerminalView) remoteMousePosition(event *tcell.EventMouse) (int, int, bool) {
+	if event == nil {
+		return 0, 0, false
+	}
+	x, y := event.Position()
+	innerX, innerY, _, _ := v.GetInnerRect()
+	return x - innerX, y - innerY, true
+}
+
 func (v *uiTerminalView) scheduleDraw() {
+	if v.app == nil {
+		return
+	}
 	v.mu.Lock()
 	if v.closed || v.redraw {
 		v.mu.Unlock()
