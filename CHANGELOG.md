@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.9.1](https://github.com/rstreamlabs/rstream-go/compare/v1.9.0...v1.9.1) (2026-03-27)
+
+
+### Bug Fixes
+
+* polish rstream ui terminal behavior ([3d659c1](https://github.com/rstreamlabs/rstream-go/commit/3d659c1b5a680fa7b88c2c5ca5d903f0d5a324a0))
+
 ## [1.9.0](https://github.com/rstreamlabs/rstream-go/compare/v1.8.0...v1.9.0) (2026-03-24)
 
 
