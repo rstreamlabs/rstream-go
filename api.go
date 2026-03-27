@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -327,10 +328,45 @@ func (c *Client) openSSE(ctx context.Context, engine, token string, params *Watc
 }
 
 type wsConn struct {
-	c *websocket.Conn
+	c            *websocket.Conn
+	done         chan struct{}
+	closeOnce    sync.Once
+	pingInterval time.Duration
+	readTimeout  time.Duration
 }
 
-func (w *wsConn) Close() error { return w.c.Close() }
+const (
+	watchWSPingInterval = 20 * time.Second
+	watchWSReadTimeout  = 90 * time.Second
+	watchWSWriteTimeout = 5 * time.Second
+)
+
+func newWSConn(conn *websocket.Conn, pingInterval, readTimeout time.Duration) *wsConn {
+	w := &wsConn{
+		c:            conn,
+		done:         make(chan struct{}),
+		pingInterval: pingInterval,
+		readTimeout:  readTimeout,
+	}
+	w.resetReadDeadline()
+	w.c.SetPongHandler(func(string) error {
+		w.resetReadDeadline()
+		return nil
+	})
+	if pingInterval > 0 {
+		go w.pingLoop()
+	}
+	return w
+}
+
+func (w *wsConn) Close() error {
+	var err error
+	w.closeOnce.Do(func() {
+		close(w.done)
+		err = w.c.Close()
+	})
+	return err
+}
 
 func (w *wsConn) Read(ctx context.Context) ([]byte, error) {
 	for {
@@ -339,7 +375,32 @@ func (w *wsConn) Read(ctx context.Context) ([]byte, error) {
 			return nil, err
 		}
 		if mt == websocket.TextMessage || mt == websocket.BinaryMessage {
+			w.resetReadDeadline()
 			return p, nil
+		}
+	}
+}
+
+func (w *wsConn) resetReadDeadline() {
+	if w.readTimeout <= 0 {
+		return
+	}
+	_ = w.c.SetReadDeadline(time.Now().Add(w.readTimeout))
+}
+
+func (w *wsConn) pingLoop() {
+	ticker := time.NewTicker(w.pingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-w.done:
+			return
+		case <-ticker.C:
+			deadline := time.Now().Add(watchWSWriteTimeout)
+			if err := w.c.WriteControl(websocket.PingMessage, nil, deadline); err != nil {
+				_ = w.Close()
+				return
+			}
 		}
 	}
 }
@@ -375,5 +436,5 @@ func (c *Client) openWS(ctx context.Context, engine, token string, params *Watch
 		_ = conn.Close()
 		return nil, fmt.Errorf("insecure websocket scheme %q is not supported", u.Scheme)
 	}
-	return &wsConn{c: conn}, nil
+	return newWSConn(conn, watchWSPingInterval, watchWSReadTimeout), nil
 }

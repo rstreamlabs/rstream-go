@@ -46,6 +46,7 @@ type uiApp struct {
 	store         *uiStore
 	connection    uiConnectionInfo
 	app           *tview.Application
+	screen        tcell.Screen
 	pages         *tview.Pages
 	headerMeta    *tview.TextView
 	headerTabs    *tview.TextView
@@ -88,6 +89,10 @@ type uiSessionHandle struct {
 
 func newUIApp(ctx context.Context, cancel context.CancelFunc, client *rstream.Client, store *uiStore, connection uiConnectionInfo) (*uiApp, error) {
 	initUIBorders()
+	screen, err := tcell.NewScreen()
+	if err != nil {
+		return nil, err
+	}
 	app := &uiApp{
 		ctx:        ctx,
 		cancel:     cancel,
@@ -95,6 +100,7 @@ func newUIApp(ctx context.Context, cancel context.CancelFunc, client *rstream.Cl
 		store:      store,
 		connection: connection,
 		app:        tview.NewApplication(),
+		screen:     screen,
 		pages:      tview.NewPages(),
 		state:      uiState{Detail: uiDetailModeSummary},
 		activePage: uiPageInventory,
@@ -104,7 +110,9 @@ func newUIApp(ctx context.Context, cancel context.CancelFunc, client *rstream.Cl
 	app.pages.AddPage(uiPageInventory, app.inventoryPage(), true, true)
 	app.pages.AddPage(uiPageHelp, uiCenteredPrimitive(app.help, 84, 14), true, false)
 	app.app.SetTitle("rstream ui")
+	app.app.SetScreen(screen)
 	app.app.EnableMouse(true)
+	app.app.EnablePaste(true)
 	app.app.SetRoot(app.pages, true)
 	app.app.SetFocus(app.table)
 	app.app.SetInputCapture(app.captureInput)
@@ -293,6 +301,9 @@ func (u *uiApp) inventoryMetaText() string {
 }
 
 func (u *uiApp) sessionMessageText() string {
+	if message := strings.TrimSpace(u.state.Message); message != "" {
+		return uiStatusMessage(message)
+	}
 	if u.sessionLeader {
 		return "[#b0bac5]Ctrl+g command: ? help, d details, q back, Ctrl+g send literal[-]"
 	}
@@ -562,13 +573,10 @@ func (u *uiApp) openSelectedWebTTY() {
 	handle.info.SetBackgroundColor(uiColorPanel)
 	handle.info.SetBorder(true).SetBorderColor(uiColorBorder).SetTitle(" Details ").SetTitleColor(uiColorText)
 	handle.info.SetText(formatSessionInfo(server))
-	handle.view = newUITerminalView(u.app, session, func() {
-		u.app.QueueUpdateDraw(func() {
-			u.closeSession("")
-		})
-	})
+	handle.view = newUITerminalView(u.app, session, u.copyTerminalSelection)
 	handle.root = u.buildSessionPage(handle)
 	u.session = handle
+	u.state.Message = ""
 	u.sessionLeader = false
 	u.pages.AddAndSwitchToPage(uiPageSession, handle.root, true)
 	u.activePage = uiPageSession
@@ -628,6 +636,17 @@ func (u *uiApp) setMessage(message string) {
 	u.refreshChrome()
 }
 
+func (u *uiApp) copyTerminalSelection(text string) bool {
+	if uiCopyToClipboard(text) {
+		return true
+	}
+	if u.screen != nil && len(text) > 0 {
+		u.screen.SetClipboard([]byte(text))
+		return true
+	}
+	return false
+}
+
 func (u *uiApp) cycleView(step int) {
 	order := []uiView{uiViewWebTTY, uiViewTunnels, uiViewClients}
 	current := 0
@@ -668,6 +687,9 @@ func (u *uiApp) captureInput(event *tcell.EventKey) *tcell.EventKey {
 	if u.activePage == uiPageSession {
 		if u.sessionLeader {
 			return u.handleSessionLeader(event)
+		}
+		if isUILocalClipboardShortcut(event) {
+			return nil
 		}
 		switch event.Key() {
 		case tcell.KeyCtrlG:
@@ -786,6 +808,10 @@ func (u *uiApp) helpText() string {
   Ctrl+g d   Toggle the details pane
   Ctrl+g q   Close the session and return
   Ctrl+g g   Send Ctrl+g to the remote terminal
+  double click   Select a word
+  drag       Select terminal text and copy it locally
+  Shift/Alt+drag   Select terminal text in full-screen apps
+  Cmd+V / Ctrl+Shift+V   Paste from the local clipboard
   Esc        Close this help
 `)
 	}
@@ -1062,6 +1088,21 @@ func uiKeyLabel(key, label string) string {
 
 func unicodeLower(value rune) rune {
 	return []rune(strings.ToLower(string(value)))[0]
+}
+
+func isUILocalClipboardShortcut(event *tcell.EventKey) bool {
+	if event == nil || event.Key() != tcell.KeyRune {
+		return false
+	}
+	r := unicodeLower(event.Rune())
+	modifiers := event.Modifiers()
+	if modifiers&tcell.ModMeta != 0 && (r == 'c' || r == 'v') {
+		return true
+	}
+	if modifiers&tcell.ModCtrl != 0 && modifiers&tcell.ModShift != 0 && (r == 'c' || r == 'v') {
+		return true
+	}
+	return false
 }
 
 func contextCanceled(err error) bool {
