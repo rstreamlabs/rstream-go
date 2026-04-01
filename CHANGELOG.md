@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.10.0](https://github.com/rstreamlabs/rstream-go/compare/v1.9.1...v1.10.0) (2026-04-01)
+
+
+### Features
+
+* add managed turn credentials support ([3ff3ff6](https://github.com/rstreamlabs/rstream-go/commit/3ff3ff6b4aa47dfe441bd9d44227b60d450c5932))
+
 ## [1.9.1](https://github.com/rstreamlabs/rstream-go/compare/v1.9.0...v1.9.1) (2026-03-27)
 
 
