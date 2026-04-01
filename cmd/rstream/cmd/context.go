@@ -10,8 +10,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/controlplane"
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/controlplane"
 	"github.com/spf13/cobra"
 )
 
@@ -165,6 +165,12 @@ var contextCreateCmd = &cobra.Command{
 		}
 		engine, _ := cmd.Flags().GetString("engine")
 		projectEndpoint, _ := cmd.Flags().GetString("project-endpoint")
+		newCtx := config.Context{
+			Name:            args[0],
+			APIURL:          apiURL,
+			Engine:          engine,
+			ProjectEndpoint: projectEndpoint,
+		}
 		if engine == "" {
 			if projectEndpoint == "" {
 				return errors.New("--engine is required")
@@ -184,14 +190,11 @@ var contextCreateCmd = &cobra.Command{
 			if err != nil {
 				return mapControlPlaneError(err)
 			}
-			projectEndpoint = project.Endpoint
-			engine = project.URL
-		}
-		newCtx := config.Context{
-			Name:            args[0],
-			APIURL:          apiURL,
-			Engine:          engine,
-			ProjectEndpoint: projectEndpoint,
+			newCtx.ProjectEndpoint = project.Endpoint
+			newCtx.Engine = project.EngineAddress()
+			newCtx.TURNDomain = project.Domain
+			newCtx.TURNPort = project.TurnPort
+			newCtx.TURNSPort = project.TurnsPort
 		}
 		transport, err := transportFromFlags(cmd)
 		if err != nil {
@@ -334,11 +337,11 @@ func init() {
 	contextCreateCmd.Flags().Bool("default", false, "set created context as default")
 	contextCreateCmd.Flags().String("project-endpoint", "", "associate a project endpoint with this context (optional)")
 	contextUpdateCmd.Flags().String("project-endpoint", "", "associate a project endpoint with this context (optional)")
-	contextCreateCmd.Flags().Bool("no-api-url", false, "do not associate this context with a control-plane apiUrl")
+	contextCreateCmd.Flags().Bool("no-api-url", false, "do not associate this context with a control-plane API URL")
 	contextGetCmd.Flags().Bool("no-api-url", false, "select an unlinked context")
 	contextUseCmd.Flags().Bool("no-api-url", false, "select an unlinked context")
 	contextDeleteCmd.Flags().Bool("no-api-url", false, "select an unlinked context")
-	contextUpdateCmd.Flags().Bool("no-api-url", false, "clear the context apiUrl association")
+	contextUpdateCmd.Flags().Bool("no-api-url", false, "clear the context API URL association")
 	rootCmd.AddCommand(contextCmd)
 }
 
@@ -465,7 +468,7 @@ func selectContext(cmd *cobra.Command, cfg config.Config, name string) (*config.
 			return nil, -1, err
 		}
 		if ctx == nil {
-			return nil, -1, fmt.Errorf("context %q not found for apiUrl %q", name, selection.apiURL)
+			return nil, -1, fmt.Errorf("context %q not found for API URL %q", name, selection.apiURL)
 		}
 		return ctx, idx, nil
 	case selection.unlinked:

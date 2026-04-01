@@ -80,12 +80,12 @@ func Resolve(input ResolveInput) (Resolved, error) {
 		}
 		if ctx == nil {
 			if apiURLExplicit != "" {
-				return Resolved{}, fmt.Errorf("context %q not found for apiUrl %q", contextName, apiURLExplicit)
+				return Resolved{}, fmt.Errorf("context %q not found for API URL %q", contextName, apiURLExplicit)
 			}
 			return Resolved{}, fmt.Errorf("context %q not found", contextName)
 		}
 		if apiURLExplicit != "" && ctx.APIURL != "" && ctx.APIURL != apiURLExplicit {
-			return Resolved{}, fmt.Errorf("context %q belongs to apiUrl %q (selected apiUrl %q)", contextName, ctx.APIURL, apiURLExplicit)
+			return Resolved{}, fmt.Errorf("context %q belongs to API URL %q (selected API URL %q)", contextName, ctx.APIURL, apiURLExplicit)
 		}
 		if apiURLExplicit == "" && ctx.APIURL != "" {
 			apiURLExplicit = ctx.APIURL

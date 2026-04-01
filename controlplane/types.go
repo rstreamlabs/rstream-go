@@ -15,12 +15,25 @@ type Project struct {
 	WorkspaceID string `json:"workspaceId"`
 	Name        string `json:"name"`
 	Endpoint    string `json:"endpoint"`
-	URL         string `json:"url"`
-	Status      string `json:"status"`
-	Provider    string `json:"provider"`
-	Region      string `json:"region,omitempty"`
-	Plan        string `json:"plan"`
-	Deployment  string `json:"deployment"`
+	// Deprecated: use 'Domain' and 'EnginePort'.
+	URL        string `json:"url"`
+	Domain     string `json:"domain,omitempty"`
+	EnginePort int    `json:"enginePort,omitempty"`
+	Status     string `json:"status"`
+	Provider   string `json:"provider"`
+	Region     string `json:"region,omitempty"`
+	Plan       string `json:"plan"`
+	Deployment string `json:"deployment"`
+	TurnDomain string `json:"turnDomain,omitempty"`
+	TurnPort   int    `json:"turnPort,omitempty"`
+	TurnsPort  int    `json:"turnsPort,omitempty"`
+}
+
+type TURNCredentials struct {
+	Username   string   `json:"username"`
+	Credential string   `json:"credential"`
+	URLs       []string `json:"urls"`
+	TTL        int      `json:"ttl"`
 }
 
 type ListProjectsResponse struct {
