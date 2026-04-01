@@ -305,6 +305,37 @@ make nupkg       # Create Windows NuGet packages
 
 The Go SDK enables applications to create and manage tunnels programmatically. The examples below use `config.NewClientFromEnv()` to read the same config and environment settings as the CLI. Ensure a default context (or `RSTREAM_ENGINE`) is set, and provide `RSTREAM_AUTHENTICATION_TOKEN` if the selected engine requires authentication.
 
+### Managed TURN credentials
+
+The SDK also exposes helpers to generate managed TURN credentials.
+
+- `config.CreateTURNCredentialsFromEnv(...)` resolves the current config, context, and token automatically.
+- Auto mode selects local PAT derivation when the active token is a PAT carrying `token_endpoint`. It falls back to the hosted API for other token types.
+- Explicit `PAT` mode requires a PAT token. Explicit `API` mode can use either a project ID or a project endpoint.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/rstreamlabs/rstream-go/config"
+)
+
+func main() {
+	turn, err := config.CreateTURNCredentialsFromEnv(
+		context.Background(),
+		config.TURNCredentialsEnvOptions{},
+	)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(turn.Username)
+	fmt.Println(turn.URLs)
+}
+```
+
 ### Manual client options (exception)
 
 Use this only when bypassing config and environment resolution is required.

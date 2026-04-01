@@ -8,8 +8,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/controlplane"
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/controlplane"
 )
 
 func validateToken(ctx context.Context, apiURL, token string) error {

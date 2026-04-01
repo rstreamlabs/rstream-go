@@ -37,6 +37,37 @@ func TestResolveProjectByEndpointEscapesPath(t *testing.T) {
 	}
 }
 
+func TestCreateProjectTURNCredentialsByEndpointEscapesPath(t *testing.T) {
+	endpoint := "bbc44f81.aws-eu-west-3-1.c.rstream.io"
+	expectedPath := "/api/projects/tunnels/resolve/" + url.PathEscape(endpoint) + "/turn-server/credentials"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.EscapedPath(); got != expectedPath {
+			http.Error(w, "unexpected path", http.StatusBadRequest)
+			return
+		}
+		if r.Method != http.MethodPost {
+			http.Error(w, "unexpected method", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(TURNCredentials{
+			Username:   "u",
+			Credential: "c",
+			URLs:       []string{"turn:example.com:3478?transport=udp"},
+			TTL:        86400,
+		})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "token")
+	res, err := client.CreateProjectTURNCredentialsByEndpoint(context.Background(), endpoint)
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	if res.Username != "u" || res.Credential != "c" || res.TTL != 86400 {
+		t.Fatalf("unexpected response: %+v", res)
+	}
+}
+
 func TestListProjectsQueryParamsAndParsing(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
-	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/controlplane"
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/controlplane"
 	"github.com/spf13/cobra"
 )
 
@@ -20,6 +20,7 @@ var rstreamLoginPermissions = []string{
 	"network.tunnels.create-delete",
 	"network.streams.create-delete",
 	"network.resources.read-only",
+	"network.turn-server-credentials.create",
 }
 
 const rstreamLoginPollInterval = 2 * time.Second
@@ -42,7 +43,7 @@ func storeToken(ctx context.Context, path string, cfg config.Config, apiURL, tok
 
 func runRstreamLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL string) error {
 	ctx := cmd.Context()
-	client := controlplane.NewClient(apiURL, "") // TODO : use nil for empty token
+	client := controlplane.NewClient(apiURL, "")
 	req := controlplane.RstreamLoginRequest{Permissions: rstreamLoginPermissions, Source: resolveRstreamLoginSource()}
 	res, err := client.CreateRstreamLogin(ctx, req)
 	if err != nil {

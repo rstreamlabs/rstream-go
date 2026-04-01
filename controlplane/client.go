@@ -103,13 +103,27 @@ func (c *Client) ResolveProjectByEndpoint(ctx context.Context, endpoint string) 
 	return out, err
 }
 
+func (c *Client) CreateProjectTURNCredentials(ctx context.Context, projectID string) (TURNCredentials, error) {
+	var out TURNCredentials
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/turn-server/credentials"
+	_, err := c.doJSON(ctx, http.MethodPost, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) CreateProjectTURNCredentialsByEndpoint(ctx context.Context, endpoint string) (TURNCredentials, error) {
+	var out TURNCredentials
+	path := "/api/projects/tunnels/resolve/" + url.PathEscape(endpoint) + "/turn-server/credentials"
+	_, err := c.doJSON(ctx, http.MethodPost, path, nil, &out)
+	return out, err
+}
+
 func (c *Client) doJSON(ctx context.Context, method, path string, query url.Values, out any) (int, error) {
 	return c.doJSONBody(ctx, method, path, query, nil, out)
 }
 
 func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.Values, body any, out any) (int, error) {
 	if c.apiURL == "" {
-		return 0, errors.New("apiUrl is required")
+		return 0, errors.New("API URL is required")
 	}
 	fullURL := c.apiURL
 	if !strings.HasPrefix(path, "/") {

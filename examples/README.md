@@ -27,6 +27,23 @@ Run an example:
 ./out/examples/http-h1-server --publish
 ```
 
+Generate managed TURN credentials from the active config context:
+
+```bash
+go run ./examples/turn-credentials
+```
+
+Or override the current context with environment variables:
+
+```bash
+RSTREAM_API_URL=http://localhost:3000 \
+RSTREAM_AUTHENTICATION_TOKEN="$RSTREAM_AUTHENTICATION_TOKEN" \
+RSTREAM_PROJECT_ENDPOINT=9bfdaa8b \
+go run ./examples/turn-credentials
+```
+
+When TURN routing fields are not already present in the local context, the SDK falls back to the control-plane API.
+
 ## CLI Run Examples
 
 - `examples/run-yaml`: YAML-based `rstream -v run --apply` example with a whoami container.
