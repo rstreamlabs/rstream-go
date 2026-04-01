@@ -33,6 +33,9 @@ type Context struct {
 	APIURL          string           `yaml:"apiUrl,omitempty"`
 	ProjectEndpoint string           `yaml:"projectEndpoint,omitempty"`
 	Engine          string           `yaml:"engine,omitempty"`
+	TURNDomain      string           `yaml:"turnDomain,omitempty"`
+	TURNPort        int              `yaml:"turnPort,omitempty"`
+	TURNSPort       int              `yaml:"turnsPort,omitempty"`
 	Auth            *Auth            `yaml:"auth,omitempty"`
 	Transport       *TransportConfig `yaml:"transport,omitempty"`
 }
@@ -190,7 +193,7 @@ func contextAmbiguousError(name string) error {
 }
 
 func contextDuplicateError(name, apiURL string) error {
-	return fmt.Errorf("multiple contexts named %q exist for apiUrl %q", name, apiURL)
+	return fmt.Errorf("multiple contexts named %q exist for API URL %q", name, apiURL)
 }
 
 func contextNotFoundForAPIURLError(name, apiURL string, matches []int, cfg *Config) error {
@@ -199,11 +202,11 @@ func contextNotFoundForAPIURLError(name, apiURL string, matches []int, cfg *Conf
 	}
 	for _, idx := range matches {
 		if cfg.Contexts[idx].APIURL != "" && apiURL != "" {
-			return fmt.Errorf("context %q not found for apiUrl %q", name, apiURL)
+			return fmt.Errorf("context %q not found for API URL %q", name, apiURL)
 		}
 	}
 	if apiURL == "" {
 		return fmt.Errorf("context %q not found", name)
 	}
-	return fmt.Errorf("context %q not found for apiUrl %q", name, apiURL)
+	return fmt.Errorf("context %q not found for API URL %q", name, apiURL)
 }

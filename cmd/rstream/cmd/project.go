@@ -9,8 +9,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/controlplane"
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/controlplane"
 	"github.com/spf13/cobra"
 )
 
@@ -120,7 +120,7 @@ var projectUseCmd = &cobra.Command{
 			}
 			if existing != nil {
 				if existing.APIURL != "" && existing.APIURL != apiURL {
-					return fmt.Errorf("context %q already exists for apiUrl %q", nameFlag, existing.APIURL)
+					return fmt.Errorf("context %q already exists for API URL %q", nameFlag, existing.APIURL)
 				}
 				if existing.APIURL == "" {
 					return fmt.Errorf("context %q already exists (unlinked)", nameFlag)
@@ -148,7 +148,10 @@ var projectUseCmd = &cobra.Command{
 		}
 		ctx.APIURL = apiURL
 		ctx.ProjectEndpoint = project.Endpoint
-		ctx.Engine = project.URL
+		ctx.Engine = project.EngineAddress()
+		ctx.TURNDomain = project.Domain
+		ctx.TURNPort = project.TurnPort
+		ctx.TURNSPort = project.TurnsPort
 		if setDefault {
 			cfg.Defaults.Context = &config.DefaultContext{Name: ctx.Name}
 		}

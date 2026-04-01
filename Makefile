@@ -15,7 +15,7 @@ EXAMPLES := $(shell find examples -mindepth 2 -maxdepth 2 -name '*.go' -print 2>
 
 # Detect git tag and branch
 GIT_TAG := $(shell git describe --tags --exact-match 2>/dev/null | sed 's/^v//')
-GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
+GIT_BRANCH := $(shell git symbolic-ref --quiet --short HEAD 2>/dev/null || printf dev)
 CHANNEL ?= $(if $(GIT_TAG),stable,dev)
 VERSION ?= $(if $(GIT_TAG),$(GIT_TAG),$(GIT_BRANCH))
 
@@ -196,7 +196,7 @@ set -e ;\
 echo "Building $1/$2 for $3/$4" ;\
 $(eval GOARCH=$(if $(findstring armv,$(word 1,$(subst /, ,$4))),arm,$(if $(findstring x86_i,$4),386,$(if $(findstring x86_64,$4),amd64,$(word 1,$(subst /, ,$4)))))) \
 $(eval GOAMD64=$(if $(findstring x86_64,$4),$(if $(findstring _v,$4),$(lastword $(subst _, ,$4)),v1),)) \
-CGO_ENABLED=0 GOPRIVATE=github.com/rstreamlabs GOOS=$(subst macos,darwin,$3) GOARCH=$(GOARCH) $(if $(filter $(GOARCH),arm),GOARM=$(word 1,$(subst armv, ,$(word 1,$(subst hf, ,$4))))$(shell echo ,)$(if $(findstring hf,$4),hardfloat,softfloat),) $(if $(filter amd64,$(GOARCH)),GOAMD64=$(GOAMD64),) $(if $(findstring x86_i386,$4),GO386=softfloat,) go build -v $(if $(filter cmd,$1),$(call go_build_tags,$2),) -ldflags="-X '$(GO_MODULE).Agent=$(patsubst %-go,%,$(notdir $(shell printf '%s\n' "$(GO_MODULE)" | sed -E 's|/v[0-9]+$$||')))' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).OS=$3' -X '$(GO_MODULE).Arch=$4'" -o $$@ ./$1/$2
+CGO_ENABLED=0 GOPRIVATE=github.com/rstreamlabs GOOS=$(subst macos,darwin,$3) GOARCH=$(GOARCH) $(if $(filter $(GOARCH),arm),GOARM=$(word 1,$(subst armv, ,$(word 1,$(subst hf, ,$4))))$(shell echo ,)$(if $(findstring hf,$4),hardfloat,softfloat),) $(if $(filter amd64,$(GOARCH)),GOAMD64=$(GOAMD64),) $(if $(findstring x86_i386,$4),GO386=softfloat,) go build -buildvcs=false -v $(if $(filter cmd,$1),$(call go_build_tags,$2),) -ldflags="-X '$(GO_MODULE).Agent=$(patsubst %-go,%,$(notdir $(shell printf '%s\n' "$(GO_MODULE)" | sed -E 's|/v[0-9]+$$||')))' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).OS=$3' -X '$(GO_MODULE).Arch=$4'" -o $$@ ./$1/$2
 endef
 
 define build_pkg
