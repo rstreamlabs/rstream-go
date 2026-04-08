@@ -1,0 +1,36 @@
+# Contributing
+
+Thanks for considering a contribution to `rstream-go`.
+
+## Before opening a change
+
+For small fixes, opening a pull request directly is usually fine. For larger changes to the public API, CLI behavior, or transport model, start with an issue or discussion so the shape of the change can be reviewed before implementation.
+
+## Development checks
+
+Before sending a pull request, run the main local checks:
+
+```bash
+go test ./...
+go test -race ./...
+go vet ./...
+```
+
+If a change affects examples, documentation, or generated output, update the corresponding files in the same pull request.
+
+## Style
+
+Keep changes small, explicit, and idiomatic.
+
+- follow the repository coding style in [CODING_STYLE.md](./CODING_STYLE.md)
+- prefer focused pull requests over broad refactors
+- keep public API changes intentional and documented
+- update README or docs when user-facing behavior changes
+
+## Generated code
+
+Some files in this repository are generated. If you modify the corresponding source definitions, regenerate the derived files before opening the pull request.
+
+## Security
+
+Please do not disclose vulnerabilities in public issues. See [SECURITY.md](./SECURITY.md) for the reporting guidance used by this repository.
