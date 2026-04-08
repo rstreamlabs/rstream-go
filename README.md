@@ -341,12 +341,19 @@ func main() {
 Use this only when bypassing config and environment resolution is required.
 
 ```go
-client, err := rstream.NewClient(rstream.ClientOptions{
-	Engine: "engine.example:443",
-	Token:  "authentication_token",
-})
-if err != nil {
-	panic(err)
+package main
+
+import "github.com/rstreamlabs/rstream-go"
+
+func main() {
+	client, err := rstream.NewClient(rstream.ClientOptions{
+		Engine: "engine.example:443",
+		Token:  "authentication_token",
+	})
+	if err != nil {
+		panic(err)
+	}
+	_ = client
 }
 ```
 
@@ -667,7 +674,7 @@ Operational and advanced CLI/SDK workflows:
 
 ## Contributing
 
-Pull requests are encouraged and appreciated. Whether you're fixing bugs, adding features, improving documentation, or suggesting enhancements, your contributions help make rstream better for everyone. Build locally, run checks, and submit focused pull requests with clear validation notes.
+Pull requests are encouraged and appreciated. Whether you're fixing bugs, adding features, improving documentation, or suggesting enhancements, your contributions help make rstream better for everyone. Build locally, run checks, and submit focused pull requests with clear validation notes. See [CONTRIBUTING.md](CONTRIBUTING.md) for the repository-specific contribution guidelines.
 
 ## Support
 
@@ -677,6 +684,8 @@ support@rstream.io
 **Report security concerns:**  
 reports@rstream.io
 
+See [SECURITY.md](SECURITY.md) for the security reporting guidance used by this repository.
+
 ## License
 
-See `LICENSE` in the repository root.
+This repository is licensed under the Apache License 2.0. See [LICENSE](LICENSE).
