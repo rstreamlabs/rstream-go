@@ -64,7 +64,7 @@ Author: rstream
 PackageName: rstream
 PackageUrl: https://rstream.io
 License: Apache-2.0
-LicenseUrl: https://github.com/uartnet/rstream-go-v2/blob/main/LICENSE
+LicenseUrl: https://github.com/rstreamlabs/rstream-go/blob/main/LICENSE
 ShortDescription: Command-line client for rstream.
 Description: rstream is a developer-first platform for zero-trust networking.
 Moniker: rstream
