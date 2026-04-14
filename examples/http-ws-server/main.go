@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/gorilla/websocket"
@@ -20,7 +21,7 @@ import (
 
 var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 
-func run(ctx context.Context, client *rstream.Client, publish bool) error {
+func run(ctx context.Context, client *rstream.Client, publish bool, publishedProtocol string) error {
 	// Open control channel
 	ctrl, err := client.Connect(ctx, nil)
 	if err != nil {
@@ -33,8 +34,15 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 		Publish: rstream.BoolPtr(publish),
 	}
 	if publish {
-		tunnelProps.Protocol = rstream.ProtocolPtr(rstream.ProtocolHTTP)
-		tunnelProps.HTTPVersion = rstream.HTTPVersionPtr(rstream.HTTP1_1)
+		switch strings.ToLower(strings.TrimSpace(publishedProtocol)) {
+		case "http":
+			tunnelProps.Protocol = rstream.ProtocolPtr(rstream.ProtocolHTTP)
+			tunnelProps.HTTPVersion = rstream.HTTPVersionPtr(rstream.HTTP1_1)
+		case "tls":
+			tunnelProps.Protocol = rstream.ProtocolPtr(rstream.ProtocolTLS)
+		default:
+			return fmt.Errorf("invalid published protocol %q (expected http or tls)", publishedProtocol)
+		}
 	}
 	tunnel, err := ctrl.CreateTunnel(ctx, tunnelProps)
 	if err != nil {
@@ -50,11 +58,9 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 		return fmt.Errorf("tunnel does not implement net.Listener")
 	}
 	fmt.Printf("Server listening on %s\n", forwardingAddr)
-	// Start a WebSocket server using the tunnel as a listener (HTTP/1.1)
+	// Start a WebSocket server using the tunnel as a listener
 	mux := http.NewServeMux()
-	server := &http.Server{
-		Handler: mux,
-	}
+	server := &http.Server{Handler: mux}
 	mux.HandleFunc("/websocket", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -93,6 +99,7 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 
 func main() {
 	publish := flag.Bool("publish", false, "publish the tunnel")
+	publishedProtocol := flag.String("published-protocol", "http", "published edge protocol to use when -publish=true (http or tls)")
 	flag.Parse()
 	client, err := config.NewClientFromEnv()
 	if err != nil {
@@ -107,7 +114,7 @@ func main() {
 		log.Println("Received shutdown signal, exiting...")
 		cancel()
 	}()
-	if err := run(ctx, client, *publish); err != nil && err != http.ErrServerClosed {
+	if err := run(ctx, client, *publish, *publishedProtocol); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
 }
