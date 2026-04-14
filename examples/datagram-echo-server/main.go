@@ -46,6 +46,7 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	// Create the tunnel
 	tunnelProps := rstream.TunnelProperties{
 		Name:    rstream.StringPtr("datagram-echo"),
+		Type:    rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
 		Publish: rstream.BoolPtr(publish),
 	}
 	if publish {

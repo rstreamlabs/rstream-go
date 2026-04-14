@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/quic-go/quic-go/http3"
@@ -43,7 +44,7 @@ func generateTLSConfig() (*tls.Config, error) {
 	return &tls.Config{Certificates: []tls.Certificate{tlsCert}, NextProtos: []string{"h3"}}, nil
 }
 
-func run(ctx context.Context, client *rstream.Client, publish bool) error {
+func run(ctx context.Context, client *rstream.Client, publish bool, publishedProtocol string) error {
 	// Open control channel
 	ctrl, err := client.Connect(ctx, nil)
 	if err != nil {
@@ -57,8 +58,15 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 		Publish: rstream.BoolPtr(publish),
 	}
 	if publish {
-		tunnelProps.Protocol = rstream.ProtocolPtr(rstream.ProtocolHTTP)
-		tunnelProps.HTTPVersion = rstream.HTTPVersionPtr(rstream.HTTP3)
+		switch strings.ToLower(strings.TrimSpace(publishedProtocol)) {
+		case "http":
+			tunnelProps.Protocol = rstream.ProtocolPtr(rstream.ProtocolHTTP)
+			tunnelProps.HTTPVersion = rstream.HTTPVersionPtr(rstream.HTTP3)
+		case "quic":
+			tunnelProps.Protocol = rstream.ProtocolPtr(rstream.ProtocolQUIC)
+		default:
+			return fmt.Errorf("invalid published protocol %q (expected http or quic)", publishedProtocol)
+		}
 	}
 	tunnel, err := ctrl.CreateTunnel(ctx, tunnelProps)
 	if err != nil {
@@ -74,7 +82,7 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 		return fmt.Errorf("tunnel does not implement rstream.PacketListener")
 	}
 	fmt.Printf("Server listening on %s\n", forwardingAddr)
-	// Start a WebTransport server using the tunnel as a listener (HTTP/3)
+	// Start a WebTransport server using the tunnel as a listener
 	tlsCfg, err := generateTLSConfig()
 	if err != nil {
 		return fmt.Errorf("failed to generate TLS config: %w", err)
@@ -82,11 +90,13 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 	mux := http.NewServeMux()
 	server := webtransport.Server{
-		H3: http3.Server{
-			Handler:   mux,
-			TLSConfig: tlsCfg,
+		H3: &http3.Server{
+			Handler:         mux,
+			TLSConfig:       tlsCfg,
+			EnableDatagrams: true,
 		},
 	}
+	webtransport.ConfigureHTTP3Server(server.H3)
 	mux.HandleFunc("/webtransport", func(w http.ResponseWriter, r *http.Request) {
 		sess, err := server.Upgrade(w, r)
 		if err != nil {
@@ -128,6 +138,7 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 
 func main() {
 	publish := flag.Bool("publish", false, "publish the tunnel")
+	publishedProtocol := flag.String("published-protocol", "quic", "published edge protocol to use when -publish=true (http or quic)")
 	flag.Parse()
 	client, err := config.NewClientFromEnv()
 	if err != nil {
@@ -142,7 +153,7 @@ func main() {
 		log.Println("Received shutdown signal, exiting...")
 		cancel()
 	}()
-	if err := run(ctx, client, *publish); err != nil && err != http.ErrServerClosed {
+	if err := run(ctx, client, *publish, *publishedProtocol); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
 }

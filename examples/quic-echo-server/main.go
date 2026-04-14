@@ -23,6 +23,9 @@ import (
 	"github.com/rstreamlabs/rstream-go/config"
 )
 
+// Published QUIC requires an explicit application ALPN; the engine mirrors it upstream
+const quicEchoALPN = "rstream-quic-echo"
+
 func generateTLSConfig() (*tls.Config, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
@@ -41,28 +44,53 @@ func generateTLSConfig() (*tls.Config, error) {
 	}
 	return &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
+		NextProtos:   []string{quicEchoALPN},
 	}, nil
 }
 
 func handleConnection(conn *quic.Conn) {
 	defer conn.CloseWithError(0, "server done")
-	stream, err := conn.AcceptStream(context.Background())
-	if err != nil {
-		log.Printf("Failed to accept stream: %v", err)
-		return
+	go handleDatagrams(conn)
+	for {
+		stream, err := conn.AcceptStream(context.Background())
+		if err != nil {
+			log.Printf("Failed to accept stream: %v", err)
+			return
+		}
+		go handleStream(conn, stream)
 	}
+}
+
+func handleStream(conn *quic.Conn, stream *quic.Stream) {
 	defer stream.Close()
 	buf := make([]byte, 2048)
 	for {
 		n, err := stream.Read(buf)
+		if n > 0 {
+			log.Printf("Received stream %d bytes from %s: %s\n", n, conn.RemoteAddr(), buf[:n])
+			if _, err := stream.Write(buf[:n]); err != nil {
+				log.Printf("Write error to %s: %v", conn.RemoteAddr(), err)
+				return
+			}
+		}
 		if err != nil {
 			if err != io.EOF {
 				log.Printf("Read error from %s: %v", conn.RemoteAddr(), err)
 			}
 			return
 		}
-		log.Printf("Received %d bytes from %s: %s\n", n, conn.RemoteAddr(), buf[:n])
-		if _, err := stream.Write(buf[:n]); err != nil {
+	}
+}
+
+func handleDatagrams(conn *quic.Conn) {
+	for {
+		payload, err := conn.ReceiveDatagram(context.Background())
+		if err != nil {
+			log.Printf("Datagram read error from %s: %v", conn.RemoteAddr(), err)
+			return
+		}
+		log.Printf("Received datagram %d bytes from %s: %s\n", len(payload), conn.RemoteAddr(), payload)
+		if err := conn.SendDatagram(payload); err != nil {
 			log.Printf("Write error to %s: %v", conn.RemoteAddr(), err)
 			return
 		}
@@ -105,10 +133,11 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 		return fmt.Errorf("failed to generate TLS config: %w", err)
 	}
 	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
-	transport := quic.Transport{
-		Conn: rstream.PacketConnFromPacketListener(packetListener),
+	transport := quic.Transport{Conn: rstream.PacketConnFromPacketListener(packetListener)}
+	listener, err := transport.Listen(tlsCfg, &quic.Config{EnableDatagrams: true})
+	if err != nil {
+		return fmt.Errorf("failed to start QUIC listener: %w", err)
 	}
-	listener, err := transport.Listen(tlsCfg, nil)
 	defer listener.Close()
 	for {
 		conn, err := listener.Accept(ctx)
