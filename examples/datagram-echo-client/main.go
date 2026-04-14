@@ -47,8 +47,12 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 		for _, tunnel := range *tunnels {
 			if tunnel.Name != nil && *tunnel.Name == name && tunnel.Host != nil {
 				host := *tunnel.Host
-				hostname, port, err := net.SplitHostPort(host)
-				if err != nil {
+				hostname := host
+				port := "4433"
+				if parsedHost, parsedPort, err := net.SplitHostPort(host); err == nil {
+					hostname = parsedHost
+					port = parsedPort
+				} else if addrErr, ok := err.(*net.AddrError); !ok || addrErr.Err != "missing port in address" {
 					return fmt.Errorf("failed to split host and port: %w", err)
 				}
 				// Connect to the published host using standard DTLS dialer

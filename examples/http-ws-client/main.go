@@ -30,11 +30,9 @@ func handleConnection(conn *websocket.Conn) error {
 }
 
 func run(ctx context.Context, client *rstream.Client, publish bool) error {
-	dialer := websocket.Dialer{
-		HandshakeTimeout: 5 * time.Second,
-	}
+	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
 	name := "ws-example"
-	var url *string = nil
+	var url *string
 	if publish {
 		// List tunnels to find the published host using rstream API (data plane)
 		tunnels, err := client.ListTunnels(context.Background(), nil)

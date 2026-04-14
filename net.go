@@ -39,12 +39,14 @@ type PacketMode int
 const (
 	PacketModeFramed PacketMode = iota
 	PacketModeRaw
+	maxFramedPacketSize = 65535
 )
 
 type connWrapper struct {
 	inner net.Conn
 	mode  PacketMode
 	w     *bufio.Writer
+	wmu   sync.Mutex
 	r     *bufio.Reader
 	raddr net.Addr
 }
@@ -112,6 +114,8 @@ func (c *connWrapper) WriteTo(p []byte, addr net.Addr) (int, error) {
 		return 0, fmt.Errorf("invalid address: expected %v, got %v", c.raddr, addr)
 	}
 	if c.mode == PacketModeFramed {
+		c.wmu.Lock()
+		defer c.wmu.Unlock()
 		if err := writeMessage(c.w, p); err != nil {
 			return 0, err
 		}
@@ -248,6 +252,9 @@ func readMessage(r *bufio.Reader) ([]byte, error) {
 		return nil, err
 	}
 	length := binary.BigEndian.Uint32(lengthBytes)
+	if length > maxFramedPacketSize {
+		return nil, fmt.Errorf("framed packet too large: %d bytes", length)
+	}
 	msgBytes := make([]byte, length)
 	if _, err := io.ReadFull(r, msgBytes); err != nil {
 		return nil, err
@@ -256,6 +263,9 @@ func readMessage(r *bufio.Reader) ([]byte, error) {
 }
 
 func writeMessage(w *bufio.Writer, msgBytes []byte) error {
+	if len(msgBytes) > maxFramedPacketSize {
+		return fmt.Errorf("framed packet too large: %d bytes", len(msgBytes))
+	}
 	length := uint32(len(msgBytes))
 	lengthBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(lengthBytes, length)

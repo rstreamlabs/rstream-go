@@ -3,13 +3,16 @@ module github.com/rstreamlabs/rstream-go
 go 1.24.2
 
 require (
+	github.com/charmbracelet/ultraviolet v0.0.0-20260303162955-0b88c25f3fff
+	github.com/charmbracelet/x/vt v0.0.0-20260323091123-df7b1bcffcca
 	github.com/creack/pty v1.1.24
 	github.com/docker/docker v25.0.3+incompatible
 	github.com/fsnotify/fsnotify v1.7.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/lmittmann/tint v1.1.2
-	github.com/pion/dtls/v3 v3.0.7
+	github.com/pion/dtls/v3 v3.1.2
+	github.com/rivo/tview v0.42.0
 	github.com/spf13/cobra v1.9.1
 	golang.org/x/net v0.49.0
 	google.golang.org/protobuf v1.36.11
@@ -20,12 +23,10 @@ require (
 	github.com/Microsoft/go-winio v0.4.21 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/colorprofile v0.4.2 // indirect
-	github.com/charmbracelet/ultraviolet v0.0.0-20260303162955-0b88c25f3fff // indirect
 	github.com/charmbracelet/x/ansi v0.11.6 // indirect
 	github.com/charmbracelet/x/exp/ordered v0.1.0 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
-	github.com/charmbracelet/x/vt v0.0.0-20260323091123-df7b1bcffcca // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.9.0 // indirect
 	github.com/clipperhouse/stringish v0.1.1 // indirect
@@ -34,6 +35,7 @@ require (
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
+	github.com/dunglas/httpsfv v1.1.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/gdamore/encoding v1.0.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
@@ -47,10 +49,9 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pion/logging v0.2.4 // indirect
-	github.com/pion/transport/v3 v3.0.7 // indirect
+	github.com/pion/transport/v4 v4.0.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/quic-go/qpack v0.5.1 // indirect
-	github.com/rivo/tview v0.42.0 // indirect
+	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
@@ -61,18 +62,16 @@ require (
 	go.opentelemetry.io/otel/trace v1.40.0 // indirect
 	go.uber.org/mock v0.6.0 // indirect
 	golang.org/x/crypto v0.47.0 // indirect
-	golang.org/x/mod v0.31.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
-	golang.org/x/tools v0.40.0 // indirect
 	gotest.tools/v3 v3.5.2 // indirect
 )
 
 require (
 	github.com/gdamore/tcell/v2 v2.9.0
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/quic-go/quic-go v0.54.0
-	github.com/quic-go/webtransport-go v0.9.0
+	github.com/quic-go/quic-go v0.59.0
+	github.com/quic-go/webtransport-go v0.10.0
 	github.com/spf13/pflag v1.0.7 // indirect
 	golang.org/x/sys v0.41.0
 	golang.org/x/term v0.39.0
