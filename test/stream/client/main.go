@@ -1,8 +1,12 @@
 // See LICENSE file in the project root for license information.
 
 // stream-matrix-client is the client side of the end-to-end stream coverage
-// matrix. For each variant, it dials the server via the rstream SDK dialer,
-// sends a fixed payload, reads it back, and checks for exact round-trip.
+// matrix. It dials the server, sends a fixed payload, reads it back, and
+// checks for an exact round-trip.
+//
+// Without --addr the rstream SDK dialer is used (unpublished path).
+// With --addr the client connects directly to the engine's edge endpoint.
+// For the tls variant, the direct path uses tls.Dial.
 
 package main
 
@@ -15,6 +19,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strings"
 	"time"
 
 	rstream "github.com/rstreamlabs/rstream-go"
@@ -23,26 +28,23 @@ import (
 
 const streamPayload = "ping-stream\n"
 
-func runPlain(ctx context.Context, client *rstream.Client, namePrefix string) error {
-	conn, err := client.Dial(ctx, rstream.Addr{IdOrName: namePrefix + "-plain"})
-	if err != nil {
-		return fmt.Errorf("dial: %w", err)
+// hostPortFromAddr extracts a bare host:port from an address that may carry
+// a scheme prefix (e.g. "tls://host:443" → "host:443") or a trailing protocol
+// annotation (e.g. "host:443 (tls)" → "host:443").
+func hostPortFromAddr(addr string) string {
+	if i := strings.Index(addr, "://"); i >= 0 {
+		addr = addr[i+3:]
 	}
-	defer conn.Close()
-	return echoCheck(conn)
-}
-
-func runTLS(ctx context.Context, client *rstream.Client, namePrefix string) error {
-	inner, err := client.Dial(ctx, rstream.Addr{IdOrName: namePrefix + "-tls"})
-	if err != nil {
-		return fmt.Errorf("dial: %w", err)
+	if i := strings.IndexByte(addr, '/'); i >= 0 {
+		addr = addr[:i]
 	}
-	conn := tls.Client(inner, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"http/1.1"}})
-	defer conn.Close()
-	if err := conn.HandshakeContext(ctx); err != nil {
-		return fmt.Errorf("tls handshake: %w", err)
+	if i := strings.IndexByte(addr, ' '); i >= 0 {
+		addr = addr[:i]
 	}
-	return echoCheck(conn)
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		addr = net.JoinHostPort(addr, "443")
+	}
+	return addr
 }
 
 func echoCheck(conn net.Conn) error {
@@ -60,65 +62,94 @@ func echoCheck(conn net.Conn) error {
 	return nil
 }
 
+func runPlain(ctx context.Context, client *rstream.Client, tunnelName string) error {
+	conn, err := client.Dial(ctx, rstream.Addr{IdOrName: tunnelName})
+	if err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+	defer conn.Close()
+	return echoCheck(conn)
+}
+
+func runTLSUnpublished(ctx context.Context, client *rstream.Client, tunnelName string) error {
+	inner, err := client.Dial(ctx, rstream.Addr{IdOrName: tunnelName})
+	if err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+	conn := tls.Client(inner, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"http/1.1"}})
+	defer conn.Close()
+	if err := conn.HandshakeContext(ctx); err != nil {
+		return fmt.Errorf("tls handshake: %w", err)
+	}
+	return echoCheck(conn)
+}
+
+func runTLSPublished(ctx context.Context, addr string) error {
+	hp := hostPortFromAddr(addr)
+	host, _, _ := net.SplitHostPort(hp)
+	conn, err := tls.DialWithDialer(
+		&net.Dialer{},
+		"tcp", hp,
+		&tls.Config{ServerName: host, InsecureSkipVerify: true, NextProtos: []string{"http/1.1"}},
+	)
+	if err != nil {
+		return fmt.Errorf("tls dial %s: %w", hp, err)
+	}
+	defer conn.Close()
+	return echoCheck(conn)
+}
+
 type testCase struct {
 	name string
 	run  func(ctx context.Context) error
 }
 
 func main() {
-	variant := flag.String("variant", "all", "variant: plain, tls, all")
-	namePrefix := flag.String("tunnel", "stream-matrix", "tunnel name prefix")
+	variant := flag.String("variant", "plain", "variant: plain, tls")
+	addr := flag.String("addr", "", "forwarding address for direct (published) connection")
+	tunnelPrefix := flag.String("tunnel", "stream-matrix", "tunnel name prefix for SDK dialer")
 	timeout := flag.Duration("timeout", 30*time.Second, "per-case timeout")
 	flag.Parse()
 	client, err := config.NewClientFromEnv()
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
-	prefix := *namePrefix
-	allCases := []testCase{
-		{
+	var tc testCase
+	switch *variant {
+	case "plain":
+		tc = testCase{
 			name: "plain",
 			run: func(ctx context.Context) error {
-				return runPlain(ctx, client, prefix)
+				return runPlain(ctx, client, *tunnelPrefix+"-plain")
 			},
-		},
-		{
-			name: "tls",
-			run: func(ctx context.Context) error {
-				return runTLS(ctx, client, prefix)
-			},
-		},
-	}
-	var cases []testCase
-	if *variant == "all" {
-		cases = allCases
-	} else {
-		for _, tc := range allCases {
-			if tc.name == *variant {
-				cases = append(cases, tc)
-				break
+		}
+	case "tls":
+		if *addr != "" {
+			tc = testCase{
+				name: "tls-published",
+				run: func(ctx context.Context) error {
+					return runTLSPublished(ctx, *addr)
+				},
+			}
+		} else {
+			tc = testCase{
+				name: "tls",
+				run: func(ctx context.Context) error {
+					return runTLSUnpublished(ctx, client, *tunnelPrefix+"-tls")
+				},
 			}
 		}
-		if len(cases) == 0 {
-			log.Fatalf("unknown variant %q (known: plain, tls, all)", *variant)
-		}
+	default:
+		log.Fatalf("unknown variant %q: must be plain or tls", *variant)
 	}
-	var failed []string
-	for _, tc := range cases {
-		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-		start := time.Now()
-		runErr := tc.run(ctx)
-		elapsed := time.Since(start)
-		cancel()
-		if runErr != nil {
-			failed = append(failed, tc.name)
-			fmt.Printf("FAIL %-8s (%.2fs): %v\n", tc.name, elapsed.Seconds(), runErr)
-		} else {
-			fmt.Printf("PASS %-8s (%.2fs)\n", tc.name, elapsed.Seconds())
-		}
-	}
-	fmt.Printf("---- summary: %d passed, %d failed out of %d ----\n", len(cases)-len(failed), len(failed), len(cases))
-	if len(failed) > 0 {
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	start := time.Now()
+	runErr := tc.run(ctx)
+	elapsed := time.Since(start)
+	cancel()
+	if runErr != nil {
+		fmt.Printf("FAIL %-16s (%.2fs): %v\n", tc.name, elapsed.Seconds(), runErr)
 		os.Exit(1)
 	}
+	fmt.Printf("PASS %-16s (%.2fs)\n", tc.name, elapsed.Seconds())
 }
