@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// http-tls-server starts an HTTPS server that terminates TLS itself behind an
+// rstream BytestreamTunnel in pass-through mode. The rstream edge forwards raw
+// bytes without decrypting them, so the server retains full control over its
+// certificate and TLS configuration.
+//
+// Run: go run . (internal only) or go run . -publish (published TLS pass-through)
+
 package main
 
 import (

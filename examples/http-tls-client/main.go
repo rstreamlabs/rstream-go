@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// http-tls-client makes a TLS HTTPS request to http-tls-server through an
+// rstream BytestreamTunnel operating in TLS pass-through mode. The rstream edge
+// never decrypts the traffic — the server owns the certificate — which is ideal
+// for end-to-end encryption or custom TLS policies.
+//
+// Run: go run . (rstream dialer) or go run . -publish (published TLS endpoint)
+
 package main
 
 import (

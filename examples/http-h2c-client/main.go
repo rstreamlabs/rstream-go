@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// http-h2c-client makes an HTTP/2 cleartext (h2c) GET request to
+// http-h2c-server through an rstream BytestreamTunnel. TLS is enforced at the
+// rstream edge while the upstream leg stays unencrypted h2c, giving multiplexed
+// HTTP/2 without double-encrypting the internal path.
+//
+// Run: go run . (rstream dialer) or go run . -publish (published HTTP/2 endpoint)
+
 package main
 
 import (

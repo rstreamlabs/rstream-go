@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// http-wt-client connects to http-wt-server over WebTransport through an
+// rstream DatagramTunnel, opens a bidi stream, and sends a ping. rstream relays
+// QUIC/HTTP3 datagrams end-to-end so browser-compatible WebTransport clients
+// reach the upstream server without a dedicated QUIC endpoint.
+//
+// Run: go run . (rstream dialer) or go run . -publish (published WT endpoint)
+
 package main
 
 import (
@@ -10,7 +17,6 @@ import (
 	"log"
 	"net"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -43,7 +49,6 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	dialer := webtransport.Dialer{}
 	name := "wt-example"
 	var url *string
-	var publishedProtocol *string
 	if publish {
 		// List tunnels to find the published host using rstream API (data plane)
 		tunnels, err := client.ListTunnels(context.Background(), nil)
@@ -61,10 +66,6 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 					}
 				}
 				url = rstream.StringPtr("https://" + host + "/webtransport")
-				if tunnel.Protocol != nil {
-					value := string(*tunnel.Protocol)
-					publishedProtocol = &value
-				}
 				break
 			}
 		}
@@ -91,9 +92,6 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	// Connect to the WebTransport server
 	_, sess, err := dialer.Dial(ctx, *url, nil)
 	if err != nil {
-		if publish && publishedProtocol != nil && strings.EqualFold(strings.TrimSpace(*publishedProtocol), "http") {
-			return fmt.Errorf("webtransport over a published HTTP tunnel is expected to fail until the engine HTTP reverse proxy supports extended CONNECT/WebTransport: %w", err)
-		}
 		return fmt.Errorf("webtransport connection failed: %w", err)
 	}
 	return handleConnection(ctx, sess)

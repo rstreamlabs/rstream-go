@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// http-h1-server starts a minimal HTTP/1.1 server behind an rstream
+// BytestreamTunnel that returns the server hostname on every GET request.
+// rstream exposes the server at a TLS-terminated public endpoint so clients
+// need no VPN or SSH tunnel to reach it.
+//
+// Run: go run . (internal only) or go run . -publish (published HTTP endpoint)
+
 package main
 
 import (

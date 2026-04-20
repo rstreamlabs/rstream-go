@@ -1,5 +1,11 @@
 // See LICENSE file in the project root for license information.
 
+// http-h1-client makes an HTTP/1.1 GET request to http-h1-server through an
+// rstream BytestreamTunnel and prints the response. rstream gives any HTTP/1.1
+// service a secure, publicly reachable endpoint with no infrastructure changes.
+//
+// Run: go run . (rstream dialer) or go run . -publish (published HTTP endpoint)
+
 package main
 
 import (

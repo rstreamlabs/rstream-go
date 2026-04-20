@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// stream-echo-client connects to stream-echo-server through an rstream
+// BytestreamTunnel, writes a message over the raw byte stream, and prints the
+// echo. This is the simplest possible rstream tunnel demo: any TCP-like
+// protocol works through a BytestreamTunnel with zero protocol changes.
+//
+// Run: go run . (rstream dialer) or go run . -publish (published TLS endpoint)
+
 package main
 
 import (
