@@ -1,10 +1,12 @@
 // See LICENSE file in the project root for license information.
 
 // datagram-matrix-client is the client side of the end-to-end datagram coverage
-// matrix. It dials each variant via the rstream SDK, sends test payloads, and
-// verifies the echo round-trip.
+// matrix. It connects to the server, sends test payloads, and verifies the
+// echo round-trip.
 //
-// Variants: dtls (UDP echo via PacketDial), quic (quic-go stream + datagram echo).
+// Without --addr the rstream SDK dialer is used (unpublished path).
+// With --addr the client connects directly to the engine's edge endpoint:
+// pion/dtls for the dtls variant, quic-go for the quic variant.
 
 package main
 
@@ -15,11 +17,14 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/pion/dtls/v3"
 	"github.com/quic-go/quic-go"
 	rstream "github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
@@ -27,40 +32,65 @@ import (
 
 const quicEchoALPN = "rstream-datagram-echo"
 
-type testCase struct {
-	name    string
-	variant string
+// hostPortFromAddr extracts a bare host:port, stripping any scheme prefix and
+// trailing protocol annotation (e.g. " (dtls)", " (quic)").
+func hostPortFromAddr(addr, defaultPort string) string {
+	if i := strings.Index(addr, "://"); i >= 0 {
+		addr = addr[i+3:]
+	}
+	if i := strings.IndexByte(addr, '/'); i >= 0 {
+		addr = addr[:i]
+	}
+	if i := strings.IndexByte(addr, ' '); i >= 0 {
+		addr = addr[:i]
+	}
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		addr = net.JoinHostPort(addr, defaultPort)
+	}
+	return addr
 }
 
-func listNames(prefix, variant string) []testCase {
-	all := []testCase{
-		{name: prefix + "-dtls", variant: "dtls"},
-		{name: prefix + "-quic", variant: "quic"},
-	}
-	if variant == "all" {
-		return all
-	}
-	for _, tc := range all {
-		if tc.variant == variant {
-			return []testCase{tc}
-		}
-	}
-	return nil
-}
+// ── DTLS ──────────────────────────────────────────────────────────────────────
 
-func runDTLS(ctx context.Context, client *rstream.Client, tunnelName string) error {
+func runDTLSUnpublished(ctx context.Context, client *rstream.Client, tunnelName string) error {
 	raddr := rstream.Addr{IdOrName: tunnelName}
 	packetConn, err := client.PacketDial(ctx, raddr)
 	if err != nil {
 		return fmt.Errorf("PacketDial: %w", err)
 	}
 	defer packetConn.Close()
+	return dtlsEcho(packetConn, &raddr)
+}
+
+func runDTLSPublished(ctx context.Context, addr string) error {
+	hp := hostPortFromAddr(addr, "4433")
+	hostname, _, _ := net.SplitHostPort(hp)
+	udpAddr, err := net.ResolveUDPAddr("udp", hp)
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", hp, err)
+	}
+	conn, err := dtls.Dial("udp", udpAddr, &dtls.Config{
+		ServerName:         hostname,
+		InsecureSkipVerify: true,
+	})
+	if err != nil {
+		return fmt.Errorf("dtls dial %s: %w", hp, err)
+	}
+	pc := rstream.PacketConnFromDTLSConn(conn)
+	defer pc.Close()
+	return dtlsEcho(pc, udpAddr)
+}
+
+func dtlsEcho(pc net.PacketConn, raddr net.Addr) error {
 	payload := []byte("ping-dtls")
-	if _, err := packetConn.WriteTo(payload, &raddr); err != nil {
+	if _, err := pc.WriteTo(payload, raddr); err != nil {
 		return fmt.Errorf("write: %w", err)
 	}
 	buf := make([]byte, 2048)
-	n, _, err := packetConn.ReadFrom(buf)
+	if err := pc.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return fmt.Errorf("set deadline: %w", err)
+	}
+	n, _, err := pc.ReadFrom(buf)
 	if err != nil {
 		return fmt.Errorf("read: %w", err)
 	}
@@ -70,23 +100,40 @@ func runDTLS(ctx context.Context, client *rstream.Client, tunnelName string) err
 	return nil
 }
 
-func runQUIC(ctx context.Context, client *rstream.Client, tunnelName string) error {
+// ── QUIC ──────────────────────────────────────────────────────────────────────
+
+func runQUICUnpublished(ctx context.Context, client *rstream.Client, tunnelName string) error {
 	raddr := rstream.Addr{IdOrName: tunnelName}
 	packetConn, err := client.PacketDial(ctx, raddr)
 	if err != nil {
 		return fmt.Errorf("PacketDial: %w", err)
 	}
 	defer packetConn.Close()
-	tlsCfg := &tls.Config{
-		InsecureSkipVerify: true,
-		NextProtos:         []string{quicEchoALPN},
-	}
 	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 	transport := quic.Transport{Conn: packetConn}
-	conn, err := transport.Dial(ctx, &raddr, tlsCfg, &quic.Config{EnableDatagrams: true})
+	conn, err := transport.Dial(ctx, &raddr,
+		&tls.Config{InsecureSkipVerify: true, NextProtos: []string{quicEchoALPN}},
+		&quic.Config{EnableDatagrams: true})
 	if err != nil {
 		return fmt.Errorf("quic dial: %w", err)
 	}
+	return quicEcho(ctx, conn)
+}
+
+func runQUICPublished(ctx context.Context, addr string) error {
+	hp := hostPortFromAddr(addr, "443")
+	hostname, _, _ := net.SplitHostPort(hp)
+	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
+	conn, err := quic.DialAddr(ctx, hp,
+		&tls.Config{ServerName: hostname, InsecureSkipVerify: true, NextProtos: []string{quicEchoALPN}},
+		&quic.Config{EnableDatagrams: true})
+	if err != nil {
+		return fmt.Errorf("quic dial %s: %w", hp, err)
+	}
+	return quicEcho(ctx, conn)
+}
+
+func quicEcho(ctx context.Context, conn *quic.Conn) error {
 	defer conn.CloseWithError(0, "client done")
 	stream, err := conn.OpenStream()
 	if err != nil {
@@ -121,15 +168,14 @@ func runQUIC(ctx context.Context, client *rstream.Client, tunnelName string) err
 	return nil
 }
 
+// ── main ──────────────────────────────────────────────────────────────────────
+
 func main() {
-	variant := flag.String("variant", "all", "variant to run: dtls, quic, or all")
-	tunnelPrefix := flag.String("tunnel", "datagram-matrix", "tunnel name prefix")
+	variant := flag.String("variant", "dtls", "variant: dtls, quic")
+	addr := flag.String("addr", "", "forwarding address for direct (published) connection")
+	tunnelPrefix := flag.String("tunnel", "datagram-matrix", "tunnel name prefix for SDK dialer")
 	timeout := flag.Duration("timeout", 30*time.Second, "per-case timeout")
 	flag.Parse()
-	cases := listNames(*tunnelPrefix, *variant)
-	if len(cases) == 0 {
-		log.Fatalf("unknown variant %q: must be dtls, quic, or all", *variant)
-	}
 	client, err := config.NewClientFromEnv()
 	if err != nil {
 		log.Fatalf("config: %v", err)
@@ -142,28 +188,34 @@ func main() {
 		<-sigCh
 		cancel()
 	}()
-	pass := 0
-	fail := 0
-	for _, tc := range cases {
-		tctx, tcancel := context.WithTimeout(ctx, *timeout)
-		var runErr error
-		switch tc.variant {
-		case "dtls":
-			runErr = runDTLS(tctx, client, tc.name)
-		case "quic":
-			runErr = runQUIC(tctx, client, tc.name)
-		}
-		tcancel()
-		if runErr != nil {
-			fmt.Printf("FAIL [%s]: %v\n", tc.variant, runErr)
-			fail++
-		} else {
-			fmt.Printf("PASS [%s]\n", tc.variant)
-			pass++
-		}
+	tctx, tcancel := context.WithTimeout(ctx, *timeout)
+	defer tcancel()
+	label := *variant
+	if *addr != "" {
+		label += "-published"
 	}
-	fmt.Printf("\n%d passed, %d failed\n", pass, fail)
-	if fail > 0 {
+	start := time.Now()
+	var runErr error
+	switch *variant {
+	case "dtls":
+		if *addr != "" {
+			runErr = runDTLSPublished(tctx, *addr)
+		} else {
+			runErr = runDTLSUnpublished(tctx, client, *tunnelPrefix+"-dtls")
+		}
+	case "quic":
+		if *addr != "" {
+			runErr = runQUICPublished(tctx, *addr)
+		} else {
+			runErr = runQUICUnpublished(tctx, client, *tunnelPrefix+"-quic")
+		}
+	default:
+		log.Fatalf("unknown variant %q: must be dtls or quic", *variant)
+	}
+	elapsed := time.Since(start)
+	if runErr != nil {
+		fmt.Printf("FAIL %-20s (%.2fs): %v\n", label, elapsed.Seconds(), runErr)
 		os.Exit(1)
 	}
+	fmt.Printf("PASS %-20s (%.2fs)\n", label, elapsed.Seconds())
 }
