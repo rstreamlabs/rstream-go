@@ -397,6 +397,28 @@ all: $(BINARIES)
 
 examples: $(EXAMPLES)
 
+# Integration test binaries — one binary per test/<suite>/<role>/ directory.
+# New test suites are picked up automatically; no Makefile change required.
+TEST_ROLES := $(shell find test -mindepth 2 -maxdepth 2 -name '*.go' -print 2>/dev/null \
+	| awk -F/ '{print $$(NF-2)"/"$$(NF-1)}' | sort -u)
+TEST_OUT := $(OUT_DIR)/test
+
+.PHONY: test-bins
+
+test-bins: $(foreach r,$(TEST_ROLES),$(TEST_OUT)/$(r))
+
+define template_test_bin
+$(TEST_OUT)/$1: $$(shell find test/$1 -name '*.go' 2>/dev/null)
+	@set -e; echo "Building test/$1 for $(CURRENT_OS)/$(CURRENT_ARCH)"; \
+	CGO_ENABLED=0 GOPRIVATE=github.com/rstreamlabs \
+	GOOS=$(subst macos,darwin,$(CURRENT_OS)) GOARCH=$(CURRENT_ARCH) \
+	go build -buildvcs=false \
+	  -ldflags="-X '$(GO_MODULE).Agent=$(patsubst %-go,%,$(notdir $(shell printf '%s\n' '$(GO_MODULE)' | sed -E 's|/v[0-9]+$$||')))' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).OS=$(CURRENT_OS)' -X '$(GO_MODULE).Arch=$(CURRENT_ARCH)'" \
+	  -o $(TEST_OUT)/$1 ./test/$1
+endef
+
+$(foreach r,$(TEST_ROLES),$(eval $(call template_test_bin,$(r))))
+
 .PHONY: clean
 
 clean:

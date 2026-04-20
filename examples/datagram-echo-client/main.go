@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// datagram-echo-client connects to the datagram-echo-server through an rstream
+// DatagramTunnel, sends a message, and prints the echoed reply. rstream relays
+// UDP datagrams through a secure DTLS tunnel, so neither endpoint needs a
+// public IP or open firewall port.
+//
+// Run: go run . (rstream dialer) or go run . -publish (published DTLS endpoint)
+
 package main
 
 import (

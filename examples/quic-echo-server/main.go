@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// quic-echo-server starts a raw QUIC echo server behind an rstream
+// DatagramTunnel. It echoes every stream message and datagram back to the
+// sender. rstream enables custom QUIC protocols to be published at a managed
+// edge endpoint without requiring the server to have a reachable UDP address.
+//
+// Run: go run . (internal only) or go run . -publish (published QUIC endpoint)
+
 package main
 
 import (

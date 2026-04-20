@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// http-ws-server starts a WebSocket server behind an rstream tunnel using
+// gorilla/websocket. It replies "pong" to "ping" and echoes everything else.
+// Any compliant WebSocket client reaches it through rstream with no changes to
+// the server code — rstream handles public exposure transparently.
+//
+// Run: go run . (internal only) or go run . -publish (published WS endpoint)
+
 package main
 
 import (
