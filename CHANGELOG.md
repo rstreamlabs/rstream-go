@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.11.0](https://github.com/rstreamlabs/rstream-go/compare/v1.10.0...v1.11.0) (2026-04-20)
+
+
+### Features
+
+* add WebSocket H2C/H3 examples and end-to-end test suites ([8660da1](https://github.com/rstreamlabs/rstream-go/commit/8660da103d88194436219fdfff6d4237131d8dbf))
+
 ## [1.10.0](https://github.com/rstreamlabs/rstream-go/compare/v1.9.1...v1.10.0) (2026-04-01)
 
 
