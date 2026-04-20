@@ -1,10 +1,13 @@
 // See LICENSE file in the project root for license information.
 
 // stream-matrix-server is the server side of the end-to-end stream coverage
-// matrix. It creates a BytestreamTunnel and runs an echo server so the client
-// can verify raw byte relay and TLS pass-through through the engine.
+// matrix. It creates a BytestreamTunnel and runs an echo server so the
+// client can verify raw byte relay through the engine.
 //
-// Variants: plain (raw bytes), tls (server terminates TLS itself).
+// Variants: plain (raw bytes, unpublished), tls (TLS, both modes).
+// With --publish the tunnel is registered on the engine's TLS listener
+// (Protocol: TLS); without it the SDK dialer path is used and the server
+// wraps the tunnel with tls.NewListener for application-level TLS.
 
 package main
 
@@ -30,12 +33,12 @@ import (
 )
 
 func generateTLSConfig() (*tls.Config, error) {
-	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, err
 	}
-	template := x509.Certificate{SerialNumber: big.NewInt(1)}
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	tmpl := x509.Certificate{SerialNumber: big.NewInt(1)}
+	certDER, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
 	if err != nil {
 		return nil, err
 	}
@@ -81,48 +84,66 @@ func serveListener(ctx context.Context, l net.Listener) error {
 	}
 }
 
-func run(ctx context.Context, client *rstream.Client, variant, name string) error {
+func run(ctx context.Context, client *rstream.Client, variant, name string, publish bool) error {
 	ctrl, err := client.Connect(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
 	defer ctrl.Close()
 	props := rstream.TunnelProperties{
-		Name: rstream.StringPtr(name),
-		Type: rstream.TunnelTypePtr(rstream.TunnelTypeBytestream),
+		Name:    rstream.StringPtr(name),
+		Type:    rstream.TunnelTypePtr(rstream.TunnelTypeBytestream),
+		Publish: rstream.BoolPtr(publish),
+	}
+	if variant == "tls" && publish {
+		// Published mode: engine's TLS listener handles the TLS handshake;
+		// the server receives plain bytes over the tunnel.
+		props.Protocol = rstream.ProtocolPtr(rstream.ProtocolTLS)
 	}
 	tunnel, err := ctrl.CreateTunnel(ctx, props)
 	if err != nil {
 		return fmt.Errorf("create tunnel: %w", err)
 	}
 	defer tunnel.Close()
-	fwdAddr, err := tunnel.ForwardingAddress()
+	tprops, err := tunnel.Properties()
 	if err != nil {
-		return fmt.Errorf("forwarding address: %w", err)
+		return fmt.Errorf("tunnel properties: %w", err)
+	}
+	// Published tunnels: Host is the clean edge address (no annotation).
+	// Unpublished tunnels: Host is nil; print the tunnel name as a ready signal.
+	if tprops.Host != nil {
+		fmt.Printf("READY %s\n", *tprops.Host)
+	} else if tprops.Name != nil {
+		fmt.Printf("READY rstrm://%s\n", *tprops.Name)
+	} else {
+		fmt.Printf("READY\n")
 	}
 	bs, ok := tunnel.(rstream.BytestreamTunnel)
 	if !ok {
 		return fmt.Errorf("tunnel is not BytestreamTunnel")
 	}
-	fmt.Printf("READY %s\n", fwdAddr)
-	switch variant {
-	case "tls":
+	if variant == "tls" && !publish {
+		// Unpublished mode: TLS is handled at the application layer;
+		// the engine relays raw bytes and the server terminates TLS itself.
 		tlsCfg, err := generateTLSConfig()
 		if err != nil {
 			return fmt.Errorf("TLS config: %w", err)
 		}
 		return serveListener(ctx, tls.NewListener(bs, tlsCfg))
-	default:
-		return serveListener(ctx, bs)
 	}
+	return serveListener(ctx, bs)
 }
 
 func main() {
 	variant := flag.String("variant", "plain", "variant: plain, tls")
-	name := flag.String("name", "", "tunnel name (default: stream-matrix-<variant>)")
+	publish := flag.Bool("publish", false, "publish the tunnel on the engine's TLS listener")
+	name := flag.String("name", "", "tunnel name (default: stream-matrix-<variant>[-pub])")
 	flag.Parse()
 	if *name == "" {
 		*name = "stream-matrix-" + *variant
+		if *publish {
+			*name += "-pub"
+		}
 	}
 	client, err := config.NewClientFromEnv()
 	if err != nil {
@@ -136,7 +157,7 @@ func main() {
 		<-sigCh
 		cancel()
 	}()
-	if err := run(ctx, client, *variant, *name); err != nil {
+	if err := run(ctx, client, *variant, *name, *publish); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }
