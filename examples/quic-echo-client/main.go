@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// quic-echo-client connects to quic-echo-server through an rstream
+// DatagramTunnel, opens a QUIC stream, sends a message, and sends a datagram.
+// rstream tunnels raw QUIC traffic so custom application protocols over QUIC
+// work end-to-end without a public UDP port on the server.
+//
+// Run: go run . (rstream dialer) or go run . -publish (published QUIC endpoint)
+
 package main
 
 import (
@@ -44,7 +51,6 @@ func handleConnection(ctx context.Context, conn *quic.Conn) error {
 		return fmt.Errorf("failed to read: %w", err)
 	}
 	log.Printf("Received stream %d bytes: %s", n, buf[:n])
-
 	dgram := []byte("Datagram from rstream-go!")
 	if err := conn.SendDatagram(dgram); err != nil {
 		return fmt.Errorf("failed to send datagram: %w", err)

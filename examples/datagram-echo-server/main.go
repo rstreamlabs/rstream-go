@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// datagram-echo-server runs a UDP datagram echo server behind an rstream
+// DatagramTunnel. Every datagram received is sent back to the sender. When
+// published as DTLS, any standard DTLS client can reach the server through the
+// rstream edge without the server exposing a public UDP port.
+//
+// Run: go run . (internal only) or go run . -publish (published DTLS endpoint)
+
 package main
 
 import (

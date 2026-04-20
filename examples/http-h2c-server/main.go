@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// http-h2c-server starts an HTTP/2 cleartext (h2c) server behind an rstream
+// BytestreamTunnel. The rstream edge terminates TLS and forwards h2c upstream,
+// enabling fully multiplexed HTTP/2 without adding TLS overhead on the
+// internal network path.
+//
+// Run: go run . (internal only) or go run . -publish (published HTTP/2 endpoint)
+
 package main
 
 import (

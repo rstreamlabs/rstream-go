@@ -1,5 +1,11 @@
 // See LICENSE file in the project root for license information.
 
+// api-list-tunnels lists all active tunnels registered with the rstream engine
+// and prints them as JSON. It uses only the rstream config API — no server-side
+// tunnel is created — making it ideal for service discovery and health checks.
+//
+// Run: go run .
+
 package main
 
 import (

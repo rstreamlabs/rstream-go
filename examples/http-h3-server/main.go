@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// http-h3-server starts an HTTP/3 server behind an rstream DatagramTunnel.
+// QUIC datagrams are relayed by rstream so the server gets genuine HTTP/3
+// connections without exposing a public UDP port or managing its own QUIC
+// termination at the network edge.
+//
+// Run: go run . (internal only) or go run . -publish (published HTTP/3 endpoint)
+
 package main
 
 import (

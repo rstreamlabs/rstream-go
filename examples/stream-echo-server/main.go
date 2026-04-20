@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// stream-echo-server starts a raw byte-stream echo server behind an rstream
+// BytestreamTunnel. Every byte received is written back to the sender. This is
+// the minimal rstream example: any bidirectional TCP-like protocol is tunneled
+// by wrapping a net.Listener with no further SDK involvement.
+//
+// Run: go run . (internal only) or go run . -publish (published TLS endpoint)
+
 package main
 
 import (

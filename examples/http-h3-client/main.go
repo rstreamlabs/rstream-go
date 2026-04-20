@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// http-h3-client makes an HTTP/3 (QUIC) GET request to http-h3-server through
+// an rstream DatagramTunnel. rstream relays QUIC datagrams end-to-end so the
+// full HTTP/3 feature set — 0-RTT, stream multiplexing — works through the
+// tunnel without any protocol downgrade.
+//
+// Run: go run . (rstream dialer) or go run . -publish (published HTTP/3 endpoint)
+
 package main
 
 import (

@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// http-wt-server starts a WebTransport server behind an rstream DatagramTunnel
+// using quic-go/webtransport-go. It echoes data on every bidi stream. rstream
+// exposes the server to WebTransport clients — including browsers — without
+// requiring a public UDP port or edge QUIC termination infrastructure.
+//
+// Run: go run . (internal only) or go run . -publish (published WT endpoint)
+
 package main
 
 import (

@@ -1,5 +1,12 @@
 // See LICENSE file in the project root for license information.
 
+// turn-credentials fetches short-lived TURN credentials from the rstream API
+// and prints them as JSON. These credentials can be fed directly into a WebRTC
+// ICE configuration so media traffic is relayed through rstream's TURN
+// infrastructure without managing a separate TURN server.
+//
+// Run: go run .
+
 package main
 
 import (
