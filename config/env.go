@@ -13,6 +13,7 @@ type EnvSettings struct {
 	Context    string
 	Engine     string
 	Token      string
+	UseQUIC    bool
 }
 
 func ReadEnv() EnvSettings {
@@ -22,5 +23,6 @@ func ReadEnv() EnvSettings {
 		Context:    strings.TrimSpace(os.Getenv("RSTREAM_CONTEXT")),
 		Engine:     strings.TrimSpace(os.Getenv("RSTREAM_ENGINE")),
 		Token:      strings.TrimSpace(os.Getenv("RSTREAM_AUTHENTICATION_TOKEN")),
+		UseQUIC:    os.Getenv("RSTREAM_QUIC_TRANSPORT") == "1",
 	}
 }

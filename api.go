@@ -28,7 +28,9 @@ func (c *Client) apiHttpClient() (*http.Client, error) {
 	return &http.Client{
 		Transport: &http.Transport{
 			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				return c.dialEngine(ctx, &addr, &[]string{"h2", "http/1.1"})
+				// API calls always use TCP TLS regardless of the configured
+				// transport, because API endpoints require HTTP/1.1 or H2 (not H3).
+				return c.dialEngineWithTransport(ctx, &addr, &[]string{"h2", "http/1.1"}, &Transport{})
 			},
 			ForceAttemptHTTP2: true,
 		},
@@ -272,7 +274,6 @@ func (s *sseConn) Read(_ context.Context) ([]byte, error) {
 		s.buf.Reset()
 		return []byte(out), nil
 	}
-
 	for {
 		line, err := s.rd.ReadString('\n')
 		if err != nil {

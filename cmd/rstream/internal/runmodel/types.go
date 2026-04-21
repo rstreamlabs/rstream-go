@@ -50,7 +50,7 @@ type ResolvedContext struct {
 	Name      string
 	Engine    string
 	Token     string
-	Transport *rstream.Transport
+	Transport rstream.Dialer
 }
 
 type DesiredTunnel struct {
