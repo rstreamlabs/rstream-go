@@ -71,6 +71,9 @@ func NewClientFromEnvOptions(opts ClientEnvOptions) (*rstream.Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	if ReadEnv().UseQUIC {
+		resolution.Resolved.Transport = &rstream.QUICTransport{}
+	}
 	return NewClientFromResolved(resolution.Resolved)
 }
 

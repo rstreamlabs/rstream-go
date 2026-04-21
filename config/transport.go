@@ -10,6 +10,7 @@ type TransportConfig struct {
 	DNS      *DNSConfig   `yaml:"dns,omitempty"`
 	MPTCP    *bool        `yaml:"mptcp,omitempty"`
 	Proxy    *ProxyConfig `yaml:"proxy,omitempty"`
+	UseQUIC  *bool        `yaml:"useQuic,omitempty"`
 }
 
 type BindConfig struct {
@@ -87,6 +88,9 @@ func MergeTransport(base, override *TransportConfig) *TransportConfig {
 	if override.MPTCP != nil {
 		out.MPTCP = override.MPTCP
 	}
+	if override.UseQUIC != nil {
+		out.UseQUIC = override.UseQUIC
+	}
 	if override.Proxy != nil {
 		if out.Proxy == nil {
 			out.Proxy = &ProxyConfig{}
@@ -112,10 +116,41 @@ func MergeTransport(base, override *TransportConfig) *TransportConfig {
 	return &out
 }
 
-func FlattenTransport(cfg *TransportConfig) *rstream.Transport {
+func FlattenTransport(cfg *TransportConfig) rstream.Dialer {
 	if cfg == nil {
 		return nil
 	}
+	// If QUIC is requested, build a QUICTransport (no HTTP proxy support for QUIC).
+	if cfg.UseQUIC != nil && *cfg.UseQUIC {
+		var t rstream.QUICTransport
+		set := false
+		if cfg.Bind != nil {
+			switch cfg.Bind.Mode {
+			case "address", "":
+				if cfg.Bind.Address != "" {
+					t.LocalAddr = rstream.StringPtr(cfg.Bind.Address)
+					set = true
+				}
+			}
+		}
+		switch cfg.IPFamily {
+		case "ipv4":
+			t.ForceIPv4 = rstream.BoolPtr(true)
+			set = true
+		case "ipv6":
+			t.ForceIPv6 = rstream.BoolPtr(true)
+			set = true
+		}
+		if cfg.DNS != nil && cfg.DNS.Override != "" {
+			t.DNSOverride = rstream.StringPtr(cfg.DNS.Override)
+			set = true
+		}
+		if !set {
+			return &rstream.QUICTransport{}
+		}
+		return &t
+	}
+	// TLS transport (default).
 	var transport rstream.Transport
 	set := false
 	if cfg.Bind != nil {

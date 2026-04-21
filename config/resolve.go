@@ -47,7 +47,7 @@ type Resolved struct {
 	Context     *Context
 	Engine      string
 	Token       string
-	Transport   *rstream.Transport
+	Transport   rstream.Dialer
 }
 
 func Resolve(input ResolveInput) (Resolved, error) {
@@ -130,7 +130,7 @@ func Resolve(input ResolveInput) (Resolved, error) {
 	if input.RequireToken && token == "" {
 		return Resolved{}, errors.New("token is required but not configured (run rstream login or set RSTREAM_AUTHENTICATION_TOKEN)")
 	}
-	var transport *rstream.Transport
+	var transport rstream.Dialer
 	if ctx != nil {
 		var merged *TransportConfig
 		if env != nil && ctx.APIURL != "" && ctx.APIURL == env.APIURL {
