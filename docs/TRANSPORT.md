@@ -76,6 +76,41 @@ DNS override allows the client to use a dedicated resolver for edge name resolut
 
 Optional MPTCP support can be enabled where available to improve resilience when multiple network paths exist. This affects how the underlying TCP connectivity behaves; it does not change the TLS 1.3 requirement.
 
+## QUIC Transport
+
+By default the rstream client connects to the edge over TLS 1.3/TCP. When the edge supports it, you can switch to `QUICTransport` to use a single QUIC connection for all client activity instead.
+
+### Enabling QUIC transport
+
+**Via environment variable** (CLI or SDK):
+```bash
+export RSTREAM_QUIC_TRANSPORT=1
+```
+
+**Via `QUICTransport` in Go code:**
+```go
+import (
+    rstream "github.com/rstreamlabs/rstream-go"
+    "github.com/rstreamlabs/rstream-go/config"
+)
+
+opts, _ := config.NewClientEnvOptions(config.ClientEnvOptions{RequireEngine: true})
+client := &rstream.Client{
+    EngineURL: opts.EngineURL,
+    Token:     opts.Token,
+    Transport: &rstream.QUICTransport{},
+}
+```
+
+`QUICTransport` accepts the same network options as the standard `Transport`:
+- `LocalAddr` — bind to a specific local IP.
+- `ForceIPv4` / `ForceIPv6` — constrain address family.
+- `DNSOverride` — use a custom resolver for the edge hostname.
+
+### Lifecycle
+
+`QUICTransport` is stateful and is designed to be held for the lifetime of the client. Create a fresh instance when reconnecting after a connection failure.
+
 ## Published and Private Tunnels
 
 For published tunnels, transport configuration primarily concerns the publishing client that maintains the upstream session to the edge. Downstream users connect with standard clients and do not use rstream transport settings.
