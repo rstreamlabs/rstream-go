@@ -111,7 +111,7 @@ func (c *connWrapper) ReadFrom(p []byte) (int, net.Addr, error) {
 
 func (c *connWrapper) WriteTo(p []byte, addr net.Addr) (int, error) {
 	if addr == nil || addr.String() != c.raddr.String() {
-		return 0, fmt.Errorf("invalid address: expected %v, got %v", c.raddr, addr)
+		return 0, fmt.Errorf("invalid remote address %v; expected %v", addr, c.raddr)
 	}
 	if c.mode == PacketModeFramed {
 		c.wmu.Lock()

@@ -21,7 +21,7 @@ func buildTunnelListParams(filter string) (*rstream.ListTunnelsParams, error) {
 	for _, part := range parts {
 		kv := strings.SplitN(part, "=", 2)
 		if len(kv) != 2 {
-			return nil, fmt.Errorf("expected key=value, got %q", part)
+			return nil, fmt.Errorf("invalid filter %q: expected key=value", part)
 		}
 		key := strings.TrimSpace(kv[0])
 		val := strings.TrimSpace(kv[1])
@@ -78,7 +78,7 @@ func buildClientListParams(filter string) (*rstream.ListClientsParams, error) {
 	for _, part := range parts {
 		kv := strings.SplitN(part, "=", 2)
 		if len(kv) != 2 {
-			return nil, fmt.Errorf("expected key=value, got %q", part)
+			return nil, fmt.Errorf("invalid filter %q: expected key=value", part)
 		}
 		key := strings.TrimSpace(kv[0])
 		val := strings.TrimSpace(kv[1])

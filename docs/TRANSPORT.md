@@ -23,6 +23,9 @@ environments:
     transport:
       dns:
         override: "1.1.1.1:53"
+        tls: true
+        serverName: "cloudflare-dns.com"
+        dnssec: true
       proxy:
         http: "http://proxy.corp:3128"
         headers:
@@ -72,6 +75,20 @@ IPv4-only or IPv6-only dialing can be enforced when one address family is filter
 
 DNS override allows the client to use a dedicated resolver for edge name resolution instead of the system resolver. This is useful when system DNS is constrained, inconsistent across environments, or must follow a specific egress route.
 
+The same DNS path is used for:
+- resolving the edge hostname before dialing when advanced DNS options are enabled;
+- discovering `SVCB` and `HTTPS` records for ECH, using the target host and ALPN in the same way a browser would.
+
+The transport DNS options are:
+- `dns.override` — send DNS queries to a specific resolver address, for example `1.1.1.1:53` or `1.1.1.1:853`.
+- `dns.tls` — use DNS over TLS for these queries. This requires `dns.override`; when the override omits a port, rstream defaults to `853`.
+- `dns.serverName` — set the TLS server name used for DNS over TLS. This is required when `dns.override` is an IP address.
+- `dns.dnssec` — require authenticated DNSSEC answers from the resolver.
+
+These options are opt-in. Without them, the client uses the platform resolver configuration for ECH discovery and for direct hostname resolution.
+
+On macOS, rstream reads the active resolver configuration from the system DNS state so scoped per-domain resolvers are respected. On Linux and other Unix targets, the fallback source remains `/etc/resolv.conf`.
+
 ## Resilience Options
 
 Optional MPTCP support can be enabled where available to improve resilience when multiple network paths exist. This affects how the underlying TCP connectivity behaves; it does not change the TLS 1.3 requirement.
@@ -106,6 +123,8 @@ client := &rstream.Client{
 - `LocalAddr` — bind to a specific local IP.
 - `ForceIPv4` / `ForceIPv6` — constrain address family.
 - `DNSOverride` — use a custom resolver for the edge hostname.
+- `DNSOverTLS` / `DNSServerName` — protect DNS lookups with DNS over TLS.
+- `DNSSECEnabled` — require authenticated DNSSEC answers.
 
 ### Lifecycle
 

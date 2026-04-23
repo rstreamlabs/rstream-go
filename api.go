@@ -24,13 +24,55 @@ type Event struct {
 	Object json.RawMessage `json:"object"`
 }
 
+func cloneProxyHTTPHeaders(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(headers))
+	for key, value := range headers {
+		out[key] = value
+	}
+	return out
+}
+
+func (c *Client) apiDialer() Dialer {
+	switch transport := c.Transport.(type) {
+	case *Transport:
+		if transport == nil {
+			return &Transport{}
+		}
+		out := *transport
+		if transport.TLSProxyConfig != nil {
+			out.TLSProxyConfig = transport.TLSProxyConfig.Clone()
+		}
+		out.ProxyHTTPHeaders = cloneProxyHTTPHeaders(transport.ProxyHTTPHeaders)
+		return &out
+	case *QUICTransport:
+		if transport == nil {
+			return &Transport{}
+		}
+		return &Transport{
+			LocalAddr:     transport.LocalAddr,
+			ForceIPv4:     transport.ForceIPv4,
+			ForceIPv6:     transport.ForceIPv6,
+			DNSOverride:   transport.DNSOverride,
+			DNSOverTLS:    transport.DNSOverTLS,
+			DNSServerName: transport.DNSServerName,
+			DNSSECEnabled: transport.DNSSECEnabled,
+		}
+	default:
+		return &Transport{}
+	}
+}
+
 func (c *Client) apiHttpClient() (*http.Client, error) {
+	dialer := c.apiDialer()
 	return &http.Client{
 		Transport: &http.Transport{
 			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				// API calls always use TCP TLS regardless of the configured
 				// transport, because API endpoints require HTTP/1.1 or H2 (not H3).
-				return c.dialEngineWithTransport(ctx, &addr, &[]string{"h2", "http/1.1"}, &Transport{})
+				return c.dialEngineWithTransport(ctx, &addr, &[]string{"h2", "http/1.1"}, dialer)
 			},
 			ForceAttemptHTTP2: true,
 		},
@@ -418,10 +460,11 @@ func (c *Client) openWS(ctx context.Context, engine, token string, params *Watch
 		return nil, err
 	}
 	u.RawQuery = q.Encode()
+	dialerTransport := c.apiDialer()
 	dialer := &websocket.Dialer{
 		NetDialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			np := []string{"http/1.1"}
-			return c.dialEngine(ctx, &addr, &np)
+			return c.dialEngineWithTransport(ctx, &addr, &np, dialerTransport)
 		},
 		EnableCompression: false,
 		Proxy:             http.ProxyFromEnvironment,
