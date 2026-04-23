@@ -1,0 +1,4 @@
+# TODO
+
+- Replace the current macOS DNS resolver source with a native implementation
+  The current Darwin path relies on a third-party parser over `scutil --dns` output to discover scoped resolvers for ECH and advanced DNS options. This works, but it should be replaced with a native macOS resolver implementation backed by system APIs so the client no longer depends on shelling out or text parsing for resolver discovery.

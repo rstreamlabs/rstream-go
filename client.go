@@ -143,6 +143,8 @@ func (c *Client) dialEngineWithTransport(ctx context.Context, engine *string, ne
 	tlsCfg := c.TLSClientConfig
 	if tlsCfg == nil {
 		tlsCfg = &tls.Config{}
+	} else {
+		tlsCfg = tlsCfg.Clone()
 	}
 	if tlsCfg.ServerName == "" {
 		host, _, err := splitHostPort(*engine)
@@ -158,7 +160,7 @@ func (c *Client) dialEngineWithTransport(ctx context.Context, engine *string, ne
 			tlsCfg.NextProtos = []string{"rstrm/1"}
 		}
 	}
-	return transport.Dial(ctx, *engine, tlsCfg)
+	return dialWithECH(ctx, transport, *engine, tlsCfg)
 }
 
 type dialType string

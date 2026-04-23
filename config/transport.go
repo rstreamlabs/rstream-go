@@ -20,7 +20,10 @@ type BindConfig struct {
 }
 
 type DNSConfig struct {
-	Override string `yaml:"override,omitempty"`
+	Override   string `yaml:"override,omitempty"`
+	TLS        *bool  `yaml:"tls,omitempty"`
+	ServerName string `yaml:"serverName,omitempty"`
+	DNSSEC     *bool  `yaml:"dnssec,omitempty"`
 }
 
 type ProxyConfig struct {
@@ -84,6 +87,15 @@ func MergeTransport(base, override *TransportConfig) *TransportConfig {
 		if override.DNS.Override != "" {
 			out.DNS.Override = override.DNS.Override
 		}
+		if override.DNS.TLS != nil {
+			out.DNS.TLS = override.DNS.TLS
+		}
+		if override.DNS.ServerName != "" {
+			out.DNS.ServerName = override.DNS.ServerName
+		}
+		if override.DNS.DNSSEC != nil {
+			out.DNS.DNSSEC = override.DNS.DNSSEC
+		}
 	}
 	if override.MPTCP != nil {
 		out.MPTCP = override.MPTCP
@@ -145,6 +157,18 @@ func FlattenTransport(cfg *TransportConfig) rstream.Dialer {
 			t.DNSOverride = rstream.StringPtr(cfg.DNS.Override)
 			set = true
 		}
+		if cfg.DNS != nil && cfg.DNS.TLS != nil {
+			t.DNSOverTLS = cfg.DNS.TLS
+			set = true
+		}
+		if cfg.DNS != nil && cfg.DNS.ServerName != "" {
+			t.DNSServerName = rstream.StringPtr(cfg.DNS.ServerName)
+			set = true
+		}
+		if cfg.DNS != nil && cfg.DNS.DNSSEC != nil {
+			t.DNSSECEnabled = cfg.DNS.DNSSEC
+			set = true
+		}
 		if !set {
 			return &rstream.QUICTransport{}
 		}
@@ -177,6 +201,18 @@ func FlattenTransport(cfg *TransportConfig) rstream.Dialer {
 	}
 	if cfg.DNS != nil && cfg.DNS.Override != "" {
 		transport.DNSOverride = rstream.StringPtr(cfg.DNS.Override)
+		set = true
+	}
+	if cfg.DNS != nil && cfg.DNS.TLS != nil {
+		transport.DNSOverTLS = cfg.DNS.TLS
+		set = true
+	}
+	if cfg.DNS != nil && cfg.DNS.ServerName != "" {
+		transport.DNSServerName = rstream.StringPtr(cfg.DNS.ServerName)
+		set = true
+	}
+	if cfg.DNS != nil && cfg.DNS.DNSSEC != nil {
+		transport.DNSSECEnabled = cfg.DNS.DNSSEC
 		set = true
 	}
 	if cfg.MPTCP != nil {
