@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.12.0](https://github.com/rstreamlabs/rstream-go/compare/v1.11.0...v1.12.0) (2026-04-23)
+
+
+### Features
+
+* add QUIC transport with datagram multiplexing and connection hardening ([af39821](https://github.com/rstreamlabs/rstream-go/commit/af39821d7c83958b15013e725ea4f0594a5fd265))
+* support ECH-aware dialing and advanced DNS options ([c95d54c](https://github.com/rstreamlabs/rstream-go/commit/c95d54cf79f29ef9b345b0cfa33d521121afc523))
+
 ## [1.11.0](https://github.com/rstreamlabs/rstream-go/compare/v1.10.0...v1.11.0) (2026-04-20)
 
 
