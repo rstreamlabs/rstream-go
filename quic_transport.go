@@ -23,13 +23,16 @@ import (
 //
 // No reconnection on error — let the control channel error propagate naturally.
 type QUICTransport struct {
-	LocalAddr   *string
-	ForceIPv4   *bool
-	ForceIPv6   *bool
-	DNSOverride *string
-	mu          sync.Mutex
-	quicConn    *quic.Conn
-	pconn       net.PacketConn
+	LocalAddr     *string
+	ForceIPv4     *bool
+	ForceIPv6     *bool
+	DNSOverride   *string
+	DNSOverTLS    *bool
+	DNSServerName *string
+	DNSSECEnabled *bool
+	mu            sync.Mutex
+	quicConn      *quic.Conn
+	pconn         net.PacketConn
 }
 
 // Dial establishes or reuses a QUIC connection to addr, then opens and returns
@@ -104,33 +107,14 @@ func (t *QUICTransport) connect(ctx context.Context, addr string, tlsCfg *tls.Co
 	} else if t.ForceIPv6 != nil && *t.ForceIPv6 {
 		network = "udp6"
 	}
-	// Resolve DNS override if requested.
 	dialAddr := addr
-	if t.DNSOverride != nil {
-		resolver := &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, rnetwork, raddress string) (net.Conn, error) {
-				protocol := "udp"
-				if t.ForceIPv4 != nil && *t.ForceIPv4 {
-					protocol = "udp4"
-				} else if t.ForceIPv6 != nil && *t.ForceIPv6 {
-					protocol = "udp6"
-				}
-				return (&net.Dialer{}).DialContext(ctx, protocol, *t.DNSOverride)
-			},
-		}
-		host, port, err := net.SplitHostPort(addr)
+	dnsOpts := dnsResolverOptionsFromQUICTransport(t)
+	var err error
+	if dnsOpts.enabled() {
+		dialAddr, err = resolveDialAddress(ctx, addr, dnsOpts)
 		if err != nil {
-			return nil, nil, fmt.Errorf("failed to split host:port from %q: %w", addr, err)
+			return nil, nil, err
 		}
-		addrs, err := resolver.LookupHost(ctx, host)
-		if err != nil {
-			return nil, nil, fmt.Errorf("DNS lookup failed for %q: %w", host, err)
-		}
-		if len(addrs) == 0 {
-			return nil, nil, fmt.Errorf("DNS lookup returned no addresses for %q", host)
-		}
-		dialAddr = net.JoinHostPort(addrs[0], port)
 	}
 	// Bind to a local UDP address.
 	var localUDPAddr *net.UDPAddr
@@ -143,7 +127,6 @@ func (t *QUICTransport) connect(ctx context.Context, addr string, tlsCfg *tls.Co
 	}
 	localNetwork := network
 	var pconn net.PacketConn
-	var err error
 	if localUDPAddr != nil {
 		pconn, err = net.ListenPacket(localNetwork, localUDPAddr.String())
 	} else {

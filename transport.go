@@ -20,6 +20,9 @@ type Transport struct {
 	ForceIPv4        *bool
 	ForceIPv6        *bool
 	DNSOverride      *string
+	DNSOverTLS       *bool
+	DNSServerName    *string
+	DNSSECEnabled    *bool
 	MPTCPEnabled     *bool
 	ProxyHTTP        *string
 	ProxyUsername    *string
@@ -80,37 +83,29 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 	} else if d.ForceIPv6 != nil && *d.ForceIPv6 {
 		network = "tcp6"
 	}
-	var resolver *net.Resolver = nil
-	if d.DNSOverride != nil {
-		resolver = &net.Resolver{
-			PreferGo: true,
-			Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
-				protocol := "udp"
-				if d.ForceIPv4 != nil && *d.ForceIPv4 {
-					protocol = "udp4"
-				} else if d.ForceIPv6 != nil && *d.ForceIPv6 {
-					protocol = "udp6"
-				}
-				return (&net.Dialer{LocalAddr: localAddr}).DialContext(ctx, protocol, *d.DNSOverride)
-			},
-		}
-	}
 	dialer := &net.Dialer{
 		LocalAddr: localAddr,
-		Resolver:  resolver,
 	}
 	if d.MPTCPEnabled != nil && *d.MPTCPEnabled {
 		dialer.SetMultipathTCP(true)
 	}
 	var conn net.Conn = nil
 	var err error = nil
+	dnsOpts := dnsResolverOptionsFromTransport(d)
 	if d.ProxyHTTP != nil {
 		proxyURL, err := url.Parse(*d.ProxyHTTP)
 		if err != nil {
 			err = fmt.Errorf("failed to parse HTTP proxy URL: %w", err)
 		}
+		proxyDialAddr := ""
 		if err == nil {
-			conn, err = dialer.DialContext(ctx, network, proxyURL.Host)
+			proxyDialAddr = proxyURL.Host
+			if dnsOpts.enabled() {
+				proxyDialAddr, err = resolveDialAddress(ctx, proxyDialAddr, dnsOpts)
+			}
+		}
+		if err == nil {
+			conn, err = dialer.DialContext(ctx, network, proxyDialAddr)
 			if err != nil {
 				err = fmt.Errorf("failed to dial proxy: %w", err)
 			}
@@ -161,7 +156,13 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 			}
 		}
 	} else {
-		conn, err = dialer.DialContext(ctx, network, addr)
+		dialAddr := addr
+		if dnsOpts.enabled() {
+			dialAddr, err = resolveDialAddress(ctx, addr, dnsOpts)
+		}
+		if err == nil {
+			conn, err = dialer.DialContext(ctx, network, dialAddr)
+		}
 		if err != nil {
 			err = fmt.Errorf("failed to dial: %w", err)
 		}
