@@ -9,10 +9,10 @@ This directory contains end-to-end tests for the rstream Go SDK. Each subdirecto
 | `websocket` | 9 | All upstream × downstream HTTP version combinations (H1, H2C, H3) |
 | `webtransport` | 10 | Bidirectional streams, unidirectional streams, datagrams, multi-stream, close codes |
 | `http` | 3 | HTTP tunnels over H1, H2C, and H3 |
-| `stream` | 3 | Bytestream tunnel: plain (unpublished), TLS via SDK dialer (unpublished), TLS via engine listener (published) |
-| `datagram` | 4 | Datagram tunnel: DTLS via SDK dialer (unpublished), DTLS via engine listener (published), QUIC via SDK dialer (unpublished), QUIC via engine listener (published) |
+| `stream` | 6 | Bytestream tunnel: plain (unpublished), TLS via SDK dialer (unpublished), TLS via engine listener (published), TLS via engine listener with upstream TLS, and ALPN rejection checks |
+| `datagram` | 8 | Datagram tunnel: DTLS via SDK dialer (unpublished), DTLS via engine listener (published, with and without upstream DTLS), QUIC via SDK dialer (unpublished), QUIC via engine listener (published), and ALPN rejection checks |
 
-**Total: 29 test cases.**
+**Total: 36 test cases.**
 
 The stream and datagram suites each cover two connectivity modes:
 
@@ -86,6 +86,9 @@ test/
 |------|---------|-------------|
 | `--variant` | `plain` | `plain` or `tls` |
 | `--publish` | false | Register on engine's TLS listener |
+| `--host` | — | Requested Stable domain hostname |
+| `--tls-alpn` | — | Custom ALPN for published TLS tunnels |
+| `--upstream-tls` | false | Use TLS between the edge and the server |
 | `--name` | auto | Tunnel name |
 
 ### stream/client
@@ -94,6 +97,7 @@ test/
 |------|---------|-------------|
 | `--variant` | `plain` | `plain` or `tls` |
 | `--addr` | — | Engine edge address for direct (published) connections |
+| `--tls-alpn` | — | Custom ALPN for TLS connections |
 | `--tunnel` | `stream-matrix` | Tunnel name prefix for SDK dialer |
 
 ### datagram/server
@@ -102,6 +106,9 @@ test/
 |------|---------|-------------|
 | `--variant` | `dtls` | `dtls` or `quic` |
 | `--publish` | false | Register on engine's DTLS/QUIC listener |
+| `--host` | — | Requested Stable domain hostname |
+| `--tls-alpn` | — | Custom ALPN for published DTLS or QUIC tunnels |
+| `--upstream-tls` | false | Use DTLS between the edge and the server for published DTLS tunnels |
 | `--name` | auto | Tunnel name |
 
 ### datagram/client
@@ -110,4 +117,5 @@ test/
 |------|---------|-------------|
 | `--variant` | `dtls` | `dtls` or `quic` |
 | `--addr` | — | Engine edge address for direct (published) connections |
+| `--tls-alpn` | — | Custom ALPN for published DTLS or QUIC connections |
 | `--tunnel` | `datagram-matrix` | Tunnel name prefix for SDK dialer |

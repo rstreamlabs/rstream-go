@@ -71,31 +71,44 @@ func runPlain(ctx context.Context, client *rstream.Client, tunnelName string) er
 	return echoCheck(conn)
 }
 
-func runTLSUnpublished(ctx context.Context, client *rstream.Client, tunnelName string) error {
+func tlsNextProtos(tlsALPN string) []string {
+	if tlsALPN != "" {
+		return []string{tlsALPN}
+	}
+	return []string{"http/1.1"}
+}
+
+func runTLSUnpublished(ctx context.Context, client *rstream.Client, tunnelName, tlsALPN string) error {
 	inner, err := client.Dial(ctx, rstream.Addr{IdOrName: tunnelName})
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}
-	conn := tls.Client(inner, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"http/1.1"}})
+	conn := tls.Client(inner, &tls.Config{InsecureSkipVerify: true, NextProtos: tlsNextProtos(tlsALPN)})
 	defer conn.Close()
 	if err := conn.HandshakeContext(ctx); err != nil {
 		return fmt.Errorf("tls handshake: %w", err)
 	}
+	if tlsALPN != "" && conn.ConnectionState().NegotiatedProtocol != tlsALPN {
+		return fmt.Errorf("unexpected ALPN: got %q, want %q", conn.ConnectionState().NegotiatedProtocol, tlsALPN)
+	}
 	return echoCheck(conn)
 }
 
-func runTLSPublished(ctx context.Context, addr string) error {
+func runTLSPublished(ctx context.Context, addr, tlsALPN string) error {
 	hp := hostPortFromAddr(addr)
 	host, _, _ := net.SplitHostPort(hp)
 	conn, err := tls.DialWithDialer(
 		&net.Dialer{},
 		"tcp", hp,
-		&tls.Config{ServerName: host, InsecureSkipVerify: true, NextProtos: []string{"http/1.1"}},
+		&tls.Config{ServerName: host, InsecureSkipVerify: true, NextProtos: tlsNextProtos(tlsALPN)},
 	)
 	if err != nil {
 		return fmt.Errorf("tls dial %s: %w", hp, err)
 	}
 	defer conn.Close()
+	if tlsALPN != "" && conn.ConnectionState().NegotiatedProtocol != tlsALPN {
+		return fmt.Errorf("unexpected ALPN: got %q, want %q", conn.ConnectionState().NegotiatedProtocol, tlsALPN)
+	}
 	return echoCheck(conn)
 }
 
@@ -107,6 +120,7 @@ type testCase struct {
 func main() {
 	variant := flag.String("variant", "plain", "variant: plain, tls")
 	addr := flag.String("addr", "", "forwarding address for direct (published) connection")
+	tlsALPN := flag.String("tls-alpn", "", "custom ALPN for TLS connections")
 	tunnelPrefix := flag.String("tunnel", "stream-matrix", "tunnel name prefix for SDK dialer")
 	timeout := flag.Duration("timeout", 30*time.Second, "per-case timeout")
 	flag.Parse()
@@ -128,14 +142,14 @@ func main() {
 			tc = testCase{
 				name: "tls-published",
 				run: func(ctx context.Context) error {
-					return runTLSPublished(ctx, *addr)
+					return runTLSPublished(ctx, *addr, *tlsALPN)
 				},
 			}
 		} else {
 			tc = testCase{
 				name: "tls",
 				run: func(ctx context.Context) error {
-					return runTLSUnpublished(ctx, client, *tunnelPrefix+"-tls")
+					return runTLSUnpublished(ctx, client, *tunnelPrefix+"-tls", *tlsALPN)
 				},
 			}
 		}

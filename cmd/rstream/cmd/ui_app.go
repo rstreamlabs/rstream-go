@@ -411,7 +411,7 @@ func (u *uiApp) renderTunnels() {
 				tunnel.Status,
 				emptyDash(stringValue(tunnel.Type)),
 				emptyDash(stringValue(tunnel.Protocol)),
-				emptyDash(trimOptionalString(tunnel.Host)),
+				emptyDash(tunnelDisplayHost(tunnel.TunnelProperties)),
 				emptyDash(strings.TrimSpace(tunnel.ClientID)),
 			},
 			trimOptionalString(tunnel.ID),
@@ -922,9 +922,16 @@ func (u *uiApp) formatTunnelDetail(tunnel rstream.TunnelInventory) string {
 		fmt.Sprintf("Type               %s", emptyDash(stringValue(tunnel.Type))),
 		fmt.Sprintf("Protocol           %s", emptyDash(stringValue(tunnel.Protocol))),
 		fmt.Sprintf("Published          %t", boolValue(tunnel.Publish)),
-		fmt.Sprintf("Domain / host      %s", emptyDash(trimOptionalString(tunnel.Host))),
+		fmt.Sprintf("Domain / host      %s", emptyDash(tunnelDisplayHost(tunnel.TunnelProperties))),
 	}
 	return strings.TrimSpace(strings.Join([]string{strings.Join(summary, "\n"), formatLabelBlock(tunnel.Labels)}, "\n\n"))
+}
+
+func tunnelDisplayHost(props rstream.TunnelProperties) string {
+	if v, err := rstream.FormatForwardingAddr(props); err == nil {
+		return v
+	}
+	return trimOptionalString(props.Hostname)
 }
 
 func (u *uiApp) formatWebTTYDetail(server webtty.ServerInfo) string {

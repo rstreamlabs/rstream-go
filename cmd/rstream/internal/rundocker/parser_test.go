@@ -189,6 +189,25 @@ func TestParseDesiredTunnelsRejectsHTTPSettingsOnNonHTTPProtocol(t *testing.T) {
 	}
 }
 
+func TestParseDesiredTunnelsRejectsUnsupportedUpstreamTLSAliases(t *testing.T) {
+	info := ContainerInfo{
+		ID:   "abc",
+		Name: "web",
+		Labels: map[string]string{
+			"rstream.tunnel.app.forward":     "8080",
+			"rstream.tunnel.app.upstreamTLS": "true",
+		},
+		Networks: map[string]string{"default": "10.0.0.2"},
+	}
+	_, err := ParseDesiredTunnels(info, "default", runmodel.ResolvedContext{Engine: "engine", Token: "token"})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !strings.Contains(err.Error(), `unknown label "upstreamTLS"`) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestParseDesiredTunnelsRejectsLegacyAuthLabels(t *testing.T) {
 	info := ContainerInfo{
 		ID:   "abc",

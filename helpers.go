@@ -14,8 +14,7 @@ import (
 )
 
 func FormatForwardingAddr(props TunnelProperties) (string, error) {
-	if props.Host != nil {
-		host := *props.Host
+	if host, ok := publishedHost(props); ok {
 		switch {
 		case props.Protocol != nil && *props.Protocol == ProtocolHTTP:
 			return "https://" + host, nil
@@ -38,10 +37,35 @@ func FormatForwardingAddr(props TunnelProperties) (string, error) {
 	return "", errors.New("invalid tunnel properties: no host, name, or ID")
 }
 
+func publishedHost(props TunnelProperties) (string, bool) {
+	if props.Hostname != nil && strings.TrimSpace(*props.Hostname) != "" {
+		host := strings.TrimSpace(*props.Hostname)
+		port := uint32(443)
+		if props.Port != nil && *props.Port > 0 {
+			port = *props.Port
+		}
+		if (props.Protocol != nil && *props.Protocol == ProtocolTLS) || port != 443 {
+			return net.JoinHostPort(host, strconv.FormatUint(uint64(port), 10)), true
+		}
+		return host, true
+	}
+	if props.Host != nil && strings.TrimSpace(*props.Host) != "" {
+		return strings.TrimSpace(*props.Host), true
+	}
+	return "", false
+}
+
+func tunnelUsesUpstreamTLS(props TunnelProperties) bool {
+	if props.UpstreamTLS != nil {
+		return *props.UpstreamTLS
+	}
+	return props.HTTPUseTLS != nil && *props.HTTPUseTLS
+}
+
 func FormatForwardedHostPort(host, port string, props TunnelProperties) (string, error) {
 	isHTTP := props.Protocol != nil && *props.Protocol == ProtocolHTTP
 	isH3 := props.HTTPVersion != nil && *props.HTTPVersion == HTTP3
-	useHTTPS := isHTTP && (isH3 || (props.HTTPUseTLS != nil && *props.HTTPUseTLS))
+	useHTTPS := isHTTP && (isH3 || tunnelUsesUpstreamTLS(props))
 	var b strings.Builder
 	if isHTTP {
 		if useHTTPS {
@@ -68,11 +92,17 @@ func FormatForwardedHostPort(host, port string, props TunnelProperties) (string,
 		case ProtocolTLS:
 			if props.TLSMode != nil && *props.TLSMode == TLSModePassthrough {
 				b.WriteString(" (tls)")
+			} else if props.UpstreamTLS != nil && *props.UpstreamTLS {
+				b.WriteString(" (tls)")
 			} else {
 				b.WriteString(" (tcp)")
 			}
 		case ProtocolDTLS:
-			b.WriteString(" (udp)")
+			if props.UpstreamTLS != nil && *props.UpstreamTLS {
+				b.WriteString(" (dtls)")
+			} else {
+				b.WriteString(" (udp)")
+			}
 		case ProtocolQUIC:
 			b.WriteString(" (quic)")
 		}
@@ -114,6 +144,8 @@ func toTunnelProperties(msg *pb.TunnelProperties) TunnelProperties {
 		GeoIP:         msg.Geoip,
 		TrustedIPs:    msg.TrustedIps,
 		Host:          stringPtrFromPbValue(msg.Host),
+		Hostname:      stringPtrFromPbValue(msg.Hostname),
+		Port:          uint32PtrFromPbValue(msg.Port),
 		TLSMode:       (*TLSMode)(stringPtrFromPbValue(msg.TlsMode)),
 		TLSALPNs:      msg.TlsAlpns,
 		TLSMinVersion: stringPtrFromPbValue(msg.TlsMinVersion),
@@ -122,6 +154,7 @@ func toTunnelProperties(msg *pb.TunnelProperties) TunnelProperties {
 		MTLSCACertPEM: stringPtrFromPbValue(msg.MtlsCacertPem),
 		HTTPVersion:   (*HTTPVersion)(stringPtrFromPbValue(msg.HttpVersion)),
 		HTTPUseTLS:    boolPtrFromPbValue(msg.HttpUseTls),
+		UpstreamTLS:   boolPtrFromPbValue(msg.UpstreamTls),
 		TokenAuth:     boolPtrFromPbValue(msg.TokenAuth),
 		RstreamAuth:   boolPtrFromPbValue(msg.RstreamAuth),
 		ChallengeMode: boolPtrFromPbValue(msg.ChallengeMode),
@@ -140,6 +173,8 @@ func toTunnelPropertiesPb(props TunnelProperties) *pb.TunnelProperties {
 		Geoip:         props.GeoIP,
 		TrustedIps:    props.TrustedIPs,
 		Host:          stringPbValueOrNil(props.Host),
+		Hostname:      stringPbValueOrNil(props.Hostname),
+		Port:          uint32PbValueOrNil(props.Port),
 		TlsMode:       stringPbValueOrNil((*string)(props.TLSMode)),
 		TlsAlpns:      props.TLSALPNs,
 		TlsMinVersion: stringPbValueOrNil(props.TLSMinVersion),
@@ -148,6 +183,7 @@ func toTunnelPropertiesPb(props TunnelProperties) *pb.TunnelProperties {
 		MtlsCacertPem: stringPbValueOrNil(props.MTLSCACertPEM),
 		HttpVersion:   stringPbValueOrNil((*string)(props.HTTPVersion)),
 		HttpUseTls:    boolPbValueOrNil(props.HTTPUseTLS),
+		UpstreamTls:   boolPbValueOrNil(props.UpstreamTLS),
 		TokenAuth:     boolPbValueOrNil(props.TokenAuth),
 		RstreamAuth:   boolPbValueOrNil(props.RstreamAuth),
 		ChallengeMode: boolPbValueOrNil(props.ChallengeMode),

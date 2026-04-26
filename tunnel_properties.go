@@ -46,6 +46,8 @@ type TunnelProperties struct {
 	GeoIP         []string          `json:"geo_ip,omitempty"`
 	TrustedIPs    []string          `json:"trusted_ips,omitempty"`
 	Host          *string           `json:"host,omitempty"`
+	Hostname      *string           `json:"hostname,omitempty"`
+	Port          *uint32           `json:"port,omitempty"`
 	TLSMode       *TLSMode          `json:"tls_mode,omitempty"`
 	TLSALPNs      []string          `json:"tls_alpns,omitempty"`
 	TLSMinVersion *string           `json:"tls_min_version,omitempty"`
@@ -54,6 +56,7 @@ type TunnelProperties struct {
 	MTLSCACertPEM *string           `json:"mtls_ca_cert_pem,omitempty"`
 	HTTPVersion   *HTTPVersion      `json:"http_version,omitempty"`
 	HTTPUseTLS    *bool             `json:"http_use_tls,omitempty"`
+	UpstreamTLS   *bool             `json:"upstream_tls,omitempty"`
 	TokenAuth     *bool             `json:"token_auth,omitempty"`
 	RstreamAuth   *bool             `json:"rstream_auth,omitempty"`
 	ChallengeMode *bool             `json:"challenge_mode,omitempty"`
@@ -73,6 +76,7 @@ type ListTunnelsFilters struct {
 	ClientID    *string            `json:"client_id,omitempty"`
 	UserID      *string            `json:"user_id,omitempty"`
 	Protocol    *string            `json:"protocol,omitempty"`
+	Hostname    *string            `json:"hostname,omitempty"`
 	Publish     *bool              `json:"publish,omitempty"`
 	HTTPVersion *string            `json:"http_version,omitempty"`
 	Labels      map[string]*string `json:"labels,omitempty"`

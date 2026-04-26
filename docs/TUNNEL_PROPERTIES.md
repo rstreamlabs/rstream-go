@@ -34,7 +34,13 @@ The edge enforces compatibility between these fields. Conceptually: TLS is alway
 
 ## Forwarding hostname
 
-For published tunnels, the server allocates the public forwarding hostname and returns it in `host`. The hostname is server-managed to ensure uniqueness and correct routing. Clients must not set `host`.
+For published tunnels, the server returns the public forwarding hostname in `hostname` and the public forwarding port in `port`. `port` is server-managed and read-only.
+
+Clients may set `hostname` to request a stable domain when it matches the engine-owned pattern `<slug>-<project-endpoint>.t.<cluster-domain>`. The server validates the hostname, verifies that the embedded project endpoint matches the authenticated project, and rejects hostnames already used by another active tunnel.
+
+When no hostname is provided, the CLI generates a stable domain for reconnecting commands when it can infer the project endpoint from the configured engine. If generation is not possible, the server falls back to an allocated hostname.
+
+`host` is deprecated and read-only. It remains populated as a compatibility authority string for older clients, but new clients should read `hostname` and `port`.
 
 ## HTTP tunnels
 
@@ -44,9 +50,13 @@ HTTP tunnels accept HTTP traffic at the edge and forward HTTP requests to your u
 
 The upstream hop supports two modes.
 
-If `http_use_tls=false`, the upstream HTTP variant is explicit via `http_version`: use `http/1.1` for cleartext HTTP/1.1, or `h2c` for HTTP/2 over cleartext (prior knowledge).
+If `upstream_tls=false`, the upstream HTTP variant is explicit via `http_version`: use `http/1.1` for cleartext HTTP/1.1, or `h2c` for HTTP/2 over cleartext (prior knowledge).
 
-If `http_use_tls=true`, the edge connects to the upstream over TLS and selects the upstream application protocol via ALPN. In practice this means the upstream becomes HTTP/1.1-over-TLS or HTTP/2-over-TLS depending on what the upstream negotiates. Because ALPN is a negotiated choice, forcing `http_version` while enabling `http_use_tls` expresses conflicting intent and is not allowed.
+If `upstream_tls=true`, the edge connects to the upstream over TLS and selects the upstream application protocol via ALPN. In practice this means the upstream becomes HTTP/1.1-over-TLS or HTTP/2-over-TLS depending on what the upstream negotiates. Because ALPN is a negotiated choice, forcing `http_version` while enabling `upstream_tls` expresses conflicting intent and is not allowed.
+
+`http_use_tls` is deprecated. It is still accepted for compatibility with existing clients, but setting both `http_use_tls` and `upstream_tls` with conflicting values is rejected.
+
+For non-HTTP published protocols, `upstream_tls` controls the upstream security mode where applicable: TLS tunnels use a TLS upstream connection when TLS is terminated at the edge, DTLS tunnels use DTLS upstream, and QUIC tunnels require upstream TLS semantics. TLS passthrough tunnels reject `upstream_tls` because the edge does not terminate or re-originate TLS.
 
 ### Token-based access control
 

@@ -32,6 +32,20 @@ import (
 
 const quicEchoALPN = "rstream-datagram-echo"
 
+func quicALPNs(tlsALPN string) []string {
+	if tlsALPN != "" {
+		return []string{tlsALPN}
+	}
+	return []string{quicEchoALPN}
+}
+
+func dtlsALPNs(tlsALPN string) []string {
+	if tlsALPN != "" {
+		return []string{tlsALPN}
+	}
+	return nil
+}
+
 // hostPortFromAddr extracts a bare host:port, stripping any scheme prefix and
 // trailing protocol annotation (e.g. " (dtls)", " (quic)").
 func hostPortFromAddr(addr, defaultPort string) string {
@@ -62,7 +76,7 @@ func runDTLSUnpublished(ctx context.Context, client *rstream.Client, tunnelName 
 	return dtlsEcho(packetConn, &raddr)
 }
 
-func runDTLSPublished(ctx context.Context, addr string) error {
+func runDTLSPublished(ctx context.Context, addr, tlsALPN string) error {
 	hp := hostPortFromAddr(addr, "4433")
 	hostname, _, _ := net.SplitHostPort(hp)
 	udpAddr, err := net.ResolveUDPAddr("udp", hp)
@@ -72,9 +86,18 @@ func runDTLSPublished(ctx context.Context, addr string) error {
 	conn, err := dtls.Dial("udp", udpAddr, &dtls.Config{
 		ServerName:         hostname,
 		InsecureSkipVerify: true,
+		SupportedProtocols: dtlsALPNs(tlsALPN),
 	})
 	if err != nil {
 		return fmt.Errorf("dtls dial %s: %w", hp, err)
+	}
+	if err := conn.HandshakeContext(ctx); err != nil {
+		return fmt.Errorf("dtls handshake %s: %w", hp, err)
+	}
+	if tlsALPN != "" {
+		if state, ok := conn.ConnectionState(); !ok || state.NegotiatedProtocol != tlsALPN {
+			return fmt.Errorf("unexpected DTLS ALPN: got %q, want %q", state.NegotiatedProtocol, tlsALPN)
+		}
 	}
 	pc := rstream.PacketConnFromDTLSConn(conn)
 	defer pc.Close()
@@ -112,7 +135,7 @@ func runQUICUnpublished(ctx context.Context, client *rstream.Client, tunnelName 
 	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 	transport := quic.Transport{Conn: packetConn}
 	conn, err := transport.Dial(ctx, &raddr,
-		&tls.Config{InsecureSkipVerify: true, NextProtos: []string{quicEchoALPN}},
+		&tls.Config{InsecureSkipVerify: true, NextProtos: quicALPNs("")},
 		&quic.Config{EnableDatagrams: true})
 	if err != nil {
 		return fmt.Errorf("quic dial: %w", err)
@@ -120,15 +143,18 @@ func runQUICUnpublished(ctx context.Context, client *rstream.Client, tunnelName 
 	return quicEcho(ctx, conn)
 }
 
-func runQUICPublished(ctx context.Context, addr string) error {
+func runQUICPublished(ctx context.Context, addr, tlsALPN string) error {
 	hp := hostPortFromAddr(addr, "443")
 	hostname, _, _ := net.SplitHostPort(hp)
 	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 	conn, err := quic.DialAddr(ctx, hp,
-		&tls.Config{ServerName: hostname, InsecureSkipVerify: true, NextProtos: []string{quicEchoALPN}},
+		&tls.Config{ServerName: hostname, InsecureSkipVerify: true, NextProtos: quicALPNs(tlsALPN)},
 		&quic.Config{EnableDatagrams: true})
 	if err != nil {
 		return fmt.Errorf("quic dial %s: %w", hp, err)
+	}
+	if tlsALPN != "" && conn.ConnectionState().TLS.NegotiatedProtocol != tlsALPN {
+		return fmt.Errorf("unexpected QUIC ALPN: got %q, want %q", conn.ConnectionState().TLS.NegotiatedProtocol, tlsALPN)
 	}
 	return quicEcho(ctx, conn)
 }
@@ -173,6 +199,7 @@ func quicEcho(ctx context.Context, conn *quic.Conn) error {
 func main() {
 	variant := flag.String("variant", "dtls", "variant: dtls, quic")
 	addr := flag.String("addr", "", "forwarding address for direct (published) connection")
+	tlsALPN := flag.String("tls-alpn", "", "custom ALPN for published DTLS or QUIC tunnels")
 	tunnelPrefix := flag.String("tunnel", "datagram-matrix", "tunnel name prefix for SDK dialer")
 	timeout := flag.Duration("timeout", 30*time.Second, "per-case timeout")
 	flag.Parse()
@@ -199,13 +226,13 @@ func main() {
 	switch *variant {
 	case "dtls":
 		if *addr != "" {
-			runErr = runDTLSPublished(tctx, *addr)
+			runErr = runDTLSPublished(tctx, *addr, *tlsALPN)
 		} else {
 			runErr = runDTLSUnpublished(tctx, client, *tunnelPrefix+"-dtls")
 		}
 	case "quic":
 		if *addr != "" {
-			runErr = runQUICPublished(tctx, *addr)
+			runErr = runQUICPublished(tctx, *addr, *tlsALPN)
 		} else {
 			runErr = runQUICUnpublished(tctx, client, *tunnelPrefix+"-quic")
 		}

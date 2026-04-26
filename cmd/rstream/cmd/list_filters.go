@@ -40,6 +40,8 @@ func buildTunnelListParams(filter string) (*rstream.ListTunnelsParams, error) {
 			fp.UserID = &val
 		case key == "protocol":
 			fp.Protocol = &val
+		case key == "hostname":
+			fp.Hostname = &val
 		case key == "publish":
 			b, err := parseBool(val)
 			if err != nil {
