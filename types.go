@@ -14,6 +14,7 @@ import (
 func StringPtr(s string) *string { return &s }
 func BoolPtr(b bool) *bool       { return &b }
 func Uint16Ptr(u uint16) *uint16 { return &u }
+func Uint32Ptr(u uint32) *uint32 { return &u }
 
 func StrOrUndef(s *string) string {
 	if s == nil {
@@ -41,6 +42,13 @@ func boolPbValueOrNil(b *bool) *wrapperspb.BoolValue {
 	return &wrapperspb.BoolValue{Value: *b}
 }
 
+func uint32PbValueOrNil(u *uint32) *wrapperspb.UInt32Value {
+	if u == nil {
+		return nil
+	}
+	return &wrapperspb.UInt32Value{Value: *u}
+}
+
 func timestampPbValueOrNil(t *time.Time) *timestamppb.Timestamp {
 	if t == nil {
 		return nil
@@ -60,6 +68,13 @@ func boolPtrFromPbValue(b *wrapperspb.BoolValue) *bool {
 		return nil
 	}
 	return &b.Value
+}
+
+func uint32PtrFromPbValue(u *wrapperspb.UInt32Value) *uint32 {
+	if u == nil {
+		return nil
+	}
+	return &u.Value
 }
 
 func timePtrFromPbValue(t *timestamppb.Timestamp) *time.Time {

@@ -117,7 +117,7 @@ func printTunnelsTable(w io.Writer, list *rstream.ListTunnelsResponse) error {
 		return si < sj
 	})
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tNAME\tTYPE\tPROTOCOL\tPUBLISH\tDOMAIN/HOST\tHTTP_VERSION\tHTTP_TLS")
+	fmt.Fprintln(tw, "ID\tNAME\tTYPE\tPROTOCOL\tPUBLISH\tDOMAIN/HOST\tHTTP_VERSION\tUPSTREAM_TLS")
 	for _, t := range *list {
 		id := str(t.ID)
 		name := str(t.Name)
@@ -134,15 +134,17 @@ func printTunnelsTable(w io.Writer, list *rstream.ListTunnelsResponse) error {
 			pub = strconv.FormatBool(*t.Publish)
 		}
 		host := "-"
-		if t.Host != nil && *t.Host != "" {
-			host = *t.Host
+		if forwarding, err := rstream.FormatForwardingAddr(t.TunnelProperties); err == nil {
+			host = forwarding
 		}
 		httpv := "-"
 		if t.HTTPVersion != nil {
 			httpv = string(*t.HTTPVersion)
 		}
 		httptls := "-"
-		if t.HTTPUseTLS != nil {
+		if t.UpstreamTLS != nil {
+			httptls = strconv.FormatBool(*t.UpstreamTLS)
+		} else if t.HTTPUseTLS != nil {
 			httptls = strconv.FormatBool(*t.HTTPUseTLS)
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", id, name, tt, proto, pub, host, httpv, httptls)
