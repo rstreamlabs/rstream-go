@@ -29,15 +29,16 @@ type TunnelEntry struct {
 }
 
 type TunnelSpec struct {
-	Publish    *bool             `yaml:"publish,omitempty"`
-	Labels     map[string]string `yaml:"labels,omitempty"`
-	Protocol   string            `yaml:"protocol,omitempty"`
-	Type       string            `yaml:"type,omitempty"`
-	Host       string            `yaml:"host,omitempty"`
-	TrustedIPs []string          `yaml:"trustedIPs,omitempty"`
-	GeoIP      []string          `yaml:"geoip,omitempty"`
-	HTTP       *HTTPSpec         `yaml:"http,omitempty"`
-	TLS        *TLSSpec          `yaml:"tls,omitempty"`
+	Publish     *bool             `yaml:"publish,omitempty"`
+	Labels      map[string]string `yaml:"labels,omitempty"`
+	Protocol    string            `yaml:"protocol,omitempty"`
+	Type        string            `yaml:"type,omitempty"`
+	Host        string            `yaml:"host,omitempty"`
+	UpstreamTLS *bool             `yaml:"upstreamTLS,omitempty"`
+	TrustedIPs  []string          `yaml:"trustedIPs,omitempty"`
+	GeoIP       []string          `yaml:"geoip,omitempty"`
+	HTTP        *HTTPSpec         `yaml:"http,omitempty"`
+	TLS         *TLSSpec          `yaml:"tls,omitempty"`
 }
 
 type HTTPSpec struct {
@@ -299,13 +300,23 @@ func tunnelPropertiesFromSpec(spec *TunnelSpec) (rstream.TunnelProperties, error
 	}
 	if strings.TrimSpace(spec.Host) != "" {
 		host := strings.TrimSpace(spec.Host)
-		props.Host = &host
+		props.Hostname = &host
+	}
+	if spec.UpstreamTLS != nil {
+		props.UpstreamTLS = spec.UpstreamTLS
+		if props.Protocol == nil || *props.Protocol == rstream.ProtocolHTTP {
+			props.HTTPUseTLS = spec.UpstreamTLS
+		}
 	}
 	if spec.HTTP != nil {
 		if props.Protocol != nil && *props.Protocol != rstream.ProtocolHTTP {
 			return props, fmt.Errorf("http settings require protocol %q", rstream.ProtocolHTTP)
 		}
 		if spec.HTTP.UpstreamTLS != nil {
+			if props.UpstreamTLS != nil && *props.UpstreamTLS != *spec.HTTP.UpstreamTLS {
+				return props, fmt.Errorf("HTTP upstream TLS option conflicts with tunnel upstream TLS option")
+			}
+			props.UpstreamTLS = spec.HTTP.UpstreamTLS
 			props.HTTPUseTLS = spec.HTTP.UpstreamTLS
 		}
 		if spec.HTTP.Version != "" {

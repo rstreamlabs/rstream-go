@@ -130,7 +130,7 @@ func init() {
 	forwardCmd.Flags().StringArray("label", nil, "set tunnel labels (key=value, might be specified multiple times)")
 	forwardCmd.Flags().String("geoip", "", "comma-separated allowed countries (ISO 3166-1 alpha-2)")
 	forwardCmd.Flags().String("trusted-ips", "", "comma-separated allowed IP/CIDR ranges")
-	forwardCmd.Flags().String("host", "", "host name for publishing")
+	forwardCmd.Flags().String("host", "", "Stable domain for publishing")
 	forwardCmd.Flags().String("tls-mode", "", "TLS mode (terminated, passthrough)")
 	forwardCmd.Flags().String("tls-alpn", "", "comma-separated ALPN protocols")
 	forwardCmd.Flags().String("tls-min-version", "", "minimum TLS version (tls1.2, tls1.3)")
@@ -139,7 +139,8 @@ func init() {
 	forwardCmd.Flags().String("mtls-cacert-file", "", "path to CA cert PEM file for mTLS")
 	forwardCmd.MarkFlagsRequiredTogether("mtls", "mtls-cacert-file")
 	forwardCmd.Flags().String("http-version", "", "HTTP version (http/1.1, h2c, h3)")
-	forwardCmd.Flags().Bool("http-use-tls", false, "use TLS for upstream")
+	forwardCmd.Flags().Bool("upstream-tls", false, "use TLS for the upstream side")
+	forwardCmd.Flags().Bool("http-use-tls", false, "use TLS for HTTP upstream (deprecated; use --upstream-tls)")
 	forwardCmd.Flags().Bool("token-auth", false, "enable token-based HTTP authentication")
 	forwardCmd.Flags().Bool("rstream-auth", false, "require rstream account authentication (HTTP only)")
 	forwardCmd.Flags().Bool("challenge-mode", false, "require an interactive challenge before access (HTTP only)")
@@ -162,6 +163,9 @@ func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {
 	props, err := newTunnelPropertiesFromFlags(cmd)
 	if err != nil {
 		return nil, err
+	}
+	if err := rstream.MaybeSetGeneratedStableDomain(props, runtime.Resolved.Engine); err != nil {
+		return nil, fmt.Errorf("failed to generate stable domain: %w", err)
 	}
 	retryPtr := getBoolPtr(cmd, "retry")
 	noRetryPtr := getBoolPtr(cmd, "no-retry")

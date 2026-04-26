@@ -44,11 +44,12 @@ tunnels:
         app: "web"
       protocol: "http"           # http|tls|dtls|quic
       type: "bytestream"         # bytestream|datagram (optional)
-      host: "example.com"        # optional
+      host: "web-project.t.cluster.example.com" # optional stable domain
+      upstreamTLS: true          # optional, applies to published protocols
       trustedIPs: ["10.0.0.0/8"]
       geoip: ["FR", "DE"]
       http:
-        upstreamTLS: true
+        upstreamTLS: true        # deprecated alias for HTTP-only configs
         version: "http/1.1"      # http/1.1|h2c|h3
         auth:
           token: true
@@ -115,12 +116,13 @@ labels:
 - `rstream.tunnel.<name>.publish` (true|false, default true)
 - `rstream.tunnel.<name>.protocol` (http|tls|dtls|quic, default http)
 - `rstream.tunnel.<name>.type` (bytestream|datagram)
-- `rstream.tunnel.<name>.host`
+- `rstream.tunnel.<name>.host` (Stable domain)
+- `rstream.tunnel.<name>.upstream-tls` (true|false)
 - `rstream.tunnel.<name>.label.<k>=<v>` (repeatable)
 - `rstream.tunnel.<name>.trusted-ips` (comma-separated)
 - `rstream.tunnel.<name>.geoip` (comma-separated)
 - `rstream.tunnel.<name>.http.version` (http/1.1|h2c|h3)
-- `rstream.tunnel.<name>.http.upstreamTLS` (true|false)
+- `rstream.tunnel.<name>.http.upstreamTLS` (true|false, deprecated alias)
 - `rstream.tunnel.<name>.http.auth.token` (true|false)
 - `rstream.tunnel.<name>.http.auth.rstream` (true|false)
 - `rstream.tunnel.<name>.http.gate.challenge` (true|false)

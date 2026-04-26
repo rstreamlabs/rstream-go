@@ -32,7 +32,7 @@ import (
 	"github.com/rstreamlabs/rstream-go/config"
 )
 
-func generateTLSConfig() (*tls.Config, error) {
+func generateTLSConfig(tlsALPN string) (*tls.Config, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, err
@@ -48,11 +48,30 @@ func generateTLSConfig() (*tls.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &tls.Config{Certificates: []tls.Certificate{tlsCert}, NextProtos: []string{"http/1.1"}}, nil
+	nextProtos := []string{"http/1.1"}
+	if tlsALPN != "" {
+		nextProtos = []string{tlsALPN}
+	}
+	return &tls.Config{Certificates: []tls.Certificate{tlsCert}, NextProtos: nextProtos}, nil
 }
 
-func echoConn(conn net.Conn) {
+func echoConn(conn net.Conn, expectedALPN string) {
 	defer conn.Close()
+	if expectedALPN != "" {
+		tlsConn, ok := conn.(*tls.Conn)
+		if !ok {
+			log.Printf("expected TLS connection with ALPN %q, got %T", expectedALPN, conn)
+			return
+		}
+		if err := tlsConn.Handshake(); err != nil {
+			log.Printf("tls handshake error: %v", err)
+			return
+		}
+		if got := tlsConn.ConnectionState().NegotiatedProtocol; got != expectedALPN {
+			log.Printf("unexpected ALPN: got %q, want %q", got, expectedALPN)
+			return
+		}
+	}
 	buf := make([]byte, 4096)
 	for {
 		n, err := conn.Read(buf)
@@ -70,7 +89,7 @@ func echoConn(conn net.Conn) {
 	}
 }
 
-func serveListener(ctx context.Context, l net.Listener) error {
+func serveListener(ctx context.Context, l net.Listener, expectedALPN string) error {
 	go func() {
 		<-ctx.Done()
 		_ = l.Close()
@@ -80,11 +99,11 @@ func serveListener(ctx context.Context, l net.Listener) error {
 		if err != nil {
 			return err
 		}
-		go echoConn(conn)
+		go echoConn(conn, expectedALPN)
 	}
 }
 
-func run(ctx context.Context, client *rstream.Client, variant, name string, publish bool) error {
+func run(ctx context.Context, client *rstream.Client, variant, name string, publish bool, hostname, tlsALPN string, upstreamTLS bool) error {
 	ctrl, err := client.Connect(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
@@ -95,48 +114,48 @@ func run(ctx context.Context, client *rstream.Client, variant, name string, publ
 		Type:    rstream.TunnelTypePtr(rstream.TunnelTypeBytestream),
 		Publish: rstream.BoolPtr(publish),
 	}
+	if hostname != "" {
+		props.Hostname = rstream.StringPtr(hostname)
+	}
 	if variant == "tls" && publish {
-		// Published mode: engine's TLS listener handles the TLS handshake;
-		// the server receives plain bytes over the tunnel.
 		props.Protocol = rstream.ProtocolPtr(rstream.ProtocolTLS)
+		if tlsALPN != "" {
+			props.TLSALPNs = []string{tlsALPN}
+		}
+		if upstreamTLS {
+			props.UpstreamTLS = rstream.BoolPtr(true)
+		}
 	}
 	tunnel, err := ctrl.CreateTunnel(ctx, props)
 	if err != nil {
 		return fmt.Errorf("create tunnel: %w", err)
 	}
 	defer tunnel.Close()
-	tprops, err := tunnel.Properties()
+	fwdAddr, err := tunnel.ForwardingAddress()
 	if err != nil {
-		return fmt.Errorf("tunnel properties: %w", err)
+		return fmt.Errorf("forwarding address: %w", err)
 	}
-	// Published tunnels: Host is the clean edge address (no annotation).
-	// Unpublished tunnels: Host is nil; print the tunnel name as a ready signal.
-	if tprops.Host != nil {
-		fmt.Printf("READY %s\n", *tprops.Host)
-	} else if tprops.Name != nil {
-		fmt.Printf("READY rstrm://%s\n", *tprops.Name)
-	} else {
-		fmt.Printf("READY\n")
-	}
+	fmt.Printf("READY %s\n", fwdAddr)
 	bs, ok := tunnel.(rstream.BytestreamTunnel)
 	if !ok {
 		return fmt.Errorf("tunnel is not BytestreamTunnel")
 	}
-	if variant == "tls" && !publish {
-		// Unpublished mode: TLS is handled at the application layer;
-		// the engine relays raw bytes and the server terminates TLS itself.
-		tlsCfg, err := generateTLSConfig()
+	if variant == "tls" && (!publish || upstreamTLS) {
+		tlsCfg, err := generateTLSConfig(tlsALPN)
 		if err != nil {
 			return fmt.Errorf("TLS config: %w", err)
 		}
-		return serveListener(ctx, tls.NewListener(bs, tlsCfg))
+		return serveListener(ctx, tls.NewListener(bs, tlsCfg), tlsALPN)
 	}
-	return serveListener(ctx, bs)
+	return serveListener(ctx, bs, "")
 }
 
 func main() {
 	variant := flag.String("variant", "plain", "variant: plain, tls")
 	publish := flag.Bool("publish", false, "publish the tunnel on the engine's TLS listener")
+	hostname := flag.String("host", "", "requested tunnel hostname")
+	tlsALPN := flag.String("tls-alpn", "", "custom ALPN for published TLS tunnels")
+	upstreamTLS := flag.Bool("upstream-tls", false, "connect from the edge to this server with upstream TLS")
 	name := flag.String("name", "", "tunnel name (default: stream-matrix-<variant>[-pub])")
 	flag.Parse()
 	if *name == "" {
@@ -157,7 +176,7 @@ func main() {
 		<-sigCh
 		cancel()
 	}()
-	if err := run(ctx, client, *variant, *name, *publish); err != nil {
+	if err := run(ctx, client, *variant, *name, *publish, *hostname, *tlsALPN, *upstreamTLS); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }

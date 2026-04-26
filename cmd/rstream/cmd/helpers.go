@@ -138,7 +138,7 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 	labels := getStringArrayMap(cmd, "label")
 	geoipSlice := getStringSlice(cmd, "geoip")
 	trustedIPsSlice := getStringSlice(cmd, "trusted-ips")
-	hostPtr := getStringPtr(cmd, "host")
+	hostnamePtr := getStringPtr(cmd, "host")
 	var tlsModePtr *rstream.TLSMode
 	if cmd.Flags().Lookup("tls-mode").Changed {
 		val, _ := cmd.Flags().GetString("tls-mode")
@@ -175,9 +175,19 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 		case "h2c":
 			tmp := rstream.HTTP2
 			httpVersionPtr = &tmp
+		case string(rstream.HTTP3):
+			tmp := rstream.HTTP3
+			httpVersionPtr = &tmp
 		}
 	}
 	httpUseTLSPtr := getBoolPtr(cmd, "http-use-tls")
+	upstreamTLSPtr := getBoolPtr(cmd, "upstream-tls")
+	if upstreamTLSPtr == nil {
+		upstreamTLSPtr = httpUseTLSPtr
+	}
+	if httpUseTLSPtr == nil && upstreamTLSPtr != nil && (protocol == nil || *protocol == rstream.ProtocolHTTP) {
+		httpUseTLSPtr = upstreamTLSPtr
+	}
 	tokenAuthPtr := getBoolPtr(cmd, "token-auth")
 	rstreamAuthPtr := getBoolPtr(cmd, "rstream-auth")
 	challengeModePtr := getBoolPtr(cmd, "challenge-mode")
@@ -194,7 +204,7 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 		Labels:        labels,
 		GeoIP:         geoipSlice,
 		TrustedIPs:    trustedIPsSlice,
-		Host:          hostPtr,
+		Hostname:      hostnamePtr,
 		TLSMode:       tlsModePtr,
 		TLSALPNs:      tlsALPNSlice,
 		TLSMinVersion: tlsMinVersionPtr,
@@ -203,6 +213,7 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 		MTLSCACertPEM: mtlsCACertPtr,
 		HTTPVersion:   httpVersionPtr,
 		HTTPUseTLS:    httpUseTLSPtr,
+		UpstreamTLS:   upstreamTLSPtr,
 		TokenAuth:     tokenAuthPtr,
 		RstreamAuth:   rstreamAuthPtr,
 		ChallengeMode: challengeModePtr,

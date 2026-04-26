@@ -68,11 +68,12 @@ var webttyServerCmd = &cobra.Command{
 		}
 		shutdownTimeoutMs, _ := cmd.Flags().GetInt64("shutdown-timeout")
 		shutdownTimeout := time.Duration(shutdownTimeoutMs) * time.Millisecond
+		var stableHostname *string
 		for {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			err := runWebTTYServerOnce(ctx, cmd, logger, shutdownTimeout)
+			err := runWebTTYServerOnce(ctx, cmd, logger, shutdownTimeout, &stableHostname)
 			if err == nil {
 				return nil
 			}
@@ -89,7 +90,7 @@ var webttyServerCmd = &cobra.Command{
 	},
 }
 
-func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.Logger, shutdownTimeout time.Duration) error {
+func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.Logger, shutdownTimeout time.Duration, stableHostname **string) error {
 	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{SessionCloseDeadline: &shutdownTimeout, Logger: logger})
 	server := &http.Server{Handler: handler}
 	var listener net.Listener
@@ -109,6 +110,16 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 		}
 		defer ctrl.Close()
 		props := newWebTTYServerTunnelProperties(cmd)
+		if stableHostname != nil && *stableHostname != nil {
+			props.Hostname = *stableHostname
+		} else {
+			if err := rstream.MaybeSetGeneratedStableDomain(&props, runtime.Resolved.Engine); err != nil {
+				return fmt.Errorf("failed to generate stable domain: %w", err)
+			}
+			if stableHostname != nil {
+				*stableHostname = props.Hostname
+			}
+		}
 		tunnel, err := ctrl.CreateTunnel(ctx, props)
 		if err != nil {
 			return fmt.Errorf("failed to create tunnel: %w", err)

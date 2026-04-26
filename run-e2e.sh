@@ -41,8 +41,10 @@ start_server() {
   local label="$1" suite="$2"
   shift 2
   local tmpout
+  local exe="$BIN/$suite"
+  [ -d "$exe" ] && exe="$exe/server"
   tmpout=$(mktemp)
-  "$BIN/$suite/server" "$@" >"$tmpout" 2>&1 &
+  "$exe" "$@" >"$tmpout" 2>&1 &
   SERVER_PID=$!
   local i=0
   while [ $i -lt 20 ]; do
@@ -72,10 +74,25 @@ run_client() {
   local label="$1" suite="$2"
   shift 2
   local out
-  if out=$("$BIN/$suite/client" "$@" 2>&1); then
+  local exe="$BIN/$suite"
+  [ -d "$exe" ] && exe="$exe/client"
+  if out=$("$exe" "$@" 2>&1); then
     log_pass "$label"
   else
     log_fail "$label" "$(echo "$out" | tail -3 | tr '\n' ' ')"
+  fi
+}
+
+run_client_expect_fail() {
+  local label="$1" suite="$2"
+  shift 2
+  local out
+  local exe="$BIN/$suite"
+  [ -d "$exe" ] && exe="$exe/client"
+  if out=$("$exe" "$@" 2>&1); then
+    log_fail "$label" "client succeeded unexpectedly"
+  else
+    log_pass "$label"
   fi
 }
 
@@ -98,6 +115,26 @@ if start_server "stream/tls" stream/server --variant tls; then
   stop_server
 fi
 
+if start_server "stream/tls-published" stream/server --variant tls --publish --tls-alpn rstream-stream-echo; then
+  run_client "stream/tls-published" stream/client --variant tls --addr "$SERVER_ADDR" --tls-alpn rstream-stream-echo
+  stop_server
+fi
+
+if start_server "stream/tls-published-alpn-reject" stream/server --variant tls --publish --tls-alpn rstream-stream-echo; then
+  run_client_expect_fail "stream/tls-published-alpn-reject" stream/client --variant tls --addr "$SERVER_ADDR" --tls-alpn rstream-stream-wrong
+  stop_server
+fi
+
+if start_server "stream/tls-published-upstream-tls" stream/server --variant tls --publish --tls-alpn rstream-stream-echo --upstream-tls; then
+  run_client "stream/tls-published-upstream-tls" stream/client --variant tls --addr "$SERVER_ADDR" --tls-alpn rstream-stream-echo
+  stop_server
+fi
+
+if start_server "stream/tls-published-upstream-tls-alpn-reject" stream/server --variant tls --publish --tls-alpn rstream-stream-echo --upstream-tls; then
+  run_client_expect_fail "stream/tls-published-upstream-tls-alpn-reject" stream/client --variant tls --addr "$SERVER_ADDR" --tls-alpn rstream-stream-wrong
+  stop_server
+fi
+
 echo "=== datagram ==="
 if start_server "datagram/dtls" datagram/server --variant dtls; then
   run_client "datagram/dtls" datagram/client --variant dtls
@@ -106,6 +143,36 @@ fi
 
 if start_server "datagram/quic" datagram/server --variant quic; then
   run_client "datagram/quic" datagram/client --variant quic
+  stop_server
+fi
+
+if start_server "datagram/dtls-published" datagram/server --variant dtls --publish --tls-alpn rstream-dtls-echo; then
+  run_client "datagram/dtls-published" datagram/client --variant dtls --addr "$SERVER_ADDR" --tls-alpn rstream-dtls-echo
+  stop_server
+fi
+
+if start_server "datagram/dtls-published-alpn-reject" datagram/server --variant dtls --publish --tls-alpn rstream-dtls-echo; then
+  run_client_expect_fail "datagram/dtls-published-alpn-reject" datagram/client --variant dtls --addr "$SERVER_ADDR" --tls-alpn rstream-dtls-wrong
+  stop_server
+fi
+
+if start_server "datagram/dtls-published-upstream-tls" datagram/server --variant dtls --publish --tls-alpn rstream-dtls-echo --upstream-tls; then
+  run_client "datagram/dtls-published-upstream-tls" datagram/client --variant dtls --addr "$SERVER_ADDR" --tls-alpn rstream-dtls-echo
+  stop_server
+fi
+
+if start_server "datagram/dtls-published-upstream-tls-alpn-reject" datagram/server --variant dtls --publish --tls-alpn rstream-dtls-echo --upstream-tls; then
+  run_client_expect_fail "datagram/dtls-published-upstream-tls-alpn-reject" datagram/client --variant dtls --addr "$SERVER_ADDR" --tls-alpn rstream-dtls-wrong
+  stop_server
+fi
+
+if start_server "datagram/quic-published" datagram/server --variant quic --publish --tls-alpn rstream-quic-echo; then
+  run_client "datagram/quic-published" datagram/client --variant quic --addr "$SERVER_ADDR" --tls-alpn rstream-quic-echo
+  stop_server
+fi
+
+if start_server "datagram/quic-published-alpn-reject" datagram/server --variant quic --publish --tls-alpn rstream-quic-echo; then
+  run_client_expect_fail "datagram/quic-published-alpn-reject" datagram/client --variant quic --addr "$SERVER_ADDR" --tls-alpn rstream-quic-wrong
   stop_server
 fi
 
@@ -135,6 +202,12 @@ for up in h1 h2c h3; do
     stop_server
   fi
 done
+
+echo "=== webtransport ==="
+if start_server "webtransport/all" webtransport/server; then
+  run_client "webtransport/all" webtransport/client --case all
+  stop_server
+fi
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

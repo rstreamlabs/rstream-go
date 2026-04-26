@@ -3,6 +3,8 @@
 package webtty
 
 import (
+	"net"
+	"strconv"
 	"strings"
 
 	rstream "github.com/rstreamlabs/rstream-go"
@@ -59,6 +61,13 @@ func parseServer(tunnel rstream.TunnelInventory) (ServerInfo, bool) {
 	if name != "" {
 		target = name
 	}
+	host := trimStringPtr(tunnel.Hostname)
+	if host != "" && tunnel.Port != nil && *tunnel.Port != 443 {
+		host = net.JoinHostPort(host, strconv.FormatUint(uint64(*tunnel.Port), 10))
+	}
+	if host == "" {
+		host = trimStringPtr(tunnel.Host)
+	}
 	info := ServerInfo{
 		Status:            strings.TrimSpace(tunnel.Status),
 		TunnelID:          id,
@@ -66,7 +75,7 @@ func parseServer(tunnel rstream.TunnelInventory) (ServerInfo, bool) {
 		Target:            target,
 		RstreamURL:        "rstrm://" + target,
 		Publish:           tunnel.Publish != nil && *tunnel.Publish,
-		Host:              cloneStringPtr(trimStringPtr(tunnel.Host)),
+		Host:              cloneStringPtr(host),
 		TokenAuth:         tunnel.TokenAuth != nil && *tunnel.TokenAuth,
 		OSFamily:          cloneStringPtr(labels[webTTYOSFamilyLabel]),
 		Arch:              cloneStringPtr(labels[webTTYArchLabel]),

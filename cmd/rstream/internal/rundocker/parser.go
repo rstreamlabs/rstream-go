@@ -76,6 +76,9 @@ func ParseDesiredTunnels(info ContainerInfo, network string, ctx runmodel.Resolv
 			proto := rstream.ProtocolHTTP
 			props.Protocol = &proto
 		}
+		if props.UpstreamTLS != nil && *props.Protocol == rstream.ProtocolHTTP && props.HTTPUseTLS == nil {
+			props.HTTPUseTLS = props.UpstreamTLS
+		}
 		if err := validateHTTPSettings(props); err != nil {
 			return nil, fmt.Errorf("tunnel %q: %w", name, err)
 		}
@@ -135,8 +138,15 @@ func (l *labelSpec) apply(key, value string) error {
 	case key == "host":
 		v := strings.TrimSpace(value)
 		if v != "" {
-			l.props.Host = &v
+			l.props.Hostname = &v
 		}
+		return nil
+	case key == "upstream-tls":
+		v, err := parseBool(value)
+		if err != nil {
+			return err
+		}
+		l.props.UpstreamTLS = &v
 		return nil
 	case key == "trusted-ips":
 		l.props.TrustedIPs = splitCSV(value)
@@ -177,6 +187,10 @@ func (l *labelSpec) applyHTTP(key, value string) error {
 		if err != nil {
 			return err
 		}
+		if l.props.UpstreamTLS != nil && *l.props.UpstreamTLS != v {
+			return fmt.Errorf("HTTP upstream TLS option conflicts with tunnel upstream TLS option")
+		}
+		l.props.UpstreamTLS = &v
 		l.props.HTTPUseTLS = &v
 		return nil
 	case strings.HasPrefix(key, "auth."):

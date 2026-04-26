@@ -380,7 +380,7 @@ func run(ctx context.Context, client *rstream.Client, publish bool, publishedPro
 	if !ok {
 		return fmt.Errorf("tunnel does not implement rstream.PacketListener")
 	}
-	fmt.Printf("Server listening on %s\n", forwardingAddr)
+	fmt.Printf("READY %s\n", forwardingAddr)
 	tlsCfg, err := generateTLSConfig()
 	if err != nil {
 		return fmt.Errorf("failed to generate TLS config: %w", err)

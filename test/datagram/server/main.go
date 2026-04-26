@@ -27,6 +27,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/pion/dtls/v3"
 	"github.com/quic-go/quic-go"
 	rstream "github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
@@ -34,7 +35,21 @@ import (
 
 const quicEchoALPN = "rstream-datagram-echo"
 
-func generateTLSConfig() (*tls.Config, error) {
+func quicALPNs(tlsALPN string) []string {
+	if tlsALPN != "" {
+		return []string{tlsALPN}
+	}
+	return []string{quicEchoALPN}
+}
+
+func dtlsALPNs(tlsALPN string) []string {
+	if tlsALPN != "" {
+		return []string{tlsALPN}
+	}
+	return nil
+}
+
+func generateTLSConfig(tlsALPN string) (*tls.Config, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, err
@@ -52,7 +67,7 @@ func generateTLSConfig() (*tls.Config, error) {
 	}
 	return &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		NextProtos:   []string{quicEchoALPN},
+		NextProtos:   quicALPNs(tlsALPN),
 	}, nil
 }
 
@@ -105,8 +120,12 @@ func handleQUICDatagrams(conn *quic.Conn) {
 	}
 }
 
-func handleQUICConn(conn *quic.Conn) {
+func handleQUICConn(conn *quic.Conn, expectedALPN string) {
 	defer conn.CloseWithError(0, "server done")
+	if expectedALPN != "" && conn.ConnectionState().TLS.NegotiatedProtocol != expectedALPN {
+		log.Printf("quic: unexpected ALPN: got %q, want %q", conn.ConnectionState().TLS.NegotiatedProtocol, expectedALPN)
+		return
+	}
 	go handleQUICDatagrams(conn)
 	for {
 		stream, err := conn.AcceptStream(context.Background())
@@ -117,7 +136,29 @@ func handleQUICConn(conn *quic.Conn) {
 	}
 }
 
-func createTunnel(ctx context.Context, client *rstream.Client, variant, name string, publish bool) (rstream.Tunnel, error) {
+func handleDTLSUpstreamConn(conn net.PacketConn, raddr net.Addr, certs []tls.Certificate, tlsALPN string) {
+	dtlsConn, err := dtls.Server(conn, raddr, &dtls.Config{Certificates: certs, SupportedProtocols: dtlsALPNs(tlsALPN)})
+	if err != nil {
+		log.Printf("dtls upstream: handshake error: %v", err)
+		conn.Close()
+		return
+	}
+	if err := dtlsConn.Handshake(); err != nil {
+		log.Printf("dtls upstream: handshake error: %v", err)
+		dtlsConn.Close()
+		return
+	}
+	if tlsALPN != "" {
+		if state, ok := dtlsConn.ConnectionState(); !ok || state.NegotiatedProtocol != tlsALPN {
+			log.Printf("dtls upstream: unexpected ALPN: got %q, want %q", state.NegotiatedProtocol, tlsALPN)
+			dtlsConn.Close()
+			return
+		}
+	}
+	handleDTLSConn(rstream.PacketConnFromDTLSConn(dtlsConn))
+}
+
+func createTunnel(ctx context.Context, client *rstream.Client, variant, name string, publish bool, hostname, tlsALPN string, upstreamTLS bool) (rstream.Tunnel, error) {
 	ctrl, err := client.Connect(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
@@ -127,12 +168,21 @@ func createTunnel(ctx context.Context, client *rstream.Client, variant, name str
 		Type:    rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
 		Publish: rstream.BoolPtr(publish),
 	}
+	if hostname != "" {
+		props.Hostname = rstream.StringPtr(hostname)
+	}
 	if publish {
 		switch variant {
 		case "dtls":
 			props.Protocol = rstream.ProtocolPtr(rstream.ProtocolDTLS)
+			if upstreamTLS {
+				props.UpstreamTLS = rstream.BoolPtr(true)
+			}
 		case "quic":
 			props.Protocol = rstream.ProtocolPtr(rstream.ProtocolQUIC)
+		}
+		if tlsALPN != "" {
+			props.TLSALPNs = []string{tlsALPN}
 		}
 	}
 	tunnel, err := ctrl.CreateTunnel(ctx, props)
@@ -148,25 +198,16 @@ func createTunnel(ctx context.Context, client *rstream.Client, variant, name str
 	return tunnel, nil
 }
 
-// tunnelReady returns the string to print after "READY ".
-// For published tunnels it is the clean edge address (no annotation).
-// For unpublished tunnels it is the tunnel name prefixed with "rstrm://".
 func tunnelReady(tunnel rstream.Tunnel) (string, error) {
-	props, err := tunnel.Properties()
+	host, err := tunnel.ForwardingAddress()
 	if err != nil {
-		return "", fmt.Errorf("tunnel properties: %w", err)
+		return "", fmt.Errorf("forwarding address: %w", err)
 	}
-	if props.Host != nil {
-		return *props.Host, nil
-	}
-	if props.Name != nil {
-		return "rstrm://" + *props.Name, nil
-	}
-	return "", fmt.Errorf("tunnel has neither host nor name")
+	return host, nil
 }
 
-func runDTLS(ctx context.Context, client *rstream.Client, name string, publish bool) error {
-	tunnel, err := createTunnel(ctx, client, "dtls", name, publish)
+func runDTLS(ctx context.Context, client *rstream.Client, name string, publish bool, hostname, tlsALPN string, upstreamTLS bool) error {
+	tunnel, err := createTunnel(ctx, client, "dtls", name, publish, hostname, tlsALPN, upstreamTLS)
 	if err != nil {
 		return err
 	}
@@ -179,18 +220,30 @@ func runDTLS(ctx context.Context, client *rstream.Client, name string, publish b
 	if !ok {
 		return fmt.Errorf("tunnel does not implement rstream.PacketListener")
 	}
+	var certs []tls.Certificate
+	if upstreamTLS {
+		tlsCfg, err := generateTLSConfig("")
+		if err != nil {
+			return fmt.Errorf("tls config: %w", err)
+		}
+		certs = tlsCfg.Certificates
+	}
 	fmt.Printf("READY %s\n", host)
 	for {
-		conn, _, err := packetListener.Accept()
+		conn, raddr, err := packetListener.Accept()
 		if err != nil {
 			return fmt.Errorf("accept: %w", err)
+		}
+		if upstreamTLS {
+			go handleDTLSUpstreamConn(conn, raddr, certs, tlsALPN)
+			continue
 		}
 		go handleDTLSConn(conn)
 	}
 }
 
-func runQUIC(ctx context.Context, client *rstream.Client, name string, publish bool) error {
-	tunnel, err := createTunnel(ctx, client, "quic", name, publish)
+func runQUIC(ctx context.Context, client *rstream.Client, name string, publish bool, hostname, tlsALPN string) error {
+	tunnel, err := createTunnel(ctx, client, "quic", name, publish, hostname, tlsALPN, true)
 	if err != nil {
 		return err
 	}
@@ -203,7 +256,7 @@ func runQUIC(ctx context.Context, client *rstream.Client, name string, publish b
 	if !ok {
 		return fmt.Errorf("tunnel does not implement rstream.PacketListener")
 	}
-	tlsCfg, err := generateTLSConfig()
+	tlsCfg, err := generateTLSConfig(tlsALPN)
 	if err != nil {
 		return fmt.Errorf("tls config: %w", err)
 	}
@@ -220,13 +273,16 @@ func runQUIC(ctx context.Context, client *rstream.Client, name string, publish b
 		if err != nil {
 			return fmt.Errorf("quic accept: %w", err)
 		}
-		go handleQUICConn(conn)
+		go handleQUICConn(conn, quicALPNs(tlsALPN)[0])
 	}
 }
 
 func main() {
 	variant := flag.String("variant", "dtls", "variant: dtls, quic")
 	publish := flag.Bool("publish", false, "publish the tunnel on the engine's DTLS or QUIC listener")
+	hostname := flag.String("host", "", "requested tunnel hostname")
+	tlsALPN := flag.String("tls-alpn", "", "custom ALPN for published DTLS or QUIC tunnels")
+	upstreamTLS := flag.Bool("upstream-tls", false, "connect from the edge to this server with upstream DTLS")
 	name := flag.String("name", "", "tunnel name (default: datagram-matrix-<variant>[-pub])")
 	flag.Parse()
 	if *name == "" {
@@ -249,11 +305,11 @@ func main() {
 	}()
 	switch *variant {
 	case "dtls":
-		if err := runDTLS(ctx, client, *name, *publish); err != nil {
+		if err := runDTLS(ctx, client, *name, *publish, *hostname, *tlsALPN, *upstreamTLS); err != nil {
 			log.Fatalf("server error: %v", err)
 		}
 	case "quic":
-		if err := runQUIC(ctx, client, *name, *publish); err != nil {
+		if err := runQUIC(ctx, client, *name, *publish, *hostname, *tlsALPN); err != nil {
 			log.Fatalf("server error: %v", err)
 		}
 	default:
