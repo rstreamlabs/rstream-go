@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.13.0](https://github.com/rstreamlabs/rstream-go/compare/v1.12.0...v1.13.0) (2026-04-26)
+
+
+### Features
+
+* add stable domains and upstream TLS ([0caa069](https://github.com/rstreamlabs/rstream-go/commit/0caa06954cd2040ff0e041a374db47af5c28cfa2))
+
 ## [1.12.0](https://github.com/rstreamlabs/rstream-go/compare/v1.11.0...v1.12.0) (2026-04-23)
 
 
