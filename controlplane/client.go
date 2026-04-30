@@ -23,6 +23,11 @@ type apiErrorResponse struct {
 	Error string `json:"error"`
 }
 
+type oauthErrorResponse struct {
+	Error            string `json:"error"`
+	ErrorDescription string `json:"error_description,omitempty"`
+}
+
 type Client struct {
 	apiURL     string
 	token      string
@@ -117,21 +122,39 @@ func (c *Client) CreateProjectTURNCredentialsByEndpoint(ctx context.Context, end
 	return out, err
 }
 
+func (c *Client) requestURL(path string, query url.Values) (string, error) {
+	if c.apiURL == "" {
+		return "", errors.New("API URL is required")
+	}
+	fullURL := path
+	if !strings.HasPrefix(path, "http://") && !strings.HasPrefix(path, "https://") {
+		if !strings.HasPrefix(path, "/") {
+			path = "/" + path
+		}
+		fullURL = c.apiURL + path
+	}
+	parsed, err := url.Parse(fullURL)
+	if err != nil {
+		return "", err
+	}
+	values := parsed.Query()
+	for key, entries := range query {
+		for _, entry := range entries {
+			values.Add(key, entry)
+		}
+	}
+	parsed.RawQuery = values.Encode()
+	return parsed.String(), nil
+}
+
 func (c *Client) doJSON(ctx context.Context, method, path string, query url.Values, out any) (int, error) {
 	return c.doJSONBody(ctx, method, path, query, nil, out)
 }
 
 func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.Values, body any, out any) (int, error) {
-	if c.apiURL == "" {
-		return 0, errors.New("API URL is required")
-	}
-	fullURL := c.apiURL
-	if !strings.HasPrefix(path, "/") {
-		path = "/" + path
-	}
-	fullURL += path
-	if len(query) > 0 {
-		fullURL += "?" + query.Encode()
+	fullURL, err := c.requestURL(path, query)
+	if err != nil {
+		return 0, err
 	}
 	c.logger.Debug("control-plane request", "method", method, "url", fullURL)
 	var reader *bytes.Reader
@@ -179,6 +202,40 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 	return resp.StatusCode, nil
 }
 
+func (c *Client) doForm(ctx context.Context, method, path string, form url.Values, out any) (int, error) {
+	fullURL, err := c.requestURL(path, nil)
+	if err != nil {
+		return 0, err
+	}
+	c.logger.Debug("control-plane request", "method", method, "url", fullURL)
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		responseBody, _ := io.ReadAll(resp.Body)
+		message := oauthControlPlaneErrorMessage(resp.Status, responseBody)
+		c.logger.Debug("control-plane response", "status", resp.StatusCode, "statusText", resp.Status)
+		return resp.StatusCode, message
+	}
+	c.logger.Debug("control-plane response", "status", resp.StatusCode)
+	if out == nil {
+		return resp.StatusCode, nil
+	}
+	dec := json.NewDecoder(resp.Body)
+	if err := dec.Decode(out); err != nil {
+		return resp.StatusCode, err
+	}
+	return resp.StatusCode, nil
+}
+
 func controlPlaneErrorMessage(status string, body []byte) string {
 	var payload apiErrorResponse
 	if err := json.Unmarshal(body, &payload); err == nil {
@@ -187,4 +244,12 @@ func controlPlaneErrorMessage(status string, body []byte) string {
 		}
 	}
 	return fmt.Sprintf("control-plane request failed: %s", status)
+}
+
+func oauthControlPlaneErrorMessage(status string, body []byte) error {
+	var payload oauthErrorResponse
+	if err := json.Unmarshal(body, &payload); err == nil && strings.TrimSpace(payload.Error) != "" {
+		return &OAuthError{Code: payload.Error, Description: payload.ErrorDescription}
+	}
+	return fmt.Errorf("control-plane request failed: %s", status)
 }
