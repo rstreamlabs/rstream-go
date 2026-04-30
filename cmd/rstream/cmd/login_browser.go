@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
@@ -17,14 +18,15 @@ import (
 
 var rstreamLoginPermissions = []string{
 	"account.projects.read-only",
-	"network.tunnels.create-delete",
-	"network.streams.create-delete",
-	"network.resources.read-only",
+	"tunnels.tunnels.create-delete",
+	"tunnels.streams.create-delete",
+	"tunnels.resources.read-only",
 	"network.turn-server-credentials.create",
 }
 
 const rstreamLoginPollInterval = 2 * time.Second
 const rstreamLoginTimeout = 10 * time.Minute
+const rstreamOAuthClientID = "rstream-cli"
 
 func storeToken(ctx context.Context, path string, cfg config.Config, apiURL, token string) error {
 	if err := validateToken(ctx, apiURL, token); err != nil {
@@ -41,7 +43,7 @@ func storeToken(ctx context.Context, path string, cfg config.Config, apiURL, tok
 	return nil
 }
 
-func runRstreamLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL string) error {
+func runLegacyDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL string) error {
 	ctx := cmd.Context()
 	client := controlplane.NewClient(apiURL, "")
 	req := controlplane.RstreamLoginRequest{Permissions: rstreamLoginPermissions, Source: resolveRstreamLoginSource()}
@@ -58,14 +60,56 @@ func runRstreamLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL 
 		fmt.Fprintln(os.Stderr, "Unable to open the browser automatically.")
 	}
 	fmt.Fprintln(os.Stdout, "Waiting for approval...")
-	token, err := waitForRstreamLoginToken(ctx, client, res)
+	token, err := waitForLegacyDeviceLoginToken(ctx, client, res)
 	if err != nil {
 		return rstreamLoginCommandError(err)
 	}
 	return rstreamLoginCommandError(storeToken(ctx, path, cfg, apiURL, token))
 }
 
-func waitForRstreamLoginToken(ctx context.Context, client *controlplane.Client, res controlplane.RstreamLoginResponse) (string, error) {
+func runOAuthDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL string) error {
+	ctx := cmd.Context()
+	client := controlplane.NewClient(apiURL, "")
+	metadata, err := client.OAuthAuthorizationServerMetadata(ctx)
+	if err != nil {
+		return rstreamLoginCommandError(err)
+	}
+	if metadata.DeviceAuthorizationEndpoint == "" || metadata.TokenEndpoint == "" {
+		return errors.New("OAuth device authorization metadata is incomplete")
+	}
+	req := controlplane.OAuthDeviceAuthorizationRequest{
+		ClientID: rstreamOAuthClientID,
+		Scope:    strings.Join(rstreamLoginPermissions, " "),
+		Source:   resolveRstreamLoginSource(),
+	}
+	res, err := client.CreateOAuthDeviceAuthorization(ctx, metadata.DeviceAuthorizationEndpoint, req)
+	if err != nil {
+		return rstreamLoginCommandError(err)
+	}
+	if res.DeviceCode == "" || res.UserCode == "" || res.VerificationURI == "" {
+		return errors.New("OAuth device authorization response is invalid")
+	}
+	loginURL := res.VerificationURIComplete
+	if loginURL == "" {
+		loginURL = res.VerificationURI
+	}
+	fmt.Fprintln(os.Stdout, "Open this URL in your browser to continue login:")
+	fmt.Fprintln(os.Stdout, loginURL)
+	if res.VerificationURIComplete == "" {
+		fmt.Fprintf(os.Stdout, "User code: %s\n", res.UserCode)
+	}
+	if err := openBrowser(loginURL); err != nil {
+		fmt.Fprintln(os.Stderr, "Unable to open the browser automatically.")
+	}
+	fmt.Fprintln(os.Stdout, "Waiting for approval...")
+	token, err := waitForOAuthDeviceToken(ctx, client, metadata.TokenEndpoint, res)
+	if err != nil {
+		return rstreamLoginCommandError(err)
+	}
+	return rstreamLoginCommandError(storeToken(ctx, path, cfg, apiURL, token))
+}
+
+func waitForLegacyDeviceLoginToken(ctx context.Context, client *controlplane.Client, res controlplane.RstreamLoginResponse) (string, error) {
 	deadline := time.Now().Add(rstreamLoginTimeout)
 	if res.ExpiresAt != nil && !res.ExpiresAt.IsZero() {
 		deadline = *res.ExpiresAt
@@ -108,6 +152,82 @@ func waitForRstreamLoginToken(ctx context.Context, client *controlplane.Client, 
 			return "", fmt.Errorf("unexpected login status: %s", resp.Status)
 		}
 	}
+}
+
+func waitForOAuthDeviceToken(ctx context.Context, client *controlplane.Client, tokenEndpoint string, res controlplane.OAuthDeviceAuthorizationResponse) (string, error) {
+	deadline := time.Now().Add(rstreamLoginTimeout)
+	if res.ExpiresIn > 0 {
+		deadline = time.Now().Add(time.Duration(res.ExpiresIn) * time.Second)
+	}
+	if time.Now().After(deadline) {
+		return "", errors.New("login expired")
+	}
+	pollCtx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	interval := time.Duration(oauthDeviceIntervalSeconds(res.Interval)) * time.Second
+	for {
+		resp, err := client.ExchangeOAuthDeviceToken(pollCtx, tokenEndpoint, controlplane.OAuthDeviceTokenRequest{ClientID: rstreamOAuthClientID, DeviceCode: res.DeviceCode})
+		if err == nil {
+			if resp.AccessToken == "" {
+				return "", errors.New("login token is empty")
+			}
+			return resp.AccessToken, nil
+		}
+		nextInterval, pending, pollErr := resolveOAuthPollError(pollCtx, err, interval)
+		if pollErr != nil {
+			return "", pollErr
+		}
+		if pending {
+			interval = nextInterval
+			if err := waitOAuthPollInterval(pollCtx, interval); err != nil {
+				return "", rstreamLoginPollError(err)
+			}
+			continue
+		}
+		return "", err
+	}
+}
+
+func resolveOAuthPollError(ctx context.Context, err error, interval time.Duration) (time.Duration, bool, error) {
+	if ctx.Err() != nil {
+		return interval, false, rstreamLoginPollError(ctx.Err())
+	}
+	var oauthErr *controlplane.OAuthError
+	if !errors.As(err, &oauthErr) {
+		return interval, false, err
+	}
+	switch oauthErr.Code {
+	case "authorization_pending":
+		return interval, true, nil
+	case "slow_down":
+		return interval + 5*time.Second, true, nil
+	case "access_denied":
+		return interval, false, errors.New("login request was denied")
+	case "expired_token":
+		return interval, false, errors.New("login expired")
+	case "invalid_grant":
+		return interval, false, errors.New("login device code is invalid")
+	default:
+		return interval, false, oauthErr
+	}
+}
+
+func waitOAuthPollInterval(ctx context.Context, interval time.Duration) error {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func oauthDeviceIntervalSeconds(value int) int {
+	if value > 0 {
+		return value
+	}
+	return 5
 }
 
 func rstreamLoginPollError(err error) error {

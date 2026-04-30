@@ -52,6 +52,8 @@ Appropriate for installations tied to a physical user (laptops, workstations).
 - Switching projects is typically done by running `rstream project use` again.
 
 The account-wide token can be obtained via:
+- `rstream login`, which uses OAuth 2.0 Device Authorization Grant by default
+- `rstream login --auth-flow legacy`, which keeps the older rstream-specific login flow available for compatibility tests
 - token generated from the rstream dashboard
 - token generated via the rstream API
 
@@ -71,12 +73,13 @@ Appropriate for servers, CI runners, and embedded systems that must not rely on 
 ### 1) Login
 
 ```bash
-rstream login <token>
+rstream login
 ```
 
 Alternative token inputs:
 
 ```bash
+rstream login <token>
 rstream login --stdin
 rstream login --token-file /path/to/token
 ```

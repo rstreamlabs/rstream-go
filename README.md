@@ -124,6 +124,8 @@ The standard developer-machine path is browser-based login:
 rstream login
 ```
 
+This uses OAuth 2.0 Device Authorization Grant by default. The legacy rstream login flow remains available for compatibility checks with `rstream login --auth-flow legacy`.
+
 For advanced authentication modes (token-based login, remote device flows, and project-scoped contexts), see [docs/CLI_WORKFLOW.md](docs/CLI_WORKFLOW.md).
 
 Before running SDK examples, ensure a project context is set up with the CLI (`rstream project use <project-endpoint>`). The SDK and CLI share the same configuration model and config file.

@@ -4,6 +4,9 @@ package cmd
 
 import "github.com/spf13/cobra"
 
+const loginAuthFlowOAuth = "oauth"
+const loginAuthFlowLegacy = "legacy"
+
 var loginCmd = &cobra.Command{
 	GroupID:      "common",
 	Use:          "login [token]",
@@ -27,8 +30,26 @@ var loginCmd = &cobra.Command{
 		if tokenProvided {
 			return storeToken(cmd.Context(), path, cfg, apiURL, token)
 		}
-		return runRstreamLogin(cmd, path, cfg, apiURL)
+		authFlow, err := cmd.Flags().GetString("auth-flow")
+		if err != nil {
+			return err
+		}
+		if authFlow == loginAuthFlowLegacy {
+			return runLegacyDeviceLogin(cmd, path, cfg, apiURL)
+		}
+		if authFlow == loginAuthFlowOAuth {
+			return runOAuthDeviceLogin(cmd, path, cfg, apiURL)
+		}
+		return &invalidLoginAuthFlowError{flow: authFlow}
 	},
+}
+
+type invalidLoginAuthFlowError struct {
+	flow string
+}
+
+func (e *invalidLoginAuthFlowError) Error() string {
+	return "invalid auth flow: " + e.flow + " (expected oauth or legacy)"
 }
 
 func init() {
@@ -37,6 +58,7 @@ func init() {
 	loginCmd.Flags().String("token", "", "authentication token")
 	loginCmd.Flags().Bool("token-stdin", false, "read token from stdin")
 	loginCmd.Flags().String("token-file", "", "read token from file")
+	loginCmd.Flags().String("auth-flow", loginAuthFlowOAuth, "browser login flow: oauth or legacy")
 	loginCmd.Flags().Bool("stdin", false, "read token from stdin (deprecated)")
 	loginCmd.MarkFlagsMutuallyExclusive("token", "token-stdin", "token-file", "stdin")
 	loginCmd.MarkFlagFilename("token-file")
