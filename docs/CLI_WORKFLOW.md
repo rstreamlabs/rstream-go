@@ -179,6 +179,29 @@ Delete a context:
 rstream context delete <name>
 ```
 
+## Automation output
+
+Use JSON output for agent and CI workflows:
+
+```bash
+rstream login -o json
+rstream project list -o json
+rstream project use <project-endpoint> --default -o json
+rstream context list -o json
+rstream context get <name> -o json
+rstream context create <name> --engine <host:port> --token-file /path/to/token --default -o json
+rstream tunnel list -o json
+rstream client list -o json
+rstream webtty list -o json
+rstream events -o json
+```
+
+Commands that wait for browser approval keep progress messages on stderr when `-o json` is selected, so stdout remains machine-readable.
+
+## Diagnostics
+
+Run `rstream doctor -o json` after setup changes or when troubleshooting. It checks local config, selected context, token claims, control-plane authentication, project resolution, engine address, DNS, TLS or QUIC transport, engine clients, and engine tunnels without printing token values.
+
 ## Logout
 
 Logout deletes locally stored authentication material for the current rstream environment.

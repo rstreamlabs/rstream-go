@@ -126,6 +126,8 @@ client := &rstream.Client{
 - `DNSOverTLS` / `DNSServerName` — protect DNS lookups with DNS over TLS.
 - `DNSSECEnabled` — require authenticated DNSSEC answers.
 
+When QUIC transport is selected, `rstream doctor -o json` runs a `quic_transport` check against the engine. This catches the common case where TCP/TLS works but UDP is blocked by the local network, VPN, firewall, or proxy path.
+
 ### Lifecycle
 
 `QUICTransport` is stateful and is designed to be held for the lifetime of the client. Create a fresh instance when reconnecting after a connection failure.

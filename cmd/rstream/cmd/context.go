@@ -113,7 +113,14 @@ var contextUseCmd = &cobra.Command{
 			return err
 		}
 		cfg.Defaults.Context = &config.DefaultContext{Name: ctx.Name}
-		return config.WriteAtomic(path, cfg)
+		if err := config.WriteAtomic(path, cfg); err != nil {
+			return err
+		}
+		output, _ := cmd.Flags().GetString("output")
+		return writeOptionalStructuredOutput(output, map[string]any{
+			"context": redactContext(*ctx),
+			"default": true,
+		})
 	},
 }
 
@@ -132,11 +139,19 @@ var contextDeleteCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		deleted := *ctx
 		cfg.Contexts = append(cfg.Contexts[:idx], cfg.Contexts[idx+1:]...)
-		if cfg.Defaults.Context != nil && cfg.Defaults.Context.Name == ctx.Name {
+		if cfg.Defaults.Context != nil && cfg.Defaults.Context.Name == deleted.Name {
 			cfg.Defaults.Context = nil
 		}
-		return config.WriteAtomic(path, cfg)
+		if err := config.WriteAtomic(path, cfg); err != nil {
+			return err
+		}
+		output, _ := cmd.Flags().GetString("output")
+		return writeOptionalStructuredOutput(output, map[string]any{
+			"deleted": true,
+			"context": redactContext(deleted),
+		})
 	},
 }
 
@@ -217,7 +232,14 @@ var contextCreateCmd = &cobra.Command{
 		if setDefault, _ := cmd.Flags().GetBool("default"); setDefault {
 			cfg.Defaults.Context = &config.DefaultContext{Name: newCtx.Name}
 		}
-		return config.WriteAtomic(path, cfg)
+		if err := config.WriteAtomic(path, cfg); err != nil {
+			return err
+		}
+		output, _ := cmd.Flags().GetString("output")
+		return writeOptionalStructuredOutput(output, map[string]any{
+			"context": redactContext(newCtx),
+			"default": cfg.Defaults.Context != nil && cfg.Defaults.Context.Name == newCtx.Name,
+		})
 	},
 }
 
@@ -313,7 +335,14 @@ var contextUpdateCmd = &cobra.Command{
 		if transport != nil {
 			ctx.Transport = config.MergeTransport(ctx.Transport, transport)
 		}
-		return config.WriteAtomic(path, cfg)
+		if err := config.WriteAtomic(path, cfg); err != nil {
+			return err
+		}
+		output, _ := cmd.Flags().GetString("output")
+		return writeOptionalStructuredOutput(output, map[string]any{
+			"context": redactContext(*ctx),
+			"default": cfg.Defaults.Context != nil && cfg.Defaults.Context.Name == ctx.Name,
+		})
 	},
 }
 
@@ -330,8 +359,14 @@ func init() {
 	contextListCmd.Flags().StringP("output", "o", "table", "output mode (table, json, yaml)")
 	contextGetCmd.Flags().SortFlags = false
 	contextGetCmd.Flags().StringP("output", "o", "yaml", "output mode (yaml, json)")
+	contextUseCmd.Flags().SortFlags = false
+	contextUseCmd.Flags().StringP("output", "o", "none", "output mode (none, json, yaml)")
+	contextDeleteCmd.Flags().SortFlags = false
+	contextDeleteCmd.Flags().StringP("output", "o", "none", "output mode (none, json, yaml)")
 	contextCreateCmd.Flags().SortFlags = false
+	contextCreateCmd.Flags().StringP("output", "o", "none", "output mode (none, json, yaml)")
 	contextUpdateCmd.Flags().SortFlags = false
+	contextUpdateCmd.Flags().StringP("output", "o", "none", "output mode (none, json, yaml)")
 	addContextTransportFlags(contextCreateCmd)
 	addContextTransportFlags(contextUpdateCmd)
 	contextCreateCmd.Flags().Bool("default", false, "set created context as default")

@@ -30,3 +30,14 @@ func writeStructuredOutput(format string, value any) error {
 		return fmt.Errorf("unsupported output format: %s", format)
 	}
 }
+
+func writeOptionalStructuredOutput(format string, value any) error {
+	switch format {
+	case "", "none":
+		return nil
+	case "json", "yaml":
+		return writeStructuredOutput(format, value)
+	default:
+		return validateOutputMode(format, "none", "json", "yaml")
+	}
+}

@@ -75,6 +75,7 @@ func resolveRuntime(cmd *cobra.Command, requireEngine, requireToken bool) (*reso
 	if err != nil {
 		return nil, err
 	}
+	resolved = applyEnvTransportOverrides(resolved, env)
 	return &resolvedRuntime{ConfigPath: path, Config: cfg, Resolved: resolved}, nil
 }
 
@@ -103,6 +104,13 @@ func resolveControlPlane(cmd *cobra.Command, requireToken bool) (*resolvedRuntim
 
 func newClientFromResolved(resolved config.Resolved) (*rstream.Client, error) {
 	return config.NewClientFromResolved(resolved)
+}
+
+func applyEnvTransportOverrides(resolved config.Resolved, env config.EnvSettings) config.Resolved {
+	if env.UseQUIC {
+		resolved.Transport = &rstream.QUICTransport{}
+	}
+	return resolved
 }
 
 func setEnvironmentToken(env *config.Environment, token string) error {

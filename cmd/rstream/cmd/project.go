@@ -155,7 +155,15 @@ var projectUseCmd = &cobra.Command{
 		if setDefault {
 			cfg.Defaults.Context = &config.DefaultContext{Name: ctx.Name}
 		}
-		return config.WriteAtomic(runtime.ConfigPath, cfg)
+		if err := config.WriteAtomic(runtime.ConfigPath, cfg); err != nil {
+			return err
+		}
+		output, _ := cmd.Flags().GetString("output")
+		return writeOptionalStructuredOutput(output, map[string]any{
+			"project": project,
+			"context": redactContext(*ctx),
+			"default": setDefault,
+		})
 	},
 }
 
@@ -174,6 +182,7 @@ func init() {
 	projectUseCmd.Flags().SortFlags = false
 	projectUseCmd.Flags().String("name", "", "context name (defaults to a derived name)")
 	projectUseCmd.Flags().Bool("default", false, "set context as default")
+	projectUseCmd.Flags().StringP("output", "o", "none", "output mode (none, json, yaml)")
 	rootCmd.AddCommand(projectCmd)
 }
 

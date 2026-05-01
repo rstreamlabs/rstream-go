@@ -39,7 +39,6 @@ func storeToken(ctx context.Context, path string, cfg config.Config, apiURL, tok
 	if err := config.WriteAtomic(path, cfg); err != nil {
 		return err
 	}
-	fmt.Fprintln(os.Stdout, "Login successful.")
 	return nil
 }
 
@@ -54,17 +53,18 @@ func runLegacyDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, ap
 	if res.RequestID == "" || res.RequestSecret == "" || res.URL == "" {
 		return errors.New("rstream login response is invalid")
 	}
-	fmt.Fprintln(os.Stdout, "Open this URL in your browser to continue login:")
-	fmt.Fprintln(os.Stdout, res.URL)
+	progress := loginProgressOutput(cmd)
+	fmt.Fprintln(progress, "Open this URL in your browser to continue login:")
+	fmt.Fprintln(progress, res.URL)
 	if err := openBrowser(res.URL); err != nil {
 		fmt.Fprintln(os.Stderr, "Unable to open the browser automatically.")
 	}
-	fmt.Fprintln(os.Stdout, "Waiting for approval...")
+	fmt.Fprintln(progress, "Waiting for approval...")
 	token, err := waitForLegacyDeviceLoginToken(ctx, client, res)
 	if err != nil {
 		return rstreamLoginCommandError(err)
 	}
-	return rstreamLoginCommandError(storeToken(ctx, path, cfg, apiURL, token))
+	return rstreamLoginCommandError(completeLogin(cmd, path, cfg, apiURL, token, loginAuthFlowLegacy))
 }
 
 func runOAuthDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL string) error {
@@ -93,20 +93,29 @@ func runOAuthDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, api
 	if loginURL == "" {
 		loginURL = res.VerificationURI
 	}
-	fmt.Fprintln(os.Stdout, "Open this URL in your browser to continue login:")
-	fmt.Fprintln(os.Stdout, loginURL)
+	progress := loginProgressOutput(cmd)
+	fmt.Fprintln(progress, "Open this URL in your browser to continue login:")
+	fmt.Fprintln(progress, loginURL)
 	if res.VerificationURIComplete == "" {
-		fmt.Fprintf(os.Stdout, "User code: %s\n", res.UserCode)
+		fmt.Fprintf(progress, "User code: %s\n", res.UserCode)
 	}
 	if err := openBrowser(loginURL); err != nil {
 		fmt.Fprintln(os.Stderr, "Unable to open the browser automatically.")
 	}
-	fmt.Fprintln(os.Stdout, "Waiting for approval...")
+	fmt.Fprintln(progress, "Waiting for approval...")
 	token, err := waitForOAuthDeviceToken(ctx, client, metadata.TokenEndpoint, res)
 	if err != nil {
 		return rstreamLoginCommandError(err)
 	}
-	return rstreamLoginCommandError(storeToken(ctx, path, cfg, apiURL, token))
+	return rstreamLoginCommandError(completeLogin(cmd, path, cfg, apiURL, token, loginAuthFlowOAuth))
+}
+
+func loginProgressOutput(cmd *cobra.Command) *os.File {
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return os.Stderr
+	}
+	return os.Stdout
 }
 
 func waitForLegacyDeviceLoginToken(ctx context.Context, client *controlplane.Client, res controlplane.RstreamLoginResponse) (string, error) {

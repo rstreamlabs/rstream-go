@@ -130,6 +130,14 @@ For advanced authentication modes (token-based login, remote device flows, and p
 
 Before running SDK examples, ensure a project context is set up with the CLI (`rstream project use <project-endpoint>`). The SDK and CLI share the same configuration model and config file.
 
+For agent and CI checks, run:
+
+```bash
+rstream doctor -o json
+```
+
+The diagnostic output covers config, context, token claims, control-plane authentication, project resolution, DNS, TLS, and engine inventory without printing secrets.
+
 ## Environment variables
 
 These variables are shared across CLI and SDK configuration resolution. Prefer configuration contexts for regular usage, and use overrides for automation or constrained environments.
