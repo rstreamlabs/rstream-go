@@ -2,10 +2,22 @@
 
 package cmd
 
-import "github.com/spf13/cobra"
+import (
+	"fmt"
+	"os"
+
+	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/spf13/cobra"
+)
 
 const loginAuthFlowOAuth = "oauth"
 const loginAuthFlowLegacy = "legacy"
+
+type loginResult struct {
+	Authenticated bool   `json:"authenticated"`
+	APIURL        string `json:"apiUrl"`
+	AuthFlow      string `json:"authFlow"`
+}
 
 var loginCmd = &cobra.Command{
 	GroupID:      "common",
@@ -28,7 +40,7 @@ var loginCmd = &cobra.Command{
 			return err
 		}
 		if tokenProvided {
-			return storeToken(cmd.Context(), path, cfg, apiURL, token)
+			return completeLogin(cmd, path, cfg, apiURL, token, "token")
 		}
 		authFlow, err := cmd.Flags().GetString("auth-flow")
 		if err != nil {
@@ -59,9 +71,30 @@ func init() {
 	loginCmd.Flags().Bool("token-stdin", false, "read token from stdin")
 	loginCmd.Flags().String("token-file", "", "read token from file")
 	loginCmd.Flags().String("auth-flow", loginAuthFlowOAuth, "browser login flow: oauth or legacy")
+	loginCmd.Flags().StringP("output", "o", "text", "output mode (text, json)")
 	loginCmd.Flags().Bool("stdin", false, "read token from stdin (deprecated)")
 	loginCmd.MarkFlagsMutuallyExclusive("token", "token-stdin", "token-file", "stdin")
 	loginCmd.MarkFlagFilename("token-file")
 	loginCmd.Flags().MarkDeprecated("stdin", "use --token-stdin")
 	rootCmd.AddCommand(loginCmd)
+}
+
+func completeLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL, token, authFlow string) error {
+	if err := storeToken(cmd.Context(), path, cfg, apiURL, token); err != nil {
+		return err
+	}
+	return writeLoginResult(cmd, loginResult{Authenticated: true, APIURL: apiURL, AuthFlow: authFlow})
+}
+
+func writeLoginResult(cmd *cobra.Command, result loginResult) error {
+	output, _ := cmd.Flags().GetString("output")
+	switch output {
+	case "text":
+		fmt.Fprintln(os.Stdout, "Login successful.")
+		return nil
+	case "json":
+		return writeStructuredOutput("json", result)
+	default:
+		return validateOutputMode(output, "text", "json")
+	}
 }
