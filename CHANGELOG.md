@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.14.0](https://github.com/rstreamlabs/rstream-go/compare/v1.13.0...v1.14.0) (2026-05-01)
+
+
+### Features
+
+* add CLI automation diagnostics ([cb07d0e](https://github.com/rstreamlabs/rstream-go/commit/cb07d0e2f3f5efc0df6e5f9167adc3f3aca5e970))
+* add OAuth device login flow ([35ed0a4](https://github.com/rstreamlabs/rstream-go/commit/35ed0a47464f73ffe77e5cd373c3bc4dd7b276a0))
+
 ## [1.13.0](https://github.com/rstreamlabs/rstream-go/compare/v1.12.0...v1.13.0) (2026-04-26)
 
 
