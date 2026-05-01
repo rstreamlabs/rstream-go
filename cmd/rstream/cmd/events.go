@@ -43,6 +43,10 @@ var eventsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		output, _ := cmd.Flags().GetString("output")
+		if output != "json" && output != "ndjson" {
+			return validateOutputMode(output, "json", "ndjson")
+		}
 		typeFilter := map[string]struct{}{}
 		for _, t := range eventsFilter {
 			for _, s := range strings.Split(t, ",") {
@@ -132,5 +136,6 @@ func init() {
 	eventsCmd.Flags().StringVar(&eventsTunnelFilter, "tunnel-filter", "", "Server-side tunnel filters, e.g. \"name=ssh-prod-01,labels.env=prod\"")
 	eventsCmd.Flags().StringVar(&eventsForwardTo, "forward-to", "", "URL to forward the webhook events to")
 	eventsCmd.Flags().BoolVar(&eventsForwardInsecureTLS, "forward-insecure-tls", false, "Skip TLS verification when forwarding events")
+	eventsCmd.Flags().StringP("output", "o", "json", "output mode (json, ndjson)")
 	rootCmd.AddCommand(eventsCmd)
 }
