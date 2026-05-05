@@ -18,6 +18,8 @@ go vet ./...
 
 If a change affects examples, documentation, or generated output, update the corresponding files in the same pull request.
 
+Public pull requests do not automatically run the repository release/build workflows. Maintainers run CI after reviewing the change; include the local commands you ran in the PR description.
+
 ## Style
 
 Keep changes small, explicit, and idiomatic.
