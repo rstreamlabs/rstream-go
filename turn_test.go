@@ -4,6 +4,8 @@ package rstream
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,7 +17,7 @@ func modePtr(mode TURNCredentialMode) *TURNCredentialMode {
 }
 
 func TestCreateTURNCredentialsAutoUsesPATDerivation(t *testing.T) {
-	token := "eyJhbGciOiJIUzI1NiJ9.eyJ0eXBlIjoicGF0IiwidG9rZW5fZW5kcG9pbnQiOiJiOTVmYWY3ZiJ9.sig"
+	token := turnTestToken(t, map[string]string{"type": "pat", "token_endpoint": "b95faf7f"})
 	res, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{
 		Token:           token,
 		ProjectEndpoint: "bbc44f81",
@@ -33,7 +35,7 @@ func TestCreateTURNCredentialsAutoUsesPATDerivation(t *testing.T) {
 }
 
 func TestCreateTURNCredentialsExplicitPATRejectsAppToken(t *testing.T) {
-	token := "eyJhbGciOiJIUzI1NiJ9.eyJ0eXBlIjoiYXBwIiwiY2xpZW50SWQiOiJhYmMifQ.sig"
+	token := turnTestToken(t, map[string]string{"type": "app", "clientId": "abc"})
 	_, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{
 		Token:           token,
 		ProjectEndpoint: "bbc44f81",
@@ -46,7 +48,7 @@ func TestCreateTURNCredentialsExplicitPATRejectsAppToken(t *testing.T) {
 }
 
 func TestCreateTURNCredentialsFallsBackToAPIForLegacyPAT(t *testing.T) {
-	token := "eyJhbGciOiJIUzI1NiJ9.eyJ0eXBlIjoicGF0In0.sig"
+	token := turnTestToken(t, map[string]string{"type": "pat"})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.EscapedPath(); got != "/api/projects/tunnels/resolve/bbc44f81/turn-server/credentials" {
 			t.Fatalf("unexpected path: %s", got)
@@ -66,4 +68,17 @@ func TestCreateTURNCredentialsFallsBackToAPIForLegacyPAT(t *testing.T) {
 	if res.Username != "u" || res.Credential != "c" {
 		t.Fatalf("unexpected response: %+v", res)
 	}
+}
+
+func turnTestToken(t *testing.T, claims map[string]string) string {
+	t.Helper()
+	header, err := json.Marshal(map[string]string{"alg": "HS256"})
+	if err != nil {
+		t.Fatalf("marshal header: %v", err)
+	}
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		t.Fatalf("marshal claims: %v", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + ".sig"
 }
