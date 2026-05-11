@@ -18,7 +18,7 @@ permissions:
 jobs:
   build:
     if: ${{ github.actor == vars.CI_ALLOWED_ACTOR && (github.ref_type == 'tag' || github.ref_name == 'main') }}
-    runs-on: ["self-hosted", "Linux"]
+    runs-on: ubuntu-latest
     steps:
       - shell: bash
         if: ${{ github.ref_type == 'tag' }}
@@ -52,8 +52,11 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
-          go-version: 1.26.x
+          go-version-file: go.mod
           cache: false
+      - name: Print Go version
+        shell: bash
+        run: go version
       - name: Build
         shell: bash
         run: |
