@@ -27,18 +27,28 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/quic-go/quic-go/http3"
 	rstream "github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
 )
 
+const maxWebSocketFramePayload = 1 << 20
+
 func generateTLSConfig() (*tls.Config, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, err
 	}
-	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1)}
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"ws-h3-example", "localhost"},
+	}
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
 	if err != nil {
 		return nil, err
@@ -62,21 +72,25 @@ func echoWSFrames(r io.Reader, w io.Writer, flush func()) {
 		}
 		opcode := hdr[0] & 0x0f
 		masked := hdr[1]&0x80 != 0
-		plen := int(hdr[1] & 0x7f)
-		switch plen {
+		payloadLen := uint64(hdr[1] & 0x7f)
+		switch payloadLen {
 		case 126:
 			ext := make([]byte, 2)
 			if _, err := io.ReadFull(r, ext); err != nil {
 				return
 			}
-			plen = int(binary.BigEndian.Uint16(ext))
+			payloadLen = uint64(binary.BigEndian.Uint16(ext))
 		case 127:
 			ext := make([]byte, 8)
 			if _, err := io.ReadFull(r, ext); err != nil {
 				return
 			}
-			plen = int(binary.BigEndian.Uint64(ext))
+			payloadLen = binary.BigEndian.Uint64(ext)
 		}
+		if payloadLen > maxWebSocketFramePayload {
+			return
+		}
+		plen := int(payloadLen)
 		var mask [4]byte
 		if masked {
 			if _, err := io.ReadFull(r, mask[:]); err != nil {
@@ -106,8 +120,9 @@ func echoWSFrames(r io.Reader, w io.Writer, flush func()) {
 		if lenByte == 126 {
 			frame = append(frame, byte(plen>>8), byte(plen))
 		} else if lenByte == 127 {
-			frame = append(frame, 0, 0, 0, 0,
-				byte(plen>>24), byte(plen>>16), byte(plen>>8), byte(plen))
+			ext := make([]byte, 8)
+			binary.BigEndian.PutUint64(ext, uint64(plen))
+			frame = append(frame, ext...)
 		}
 		frame = append(frame, payload...)
 		if _, err := w.Write(frame); err != nil {
@@ -149,6 +164,7 @@ func run(ctx context.Context, client *rstream.Client) error {
 	tunnel, err := ctrl.CreateTunnel(ctx, rstream.TunnelProperties{
 		Name:        rstream.StringPtr("ws-h3-example"),
 		Type:        rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
+		Publish:     rstream.BoolPtr(false),
 		HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP3),
 	})
 	if err != nil {

@@ -18,6 +18,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
@@ -36,7 +37,8 @@ func main() {
 	}
 	// Create the HTTP client
 	httpClient := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout:       5 * time.Second,
+		CheckRedirect: rejectCrossHostRedirects,
 	}
 	name := "h2c-example"
 	var url *string = nil
@@ -65,6 +67,9 @@ func main() {
 				if err != nil || host == "" {
 					return nil, fmt.Errorf("failed to extract host from address: %v", err)
 				}
+				if !strings.EqualFold(host, name) {
+					return nil, fmt.Errorf("redirect to unexpected tunnel host %q", host)
+				}
 				return client.Dial(ctx, rstream.Addr{IdOrName: host})
 			},
 		}
@@ -82,4 +87,14 @@ func main() {
 	}
 	fmt.Printf("Response status: %s\n", resp.Status)
 	fmt.Printf("Response body:\n%s", body)
+}
+
+func rejectCrossHostRedirects(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	if !strings.EqualFold(req.URL.Hostname(), via[0].URL.Hostname()) {
+		return http.ErrUseLastResponse
+	}
+	return nil
 }

@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/rstreamlabs/rstream-go/webtty"
@@ -11,12 +12,14 @@ import (
 
 func newTestWebTTYServerCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "server"}
-	cmd.Flags().String("listen", ":8080", "")
+	cmd.Flags().String("listen", "127.0.0.1:8080", "")
 	cmd.Flags().Bool("rstream", false, "")
 	cmd.Flags().Bool("web", false, "")
 	cmd.Flags().String("name", "", "")
 	cmd.Flags().Bool("publish", false, "")
 	cmd.Flags().Bool("no-publish", false, "")
+	cmd.Flags().String("auth-token-file", "", "")
+	cmd.Flags().Bool("allow-unauthenticated", false, "")
 	return cmd
 }
 
@@ -37,6 +40,16 @@ func TestWebTTYServerUsesRstream(t *testing.T) {
 	}
 	if !webttyServerUsesRstream(cmd) {
 		t.Fatalf("expected --web alias to enable rstream mode")
+	}
+}
+
+func TestWebTTYServerAllowedOrigins(t *testing.T) {
+	if got := webTTYServerAllowedOrigins(false); got != nil {
+		t.Fatalf("local webtty server should not allow cross-origin requests by default: %#v", got)
+	}
+	got := webTTYServerAllowedOrigins(true)
+	if len(got) != 1 || got[0] != "*" {
+		t.Fatalf("rstream webtty server should accept browser origins through tunnel auth, got %#v", got)
 	}
 }
 
@@ -150,4 +163,48 @@ func TestNewWebTTYServerTunnelProperties(t *testing.T) {
 			t.Fatalf("expected token auth to be unset for private tunnel, got %#v", props.TokenAuth)
 		}
 	})
+}
+
+func TestWebTTYClientRstreamTargetHelpers(t *testing.T) {
+	if !webttyClientUsesRstream(" RSTRM://shell ") {
+		t.Fatalf("expected rstrm URL to use rstream")
+	}
+	if webttyClientUsesRstream("wss://example.com") {
+		t.Fatalf("unexpected rstream mode for websocket URL")
+	}
+	target, err := extractWebTTYTunnelTarget("shell:443")
+	if err != nil || target != "shell" {
+		t.Fatalf("extractWebTTYTunnelTarget(host:port) = %q, %v", target, err)
+	}
+	target, err = extractWebTTYTunnelTarget("shell")
+	if err != nil || target != "shell" {
+		t.Fatalf("extractWebTTYTunnelTarget(host) = %q, %v", target, err)
+	}
+	if _, err := extractWebTTYTunnelTarget(":443"); err == nil || !strings.Contains(err.Error(), "missing tunnel") {
+		t.Fatalf("expected missing tunnel error, got %v", err)
+	}
+	if _, err := extractWebTTYTunnelTarget("shell:bad:addr"); err == nil || !strings.Contains(err.Error(), "failed to extract") {
+		t.Fatalf("expected malformed target error, got %v", err)
+	}
+}
+
+func TestCommandExitErrorExitCodeClampsToShellRange(t *testing.T) {
+	cases := []struct {
+		code int
+		want int
+	}{
+		{code: -1, want: 1},
+		{code: 0, want: 1},
+		{code: 42, want: 42},
+		{code: 300, want: 255},
+	}
+	for _, tc := range cases {
+		err := &commandExitError{code: tc.code}
+		if got := err.ExitCode(); got != tc.want {
+			t.Fatalf("ExitCode(%d) = %d, want %d", tc.code, got, tc.want)
+		}
+		if !strings.Contains(err.Error(), "remote command exited") {
+			t.Fatalf("unexpected error string: %q", err.Error())
+		}
+	}
 }

@@ -115,17 +115,21 @@ func runDoctor(cmd *cobra.Command) doctorReport {
 	if resolved.Context != nil {
 		report.ProjectEndpoint = resolved.Context.ProjectEndpoint
 	}
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	checkDoctorContext(&report, resolved)
 	checkDoctorToken(&report, resolved.Token)
 	if doctorUsesControlPlane(resolved) {
-		checkDoctorControlPlane(cmd.Context(), &report, resolved)
-		checkDoctorProject(cmd.Context(), &report, resolved)
+		checkDoctorControlPlane(ctx, &report, resolved)
+		checkDoctorProject(ctx, &report, resolved)
 	} else {
 		report.add("control_plane_auth", doctorStatusSkip, "context is not linked to a hosted API URL", nil)
 		report.add("project", doctorStatusSkip, "context is engine-only", nil)
 	}
-	checkDoctorNetwork(cmd.Context(), &report, resolved)
-	checkDoctorEngine(cmd.Context(), &report, resolved)
+	checkDoctorNetwork(ctx, &report, resolved)
+	checkDoctorEngine(ctx, &report, resolved)
 	report.finalize()
 	return report
 }

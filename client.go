@@ -6,7 +6,6 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -268,7 +267,13 @@ func (c *Client) PacketDial(ctx context.Context, raddr Addr) (net.PacketConn, er
 }
 
 type pendingOpenTunnelReq struct {
-	respCh chan *pb.OpenTunnelRsp
+	respCh    chan *pb.OpenTunnelRsp
+	readyCh   chan struct{}
+	readyOnce sync.Once
+}
+
+func (p *pendingOpenTunnelReq) closeReady() {
+	p.readyOnce.Do(func() { close(p.readyCh) })
 }
 
 type controlChannelImpl struct {
@@ -291,8 +296,8 @@ type controlChannelImpl struct {
 	err               error
 	// QUIC datagram support — non-nil when the transport implements DatagramProvider.
 	datagramProvider DatagramProvider
-	datagramTunnels  map[string]*quicDatagramListener // tunnelID -> listener
-	datagramChannels map[uint32]*quicDatagramChannel  // channelID -> active channel
+	datagramTunnels  map[string]*quicDatagramListener           // tunnelID -> listener
+	datagramChannels map[datagramChannelID]*quicDatagramChannel // channelID -> active channel
 	datagramCtx      context.Context
 	datagramCancel   context.CancelFunc
 }
@@ -377,7 +382,7 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 		if dp, ok := c.Transport.(DatagramProvider); ok {
 			ch.datagramProvider = dp
 			ch.datagramTunnels = make(map[string]*quicDatagramListener)
-			ch.datagramChannels = make(map[uint32]*quicDatagramChannel)
+			ch.datagramChannels = make(map[datagramChannelID]*quicDatagramChannel)
 			datagramCtx, datagramCancel := context.WithCancel(context.Background())
 			ch.datagramCtx = datagramCtx
 			ch.datagramCancel = datagramCancel
@@ -407,7 +412,8 @@ func (c *controlChannelImpl) CreateTunnel(ctx context.Context, props TunnelPrope
 	}
 	requestID := uuid.New().String()
 	pending := &pendingOpenTunnelReq{
-		respCh: make(chan *pb.OpenTunnelRsp, 1),
+		respCh:  make(chan *pb.OpenTunnelRsp, 1),
+		readyCh: make(chan struct{}),
 	}
 	c.pendingTunnels[requestID] = pending
 	c.mu.Unlock()
@@ -430,9 +436,11 @@ func (c *controlChannelImpl) CreateTunnel(ctx context.Context, props TunnelPrope
 	case <-ctx.Done():
 		c.mu.Lock()
 		delete(c.pendingTunnels, requestID)
+		pending.closeReady()
 		c.mu.Unlock()
 		return nil, ctx.Err()
 	case openTunnelRsp, ok := <-pending.respCh:
+		defer pending.closeReady()
 		if !ok {
 			return nil, errors.New("control channel closed unexpectedly")
 		}
@@ -544,12 +552,23 @@ func (c *controlChannelImpl) readLoop() {
 		if c.closed || err != nil {
 			break
 		} else {
-			cause, close := c.handleMessage(msg)
+			cause, close, waitCh := c.handleMessage(msg)
 			if cause != nil {
 				err = fmt.Errorf("failed to handle message: %w", cause)
 			}
 			if close || err != nil {
 				break
+			}
+			if waitCh != nil {
+				c.mu.Unlock()
+				select {
+				case <-waitCh:
+				case <-c.doneCh:
+				}
+				c.mu.Lock()
+				if c.closed {
+					break
+				}
 			}
 		}
 	}
@@ -563,9 +582,9 @@ func (c *controlChannelImpl) readLoop() {
 func (c *controlChannelImpl) heartbeatLoop() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	t := time.NewTicker(c.heartbeatInterval)
+	defer t.Stop()
 	for {
-		t := time.NewTicker(c.heartbeatInterval)
-		defer t.Stop()
 		wait := func() bool {
 			select {
 			case <-c.doneCh:
@@ -597,35 +616,36 @@ func (c *controlChannelImpl) heartbeatLoop() {
 	}
 }
 
-func (c *controlChannelImpl) handleMessage(msg *pb.Message) (error, bool) {
+func (c *controlChannelImpl) handleMessage(msg *pb.Message) (error, bool, <-chan struct{}) {
 	if c.closed {
-		return nil, true
+		return nil, true, nil
 	}
 	switch payload := msg.Payload.(type) {
 	case *pb.Message_OpenTunnelRsp:
-		c.handleOpenTunnelRsp(payload.OpenTunnelRsp)
-		return nil, false
+		return nil, false, c.handleOpenTunnelRsp(payload.OpenTunnelRsp)
 	case *pb.Message_CloseTunnelRsp:
 		c.handleCloseTunnelRsp(payload.CloseTunnelRsp)
-		return nil, false
+		return nil, false, nil
 	case *pb.Message_ProxyConnReq:
 		c.handleProxyConnReq(payload.ProxyConnReq)
-		return nil, false
+		return nil, false, nil
 	case *pb.Message_CloseControlChannelRsp:
-		return nil, true
+		return nil, true, nil
 	default:
-		return nil, false
+		return nil, false, nil
 	}
 }
 
-func (c *controlChannelImpl) handleOpenTunnelRsp(rsp *pb.OpenTunnelRsp) {
+func (c *controlChannelImpl) handleOpenTunnelRsp(rsp *pb.OpenTunnelRsp) <-chan struct{} {
 	requestId := rsp.RequestId
 	pending, found := c.pendingTunnels[requestId]
 	if found {
 		delete(c.pendingTunnels, requestId)
 		pending.respCh <- rsp
+		return pending.readyCh
 	} else {
-		c.logger.Warn("unexpected OpenTunnelRsp", "rsp", rsp)
+		c.logger.Warn("unexpected OpenTunnelRsp", "request_id", requestId)
+		return nil
 	}
 }
 
@@ -640,8 +660,9 @@ func (c *controlChannelImpl) handleCloseTunnelRsp(rsp *pb.CloseTunnelRsp) {
 			delete(c.datagramTunnels, tunnelId)
 			l.Close()
 		}
+		c.closeDatagramChannelsForTunnelLocked(tunnelId)
 	} else {
-		c.logger.Warn("unexpected CloseTunnelRsp", "rsp", rsp)
+		c.logger.Warn("unexpected CloseTunnelRsp", "tunnel_id", tunnelId)
 	}
 }
 
@@ -649,24 +670,16 @@ func (c *controlChannelImpl) handleProxyConnReq(req *pb.ProxyConnReq) {
 	tunnelId := req.TunnelId
 	tunnel, found := c.tunnels[tunnelId]
 	if !found {
-		c.logger.Warn("unexpected ProxyConnReq", "req", req)
+		c.logger.Warn("unexpected ProxyConnReq", "tunnel_id", tunnelId, "stream_id", req.StreamId)
 		return
 	}
 	// QUIC datagram mode: create a quicDatagramChannel instead of dialing a new stream.
 	if c.datagramProvider != nil && tunnel.props.Type != nil && *tunnel.props.Type == TunnelTypeDatagram {
-		go c.handleDatagramProxyConnReq(req, tunnel)
-		// Still send ProxyConnRsp as acknowledgment (no stream opened).
 		go func() {
-			msg := &pb.Message{
-				Payload: &pb.Message_ProxyConnRsp{
-					ProxyConnRsp: &pb.ProxyConnRsp{StreamId: req.StreamId},
-				},
+			if !c.handleDatagramProxyConnReq(req, tunnel) {
+				return
 			}
-			if err := c.writePbMessage(msg); err != nil {
-				c.mu.Lock()
-				c.onError(fmt.Errorf("failed to send ProxyConnRsp: %w", err))
-				c.mu.Unlock()
-			}
+			c.sendProxyConnRsp(req.StreamId)
 		}()
 		return
 	}
@@ -695,25 +708,33 @@ func (c *controlChannelImpl) handleProxyConnReq(req *pb.ProxyConnReq) {
 		}
 	}()
 	go func() {
-		msg := &pb.Message{
-			Payload: &pb.Message_ProxyConnRsp{
-				ProxyConnRsp: &pb.ProxyConnRsp{
-					StreamId: req.StreamId,
-				},
-			},
-		}
-		if err := c.writePbMessage(msg); err != nil {
-			c.mu.Lock()
-			c.onError(fmt.Errorf("failed to send ProxyConnRsp: %w", err))
-			c.mu.Unlock()
-		}
+		c.sendProxyConnRsp(req.StreamId)
 	}()
+}
+
+func (c *controlChannelImpl) sendProxyConnRsp(streamID string) {
+	msg := &pb.Message{
+		Payload: &pb.Message_ProxyConnRsp{
+			ProxyConnRsp: &pb.ProxyConnRsp{
+				StreamId: streamID,
+			},
+		},
+	}
+	if err := c.writePbMessage(msg); err != nil {
+		c.mu.Lock()
+		c.onError(fmt.Errorf("failed to send ProxyConnRsp: %w", err))
+		c.mu.Unlock()
+	}
 }
 
 // handleDatagramProxyConnReq creates a quicDatagramChannel for a datagram
 // tunnel connection request and delivers it to the appropriate listener.
-func (c *controlChannelImpl) handleDatagramProxyConnReq(req *pb.ProxyConnReq, tunnel *bytestreamTunnelImpl) {
-	channelID := datagramChannelIDFromStreamID(req.StreamId)
+func (c *controlChannelImpl) handleDatagramProxyConnReq(req *pb.ProxyConnReq, tunnel *bytestreamTunnelImpl) bool {
+	channelID, err := datagramChannelIDFromStreamID(req.StreamId)
+	if err != nil {
+		c.logger.Warn("invalid datagram stream ID", "tunnelID", tunnel.tunnelID, "streamID", req.StreamId, "error", err)
+		return false
+	}
 	laddr := &Addr{IdOrName: req.StreamId, SourceIP: NetIPFromPbValue(req.SourceIp)}
 	raddr := &Addr{IdOrName: tunnel.tunnelID}
 	chCtx, chCancel := context.WithCancel(c.datagramCtx)
@@ -725,13 +746,22 @@ func (c *controlChannelImpl) handleDatagramProxyConnReq(req *pb.ProxyConnReq, tu
 		recvCh:    make(chan []byte, 64),
 		ctx:       chCtx,
 		cancel:    chCancel,
+		onClose: func(ch *quicDatagramChannel) {
+			c.unregisterDatagramChannel(channelID, ch)
+		},
 	}
 	c.mu.Lock()
 	// Guard against a race with onError which sets datagramChannels to nil.
 	if c.closed {
 		c.mu.Unlock()
 		ch.Close()
-		return
+		return false
+	}
+	if existing := c.datagramChannels[channelID]; existing != nil {
+		c.mu.Unlock()
+		c.logger.Warn("datagram channel ID collision", "tunnelID", tunnel.tunnelID, "streamID", req.StreamId, "channelID", channelID)
+		ch.Close()
+		return false
 	}
 	c.datagramChannels[channelID] = ch
 	listener := c.datagramTunnels[tunnel.tunnelID]
@@ -739,6 +769,7 @@ func (c *controlChannelImpl) handleDatagramProxyConnReq(req *pb.ProxyConnReq, tu
 	if listener != nil {
 		select {
 		case listener.conns <- ch:
+			return true
 		default:
 			c.logger.Warn("datagram tunnel conns channel full", "tunnelID", tunnel.tunnelID)
 			ch.Close()
@@ -747,10 +778,11 @@ func (c *controlChannelImpl) handleDatagramProxyConnReq(req *pb.ProxyConnReq, tu
 		c.logger.Warn("no datagram listener for tunnel", "tunnelID", tunnel.tunnelID)
 		ch.Close()
 	}
+	return false
 }
 
-// datagramReadLoop reads QUIC datagrams, strips the 4-byte channel ID prefix,
-// and routes the payload to the appropriate quicDatagramChannel.
+// datagramReadLoop reads QUIC datagrams, strips the stream-derived channel ID
+// prefix, and routes the payload to the appropriate quicDatagramChannel.
 func (c *controlChannelImpl) datagramReadLoop() {
 	for {
 		data, err := c.datagramProvider.ReceiveDatagram(c.datagramCtx)
@@ -760,11 +792,12 @@ func (c *controlChannelImpl) datagramReadLoop() {
 			}
 			return
 		}
-		if len(data) < 4 {
+		if len(data) < datagramChannelIDSize {
 			continue
 		}
-		channelID := binary.BigEndian.Uint32(data[:4])
-		payload := data[4:]
+		var channelID datagramChannelID
+		copy(channelID[:], data[:datagramChannelIDSize])
+		payload := data[datagramChannelIDSize:]
 		c.mu.Lock()
 		ch := c.datagramChannels[channelID]
 		c.mu.Unlock()
@@ -773,6 +806,31 @@ func (c *controlChannelImpl) datagramReadLoop() {
 			case ch.recvCh <- payload:
 			default: // drop silently if the channel buffer is full
 			}
+		}
+	}
+}
+
+func (c *controlChannelImpl) unregisterDatagramChannel(channelID datagramChannelID, ch *quicDatagramChannel) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.datagramChannels == nil {
+		return
+	}
+	if c.datagramChannels[channelID] == ch {
+		delete(c.datagramChannels, channelID)
+	}
+}
+
+func (c *controlChannelImpl) closeDatagramChannelLocked(channelID datagramChannelID, ch *quicDatagramChannel) {
+	delete(c.datagramChannels, channelID)
+	ch.onClose = nil
+	ch.Close()
+}
+
+func (c *controlChannelImpl) closeDatagramChannelsForTunnelLocked(tunnelID string) {
+	for channelID, ch := range c.datagramChannels {
+		if ch.raddr != nil && ch.raddr.String() == tunnelID {
+			c.closeDatagramChannelLocked(channelID, ch)
 		}
 	}
 }
@@ -797,6 +855,7 @@ func (c *controlChannelImpl) onError(err error) {
 	c.closed = true
 	for _, p := range c.pendingTunnels {
 		close(p.respCh)
+		p.closeReady()
 	}
 	for _, t := range c.tunnels {
 		t.onError(fmt.Errorf("control channel closed: %w", err))
@@ -810,8 +869,8 @@ func (c *controlChannelImpl) onError(err error) {
 		l.Close()
 	}
 	c.datagramTunnels = nil
-	for _, ch := range c.datagramChannels {
-		ch.Close()
+	for channelID, ch := range c.datagramChannels {
+		c.closeDatagramChannelLocked(channelID, ch)
 	}
 	c.datagramChannels = nil
 	c.conn.Close()

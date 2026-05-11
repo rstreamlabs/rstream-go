@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -46,6 +47,25 @@ func hostFromAddr(addr string) (string, error) {
 		port = "443"
 	}
 	return net.JoinHostPort(host, port), nil
+}
+
+func hostPortFromPublishedHost(host string) (string, error) {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return "", fmt.Errorf("empty published host")
+	}
+	if strings.Contains(host, "://") {
+		return hostFromAddr(host)
+	}
+	if h, p, err := net.SplitHostPort(host); err == nil {
+		return net.JoinHostPort(h, p), nil
+	} else {
+		var addrErr *net.AddrError
+		if !errors.As(err, &addrErr) || addrErr.Err != "missing port in address" {
+			return "", fmt.Errorf("invalid published host %q: %w", host, err)
+		}
+	}
+	return net.JoinHostPort(host, "443"), nil
 }
 
 // findTunnelHost resolves a tunnel's forwarding host via the rstream API.
@@ -259,7 +279,10 @@ func main() {
 		if err != nil {
 			log.Fatalf("find tunnel: %v", err)
 		}
-		rawAddr = net.JoinHostPort(host, "443")
+		rawAddr, err = hostPortFromPublishedHost(host)
+		if err != nil {
+			log.Fatalf("published host: %v", err)
+		}
 	}
 	allCases := []testCase{
 		{

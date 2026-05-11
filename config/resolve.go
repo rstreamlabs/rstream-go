@@ -52,7 +52,7 @@ type Resolved struct {
 
 func Resolve(input ResolveInput) (Resolved, error) {
 	cfg := input.Config
-	apiURLExplicit := firstNonEmpty(input.FlagAPIURL, input.EnvAPIURL)
+	apiURLExplicit := NormalizeAPIURL(firstNonEmpty(input.FlagAPIURL, input.EnvAPIURL))
 	contextName := firstNonEmpty(input.FlagContext, input.EnvContext)
 	if !input.IgnoreDefaultContext && contextName == "" && cfg.Defaults.Context != nil {
 		contextName = cfg.Defaults.Context.Name
@@ -84,11 +84,12 @@ func Resolve(input ResolveInput) (Resolved, error) {
 			}
 			return Resolved{}, fmt.Errorf("context %q not found", contextName)
 		}
-		if apiURLExplicit != "" && ctx.APIURL != "" && ctx.APIURL != apiURLExplicit {
+		ctxAPIURL := NormalizeAPIURL(ctx.APIURL)
+		if apiURLExplicit != "" && ctxAPIURL != "" && ctxAPIURL != apiURLExplicit {
 			return Resolved{}, fmt.Errorf("context %q belongs to API URL %q (selected API URL %q)", contextName, ctx.APIURL, apiURLExplicit)
 		}
-		if apiURLExplicit == "" && ctx.APIURL != "" {
-			apiURLExplicit = ctx.APIURL
+		if apiURLExplicit == "" && ctxAPIURL != "" {
+			apiURLExplicit = ctxAPIURL
 		}
 	}
 	apiURL := apiURLExplicit
@@ -96,10 +97,11 @@ func Resolve(input ResolveInput) (Resolved, error) {
 		apiURL = defaultAPIURL
 	}
 	env, _ := cfg.FindEnvironment(apiURL)
-	if ctx != nil && ctx.APIURL == "" {
+	if ctx != nil && NormalizeAPIURL(ctx.APIURL) == "" {
 		env = nil
 	}
-	engine := firstNonEmpty(input.FlagEngine, input.EnvEngine)
+	engineOverride := firstNonEmpty(input.FlagEngine, input.EnvEngine)
+	engine := engineOverride
 	if engine == "" && ctx != nil {
 		engine = ctx.Engine
 	}
@@ -112,6 +114,9 @@ func Resolve(input ResolveInput) (Resolved, error) {
 			token, err = resolveToken(ctx, env)
 			if err != nil {
 				return Resolved{}, err
+			}
+			if token != "" && engineOverrideUsesStoredToken(engineOverride, ctx) {
+				return Resolved{}, errors.New("refusing to use a stored token with an explicit engine override; set RSTREAM_AUTHENTICATION_TOKEN or pass --token for the selected engine")
 			}
 		}
 	}
@@ -133,7 +138,7 @@ func Resolve(input ResolveInput) (Resolved, error) {
 	var transport rstream.Dialer
 	if ctx != nil {
 		var merged *TransportConfig
-		if env != nil && ctx.APIURL != "" && ctx.APIURL == env.APIURL {
+		if env != nil && NormalizeAPIURL(ctx.APIURL) != "" && NormalizeAPIURL(ctx.APIURL) == NormalizeAPIURL(env.APIURL) {
 			merged = MergeTransport(envTransport(env), ctxTransport(ctx))
 		} else {
 			merged = MergeTransport(nil, ctxTransport(ctx))
@@ -151,6 +156,21 @@ func Resolve(input ResolveInput) (Resolved, error) {
 	}, nil
 }
 
+func engineOverrideUsesStoredToken(engineOverride string, ctx *Context) bool {
+	engineOverride = strings.TrimSpace(engineOverride)
+	if engineOverride == "" {
+		return false
+	}
+	if ctx == nil {
+		return true
+	}
+	ctxEngine := strings.TrimSpace(ctx.Engine)
+	if ctxEngine == "" {
+		return true
+	}
+	return ctxEngine != engineOverride
+}
+
 func resolveToken(ctx *Context, env *Environment) (string, error) {
 	if ctx != nil {
 		if token, ok, err := TokenFromAuth(ctx.Auth); err != nil {
@@ -159,7 +179,7 @@ func resolveToken(ctx *Context, env *Environment) (string, error) {
 			return token, nil
 		}
 	}
-	if env != nil && (ctx == nil || ctx.APIURL == env.APIURL) {
+	if env != nil && (ctx == nil || NormalizeAPIURL(ctx.APIURL) == NormalizeAPIURL(env.APIURL)) {
 		if token, ok, err := TokenFromAuth(env.Auth); err != nil {
 			return "", err
 		} else if ok {

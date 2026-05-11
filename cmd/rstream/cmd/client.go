@@ -54,7 +54,7 @@ var clientListCmd = &cobra.Command{
 		if clientListQuiet {
 			for _, cl := range *list {
 				if cl.ID != "" {
-					fmt.Fprintln(os.Stdout, cl.ID)
+					fmt.Fprintln(os.Stdout, terminalSafeDefault(cl.ID))
 				}
 			}
 			return nil
@@ -95,7 +95,18 @@ func printClientsTable(w io.Writer, list *rstream.ListClientsResponse) error {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tSTATUS\tUSER\tAGENT\tCHANNEL\tVERSION\tOS\tARCH")
 	for _, cl := range *list {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", cl.ID, cl.Status, str(cl.UserID), str(cl.Agent), str(cl.Channel), str(cl.Version), str(cl.OS), str(cl.Arch))
+		fmt.Fprintf(
+			tw,
+			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			terminalSafeDefault(cl.ID),
+			terminalSafeDefault(cl.Status),
+			terminalSafeDefault(str(cl.UserID)),
+			terminalSafeDefault(str(cl.Agent)),
+			terminalSafeDefault(str(cl.Channel)),
+			terminalSafeDefault(str(cl.Version)),
+			terminalSafeDefault(str(cl.OS)),
+			terminalSafeDefault(str(cl.Arch)),
+		)
 	}
 	return tw.Flush()
 }

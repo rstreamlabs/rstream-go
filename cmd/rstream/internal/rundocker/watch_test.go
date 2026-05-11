@@ -5,7 +5,7 @@ package rundocker
 import (
 	"testing"
 
-	"github.com/docker/docker/api/types/events"
+	"github.com/moby/moby/api/types/events"
 )
 
 func TestShouldTriggerDockerEvent(t *testing.T) {

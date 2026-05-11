@@ -21,13 +21,13 @@ type loginResult struct {
 
 var loginCmd = &cobra.Command{
 	GroupID:      "common",
-	Use:          "login [token]",
+	Use:          "login",
 	Short:        "Login to rstream",
-	Long:         "Authenticate using a token or complete a browser-based login flow.",
+	Long:         "Authenticate using a browser-based login flow, or pass a token through stdin or a file.",
 	SilenceUsage: true,
-	Args:         cobra.MaximumNArgs(1),
+	Args:         cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		token, tokenProvided, err := readTokenInputOptional(cmd, args)
+		token, tokenProvided, err := readTokenInputOptional(cmd)
 		if err != nil {
 			return err
 		}
@@ -67,13 +67,12 @@ func (e *invalidLoginAuthFlowError) Error() string {
 func init() {
 	loginCmd.Flags().SortFlags = false
 	loginCmd.PersistentFlags().SortFlags = false
-	loginCmd.Flags().String("token", "", "authentication token")
 	loginCmd.Flags().Bool("token-stdin", false, "read token from stdin")
 	loginCmd.Flags().String("token-file", "", "read token from file")
 	loginCmd.Flags().String("auth-flow", loginAuthFlowOAuth, "browser login flow: oauth or legacy")
 	loginCmd.Flags().StringP("output", "o", "text", "output mode (text, json)")
 	loginCmd.Flags().Bool("stdin", false, "read token from stdin (deprecated)")
-	loginCmd.MarkFlagsMutuallyExclusive("token", "token-stdin", "token-file", "stdin")
+	loginCmd.MarkFlagsMutuallyExclusive("token-stdin", "token-file", "stdin")
 	loginCmd.MarkFlagFilename("token-file")
 	loginCmd.Flags().MarkDeprecated("stdin", "use --token-stdin")
 	rootCmd.AddCommand(loginCmd)

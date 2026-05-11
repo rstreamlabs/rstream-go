@@ -354,20 +354,20 @@ else \
 [ -n "$(MACOS_CERTIFICATE)" ] || { echo "Error: MACOS_CERTIFICATE is required when MACOS_CODESIGN_MODE=certificate" >&2 ; exit 1 ; } ;\
 [ -n "$(MACOS_CERTIFICATE_PWD)" ] || { echo "Error: MACOS_CERTIFICATE_PWD is required when MACOS_CODESIGN_MODE=certificate" >&2 ; exit 1 ; } ;\
 [ -n "$(MACOS_APP_STORE_API_KEY)" ] || { echo "Error: MACOS_APP_STORE_API_KEY is required when MACOS_CODESIGN_MODE=certificate" >&2 ; exit 1 ; } ;\
-BINARY_ARCHIVE=$$$$(mktemp).zip ;\
-MACOS_CERTIFICATE_FILE=$$$$(mktemp).p12 ;\
-MACOS_APP_STORE_API_KEY_FILE=$$$$(mktemp).json ;\
-echo "Signing $(call binary_path,$1,$2,$3) ..." ;\
-echo ${MACOS_CERTIFICATE} | base64 --decode > $$$$MACOS_CERTIFICATE_FILE ;\
-rcodesign sign --p12-file "$$$$MACOS_CERTIFICATE_FILE" --p12-password "$(MACOS_CERTIFICATE_PWD)" --code-signature-flags runtime $(call binary_path,$1,$2,$3) ;\
-echo "Notarizing $(call binary_path,$1,$2,$3) ..." ;\
-zip -j -q $$$$BINARY_ARCHIVE $(call binary_path,$1,$2,$3) ;\
-echo ${MACOS_APP_STORE_API_KEY} | base64 --decode > $$$$MACOS_APP_STORE_API_KEY_FILE ;\
-rcodesign notary-submit -v --api-key-file $$$$MACOS_APP_STORE_API_KEY_FILE --wait $$$$BINARY_ARCHIVE ;\
-rm -rf $$$$BINARY_ARCHIVE ;\
-rm -rf $$$$MACOS_CERTIFICATE_FILE ;\
-rm -rf $$$$MACOS_APP_STORE_API_KEY_FILE ;\
-fi
+	umask 077 ;\
+	TMP_DIR=$$$$(mktemp -d) ;\
+	trap 'rm -rf "$$$$TMP_DIR"' EXIT ;\
+	BINARY_ARCHIVE="$$$$TMP_DIR/binary.zip" ;\
+	MACOS_CERTIFICATE_FILE="$$$$TMP_DIR/certificate.p12" ;\
+	MACOS_APP_STORE_API_KEY_FILE="$$$$TMP_DIR/app-store-api-key.json" ;\
+	echo "Signing $(call binary_path,$1,$2,$3) ..." ;\
+	echo ${MACOS_CERTIFICATE} | base64 --decode > $$$$MACOS_CERTIFICATE_FILE ;\
+	rcodesign sign --p12-file "$$$$MACOS_CERTIFICATE_FILE" --p12-password "$(MACOS_CERTIFICATE_PWD)" --code-signature-flags runtime $(call binary_path,$1,$2,$3) ;\
+	echo "Notarizing $(call binary_path,$1,$2,$3) ..." ;\
+	zip -j -q $$$$BINARY_ARCHIVE $(call binary_path,$1,$2,$3) ;\
+	echo ${MACOS_APP_STORE_API_KEY} | base64 --decode > $$$$MACOS_APP_STORE_API_KEY_FILE ;\
+	rcodesign notary-submit -v --api-key-file $$$$MACOS_APP_STORE_API_KEY_FILE --wait $$$$BINARY_ARCHIVE ;\
+	fi
 endef
 
 define build_nupkg
@@ -399,9 +399,12 @@ examples: $(EXAMPLES)
 
 # Integration test binaries — one binary per test/<suite>/<role>/ directory.
 # New test suites are picked up automatically; no Makefile change required.
-TEST_ROLES := $(shell find test -mindepth 2 -maxdepth 2 -name '*.go' -print 2>/dev/null \
+TEST_ROLES := $(shell find test -mindepth 3 -maxdepth 3 -name '*.go' -print 2>/dev/null \
 	| awk -F/ '{print $$(NF-2)"/"$$(NF-1)}' | sort -u)
 TEST_OUT := $(OUT_DIR)/test
+TEST_GOOS := $(shell go env GOOS)
+TEST_GOARCH := $(shell go env GOARCH)
+TEST_GOAMD64 := $(shell go env GOAMD64)
 
 .PHONY: test-bins
 
@@ -411,7 +414,7 @@ define template_test_bin
 $(TEST_OUT)/$1: $$(shell find test/$1 -name '*.go' 2>/dev/null)
 	@set -e; echo "Building test/$1 for $(CURRENT_OS)/$(CURRENT_ARCH)"; \
 	CGO_ENABLED=0 GOPRIVATE=github.com/rstreamlabs \
-	GOOS=$(subst macos,darwin,$(CURRENT_OS)) GOARCH=$(CURRENT_ARCH) \
+	GOOS=$(TEST_GOOS) GOARCH=$(TEST_GOARCH) $(if $(filter amd64,$(TEST_GOARCH)),GOAMD64=$(TEST_GOAMD64),) \
 	go build -buildvcs=false \
 	  -ldflags="-X '$(GO_MODULE).Agent=$(patsubst %-go,%,$(notdir $(shell printf '%s\n' '$(GO_MODULE)' | sed -E 's|/v[0-9]+$$||')))' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).OS=$(CURRENT_OS)' -X '$(GO_MODULE).Arch=$(CURRENT_ARCH)'" \
 	  -o $(TEST_OUT)/$1 ./test/$1
@@ -429,6 +432,7 @@ clean:
 tests:
 	@echo "==> Running tests..."
 	go test -v ./...
+	@echo "==> All tests passed"
 
 $(GOIMPORTS):
 	@go install golang.org/x/tools/cmd/goimports@latest

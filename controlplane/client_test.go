@@ -5,11 +5,71 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
+	"time"
 )
+
+func TestNewClientOptionsAndRequireToken(t *testing.T) {
+	httpClient := &http.Client{Timeout: time.Second}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	client := NewClient(" https://api.example.com/ ", " token ", WithHTTPClient(httpClient), WithLogger(logger))
+	if client.apiURL != "https://api.example.com" || client.token != "token" {
+		t.Fatalf("client fields not normalized: apiURL=%q token=%q", client.apiURL, client.token)
+	}
+	if client.httpClient != httpClient || client.logger != logger {
+		t.Fatalf("client options not applied")
+	}
+	if err := client.RequireToken(); err != nil {
+		t.Fatalf("RequireToken() error = %v", err)
+	}
+	if err := NewClient("https://api.example.com", " ").RequireToken(); err == nil {
+		t.Fatalf("expected missing token error")
+	}
+}
+
+func TestWhoamiAuthorizationAndUnauthorizedWrapping(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/whoami":
+			if got := r.Header.Get("Authorization"); got != "Bearer token" {
+				http.Error(w, "unexpected authorization", http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(Whoami{ID: "user-1", Role: "admin"})
+		case "/api/projects/tunnels":
+			if got := r.Header.Get("Authorization"); got != "" {
+				http.Error(w, "authorization should be empty", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, " token ")
+	whoami, err := client.Whoami(context.Background())
+	if err != nil {
+		t.Fatalf("Whoami() error = %v", err)
+	}
+	if whoami.ID != "user-1" || whoami.Role != "admin" {
+		t.Fatalf("unexpected whoami: %+v", whoami)
+	}
+	_, err = NewClient(server.URL, "").ListProjects(context.Background(), ListProjectsParams{})
+	if !errors.Is(err, ErrUnauthorized) || !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("expected unauthorized wrapped error, got %v", err)
+	}
+}
 
 func TestResolveProjectByEndpointEscapesPath(t *testing.T) {
 	endpoint := "e7e8a732.aws-eu-west-3-1.c.rstream.io:8443"
@@ -34,6 +94,32 @@ func TestResolveProjectByEndpointEscapesPath(t *testing.T) {
 	}
 	if project.ID != "p1" || project.Endpoint != endpoint {
 		t.Fatalf("unexpected project: %+v", project)
+	}
+}
+
+func TestCreateProjectTURNCredentialsEscapesProjectID(t *testing.T) {
+	projectID := "workspace/project id"
+	expectedPath := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/turn-server/credentials"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "unexpected method", http.StatusBadRequest)
+			return
+		}
+		if got := r.URL.EscapedPath(); got != expectedPath {
+			http.Error(w, "unexpected path", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(TURNCredentials{Username: "u", Credential: "c", URLs: []string{"turn:example.com"}, TTL: 60})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "token")
+	res, err := client.CreateProjectTURNCredentials(context.Background(), projectID)
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	if res.Username != "u" || res.Credential != "c" || res.TTL != 60 {
+		t.Fatalf("unexpected credentials: %+v", res)
 	}
 }
 

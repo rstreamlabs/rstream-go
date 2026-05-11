@@ -25,17 +25,25 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
 )
 
 func generateTLSConfig() (*tls.Config, error) {
-	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, err
 	}
-	template := x509.Certificate{SerialNumber: big.NewInt(1)}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"http-tls-example", "localhost"},
+	}
 	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
 	if err != nil {
 		return nil, err
@@ -49,6 +57,7 @@ func generateTLSConfig() (*tls.Config, error) {
 	return &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
 		NextProtos:   []string{"h2", "http/1.1"},
+		MinVersion:   tls.VersionTLS12,
 	}, nil
 }
 
@@ -59,7 +68,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, hostname)
 }
 
-func run(ctx context.Context, client *rstream.Client, publish bool) error {
+func run(ctx context.Context, client *rstream.Client, publish bool, certFile, keyFile string) error {
 	// Open control channel
 	ctrl, err := client.Connect(ctx, nil)
 	if err != nil {
@@ -90,12 +99,16 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	}
 	fmt.Printf("Server listening on %s\n", forwardingAddr)
 	// Start an HTTP server using the tunnel as a listener (HTTP/1.1, HTTP/2, over TLS)
-	tlsCfg, err := generateTLSConfig()
+	tlsCfg, err := loadTLSConfig(publish, certFile, keyFile)
 	if err != nil {
-		return fmt.Errorf("failed to generate TLS config: %w", err)
+		return err
 	}
 	server := &http.Server{
-		Handler: http.HandlerFunc(handler),
+		Handler:           http.HandlerFunc(handler),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       time.Minute,
 	}
 	errCh := make(chan error, 1)
 	go func() {
@@ -112,6 +125,8 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 
 func main() {
 	publish := flag.Bool("publish", false, "publish the tunnel")
+	certFile := flag.String("cert-file", "", "TLS certificate file for published mode")
+	keyFile := flag.String("key-file", "", "TLS private key file for published mode")
 	flag.Parse()
 	client, err := config.NewClientFromEnv()
 	if err != nil {
@@ -126,7 +141,32 @@ func main() {
 		log.Println("Received shutdown signal, exiting...")
 		cancel()
 	}()
-	if err := run(ctx, client, *publish); err != nil && err != http.ErrServerClosed {
+	if err := run(ctx, client, *publish, *certFile, *keyFile); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
+}
+
+func loadTLSConfig(publish bool, certFile, keyFile string) (*tls.Config, error) {
+	if certFile != "" || keyFile != "" {
+		if certFile == "" || keyFile == "" {
+			return nil, fmt.Errorf("--cert-file and --key-file must be provided together")
+		}
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load TLS certificate: %w", err)
+		}
+		return &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			NextProtos:   []string{"h2", "http/1.1"},
+			MinVersion:   tls.VersionTLS12,
+		}, nil
+	}
+	if publish {
+		return nil, fmt.Errorf("published TLS mode requires --cert-file and --key-file for a certificate valid for the published host")
+	}
+	tlsCfg, err := generateTLSConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate TLS config: %w", err)
+	}
+	return tlsCfg, nil
 }

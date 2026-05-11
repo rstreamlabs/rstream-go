@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,8 @@ import (
 	"github.com/charmbracelet/x/vt"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/webtty"
 )
 
 func TestUICaptureInputSessionDoesNotInterceptPrintableRunes(t *testing.T) {
@@ -189,6 +192,94 @@ func TestFormatRawObjectDoesNotPrefixJSON(t *testing.T) {
 	}
 	if !strings.HasPrefix(strings.TrimSpace(got), "{") {
 		t.Fatalf("formatRawObject() = %q, want JSON object", got)
+	}
+}
+
+func TestUIAppDetailFormattersCoverSummaryAndJSONModes(t *testing.T) {
+	t.Parallel()
+	app := &uiApp{state: uiState{Detail: uiDetailModeSummary}}
+	client := rstream.ClientProperties{ID: "client-1", Status: "online", Agent: rstream.StringPtr("agent"), Labels: map[string]string{"b": "2", "a": "1"}}
+	clientSummary := app.formatClientDetail(client)
+	if !strings.Contains(clientSummary, "ID                 client-1") || !strings.Contains(clientSummary, "  a=1\n  b=2") {
+		t.Fatalf("formatClientDetail(summary) = %q", clientSummary)
+	}
+	tunnel := rstream.TunnelInventory{TunnelProperties: rstream.TunnelProperties{ID: rstream.StringPtr("tun-1"), Name: rstream.StringPtr("web"), Publish: rstream.BoolPtr(true), Labels: map[string]string{"env": "prod"}}, Status: "online", ClientID: "client-1"}
+	tunnelSummary := app.formatTunnelDetail(tunnel)
+	if !strings.Contains(tunnelSummary, "Target             web") || !strings.Contains(tunnelSummary, "Published          true") {
+		t.Fatalf("formatTunnelDetail(summary) = %q", tunnelSummary)
+	}
+	server := webtty.ServerInfo{Target: "shell", Status: "online", TunnelID: "tun-1", TunnelName: rstream.StringPtr("tty"), RstreamURL: "rstrm://tty", Hostname: rstream.StringPtr("host"), Labels: map[string]string{"role": "admin"}}
+	serverSummary := app.formatWebTTYDetail(server)
+	if !strings.Contains(serverSummary, "Target             shell") || !strings.Contains(serverSummary, "Tunnel name        tty") {
+		t.Fatalf("formatWebTTYDetail(summary) = %q", serverSummary)
+	}
+	app.state.Detail = uiDetailModeJSON
+	if got := app.formatClientDetail(client); !strings.Contains(got, `"id": "client-1"`) {
+		t.Fatalf("formatClientDetail(json) = %q", got)
+	}
+}
+
+func TestUIAppPureDisplayHelpers(t *testing.T) {
+	t.Parallel()
+	if got := defaultUIView(uiSnapshot{WebTTY: []webtty.ServerInfo{{Target: "shell"}}}); got != uiViewWebTTY {
+		t.Fatalf("defaultUIView(webtty) = %q", got)
+	}
+	if got := defaultUIView(uiSnapshot{Tunnels: []rstream.TunnelInventory{{Status: "online"}}}); got != uiViewTunnels {
+		t.Fatalf("defaultUIView(tunnels) = %q", got)
+	}
+	if got := defaultUIView(uiSnapshot{}); got != uiViewClients {
+		t.Fatalf("defaultUIView(empty) = %q", got)
+	}
+	value := " value "
+	protocol := rstream.ProtocolHTTP
+	if optionalValue(nil) != "-" || optionalValue(&value) != "value" {
+		t.Fatalf("optionalValue returned unexpected values")
+	}
+	if emptyDash("  ") != "-" || emptyDash(" value ") != "value" {
+		t.Fatalf("emptyDash returned unexpected values")
+	}
+	if boolValue(nil) || !boolValue(rstream.BoolPtr(true)) {
+		t.Fatalf("boolValue returned unexpected values")
+	}
+	if stringValue(&protocol) != "http" || stringValue((*rstream.Protocol)(nil)) != "" {
+		t.Fatalf("stringValue returned unexpected values")
+	}
+	if uiStatusColor("offline") != uiColorDanger || uiStatusColor("connecting") != uiColorMuted || uiStatusColor("online") != uiColorText {
+		t.Fatalf("uiStatusColor returned unexpected values")
+	}
+	if uiStatusMessage(" ") != " " || !strings.Contains(uiStatusMessage(" failed "), "failed") {
+		t.Fatalf("uiStatusMessage returned unexpected values")
+	}
+	if got := uiSafe("[red]owned[-]"); got != tview.Escape("[red]owned[-]") {
+		t.Fatalf("uiSafe() = %q, want escaped tview markup", got)
+	}
+	if got := uiStatusMessage("[red]owned[-]"); !strings.Contains(got, tview.Escape("[red]owned[-]")) {
+		t.Fatalf("uiStatusMessage() = %q, want escaped message body", got)
+	}
+	if !contextCanceled(context.Canceled) || !contextCanceled(context.DeadlineExceeded) || contextCanceled(nil) {
+		t.Fatalf("contextCanceled returned unexpected values")
+	}
+}
+
+func TestUIAppTableHelpersAndSessionChrome(t *testing.T) {
+	t.Parallel()
+	table := tview.NewTable()
+	addHeaderRow(table, []string{"Name", "Status"})
+	addPlaceholderRow(table, "empty")
+	setRow(table, 2, []string{"client-1", "offline"}, "client-1")
+	setRow(table, 3, []string{"[red]client[-]", "online"}, "client-2")
+	if table.GetCell(0, 0).Text != "Name" || table.GetCell(1, 0).Text != "empty" || table.GetCell(2, 0).GetReference() != "client-1" || table.GetCell(3, 0).Text != tview.Escape("[red]client[-]") {
+		t.Fatalf("table helpers did not populate expected cells")
+	}
+	server := webtty.ServerInfo{Target: "shell", Hostname: rstream.StringPtr("host")}
+	if !strings.Contains(sessionHeaderText(server), "shell") || !strings.Contains(sessionHeaderText(server), "host") {
+		t.Fatalf("sessionHeaderText() = %q", sessionHeaderText(server))
+	}
+	if !strings.Contains(sessionActionsText(), "Ctrl+g q") {
+		t.Fatalf("sessionActionsText() = %q", sessionActionsText())
+	}
+	if unicodeLower('É') != 'é' {
+		t.Fatalf("unicodeLower did not lower-case rune")
 	}
 }
 

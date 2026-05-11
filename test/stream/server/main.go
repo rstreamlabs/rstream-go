@@ -103,7 +103,7 @@ func serveListener(ctx context.Context, l net.Listener, expectedALPN string) err
 	}
 }
 
-func run(ctx context.Context, client *rstream.Client, variant, name string, publish bool, hostname, tlsALPN string, upstreamTLS bool) error {
+func run(ctx context.Context, client *rstream.Client, variant, name string, publish bool, hostname, tlsALPN, tlsMode string, upstreamTLS bool) error {
 	ctrl, err := client.Connect(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
@@ -119,6 +119,9 @@ func run(ctx context.Context, client *rstream.Client, variant, name string, publ
 	}
 	if variant == "tls" && publish {
 		props.Protocol = rstream.ProtocolPtr(rstream.ProtocolTLS)
+		if tlsMode != "" {
+			props.TLSMode = rstream.TLSModePtr(rstream.TLSMode(tlsMode))
+		}
 		if tlsALPN != "" {
 			props.TLSALPNs = []string{tlsALPN}
 		}
@@ -140,7 +143,7 @@ func run(ctx context.Context, client *rstream.Client, variant, name string, publ
 	if !ok {
 		return fmt.Errorf("tunnel is not BytestreamTunnel")
 	}
-	if variant == "tls" && (!publish || upstreamTLS) {
+	if variant == "tls" && (!publish || upstreamTLS || tlsMode == string(rstream.TLSModePassthrough)) {
 		tlsCfg, err := generateTLSConfig(tlsALPN)
 		if err != nil {
 			return fmt.Errorf("TLS config: %w", err)
@@ -154,6 +157,7 @@ func main() {
 	variant := flag.String("variant", "plain", "variant: plain, tls")
 	publish := flag.Bool("publish", false, "publish the tunnel on the engine's TLS listener")
 	hostname := flag.String("host", "", "requested tunnel hostname")
+	tlsMode := flag.String("tls-mode", "", "TLS mode for published TLS tunnels (terminated, passthrough)")
 	tlsALPN := flag.String("tls-alpn", "", "custom ALPN for published TLS tunnels")
 	upstreamTLS := flag.Bool("upstream-tls", false, "connect from the edge to this server with upstream TLS")
 	name := flag.String("name", "", "tunnel name (default: stream-matrix-<variant>[-pub])")
@@ -176,7 +180,7 @@ func main() {
 		<-sigCh
 		cancel()
 	}()
-	if err := run(ctx, client, *variant, *name, *publish, *hostname, *tlsALPN, *upstreamTLS); err != nil {
+	if err := run(ctx, client, *variant, *name, *publish, *hostname, *tlsALPN, *tlsMode, *upstreamTLS); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
 }

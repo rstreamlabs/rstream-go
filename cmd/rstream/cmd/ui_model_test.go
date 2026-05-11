@@ -5,61 +5,80 @@ package cmd
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/rstreamlabs/rstream-go"
-	"github.com/rstreamlabs/rstream-go/webtty"
 )
 
-func TestUIStoreApplyInitialStateBuildsWebTTYInventory(t *testing.T) {
-	t.Parallel()
-	hostname := "host-a"
-	clientID := "client-1"
-	tunnelID := "tunnel-1"
-	tunnelName := "webtty-a"
-	tunnelType := string(rstream.TunnelTypeBytestream)
-	status := "online"
-	state := uiInitialState{
+func TestUIStoreAppliesEventsAndSortsSnapshot(t *testing.T) {
+	store := newUIStore("sse")
+	initial := uiInitialState{
+		SnapshotAt: time.Now(),
 		Clients: []rstream.ClientProperties{
-			{
-				ID:     clientID,
-				Status: status,
-			},
+			{ID: "client-offline", Status: "offline"},
+			{ID: "client-online", Status: "online"},
 		},
 		Tunnels: []rstream.TunnelInventory{
-			{
-				TunnelProperties: rstream.TunnelProperties{
-					ID:   &tunnelID,
-					Name: &tunnelName,
-					Type: rstream.TunnelTypePtr(rstream.TunnelType(tunnelType)),
-					Labels: map[string]string{
-						webtty.WebTTYApplicationProtocolKey: webtty.WebTTYApplicationProtocol,
-						webtty.WebTTYHostnameLabelKey:       hostname,
-					},
-				},
-				Status:   status,
-				ClientID: clientID,
-			},
+			{TunnelProperties: rstream.TunnelProperties{ID: rstream.StringPtr("tun-b"), Name: rstream.StringPtr("beta")}, Status: "offline"},
+			{TunnelProperties: rstream.TunnelProperties{ID: rstream.StringPtr("tun-a"), Name: rstream.StringPtr("alpha")}, Status: "online"},
 		},
 	}
-	raw, err := json.Marshal(state)
-	if err != nil {
-		t.Fatalf("Marshal() error = %v", err)
-	}
-	store := newUIStore("websocket")
-	if err := store.applyEvent(rstream.Event{Type: "state.initial", Object: raw}); err != nil {
-		t.Fatalf("applyEvent() error = %v", err)
+	if err := store.applyEvent(rstream.Event{Type: "state.initial", Object: mustJSON(t, initial)}); err != nil {
+		t.Fatalf("applyEvent(initial) error = %v", err)
 	}
 	snapshot := store.snapshot()
-	if got := len(snapshot.Clients); got != 1 {
-		t.Fatalf("len(snapshot.Clients) = %d, want 1", got)
+	if len(snapshot.Clients) != 2 || snapshot.Clients[0].ID != "client-online" {
+		t.Fatalf("clients not sorted by status: %#v", snapshot.Clients)
 	}
-	if got := len(snapshot.Tunnels); got != 1 {
-		t.Fatalf("len(snapshot.Tunnels) = %d, want 1", got)
+	if len(snapshot.Tunnels) != 2 || *snapshot.Tunnels[0].ID != "tun-a" {
+		t.Fatalf("tunnels not sorted by status/name: %#v", snapshot.Tunnels)
 	}
-	if got := len(snapshot.WebTTY); got != 1 {
-		t.Fatalf("len(snapshot.WebTTY) = %d, want 1", got)
+	if err := store.applyEvent(rstream.Event{Type: "client.updated", Object: mustJSON(t, rstream.ClientProperties{ID: "client-offline", Status: "online"})}); err != nil {
+		t.Fatalf("applyEvent(client.updated) error = %v", err)
 	}
-	if got := snapshot.WebTTY[0].RstreamURL; got != "rstrm://webtty-a" {
-		t.Fatalf("snapshot.WebTTY[0].RstreamURL = %q, want %q", got, "rstrm://webtty-a")
+	if err := store.applyEvent(rstream.Event{Type: "tunnel.deleted", Object: mustJSON(t, rstream.TunnelInventory{TunnelProperties: rstream.TunnelProperties{ID: rstream.StringPtr("tun-b")}})}); err != nil {
+		t.Fatalf("applyEvent(tunnel.deleted) error = %v", err)
 	}
+	snapshot = store.snapshot()
+	if snapshot.Clients[0].Status != "online" || len(snapshot.Tunnels) != 1 {
+		t.Fatalf("updates/deletes not reflected: %#v", snapshot)
+	}
+}
+
+func TestUIStoreConnectionStateAndHelpers(t *testing.T) {
+	store := newUIStore("ws")
+	store.setConnectionState(true, " connected ")
+	select {
+	case <-store.Changes():
+	default:
+		t.Fatalf("expected connection state change notification")
+	}
+	snapshot := store.snapshot()
+	if !snapshot.Connected || snapshot.LastError != "connected" {
+		t.Fatalf("unexpected connection snapshot: %#v", snapshot)
+	}
+	if trimOptionalString(nil) != "" || trimOptionalString(rstream.StringPtr(" value ")) != "value" {
+		t.Fatalf("trimOptionalString returned unexpected values")
+	}
+	if uiStatusRank("online") >= uiStatusRank("offline") || uiStatusRank("unknown") <= uiStatusRank("offline") {
+		t.Fatalf("uiStatusRank ordering is unexpected")
+	}
+}
+
+func TestUIStoreRejectsMalformedEvents(t *testing.T) {
+	store := newUIStore("sse")
+	for _, eventType := range []string{"state.initial", "client.created", "client.deleted", "tunnel.created", "tunnel.deleted"} {
+		if err := store.applyEvent(rstream.Event{Type: eventType, Object: json.RawMessage("{")}); err == nil {
+			t.Fatalf("applyEvent(%s) accepted malformed JSON", eventType)
+		}
+	}
+}
+
+func mustJSON(t *testing.T, value any) json.RawMessage {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	return data
 }
