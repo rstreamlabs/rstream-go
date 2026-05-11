@@ -111,7 +111,10 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 			}
 		}
 		if err == nil {
-			tlsProxyCfg := d.TLSProxyConfig
+			var tlsProxyCfg *tls.Config
+			if d.TLSProxyConfig != nil {
+				tlsProxyCfg = d.TLSProxyConfig.Clone()
+			}
 			if tlsProxyCfg == nil && proxyURL.Scheme == "https" {
 				tlsProxyCfg = &tls.Config{}
 			} else if tlsProxyCfg != nil && proxyURL.Scheme == "http" {
@@ -139,6 +142,8 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 			}
 			if d.ProxyUsername != nil && d.ProxyPassword != nil {
 				req.SetBasicAuth(*d.ProxyUsername, *d.ProxyPassword)
+				req.Header.Set("Proxy-Authorization", req.Header.Get("Authorization"))
+				req.Header.Del("Authorization")
 			}
 			for k, v := range d.ProxyHTTPHeaders {
 				req.Header.Set(k, v)

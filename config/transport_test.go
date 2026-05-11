@@ -40,3 +40,85 @@ func TestMergeTransportSafeOverride(t *testing.T) {
 		t.Fatalf("expected headers merged, got %+v", merged.Proxy.Headers)
 	}
 }
+
+func TestMergeTransportDeepCopiesNestedValues(t *testing.T) {
+	base := &TransportConfig{
+		Bind: &BindConfig{Mode: "address", Address: "127.0.0.1"},
+		DNS:  &DNSConfig{Override: "1.1.1.1:53"},
+		Proxy: &ProxyConfig{
+			HTTP:    "http://proxy.local:3128",
+			Headers: map[string]string{"X-Trace": "source"},
+		},
+	}
+	merged := MergeTransport(base, nil)
+	base.Bind.Address = "10.0.0.1"
+	base.DNS.Override = "8.8.8.8:53"
+	base.Proxy.Headers["X-Trace"] = "mutated"
+	if merged.Bind.Address != "127.0.0.1" || merged.DNS.Override != "1.1.1.1:53" || merged.Proxy.Headers["X-Trace"] != "source" {
+		t.Fatalf("merged transport should be independent from base: %#v", merged)
+	}
+}
+
+func TestFlattenTransportBuildsTCPTransport(t *testing.T) {
+	cfg := &TransportConfig{
+		Bind:     &BindConfig{Mode: "interface", Interface: "lo0"},
+		IPFamily: "ipv4",
+		DNS:      &DNSConfig{Override: "1.1.1.1:853", TLS: rstream.BoolPtr(true), ServerName: "cloudflare-dns.com", DNSSEC: rstream.BoolPtr(true)},
+		MPTCP:    rstream.BoolPtr(true),
+		Proxy: &ProxyConfig{
+			HTTP:     "https://proxy.local:8443",
+			Username: "user",
+			Password: "pass",
+			Headers:  map[string]string{"X-Trace": "abc"},
+		},
+	}
+	transport, ok := FlattenTransport(cfg).(*rstream.Transport)
+	if !ok {
+		t.Fatalf("FlattenTransport() returned %T, want *rstream.Transport", FlattenTransport(cfg))
+	}
+	if transport.NetworkInterface == nil || *transport.NetworkInterface != "lo0" || transport.ForceIPv4 == nil || !*transport.ForceIPv4 {
+		t.Fatalf("bind/IP settings not flattened: %#v", transport)
+	}
+	if transport.DNSOverride == nil || *transport.DNSOverride != "1.1.1.1:853" || transport.DNSOverTLS == nil || !*transport.DNSOverTLS {
+		t.Fatalf("DNS settings not flattened: %#v", transport)
+	}
+	if transport.DNSServerName == nil || *transport.DNSServerName != "cloudflare-dns.com" || transport.DNSSECEnabled == nil || !*transport.DNSSECEnabled {
+		t.Fatalf("advanced DNS settings not flattened: %#v", transport)
+	}
+	if transport.MPTCPEnabled == nil || !*transport.MPTCPEnabled {
+		t.Fatalf("MPTCP setting not flattened")
+	}
+	if transport.ProxyHTTP == nil || *transport.ProxyHTTP != "https://proxy.local:8443" || transport.ProxyUsername == nil || *transport.ProxyUsername != "user" {
+		t.Fatalf("proxy settings not flattened: %#v", transport)
+	}
+	if transport.ProxyHTTPHeaders["X-Trace"] != "abc" {
+		t.Fatalf("proxy headers not flattened: %#v", transport.ProxyHTTPHeaders)
+	}
+	cfg.Proxy.Headers["X-Trace"] = "mutated"
+	if transport.ProxyHTTPHeaders["X-Trace"] != "abc" {
+		t.Fatalf("flattened proxy headers should be copied")
+	}
+}
+
+func TestFlattenTransportBuildsQUICTransport(t *testing.T) {
+	cfg := &TransportConfig{
+		UseQUIC:  rstream.BoolPtr(true),
+		Bind:     &BindConfig{Mode: "address", Address: "127.0.0.1"},
+		IPFamily: "ipv6",
+		DNS:      &DNSConfig{Override: "1.1.1.1:853", TLS: rstream.BoolPtr(true), ServerName: "cloudflare-dns.com", DNSSEC: rstream.BoolPtr(true)},
+		Proxy:    &ProxyConfig{HTTP: "http://ignored.local:3128"},
+	}
+	transport, ok := FlattenTransport(cfg).(*rstream.QUICTransport)
+	if !ok {
+		t.Fatalf("FlattenTransport() returned %T, want *rstream.QUICTransport", FlattenTransport(cfg))
+	}
+	if transport.LocalAddr == nil || *transport.LocalAddr != "127.0.0.1" || transport.ForceIPv6 == nil || !*transport.ForceIPv6 {
+		t.Fatalf("bind/IP settings not flattened: %#v", transport)
+	}
+	if transport.DNSOverride == nil || *transport.DNSOverride != "1.1.1.1:853" || transport.DNSOverTLS == nil || !*transport.DNSOverTLS {
+		t.Fatalf("DNS settings not flattened: %#v", transport)
+	}
+	if transport.DNSServerName == nil || *transport.DNSServerName != "cloudflare-dns.com" || transport.DNSSECEnabled == nil || !*transport.DNSSECEnabled {
+		t.Fatalf("advanced DNS settings not flattened: %#v", transport)
+	}
+}

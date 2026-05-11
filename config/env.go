@@ -19,7 +19,7 @@ type EnvSettings struct {
 func ReadEnv() EnvSettings {
 	return EnvSettings{
 		ConfigPath: strings.TrimSpace(os.Getenv("RSTREAM_CONFIG")),
-		APIURL:     strings.TrimSpace(os.Getenv("RSTREAM_API_URL")),
+		APIURL:     NormalizeAPIURL(os.Getenv("RSTREAM_API_URL")),
 		Context:    strings.TrimSpace(os.Getenv("RSTREAM_CONTEXT")),
 		Engine:     strings.TrimSpace(os.Getenv("RSTREAM_ENGINE")),
 		Token:      strings.TrimSpace(os.Getenv("RSTREAM_AUTHENTICATION_TOKEN")),

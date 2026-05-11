@@ -61,6 +61,12 @@ func (c *Config) EnsureVersion() {
 
 func (c *Config) Normalize() {
 	c.EnsureVersion()
+	for i := range c.Environments {
+		c.Environments[i].APIURL = NormalizeAPIURL(c.Environments[i].APIURL)
+	}
+	for i := range c.Contexts {
+		c.Contexts[i].APIURL = NormalizeAPIURL(c.Contexts[i].APIURL)
+	}
 	if c.Defaults.Context == nil {
 		return
 	}
@@ -70,8 +76,9 @@ func (c *Config) Normalize() {
 }
 
 func (c *Config) FindEnvironment(apiURL string) (*Environment, int) {
+	apiURL = NormalizeAPIURL(apiURL)
 	for i := range c.Environments {
-		if c.Environments[i].APIURL == apiURL {
+		if NormalizeAPIURL(c.Environments[i].APIURL) == apiURL {
 			return &c.Environments[i], i
 		}
 	}
@@ -79,7 +86,9 @@ func (c *Config) FindEnvironment(apiURL string) (*Environment, int) {
 }
 
 func (c *Config) EnsureEnvironment(apiURL string) *Environment {
+	apiURL = NormalizeAPIURL(apiURL)
 	if env, _ := c.FindEnvironment(apiURL); env != nil {
+		env.APIURL = apiURL
 		return env
 	}
 	c.Environments = append(c.Environments, Environment{APIURL: apiURL})
@@ -99,13 +108,14 @@ func (c *Config) FindContextByName(name string) (*Context, int, error) {
 }
 
 func (c *Config) FindContextByNameAndAPIURL(name, apiURL string) (*Context, int, error) {
+	apiURL = NormalizeAPIURL(apiURL)
 	matches := c.contextMatches(name)
 	if len(matches) == 0 {
 		return nil, -1, nil
 	}
 	var exact []int
 	for _, idx := range matches {
-		if c.Contexts[idx].APIURL == apiURL {
+		if NormalizeAPIURL(c.Contexts[idx].APIURL) == apiURL {
 			exact = append(exact, idx)
 		}
 	}
@@ -120,13 +130,14 @@ func (c *Config) FindContextByNameAndAPIURL(name, apiURL string) (*Context, int,
 }
 
 func (c *Config) FindContextForAPIURL(name, apiURL string) (*Context, int, error) {
+	apiURL = NormalizeAPIURL(apiURL)
 	matches := c.contextMatches(name)
 	if len(matches) == 0 {
 		return nil, -1, nil
 	}
 	var exact []int
 	for _, idx := range matches {
-		if c.Contexts[idx].APIURL == apiURL {
+		if NormalizeAPIURL(c.Contexts[idx].APIURL) == apiURL {
 			exact = append(exact, idx)
 		}
 	}
@@ -176,6 +187,14 @@ func (c *Config) FindContextUnlinked(name string) (*Context, int, error) {
 	default:
 		return nil, -1, contextAmbiguousError(name)
 	}
+}
+
+func NormalizeAPIURL(apiURL string) string {
+	apiURL = strings.TrimSpace(apiURL)
+	for strings.HasSuffix(apiURL, "/") && !strings.HasSuffix(apiURL, "://") {
+		apiURL = strings.TrimSuffix(apiURL, "/")
+	}
+	return apiURL
 }
 
 func (c *Config) contextMatches(name string) []int {

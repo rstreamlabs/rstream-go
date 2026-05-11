@@ -39,9 +39,12 @@ func (s *Source) Watch(ctx context.Context) (<-chan struct{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := watcher.Add(parentDir(s.path)); err != nil {
-		_ = watcher.Close()
-		return nil, err
+	targets := watchTargets(s.path)
+	for _, dir := range watchDirs(targets) {
+		if err := watcher.Add(dir); err != nil {
+			_ = watcher.Close()
+			return nil, err
+		}
 	}
 	s.logger.Info("Watching configuration file", "path", s.path)
 	out := make(chan struct{}, 1)
@@ -57,7 +60,7 @@ func (s *Source) Watch(ctx context.Context) (<-chan struct{}, error) {
 					close(out)
 					return
 				}
-				if shouldReloadEvent(event, s.path) {
+				if shouldReloadEvent(event, targets...) {
 					select {
 					case out <- struct{}{}:
 					default:

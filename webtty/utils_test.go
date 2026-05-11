@@ -5,6 +5,7 @@ package webtty
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
@@ -56,5 +57,33 @@ func TestBuildEnvironmentPreservesExplicitEmptyValues(t *testing.T) {
 	}
 	if env[1] != "SET=1" {
 		t.Fatalf("unexpected second env var: got %q want %q", env[1], "SET=1")
+	}
+}
+
+func TestAddEnvironmentVariableForceSemantics(t *testing.T) {
+	env := []string{"A=1", "B=2"}
+	AddEnvironmentVariable(&env, "A", "changed", false)
+	if env[0] != "A=1" {
+		t.Fatalf("non-forced update should preserve existing value")
+	}
+	AddEnvironmentVariable(&env, "A", "changed", true)
+	AddEnvironmentVariable(&env, "C", "3", false)
+	if !reflect.DeepEqual(env, []string{"A=changed", "B=2", "C=3"}) {
+		t.Fatalf("unexpected env: %#v", env)
+	}
+}
+
+func TestDefaultLabelsIncludesStableRuntimeIdentity(t *testing.T) {
+	labels := DefaultLabels()
+	if labels[webTTYApplicationProtocolKey] != WebTTYApplicationProtocol {
+		t.Fatalf("protocol label = %q, want %q", labels[webTTYApplicationProtocolKey], WebTTYApplicationProtocol)
+	}
+	if labels[webTTYOSFamilyLabel] == "" || labels[webTTYArchLabel] == "" {
+		t.Fatalf("runtime labels missing OS/arch: %#v", labels)
+	}
+	for key, value := range labels {
+		if value == "" {
+			t.Fatalf("label %q has an empty value", key)
+		}
 	}
 }

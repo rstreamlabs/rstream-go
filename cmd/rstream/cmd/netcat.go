@@ -17,6 +17,7 @@ import (
 
 const (
 	defaultNetcatOpenTimeout = 10 * time.Second
+	defaultNetcatMaxConns    = 64
 )
 
 type netcatDialer func(context.Context) (net.Conn, error)
@@ -51,6 +52,7 @@ type netcatServerConfig struct {
 	Upstream            netcatDialer
 	Exec                *netcatExecConfig
 	OpenTimeout         time.Duration
+	MaxConnections      int
 	Stderr              io.Writer
 	Logger              *slog.Logger
 }
@@ -95,6 +97,7 @@ func init() {
 	netcatCmd.Flags().StringP("sh-exec", "c", "", "run a command by passing it to a system shell")
 	netcatCmd.Flags().BoolP("interactive", "i", false, "enable interactive mode")
 	netcatCmd.Flags().BoolP("no-interactive", "I", false, "disable interactive mode")
+	netcatCmd.Flags().Int("max-connections", defaultNetcatMaxConns, "maximum concurrent server-mode connections")
 	netcatCmd.MarkFlagsMutuallyExclusive("interactive", "no-interactive")
 	netcatCmd.MarkFlagsMutuallyExclusive("remote", "exec", "sh-exec")
 	rootCmd.AddCommand(netcatCmd)
@@ -128,6 +131,10 @@ func validateNetcatFlags(cmd *cobra.Command, args []string) error {
 		if cmd.Flags().Changed("interactive") || cmd.Flags().Changed("no-interactive") {
 			return fmt.Errorf("--interactive and --no-interactive are only valid in client mode")
 		}
+		maxConnections, _ := cmd.Flags().GetInt("max-connections")
+		if maxConnections <= 0 {
+			return fmt.Errorf("--max-connections must be greater than 0")
+		}
 		return nil
 	}
 	if len(args) != 1 {
@@ -135,6 +142,9 @@ func validateNetcatFlags(cmd *cobra.Command, args []string) error {
 	}
 	if cmd.Flags().Changed("remote") || cmd.Flags().Changed("exec") || cmd.Flags().Changed("sh-exec") {
 		return fmt.Errorf("--remote, --exec, and --sh-exec require --listen")
+	}
+	if cmd.Flags().Changed("max-connections") {
+		return fmt.Errorf("--max-connections requires --listen")
 	}
 	return nil
 }
@@ -175,6 +185,7 @@ func newNetcatServerConfig(cmd *cobra.Command, logger *slog.Logger) (*netcatServ
 		return nil, err
 	}
 	usesRstream := listenTarget.Kind == netcatEndpointRstream
+	maxConnections, _ := cmd.Flags().GetInt("max-connections")
 	var upstreamDialer netcatDialer
 	if cmd.Flags().Changed("remote") {
 		rawRemote, _ := cmd.Flags().GetString("remote")
@@ -194,6 +205,7 @@ func newNetcatServerConfig(cmd *cobra.Command, logger *slog.Logger) (*netcatServ
 			UpstreamHalfClose:   remoteTarget.Kind == netcatEndpointTCP,
 			Upstream:            upstreamDialer,
 			OpenTimeout:         defaultNetcatOpenTimeout,
+			MaxConnections:      maxConnections,
 			Stderr:              os.Stderr,
 			Logger:              logger,
 		}, nil
@@ -215,6 +227,7 @@ func newNetcatServerConfig(cmd *cobra.Command, logger *slog.Logger) (*netcatServ
 		DownstreamHalfClose: listenTarget.Kind == netcatEndpointTCP,
 		Exec:                execCfg,
 		OpenTimeout:         defaultNetcatOpenTimeout,
+		MaxConnections:      maxConnections,
 		Stderr:              os.Stderr,
 		Logger:              logger,
 	}, nil

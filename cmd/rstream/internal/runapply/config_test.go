@@ -5,11 +5,14 @@ package runapply
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
+	"github.com/rstreamlabs/rstream-go/config"
+	"gopkg.in/yaml.v3"
 )
 
 func TestLoadConfigValidationAndEnvExpansion(t *testing.T) {
@@ -260,5 +263,172 @@ contexts:
 				}
 			}
 		})
+	}
+}
+
+func TestTunnelPropertiesFromSpecFullSurface(t *testing.T) {
+	dir := t.TempDir()
+	certPath := filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(certPath, []byte("PEM-FILE"), 0o600); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+	props, err := tunnelPropertiesFromSpec(&TunnelSpec{
+		Publish:     rstream.BoolPtr(false),
+		Protocol:    "http",
+		Type:        "bytestream",
+		Host:        " app.example.com ",
+		UpstreamTLS: rstream.BoolPtr(true),
+		Labels:      map[string]string{"tier": "edge"},
+		TrustedIPs:  []string{"10.0.0.0/8"},
+		GeoIP:       []string{"FR"},
+		HTTP: &HTTPSpec{
+			Version: "h2c",
+			Auth:    &HTTPAuthSpec{Token: rstream.BoolPtr(true), Rstream: rstream.BoolPtr(false)},
+			Gate:    &HTTPGateSpec{Challenge: rstream.BoolPtr(true)},
+		},
+		TLS: &TLSSpec{
+			Mode:           "terminated",
+			MinVersion:     "tls1.3",
+			ALPNs:          []string{"h2"},
+			MTLS:           rstream.BoolPtr(true),
+			MTLSCACertFile: certPath,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if props.Publish == nil || *props.Publish {
+		t.Fatalf("publish flag not applied")
+	}
+	if props.Protocol == nil || *props.Protocol != rstream.ProtocolHTTP {
+		t.Fatalf("unexpected protocol: %#v", props.Protocol)
+	}
+	if props.Type == nil || *props.Type != rstream.TunnelTypeBytestream {
+		t.Fatalf("unexpected type: %#v", props.Type)
+	}
+	if props.Hostname == nil || *props.Hostname != "app.example.com" {
+		t.Fatalf("unexpected host: %#v", props.Hostname)
+	}
+	if props.HTTPUseTLS == nil || !*props.HTTPUseTLS || props.UpstreamTLS == nil || !*props.UpstreamTLS {
+		t.Fatalf("expected HTTP upstream TLS propagation")
+	}
+	if props.HTTPVersion == nil || *props.HTTPVersion != rstream.HTTP2 {
+		t.Fatalf("unexpected HTTP version: %#v", props.HTTPVersion)
+	}
+	if props.TokenAuth == nil || !*props.TokenAuth || props.RstreamAuth == nil || *props.RstreamAuth || props.ChallengeMode == nil || !*props.ChallengeMode {
+		t.Fatalf("unexpected auth/gate values: %#v", props)
+	}
+	if props.TLSMode == nil || *props.TLSMode != rstream.TLSModeTerminated || props.TLSMinVersion == nil || *props.TLSMinVersion != "tls1.3" {
+		t.Fatalf("unexpected TLS settings: %#v", props)
+	}
+	if props.MTLSCACertPEM == nil || *props.MTLSCACertPEM != "PEM-FILE" {
+		t.Fatalf("expected cert file contents, got %#v", props.MTLSCACertPEM)
+	}
+}
+
+func TestTunnelPropertiesFromSpecPrefersInlineCertificate(t *testing.T) {
+	props, err := tunnelPropertiesFromSpec(&TunnelSpec{
+		TLS: &TLSSpec{MTLSCACertInline: "  INLINE-PEM  ", MTLSCACertFile: "missing.pem"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if props.MTLSCACertPEM == nil || *props.MTLSCACertPEM != "INLINE-PEM" {
+		t.Fatalf("inline cert should be trimmed and preferred, got %#v", props.MTLSCACertPEM)
+	}
+}
+
+func TestTunnelPropertiesFromSpecRejectsConflictingHTTPUpstreamTLS(t *testing.T) {
+	_, err := tunnelPropertiesFromSpec(&TunnelSpec{
+		Protocol:    "http",
+		UpstreamTLS: rstream.BoolPtr(true),
+		HTTP:        &HTTPSpec{UpstreamTLS: rstream.BoolPtr(false)},
+	})
+	if err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("expected upstream TLS conflict, got %v", err)
+	}
+}
+
+func TestRunApplyParsers(t *testing.T) {
+	protocol, err := parseProtocol(" QUIC ")
+	if err != nil || protocol != rstream.ProtocolQUIC {
+		t.Fatalf("parseProtocol got %q err=%v", protocol, err)
+	}
+	tunnelType, err := parseTunnelType(" datagram ")
+	if err != nil || tunnelType != rstream.TunnelTypeDatagram {
+		t.Fatalf("parseTunnelType got %q err=%v", tunnelType, err)
+	}
+	httpVersion, err := parseHTTPVersion(" HTTP/1.1 ")
+	if err != nil || httpVersion != rstream.HTTP1_1 {
+		t.Fatalf("parseHTTPVersion got %q err=%v", httpVersion, err)
+	}
+	tlsMode, err := parseTLSMode(" passthrough ")
+	if err != nil || tlsMode != rstream.TLSModePassthrough {
+		t.Fatalf("parseTLSMode got %q err=%v", tlsMode, err)
+	}
+	tlsMinVersion, err := parseTLSMinVersion(" TLS1.2 ")
+	if err != nil || tlsMinVersion != "tls1.2" {
+		t.Fatalf("parseTLSMinVersion got %q err=%v", tlsMinVersion, err)
+	}
+	for name, fn := range map[string]func(string) error{
+		"protocol": func(v string) error { _, err := parseProtocol(v); return err },
+		"type":     func(v string) error { _, err := parseTunnelType(v); return err },
+		"http":     func(v string) error { _, err := parseHTTPVersion(v); return err },
+		"tlsMode":  func(v string) error { _, err := parseTLSMode(v); return err },
+		"tlsMin":   func(v string) error { _, err := parseTLSMinVersion(v); return err },
+	} {
+		if err := fn("invalid"); err == nil {
+			t.Fatalf("%s parser should reject invalid input", name)
+		}
+	}
+}
+
+func TestResolveNamedContextsErrors(t *testing.T) {
+	if _, err := resolveNamedContexts(map[string]ContextEntry{" ": {Engine: "engine", Token: "token"}}, nil); err == nil {
+		t.Fatalf("expected blank context name error")
+	}
+	if _, err := resolveNamedContexts(map[string]ContextEntry{"prod": {External: true}}, nil); err == nil {
+		t.Fatalf("expected missing external lookup error")
+	}
+	if _, err := resolveInlineContext("", "token", nil); err == nil {
+		t.Fatalf("expected missing engine error")
+	}
+	if _, err := resolveInlineContext("engine", "", nil); err == nil {
+		t.Fatalf("expected missing token error")
+	}
+	ctx, err := resolveInlineContext(" engine ", " token ", &config.TransportConfig{UseQUIC: rstream.BoolPtr(true)})
+	if err != nil {
+		t.Fatalf("unexpected inline context error: %v", err)
+	}
+	if ctx.Engine != "engine" || ctx.Token != "token" || ctx.Transport == nil {
+		t.Fatalf("unexpected inline context: %#v", ctx)
+	}
+}
+
+func TestContextRefUnmarshalYAMLValidation(t *testing.T) {
+	var cfg FileConfig
+	err := yaml.Unmarshal([]byte("version: 1\ntunnels:\n- name: x\n  forward: \"8080\"\n  context:\n    unknown: true\n  tunnel:\n    publish: true\n"), &cfg)
+	if err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("expected unknown context field error, got %v", err)
+	}
+	err = yaml.Unmarshal([]byte("version: 1\ntunnels:\n- name: x\n  forward: \"8080\"\n  context: {}\n  tunnel:\n    publish: true\n"), &cfg)
+	if err != nil {
+		t.Fatalf("empty inline context should decode: %v", err)
+	}
+	if cfg.Tunnels[0].Context == nil || cfg.Tunnels[0].Context.Inline == nil {
+		t.Fatalf("expected inline context, got %#v", cfg.Tunnels[0].Context)
+	}
+}
+
+func TestTunnelPropertiesFromSpecKeepsSlicesAndMaps(t *testing.T) {
+	labels := map[string]string{"a": "b"}
+	geo := []string{"FR"}
+	trusted := []string{"10.0.0.0/8"}
+	props, err := tunnelPropertiesFromSpec(&TunnelSpec{Labels: labels, GeoIP: geo, TrustedIPs: trusted})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !reflect.DeepEqual(props.Labels, labels) || !reflect.DeepEqual(props.GeoIP, geo) || !reflect.DeepEqual(props.TrustedIPs, trusted) {
+		t.Fatalf("collections not applied: %#v", props)
 	}
 }

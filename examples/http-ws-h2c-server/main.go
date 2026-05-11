@@ -27,6 +27,8 @@ import (
 	"golang.org/x/net/http2"
 )
 
+const maxWebSocketFramePayload = 1 << 20
+
 // echoWSFrames reads WebSocket frames from r and writes them back to w,
 // flushing after each frame. It returns on a close frame or on any I/O error.
 // This minimal framing loop is the only server-side WebSocket code required
@@ -40,21 +42,25 @@ func echoWSFrames(r io.Reader, w io.Writer, flush func()) {
 		}
 		opcode := hdr[0] & 0x0f
 		masked := hdr[1]&0x80 != 0
-		plen := int(hdr[1] & 0x7f)
-		switch plen {
+		payloadLen := uint64(hdr[1] & 0x7f)
+		switch payloadLen {
 		case 126:
 			ext := make([]byte, 2)
 			if _, err := io.ReadFull(r, ext); err != nil {
 				return
 			}
-			plen = int(binary.BigEndian.Uint16(ext))
+			payloadLen = uint64(binary.BigEndian.Uint16(ext))
 		case 127:
 			ext := make([]byte, 8)
 			if _, err := io.ReadFull(r, ext); err != nil {
 				return
 			}
-			plen = int(binary.BigEndian.Uint64(ext))
+			payloadLen = binary.BigEndian.Uint64(ext)
 		}
+		if payloadLen > maxWebSocketFramePayload {
+			return
+		}
+		plen := int(payloadLen)
 		var mask [4]byte
 		if masked {
 			if _, err := io.ReadFull(r, mask[:]); err != nil {
@@ -85,8 +91,9 @@ func echoWSFrames(r io.Reader, w io.Writer, flush func()) {
 		if lenByte == 126 {
 			frame = append(frame, byte(plen>>8), byte(plen))
 		} else if lenByte == 127 {
-			frame = append(frame, 0, 0, 0, 0,
-				byte(plen>>24), byte(plen>>16), byte(plen>>8), byte(plen))
+			ext := make([]byte, 8)
+			binary.BigEndian.PutUint64(ext, uint64(plen))
+			frame = append(frame, ext...)
 		}
 		frame = append(frame, payload...)
 		if _, err := w.Write(frame); err != nil {
@@ -128,6 +135,7 @@ func run(ctx context.Context, client *rstream.Client) error {
 	// the engine handles the H1→H2C or H2→H2C protocol translation automatically.
 	tunnel, err := ctrl.CreateTunnel(ctx, rstream.TunnelProperties{
 		Name:        rstream.StringPtr("ws-h2c-example"),
+		Publish:     rstream.BoolPtr(false),
 		HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP2),
 	})
 	if err != nil {

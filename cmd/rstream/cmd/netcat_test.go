@@ -16,6 +16,7 @@ func newTestNetcatCommand() *cobra.Command {
 	cmd.Flags().String("sh-exec", "", "")
 	cmd.Flags().Bool("interactive", false, "")
 	cmd.Flags().Bool("no-interactive", false, "")
+	cmd.Flags().Int("max-connections", defaultNetcatMaxConns, "")
 	return cmd
 }
 
@@ -62,6 +63,27 @@ func TestValidateNetcatFlags(t *testing.T) {
 					return err
 				}
 				return cmd.Flags().Set("interactive", "true")
+			},
+			wantErr: true,
+		},
+		{
+			name: "server mode rejects invalid max connections",
+			config: func(cmd *cobra.Command) error {
+				if err := cmd.Flags().Set("listen", ":2222"); err != nil {
+					return err
+				}
+				if err := cmd.Flags().Set("remote", "127.0.0.1:22"); err != nil {
+					return err
+				}
+				return cmd.Flags().Set("max-connections", "0")
+			},
+			wantErr: true,
+		},
+		{
+			name: "client mode rejects max connections",
+			args: []string{"127.0.0.1:22"},
+			config: func(cmd *cobra.Command) error {
+				return cmd.Flags().Set("max-connections", "2")
 			},
 			wantErr: true,
 		},

@@ -43,7 +43,7 @@ func loadConfig(cmd *cobra.Command) (string, config.Config, error) {
 func resolveAPIURL(cmd *cobra.Command, cfg config.Config) (string, error) {
 	flagAPIURL, _ := cmd.Flags().GetString("api-url")
 	if flagAPIURL != "" {
-		return flagAPIURL, nil
+		return config.NormalizeAPIURL(flagAPIURL), nil
 	}
 	if env := config.ReadEnv().APIURL; env != "" {
 		return env, nil

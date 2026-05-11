@@ -290,12 +290,12 @@ func (u *uiApp) inventoryMetaText() string {
 		status,
 	}
 	if contextName := strings.TrimSpace(u.connection.ContextName); contextName != "" {
-		parts = append(parts, fmt.Sprintf("[#b0bac5]ctx %s[-]", contextName))
+		parts = append(parts, fmt.Sprintf("[#b0bac5]ctx %s[-]", uiSafe(contextName)))
 	}
 	if engine := strings.TrimSpace(u.connection.Engine); engine != "" {
-		parts = append(parts, fmt.Sprintf("[#b0bac5]engine %s[-]", engine))
+		parts = append(parts, fmt.Sprintf("[#b0bac5]engine %s[-]", uiSafe(engine)))
 	} else if apiURL := strings.TrimSpace(u.connection.APIURL); apiURL != "" {
-		parts = append(parts, fmt.Sprintf("[#b0bac5]api %s[-]", apiURL))
+		parts = append(parts, fmt.Sprintf("[#b0bac5]api %s[-]", uiSafe(apiURL)))
 	}
 	return strings.Join(parts, " [#b0bac5]-[-] ")
 }
@@ -866,7 +866,7 @@ func addPlaceholderRow(table *tview.Table, text string) {
 
 func setRow(table *tview.Table, row int, values []string, ref string) {
 	for column, value := range values {
-		cell := tview.NewTableCell(value).SetExpansion(1).SetTextColor(uiColorText)
+		cell := tview.NewTableCell(uiSafe(value)).SetExpansion(1).SetTextColor(uiColorText)
 		if column == 0 {
 			cell.SetReference(ref)
 		}
@@ -893,15 +893,15 @@ func (u *uiApp) formatClientDetail(client rstream.ClientProperties) string {
 		return formatRawObject(client)
 	}
 	summary := []string{
-		fmt.Sprintf("ID                 %s", client.ID),
-		fmt.Sprintf("Status             %s", client.Status),
-		fmt.Sprintf("Agent              %s", optionalValue(client.Agent)),
-		fmt.Sprintf("Channel            %s", optionalValue(client.Channel)),
-		fmt.Sprintf("Version            %s", optionalValue(client.Version)),
-		fmt.Sprintf("User               %s", optionalValue(client.UserID)),
-		fmt.Sprintf("OS                 %s", optionalValue(client.OS)),
-		fmt.Sprintf("Arch               %s", optionalValue(client.Arch)),
-		fmt.Sprintf("Protocol version   %s", optionalValue(client.ProtocolVersion)),
+		fmt.Sprintf("ID                 %s", uiSafe(client.ID)),
+		fmt.Sprintf("Status             %s", uiSafe(client.Status)),
+		fmt.Sprintf("Agent              %s", uiSafe(optionalValue(client.Agent))),
+		fmt.Sprintf("Channel            %s", uiSafe(optionalValue(client.Channel))),
+		fmt.Sprintf("Version            %s", uiSafe(optionalValue(client.Version))),
+		fmt.Sprintf("User               %s", uiSafe(optionalValue(client.UserID))),
+		fmt.Sprintf("OS                 %s", uiSafe(optionalValue(client.OS))),
+		fmt.Sprintf("Arch               %s", uiSafe(optionalValue(client.Arch))),
+		fmt.Sprintf("Protocol version   %s", uiSafe(optionalValue(client.ProtocolVersion))),
 	}
 	return strings.TrimSpace(strings.Join([]string{strings.Join(summary, "\n"), formatLabelBlock(client.Labels)}, "\n\n"))
 }
@@ -915,14 +915,14 @@ func (u *uiApp) formatTunnelDetail(tunnel rstream.TunnelInventory) string {
 		target = value
 	}
 	summary := []string{
-		fmt.Sprintf("Target             %s", target),
-		fmt.Sprintf("ID                 %s", trimOptionalString(tunnel.ID)),
-		fmt.Sprintf("Status             %s", tunnel.Status),
-		fmt.Sprintf("Client             %s", emptyDash(strings.TrimSpace(tunnel.ClientID))),
-		fmt.Sprintf("Type               %s", emptyDash(stringValue(tunnel.Type))),
-		fmt.Sprintf("Protocol           %s", emptyDash(stringValue(tunnel.Protocol))),
+		fmt.Sprintf("Target             %s", uiSafe(target)),
+		fmt.Sprintf("ID                 %s", uiSafe(trimOptionalString(tunnel.ID))),
+		fmt.Sprintf("Status             %s", uiSafe(tunnel.Status)),
+		fmt.Sprintf("Client             %s", uiSafe(emptyDash(strings.TrimSpace(tunnel.ClientID)))),
+		fmt.Sprintf("Type               %s", uiSafe(emptyDash(stringValue(tunnel.Type)))),
+		fmt.Sprintf("Protocol           %s", uiSafe(emptyDash(stringValue(tunnel.Protocol)))),
 		fmt.Sprintf("Published          %t", boolValue(tunnel.Publish)),
-		fmt.Sprintf("Domain / host      %s", emptyDash(tunnelDisplayHost(tunnel.TunnelProperties))),
+		fmt.Sprintf("Domain / host      %s", uiSafe(emptyDash(tunnelDisplayHost(tunnel.TunnelProperties)))),
 	}
 	return strings.TrimSpace(strings.Join([]string{strings.Join(summary, "\n"), formatLabelBlock(tunnel.Labels)}, "\n\n"))
 }
@@ -939,29 +939,29 @@ func (u *uiApp) formatWebTTYDetail(server webtty.ServerInfo) string {
 		return formatRawObject(server)
 	}
 	summary := []string{
-		fmt.Sprintf("Target             %s", server.Target),
-		fmt.Sprintf("Status             %s", server.Status),
-		fmt.Sprintf("Tunnel ID          %s", server.TunnelID),
-		fmt.Sprintf("Tunnel name        %s", optionalValue(server.TunnelName)),
-		fmt.Sprintf("rstream URL        %s", server.RstreamURL),
+		fmt.Sprintf("Target             %s", uiSafe(server.Target)),
+		fmt.Sprintf("Status             %s", uiSafe(server.Status)),
+		fmt.Sprintf("Tunnel ID          %s", uiSafe(server.TunnelID)),
+		fmt.Sprintf("Tunnel name        %s", uiSafe(optionalValue(server.TunnelName))),
+		fmt.Sprintf("rstream URL        %s", uiSafe(server.RstreamURL)),
 		fmt.Sprintf("Published          %t", server.Publish),
-		fmt.Sprintf("Domain / host      %s", optionalValue(server.Host)),
-		fmt.Sprintf("Hostname           %s", optionalValue(server.Hostname)),
-		fmt.Sprintf("System             %s", webTTYSystem(server)),
-		fmt.Sprintf("Arch               %s", optionalValue(server.Arch)),
+		fmt.Sprintf("Domain / host      %s", uiSafe(optionalValue(server.Host))),
+		fmt.Sprintf("Hostname           %s", uiSafe(optionalValue(server.Hostname))),
+		fmt.Sprintf("System             %s", uiSafe(webTTYSystem(server))),
+		fmt.Sprintf("Arch               %s", uiSafe(optionalValue(server.Arch))),
 	}
 	return strings.TrimSpace(strings.Join([]string{strings.Join(summary, "\n"), formatLabelBlock(server.Labels)}, "\n\n"))
 }
 
 func formatSessionInfo(server webtty.ServerInfo) string {
 	summary := []string{
-		fmt.Sprintf("Target             %s", server.Target),
-		fmt.Sprintf("Status             %s", server.Status),
-		fmt.Sprintf("rstream URL        %s", server.RstreamURL),
-		fmt.Sprintf("Domain / host      %s", optionalValue(server.Host)),
-		fmt.Sprintf("Hostname           %s", optionalValue(server.Hostname)),
-		fmt.Sprintf("System             %s", webTTYSystem(server)),
-		fmt.Sprintf("Arch               %s", optionalValue(server.Arch)),
+		fmt.Sprintf("Target             %s", uiSafe(server.Target)),
+		fmt.Sprintf("Status             %s", uiSafe(server.Status)),
+		fmt.Sprintf("rstream URL        %s", uiSafe(server.RstreamURL)),
+		fmt.Sprintf("Domain / host      %s", uiSafe(optionalValue(server.Host))),
+		fmt.Sprintf("Hostname           %s", uiSafe(optionalValue(server.Hostname))),
+		fmt.Sprintf("System             %s", uiSafe(webTTYSystem(server))),
+		fmt.Sprintf("Arch               %s", uiSafe(optionalValue(server.Arch))),
 	}
 	return strings.TrimSpace(strings.Join([]string{strings.Join(summary, "\n"), formatLabelBlock(server.Labels)}, "\n\n"))
 }
@@ -978,7 +978,7 @@ func formatLabelBlock(labels map[string]string) string {
 	lines := make([]string, 0, len(keys)+1)
 	lines = append(lines, "Labels")
 	for _, key := range keys {
-		lines = append(lines, fmt.Sprintf("  %s=%s", key, labels[key]))
+		lines = append(lines, fmt.Sprintf("  %s=%s", uiSafe(key), uiSafe(labels[key])))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -988,14 +988,14 @@ func formatRawObject(value any) string {
 	if err != nil {
 		return "unavailable"
 	}
-	return string(raw)
+	return tview.Escape(string(raw))
 }
 
 func sessionHeaderText(server webtty.ServerInfo) string {
 	return fmt.Sprintf(
 		"[white::b]target[-:-:-] %s   [white::b]hostname[-:-:-] %s",
-		server.Target,
-		emptyDash(optionalValue(server.Hostname)),
+		uiSafe(server.Target),
+		uiSafe(emptyDash(optionalValue(server.Hostname))),
 	)
 }
 
@@ -1086,7 +1086,11 @@ func uiStatusMessage(message string) string {
 	if strings.TrimSpace(message) == "" {
 		return " "
 	}
-	return "[#f27a7a]" + strings.TrimSpace(message) + "[-]"
+	return "[#f27a7a]" + uiSafe(strings.TrimSpace(message)) + "[-]"
+}
+
+func uiSafe(value string) string {
+	return tview.Escape(terminalSafeDefault(value))
 }
 
 func uiKeyLabel(key, label string) string {

@@ -27,10 +27,9 @@ import (
 )
 
 func handler(w http.ResponseWriter, r *http.Request) {
-	hostname, _ := os.Hostname()
 	w.Header().Set("Server", "rstream-go-example/1.0")
 	w.Header().Set("Content-Type", "text/plain")
-	fmt.Fprintln(w, hostname)
+	fmt.Fprintln(w, "rstream h2c example")
 }
 
 func run(ctx context.Context, client *rstream.Client, publish bool) error {

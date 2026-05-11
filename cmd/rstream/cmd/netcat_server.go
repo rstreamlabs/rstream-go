@@ -92,6 +92,10 @@ func runNetcatServer(ctx context.Context, cfg *netcatServerConfig) error {
 		}
 	}()
 	var wg sync.WaitGroup
+	var slots chan struct{}
+	if cfg.MaxConnections > 0 {
+		slots = make(chan struct{}, cfg.MaxConnections)
+	}
 	for {
 		conn, err := result.Listener.Accept()
 		if err != nil {
@@ -107,9 +111,23 @@ func runNetcatServer(ctx context.Context, cfg *netcatServerConfig) error {
 			wg.Wait()
 			return err
 		}
+		acquiredSlot := false
+		if slots != nil {
+			select {
+			case slots <- struct{}{}:
+				acquiredSlot = true
+			default:
+				cfg.Logger.Warn("netcat server connection limit reached", "limit", cfg.MaxConnections, "peer", conn.RemoteAddr().String())
+				_ = conn.Close()
+				continue
+			}
+		}
 		wg.Add(1)
 		go func(inbound net.Conn) {
 			defer wg.Done()
+			if acquiredSlot {
+				defer func() { <-slots }()
+			}
 			logger := cfg.Logger.With("peer", inbound.RemoteAddr().String())
 			var err error
 			switch {
@@ -216,9 +234,6 @@ func runNetcatExecSession(ctx context.Context, downstream net.Conn, execCfg *net
 	stderrErrCh := make(chan error, 1)
 	writer := &netcatLockedWriter{w: downstream}
 	go func() {
-		childErrCh <- waitNetcatProcess(cmd)
-	}()
-	go func() {
 		n, err := copyNetcatCommandInput(stdin, downstream, closeStdin)
 		logger.Debug("netcat exec input completed", "bytes", n, "error", err)
 		stdinErrCh <- err
@@ -237,6 +252,7 @@ func runNetcatExecSession(ctx context.Context, downstream net.Conn, execCfg *net
 	stderrDone := false
 	stdinDone := false
 	childDone := false
+	childWaitStarted := false
 	var stdoutErr error
 	var stderrErr error
 	var stdinErr error
@@ -282,6 +298,12 @@ func runNetcatExecSession(ctx context.Context, downstream net.Conn, execCfg *net
 		}
 		if downstreamHalfClose && childDone && stdoutDone && stderrDone && !stdinDone {
 			closeDownstream()
+		}
+		if stdoutDone && stderrDone && !childWaitStarted {
+			childWaitStarted = true
+			go func() {
+				childErrCh <- waitNetcatProcess(cmd)
+			}()
 		}
 	}
 	if err := firstNetcatError(stdoutErr, stderrErr, stdinErr, childErr); err != nil {

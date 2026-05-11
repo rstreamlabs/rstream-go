@@ -81,3 +81,27 @@ func resolveExecutable(exe, workdir string) (string, error) {
 	}
 	return path, nil
 }
+
+func webTTYMessageType(msg *pb.Message) string {
+	if msg == nil || msg.Payload == nil {
+		return "nil"
+	}
+	switch msg.Payload.(type) {
+	case *pb.Message_Open:
+		return "open"
+	case *pb.Message_Ack:
+		return "ack"
+	case *pb.Message_Error:
+		return "error"
+	case *pb.Message_Close:
+		return "close"
+	case *pb.Message_Data:
+		return "data"
+	case *pb.Message_Parameter:
+		return "parameter"
+	case *pb.Message_Heartbeat:
+		return "heartbeat"
+	default:
+		return "unknown"
+	}
+}

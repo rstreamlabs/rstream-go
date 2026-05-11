@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,8 @@ import (
 	"github.com/rstreamlabs/rstream-go/webtty"
 	"github.com/spf13/cobra"
 )
+
+const webTTYAuthTokenEnv = "RSTREAM_WEBTTY_AUTH_TOKEN"
 
 type commandExitError struct {
 	code int
@@ -91,11 +94,29 @@ var webttyServerCmd = &cobra.Command{
 }
 
 func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.Logger, shutdownTimeout time.Duration, stableHostname **string) error {
-	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{SessionCloseDeadline: &shutdownTimeout, Logger: logger})
+	useRstream := webttyServerUsesRstream(cmd)
+	authToken, err := readWebTTYAuthToken(cmd)
+	if err != nil {
+		return err
+	}
+	allowUnauthenticated, _ := cmd.Flags().GetBool("allow-unauthenticated")
+	if !useRstream && authToken == nil && !allowUnauthenticated {
+		return fmt.Errorf("local webtty server requires --auth-token-file or %s; use --allow-unauthenticated only for isolated development", webTTYAuthTokenEnv)
+	}
+	if useRstream && authToken == nil {
+		allowUnauthenticated = true
+	}
+	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{
+		SessionCloseDeadline: &shutdownTimeout,
+		AuthToken:            authToken,
+		AllowUnauthenticated: &allowUnauthenticated,
+		AllowedOrigins:       webTTYServerAllowedOrigins(useRstream),
+		Logger:               logger,
+	})
 	server := &http.Server{Handler: handler}
 	var listener net.Listener
 	address := ""
-	if webttyServerUsesRstream(cmd) {
+	if useRstream {
 		runtime, err := resolveRuntime(cmd, true, true)
 		if err != nil {
 			return fmt.Errorf("failed to resolve runtime: %w", err)
@@ -167,7 +188,7 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 		case <-stopShutdownWatcher:
 		}
 	}()
-	err := server.Serve(listener)
+	err = server.Serve(listener)
 	close(stopShutdownWatcher)
 	shutdown("serve loop ended")
 	if err == nil || errors.Is(err, http.ErrServerClosed) {
@@ -195,7 +216,7 @@ func init() {
 func init() {
 	webttyServerCmd.Flags().SortFlags = false
 	webttyServerCmd.PersistentFlags().SortFlags = false
-	webttyServerCmd.Flags().String("listen", ":8080", "listen address (e.g. :8080 or 0.0.0.0:8080)")
+	webttyServerCmd.Flags().String("listen", "127.0.0.1:8080", "listen address (e.g. 127.0.0.1:8080 or 0.0.0.0:8080)")
 	webttyServerCmd.Flags().Bool("rstream", false, "serve over an rstream tunnel")
 	webttyServerCmd.MarkFlagsMutuallyExclusive("listen", "rstream")
 	webttyServerCmd.Flags().BoolP("web", "w", false, "serve over an rstream tunnel")
@@ -209,6 +230,8 @@ func init() {
 	webttyServerCmd.MarkFlagsMutuallyExclusive("retry", "no-retry")
 	webttyServerCmd.Flags().Int64("retry-interval", 0, "retry interval in ms")
 	webttyServerCmd.Flags().Int64("shutdown-timeout", 5000, "graceful shutdown timeout in ms")
+	webttyServerCmd.Flags().String("auth-token-file", "", "read local WebTTY bearer token from file")
+	webttyServerCmd.Flags().Bool("allow-unauthenticated", false, "allow unauthenticated local WebTTY access")
 	webttyCmd.AddCommand(webttyServerCmd)
 }
 
@@ -226,6 +249,7 @@ func init() {
 	webttyClientCmd.Flags().StringArrayP("env", "e", nil, "pass environment variable (KEY or KEY=VALUE)")
 	webttyClientCmd.Flags().StringP("workdir", "w", "", "set the working directory")
 	webttyClientCmd.Flags().StringP("user", "u", "", "username or UID")
+	webttyClientCmd.Flags().String("auth-token-file", "", "read local WebTTY bearer token from file")
 	webttyCmd.AddCommand(webttyClientCmd)
 }
 
@@ -248,6 +272,35 @@ func validateWebTTYServerFlags(cmd *cobra.Command) error {
 	}
 	if cmd.Flags().Changed("name") || cmd.Flags().Changed("publish") || cmd.Flags().Changed("no-publish") {
 		return fmt.Errorf("--name, --publish and --no-publish require --rstream")
+	}
+	return nil
+}
+
+func readWebTTYAuthToken(cmd *cobra.Command) (*string, error) {
+	if cmd.Flags().Changed("auth-token-file") {
+		path, _ := cmd.Flags().GetString("auth-token-file")
+		if strings.TrimSpace(path) == "" {
+			return nil, fmt.Errorf("--auth-token-file is empty")
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read --auth-token-file: %w", err)
+		}
+		token := strings.TrimSpace(string(data))
+		if token == "" {
+			return nil, fmt.Errorf("--auth-token-file is empty")
+		}
+		return &token, nil
+	}
+	if token := strings.TrimSpace(os.Getenv(webTTYAuthTokenEnv)); token != "" {
+		return &token, nil
+	}
+	return nil, nil
+}
+
+func webTTYServerAllowedOrigins(useRstream bool) []string {
+	if useRstream {
+		return []string{"*"}
 	}
 	return nil
 }
@@ -347,6 +400,11 @@ func runWebTTYClient(cmd *cobra.Command, urlOverride string, args []string) erro
 		CmdArgs:       args,
 		Logger:        logger,
 	}
+	authToken, err := readWebTTYAuthToken(cmd)
+	if err != nil {
+		return err
+	}
+	clientCfg.AuthToken = authToken
 	if webttyClientUsesRstream(urlValue) {
 		runtime, err := resolveRuntime(cmd, true, true)
 		if err != nil {

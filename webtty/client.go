@@ -18,7 +18,6 @@ import (
 
 	"github.com/gorilla/websocket"
 	"golang.org/x/term"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
@@ -34,6 +33,7 @@ type ClientConfig struct {
 	Workdir           *string
 	Username          *string
 	CmdArgs           []string
+	AuthToken         *string
 	MaxMessageSize    *int64
 	ReadBufferSize    *int
 	WriteBufferSize   *int
@@ -517,7 +517,7 @@ func (c *clientRuntime) handleOpenMessage(msg *pb.Message) error {
 	case *pb.Message_Ack:
 		return nil
 	case *pb.Message_Error:
-		if strings.TrimSpace(payload.Error.Msg) != "" {
+		if payload.Error != nil && strings.TrimSpace(payload.Error.Msg) != "" {
 			return fmt.Errorf("%w: %s", errClientServer, payload.Error.Msg)
 		}
 		return errClientServer
@@ -537,11 +537,14 @@ func (c *clientRuntime) handleSessionMessage(msg *pb.Message) (int, bool, error)
 		}
 		return -1, false, nil
 	case *pb.Message_Close:
+		if payload.Close == nil {
+			return -1, true, errClientProtocol
+		}
 		return int(payload.Close.ReturnCode), true, nil
 	case *pb.Message_Heartbeat:
 		return -1, false, nil
 	case *pb.Message_Error:
-		if strings.TrimSpace(payload.Error.Msg) != "" {
+		if payload.Error != nil && strings.TrimSpace(payload.Error.Msg) != "" {
 			return -1, true, fmt.Errorf("%w: %s", errClientServer, payload.Error.Msg)
 		}
 		return -1, true, errClientServer
@@ -671,12 +674,7 @@ func (c *clientRuntime) logProtoMessage(direction string, msg *pb.Message) {
 	if !c.logProto {
 		return
 	}
-	payload, err := protojson.MarshalOptions{EmitDefaultValues: true}.Marshal(msg)
-	if err != nil {
-		c.logger.Debug("failed to marshal protobuf for logs", "error", err)
-		return
-	}
-	c.logger.Debug("protobuf message", "direction", direction, "payload", string(payload))
+	c.logger.Debug("protobuf message", "direction", direction, "payload_type", webTTYMessageType(msg))
 }
 
 func writeAll(w io.Writer, payload []byte) error {

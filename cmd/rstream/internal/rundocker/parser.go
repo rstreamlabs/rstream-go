@@ -4,8 +4,6 @@ package rundocker
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -146,6 +144,9 @@ func (l *labelSpec) apply(key, value string) error {
 		if err != nil {
 			return err
 		}
+		if l.props.UpstreamTLS != nil && *l.props.UpstreamTLS != v {
+			return fmt.Errorf("HTTP upstream TLS option conflicts with tunnel upstream TLS option")
+		}
 		l.props.UpstreamTLS = &v
 		return nil
 	case key == "trusted-ips":
@@ -229,13 +230,7 @@ func (l *labelSpec) applyTLS(key, value string) error {
 		l.props.MTLS = &v
 		return nil
 	case "mtlsCACertFile":
-		pem, err := os.ReadFile(filepath.Clean(value))
-		if err != nil {
-			return fmt.Errorf("read mtlsCACertFile: %w", err)
-		}
-		val := string(pem)
-		l.props.MTLSCACertPEM = &val
-		return nil
+		return fmt.Errorf("tls.mtlsCACertFile is not supported from Docker labels; use --apply for host file references")
 	default:
 		return fmt.Errorf("unknown tls label %q", key)
 	}
@@ -288,7 +283,14 @@ func resolveForward(raw string, info ContainerInfo, network string) (runmodel.Fo
 		}
 		return runmodel.ParseForwardTarget(fmt.Sprintf("%s:%s", host, value), host)
 	}
-	return runmodel.ParseForwardTarget(value, "")
+	target, err := runmodel.ParseForwardTarget(value, "")
+	if err != nil {
+		return runmodel.ForwardTarget{}, err
+	}
+	if !dockerForwardHostAllowed(target.Host, info, network) {
+		return runmodel.ForwardTarget{}, fmt.Errorf("host %q is outside the discovered container network; use a bare port label or --apply for host/internal targets", target.Host)
+	}
+	return target, nil
 }
 
 func resolveContainerHost(info ContainerInfo, network string) string {
@@ -297,18 +299,27 @@ func resolveContainerHost(info ContainerInfo, network string) string {
 			return ip
 		}
 	}
-	if network == "" {
-		if name := strings.TrimSpace(info.Name); name != "" {
-			return name
+	return info.FirstIP()
+}
+
+func dockerForwardHostAllowed(host string, info ContainerInfo, network string) bool {
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if host == "" {
+		return false
+	}
+	allowed := map[string]struct{}{}
+	addAllowed := func(value string) {
+		value = strings.Trim(strings.TrimSpace(value), "[]")
+		if value != "" {
+			allowed[value] = struct{}{}
 		}
 	}
-	if ip := info.FirstIP(); ip != "" {
-		return ip
+	addAllowed(resolveContainerHost(info, network))
+	for _, ip := range info.Networks {
+		addAllowed(ip)
 	}
-	if name := strings.TrimSpace(info.Name); name != "" {
-		return name
-	}
-	return ""
+	_, ok := allowed[host]
+	return ok
 }
 
 func isBarePort(value string) bool {

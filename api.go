@@ -318,8 +318,8 @@ func (s *sseConn) Read(_ context.Context) ([]byte, error) {
 	}
 	for {
 		line, err := s.rd.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
+		if err != nil && len(line) == 0 {
+			if errors.Is(err, io.EOF) {
 				if msg, _ := flush(); len(msg) > 0 {
 					return msg, nil
 				}
@@ -337,6 +337,15 @@ func (s *sseConn) Read(_ context.Context) ([]byte, error) {
 			}
 			s.buf.WriteString(chunk)
 		}
+		if errors.Is(err, io.EOF) {
+			if msg, _ := flush(); len(msg) > 0 {
+				return msg, nil
+			}
+			return nil, err
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 }
 
@@ -349,15 +358,18 @@ func (c *Client) openSSE(ctx context.Context, engine, token string, params *Watc
 	base := "https://" + engine
 	u := base + "/api/sse"
 	q := url.Values{}
-	q.Set("rstream.token", token)
 	if err := setQueryJSON(q, "params", params); err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u+"?"+q.Encode(), nil)
+	if len(q) > 0 {
+		u += "?" + q.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := httpc.Do(req)
 	if err != nil {
 		return nil, err
@@ -455,7 +467,6 @@ func (c *Client) openWS(ctx context.Context, engine, token string, params *Watch
 		Path:   "/api/websocket",
 	}
 	q := u.Query()
-	q.Set("rstream.token", token)
 	if err := setQueryJSON(q, "params", params); err != nil {
 		return nil, err
 	}
@@ -469,7 +480,9 @@ func (c *Client) openWS(ctx context.Context, engine, token string, params *Watch
 		EnableCompression: false,
 		Proxy:             http.ProxyFromEnvironment,
 	}
-	conn, resp, err := dialer.DialContext(ctx, u.String(), http.Header{})
+	header := http.Header{}
+	header.Set("Authorization", "Bearer "+token)
+	conn, resp, err := dialer.DialContext(ctx, u.String(), header)
 	if err != nil {
 		if resp != nil {
 			return nil, fmt.Errorf("websocket dial failed: %s (%d)", http.StatusText(resp.StatusCode), resp.StatusCode)

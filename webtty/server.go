@@ -4,10 +4,13 @@ package webtty
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -32,6 +35,9 @@ type ServerConfig struct {
 	SessionOpenDeadline  *time.Duration
 	SessionCloseDeadline *time.Duration
 	HeartbeatInterval    *time.Duration
+	AuthToken            *string
+	AllowUnauthenticated *bool
+	AllowedOrigins       []string
 	Logger               *slog.Logger
 }
 
@@ -50,8 +56,9 @@ func NewWebTTYHandler(cfg *ServerConfig) *Handler {
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  *resolved.ReadBufferSize,
 		WriteBufferSize: *resolved.WriteBufferSize,
-		CheckOrigin: func(_ *http.Request) bool {
-			return true
+		CheckOrigin: func(r *http.Request) bool {
+			allowSameHost := resolved.AllowUnauthenticated == nil || !*resolved.AllowUnauthenticated
+			return webTTYOriginAllowed(r, resolved.AllowedOrigins, allowSameHost)
 		},
 	}
 	return &Handler{
@@ -104,6 +111,10 @@ func resolveServerConfig(cfg *ServerConfig) *ServerConfig {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.draining.Load() {
 		http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		return
+	}
+	if !h.authorize(r) {
+		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
 	conn, err := h.upgrader.Upgrade(w, r, nil)
@@ -189,10 +200,58 @@ func (h *Handler) Shutdown(ctx context.Context) error {
 		h.logger.Info("all webtty sessions are closed")
 		return nil
 	case <-ctx.Done():
-		<-done
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			h.logger.Warn("graceful shutdown deadline reached, forced remaining sessions")
 		}
 		return fmt.Errorf("webtty shutdown failed: %w", ctx.Err())
 	}
+}
+
+func (h *Handler) authorize(r *http.Request) bool {
+	if h.cfg.AllowUnauthenticated != nil && *h.cfg.AllowUnauthenticated {
+		return true
+	}
+	if h.cfg.AuthToken == nil || strings.TrimSpace(*h.cfg.AuthToken) == "" {
+		return false
+	}
+	got := bearerToken(r.Header.Get("Authorization"))
+	want := strings.TrimSpace(*h.cfg.AuthToken)
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
+func bearerToken(header string) string {
+	parts := strings.Fields(header)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
+		return ""
+	}
+	return parts[1]
+}
+
+func webTTYOriginAllowed(r *http.Request, allowed []string, allowSameHost bool) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	originValue := strings.ToLower(origin)
+	originHost := strings.ToLower(u.Host)
+	for _, allowedOrigin := range allowed {
+		allowedOrigin = strings.ToLower(strings.TrimSpace(allowedOrigin))
+		if allowedOrigin == "*" {
+			return true
+		}
+		if allowedOrigin != "" && allowedOrigin == originValue {
+			return true
+		}
+		if allowedOrigin != "" && allowedOrigin == originHost {
+			return true
+		}
+	}
+	if !allowSameHost {
+		return false
+	}
+	return originHost == strings.ToLower(r.Host)
 }

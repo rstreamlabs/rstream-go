@@ -43,7 +43,7 @@ var webttyListCmd = &cobra.Command{
 		}
 		if webttyListQuiet {
 			for _, server := range list {
-				fmt.Fprintln(os.Stdout, server.RstreamURL)
+				fmt.Fprintln(os.Stdout, terminalSafeDefault(server.RstreamURL))
 			}
 			return nil
 		}
@@ -117,11 +117,11 @@ func printWebTTYServersTable(w io.Writer, list []webtty.ServerInfo) error {
 		fmt.Fprintf(
 			tw,
 			"%s\t%s\t%s\t%s\t%s\n",
-			server.RstreamURL,
-			webTTYValue(server.Hostname),
-			webTTYSystem(server),
-			webTTYValue(server.Arch),
-			webTTYValue(server.Host),
+			terminalSafeDefault(server.RstreamURL),
+			terminalSafeDefault(webTTYValue(server.Hostname)),
+			terminalSafeDefault(webTTYSystem(server)),
+			terminalSafeDefault(webTTYValue(server.Arch)),
+			terminalSafeDefault(webTTYValue(server.Host)),
 		)
 	}
 	return tw.Flush()

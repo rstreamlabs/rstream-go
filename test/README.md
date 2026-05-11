@@ -9,10 +9,10 @@ This directory contains end-to-end tests for the rstream Go SDK. Each subdirecto
 | `websocket` | 9 | All upstream × downstream HTTP version combinations (H1, H2C, H3) |
 | `webtransport` | 10 | Bidirectional streams, unidirectional streams, datagrams, multi-stream, close codes |
 | `http` | 3 | HTTP tunnels over H1, H2C, and H3 |
-| `stream` | 6 | Bytestream tunnel: plain (unpublished), TLS via SDK dialer (unpublished), TLS via engine listener (published), TLS via engine listener with upstream TLS, and ALPN rejection checks |
+| `stream` | 7 | Bytestream tunnel: plain (unpublished), TLS via SDK dialer (unpublished), TLS via engine listener (published), TLS passthrough via engine listener, TLS via engine listener with upstream TLS, and ALPN rejection checks |
 | `datagram` | 8 | Datagram tunnel: DTLS via SDK dialer (unpublished), DTLS via engine listener (published, with and without upstream DTLS), QUIC via SDK dialer (unpublished), QUIC via engine listener (published), and ALPN rejection checks |
 
-**Total: 36 test cases.**
+**Total: 37 test cases.**
 
 The stream and datagram suites each cover two connectivity modes:
 
@@ -24,12 +24,18 @@ The stream and datagram suites each cover two connectivity modes:
 ### Prerequisites
 
 - A running rstream engine accessible via the SDK.
-- The `RSTREAM_CONTEXT` environment variable set to the target context name.
+- The `RSTREAM_CONTEXT` environment variable set to the target context name, or `RSTREAM_ENGINE` plus the matching authentication environment.
 - All test binaries built (see below).
 
 ### Build
 
 From the repository root:
+
+```sh
+make test-bins
+```
+
+Equivalent manual commands:
 
 ```sh
 mkdir -p out/test/{websocket,webtransport,http,stream,datagram}
@@ -56,6 +62,7 @@ bash run-e2e.sh
 ```
 
 The script exits with status 0 if all cases pass, non-zero otherwise.
+Before running cases, the script checks that all required binaries are executable and that either `RSTREAM_CONTEXT` or `RSTREAM_ENGINE` is set.
 
 ## Structure
 
@@ -87,6 +94,7 @@ test/
 | `--variant` | `plain` | `plain` or `tls` |
 | `--publish` | false | Register on engine's TLS listener |
 | `--host` | — | Requested Stable domain hostname |
+| `--tls-mode` | — | TLS mode for published TLS tunnels (`terminated` or `passthrough`) |
 | `--tls-alpn` | — | Custom ALPN for published TLS tunnels |
 | `--upstream-tls` | false | Use TLS between the edge and the server |
 | `--name` | auto | Tunnel name |

@@ -255,6 +255,7 @@ var contextUpdateCmd = &cobra.Command{
 		}
 		apiURLFlagSet := cmd.Flags().Changed("api-url")
 		apiURLValue, _ := cmd.Flags().GetString("api-url")
+		apiURLValue = config.NormalizeAPIURL(apiURLValue)
 		noAPIURL, _ := cmd.Flags().GetBool("no-api-url")
 		if apiURLFlagSet && noAPIURL {
 			return errors.New("cannot use --api-url with --no-api-url")
@@ -264,20 +265,14 @@ var contextUpdateCmd = &cobra.Command{
 		var idx int
 		switch {
 		case apiURLFlagSet && apiURLValue != "":
-			ctx, idx, err = cfg.FindContextByNameAndAPIURL(args[0], apiURLValue)
+			ctx, idx, err = cfg.FindContextByName(args[0])
 			if err != nil {
 				return err
 			}
 			if ctx == nil {
-				ctx, idx, err = cfg.FindContextByName(args[0])
-				if err != nil {
-					return err
-				}
-				if ctx == nil {
-					return fmt.Errorf("context %q not found", args[0])
-				}
-				applyAPIURL = true
+				return fmt.Errorf("context %q not found", args[0])
 			}
+			applyAPIURL = true
 		case apiURLFlagSet && apiURLValue == "":
 			ctx, idx, err = cfg.FindContextByName(args[0])
 			if err != nil {
@@ -460,7 +455,41 @@ func setContextToken(ctx *config.Context, token string) {
 
 func redactContext(ctx config.Context) config.Context {
 	ctx.Auth = nil
+	if ctx.Transport != nil {
+		ctx.Transport = config.MergeTransport(nil, ctx.Transport)
+		if ctx.Transport.Proxy != nil {
+			if ctx.Transport.Proxy.Password != "" {
+				ctx.Transport.Proxy.Password = redactedValue
+			}
+			for key := range ctx.Transport.Proxy.Headers {
+				if isSensitiveHeader(key) {
+					ctx.Transport.Proxy.Headers[key] = redactedValue
+				}
+			}
+		}
+	}
 	return ctx
+}
+
+const redactedValue = "<redacted>"
+
+func isSensitiveHeader(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	switch key {
+	case "authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key", "api-key", "x-auth-key", "x-auth-token", "x-csrf-token":
+		return true
+	default:
+		return strings.Contains(key, "auth") ||
+			strings.Contains(key, "credential") ||
+			strings.Contains(key, "jwt") ||
+			strings.Contains(key, "key") ||
+			strings.Contains(key, "oidc") ||
+			strings.Contains(key, "password") ||
+			strings.Contains(key, "saml") ||
+			strings.Contains(key, "secret") ||
+			strings.Contains(key, "session") ||
+			strings.Contains(key, "token")
+	}
 }
 
 type contextSelection struct {
@@ -476,6 +505,7 @@ func resolveContextSelection(cmd *cobra.Command, cfg config.Config) (contextSele
 	}
 	if cmd.Flags().Changed("api-url") {
 		value, _ := cmd.Flags().GetString("api-url")
+		value = config.NormalizeAPIURL(value)
 		if value == "" {
 			return contextSelection{unlinked: true}, nil
 		}
