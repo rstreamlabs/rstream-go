@@ -69,6 +69,7 @@ var runCmd = &cobra.Command{
 		dockerSocket, _ := cmd.Flags().GetString("docker-socket")
 		dockerNetwork, _ := cmd.Flags().GetString("docker-network")
 		dockerDefault, _ := cmd.Flags().GetString("docker-default-context")
+		dockerAllowContextLabels, _ := cmd.Flags().GetBool("docker-allow-context-labels")
 		if dockerDefault != "" {
 			resolved, err := lookup(dockerDefault)
 			if err != nil {
@@ -76,7 +77,7 @@ var runCmd = &cobra.Command{
 			}
 			fallback = resolved
 		}
-		source, err := rundocker.NewSource(dockerSocket, dockerNetwork, fallback, lookup, slog.With("component", "run.docker"))
+		source, err := rundocker.NewSource(dockerSocket, dockerNetwork, fallback, lookup, dockerAllowContextLabels, slog.With("component", "run.docker"))
 		if err != nil {
 			return err
 		}
@@ -94,6 +95,7 @@ func init() {
 	runCmd.Flags().String("docker-socket", "unix:///var/run/docker.sock", "Docker socket")
 	runCmd.Flags().String("docker-network", "", "Docker network for bare-port resolution (multi-network containers)")
 	runCmd.Flags().String("docker-default-context", "", "default context for Docker tunnels")
+	runCmd.Flags().Bool("docker-allow-context-labels", false, "allow containers to select rstream contexts with rstream.context labels")
 	runCmd.MarkFlagsMutuallyExclusive("apply", "docker")
 	rootCmd.AddCommand(runCmd)
 }
@@ -108,7 +110,10 @@ func runLoop(ctx context.Context, source interface {
 			logger.Warn("Failed to load desired state", "error", err)
 			return err
 		}
-		_ = recon.Reconcile(desired)
+		if err := recon.Reconcile(desired); err != nil {
+			logger.Warn("Failed to reconcile desired state", "error", err)
+			return err
+		}
 		return nil
 	}
 	if err := apply(); err != nil && !watch {

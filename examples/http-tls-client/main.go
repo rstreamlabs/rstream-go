@@ -18,6 +18,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
@@ -28,6 +29,7 @@ import (
 
 func main() {
 	publish := flag.Bool("publish", false, "connect to published host instead of using rstream dialer")
+	insecureDemoTLS := flag.Bool("insecure-demo-tls", false, "skip upstream TLS verification for the self-signed internal demo certificate")
 	flag.Parse()
 	client, err := config.NewClientFromEnv()
 	if err != nil {
@@ -35,7 +37,8 @@ func main() {
 	}
 	// Create the HTTP client
 	httpClient := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout:       5 * time.Second,
+		CheckRedirect: rejectCrossHostRedirects,
 	}
 	name := "http-tls-example"
 	var url *string = nil
@@ -63,10 +66,13 @@ func main() {
 				if err != nil || host == "" {
 					return nil, fmt.Errorf("failed to extract host from address: %v", err)
 				}
+				if !strings.EqualFold(host, name) {
+					return nil, fmt.Errorf("redirect to unexpected tunnel host %q", host)
+				}
 				return client.Dial(ctx, rstream.Addr{IdOrName: host})
 			},
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
+				InsecureSkipVerify: *insecureDemoTLS,
 				NextProtos:         []string{"h2", "http/1.1"},
 			},
 			ForceAttemptHTTP2: true,
@@ -85,4 +91,14 @@ func main() {
 	}
 	fmt.Printf("Response status: %s\n", resp.Status)
 	fmt.Printf("Response body:\n%s", body)
+}
+
+func rejectCrossHostRedirects(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	if !strings.EqualFold(req.URL.Hostname(), via[0].URL.Hostname()) {
+		return http.ErrUseLastResponse
+	}
+	return nil
 }

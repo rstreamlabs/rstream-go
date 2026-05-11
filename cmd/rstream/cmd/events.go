@@ -28,6 +28,8 @@ var (
 	eventsForwardInsecureTLS bool
 )
 
+const maxEventsForwardErrorBody = 4096
+
 var eventsCmd = &cobra.Command{
 	GroupID:      "common",
 	Use:          "events",
@@ -79,13 +81,16 @@ var eventsCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("invalid --forward-to: %w", err)
 			}
-			forward = func(ctx context.Context, body []byte) error {
-				cl := &http.Client{Timeout: 10 * time.Second}
-				if dst.Scheme == "https" && eventsForwardInsecureTLS {
-					cl.Transport = &http.Transport{
-						TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-					}
+			cl := &http.Client{
+				Timeout:       10 * time.Second,
+				CheckRedirect: sameHostRedirectPolicy,
+			}
+			if dst.Scheme == "https" && eventsForwardInsecureTLS {
+				cl.Transport = &http.Transport{
+					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 				}
+			}
+			forward = func(ctx context.Context, body []byte) error {
 				req, err := http.NewRequestWithContext(ctx, http.MethodPost, dst.String(), strings.NewReader(string(body)))
 				if err != nil {
 					return err
@@ -97,7 +102,7 @@ var eventsCmd = &cobra.Command{
 				}
 				defer resp.Body.Close()
 				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-					b, _ := io.ReadAll(resp.Body)
+					b, _ := io.ReadAll(io.LimitReader(resp.Body, maxEventsForwardErrorBody))
 					return fmt.Errorf("forward failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(b)))
 				}
 				return nil
@@ -138,4 +143,14 @@ func init() {
 	eventsCmd.Flags().BoolVar(&eventsForwardInsecureTLS, "forward-insecure-tls", false, "Skip TLS verification when forwarding events")
 	eventsCmd.Flags().StringP("output", "o", "json", "output mode (json, ndjson)")
 	rootCmd.AddCommand(eventsCmd)
+}
+
+func sameHostRedirectPolicy(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	if !strings.EqualFold(req.URL.Hostname(), via[0].URL.Hostname()) {
+		return http.ErrUseLastResponse
+	}
+	return nil
 }

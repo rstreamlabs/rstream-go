@@ -4,6 +4,9 @@ package webtty
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"os"
 	"testing"
 	"time"
 
@@ -145,6 +148,9 @@ func TestHandleOpenMessage(t *testing.T) {
 	if err := runtime.handleOpenMessage(&pb.Message{Payload: &pb.Message_Error{Error: &pb.Error{Msg: "server error"}}}); err == nil {
 		t.Fatalf("handleOpenMessage(error) returned nil")
 	}
+	if err := runtime.handleOpenMessage(&pb.Message{Payload: &pb.Message_Error{}}); !errors.Is(err, errClientServer) {
+		t.Fatalf("handleOpenMessage(empty error) = %v", err)
+	}
 	if err := runtime.handleOpenMessage(&pb.Message{Payload: &pb.Message_Close{Close: &pb.Close{ReturnCode: 0}}}); err == nil {
 		t.Fatalf("handleOpenMessage(close) returned nil")
 	}
@@ -176,7 +182,143 @@ func TestHandleSessionMessage(t *testing.T) {
 	if exitCode != 7 {
 		t.Fatalf("unexpected exit code for close: got %d want 7", exitCode)
 	}
+	if _, done, err := runtime.handleSessionMessage(&pb.Message{Payload: &pb.Message_Close{}}); !errors.Is(err, errClientProtocol) || !done {
+		t.Fatalf("handleSessionMessage(empty close) = done %v err %v", done, err)
+	}
+	if _, done, err := runtime.handleSessionMessage(&pb.Message{Payload: &pb.Message_Error{}}); !errors.Is(err, errClientServer) || !done {
+		t.Fatalf("handleSessionMessage(empty error) = done %v err %v", done, err)
+	}
 	if _, done, err := runtime.handleSessionMessage(&pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}}); err == nil || !done {
 		t.Fatalf("handleSessionMessage(ack) should fail and finish the session")
 	}
 }
+
+func TestBuildOpenMessage(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	workdir := " /tmp/work "
+	username := "1001"
+	runtime := &clientRuntime{cfg: &ClientConfig{
+		Interactive:   true,
+		AllocateTTY:   true,
+		SendHeartbeat: true,
+		EnvVars:       []string{"A=1"},
+		Workdir:       &workdir,
+		Username:      &username,
+		CmdArgs:       []string{"bash", "-lc", "echo ok"},
+	}}
+	msg, err := runtime.buildOpenMessage()
+	if err != nil {
+		t.Fatalf("buildOpenMessage() error = %v", err)
+	}
+	open := msg.GetOpen()
+	if open == nil || open.Config == nil {
+		t.Fatalf("expected open config, got %#v", msg)
+	}
+	if !open.Config.Options.Interactive || !open.Config.Options.AllocateTty || !open.Config.Options.SendHeartbeat {
+		t.Fatalf("options not applied: %#v", open.Config.Options)
+	}
+	if open.Config.Workdir == nil || open.Config.Workdir.Value != "/tmp/work" {
+		t.Fatalf("workdir not trimmed: %#v", open.Config.Workdir)
+	}
+	if open.Config.Username.GetId() != 1001 {
+		t.Fatalf("username not parsed as numeric id: %#v", open.Config.Username)
+	}
+	if len(open.Config.CmdArgs) != 3 || open.Config.CmdArgs[0] != "bash" {
+		t.Fatalf("cmd args not copied: %#v", open.Config.CmdArgs)
+	}
+	env := map[string]string{}
+	for _, item := range open.Config.EnvVars {
+		env[item.Key] = item.Value
+	}
+	if env["A"] != "1" || env["TERM"] != "xterm-256color" {
+		t.Fatalf("environment not built correctly: %#v", env)
+	}
+}
+
+func TestBuildOpenMessagePreservesExplicitTERM(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	runtime := &clientRuntime{cfg: &ClientConfig{AllocateTTY: true, EnvVars: []string{"TERM=screen"}}}
+	msg, err := runtime.buildOpenMessage()
+	if err != nil {
+		t.Fatalf("buildOpenMessage() error = %v", err)
+	}
+	env := msg.GetOpen().Config.EnvVars
+	if len(env) != 1 || env[0].Key != "TERM" || env[0].Value != "screen" {
+		t.Fatalf("explicit TERM should be preserved without duplicate: %#v", env)
+	}
+}
+
+func TestWaitForOpen(t *testing.T) {
+	deadline := 10 * time.Millisecond
+	runtime := &clientRuntime{cfg: &ClientConfig{OpenDeadline: &deadline}}
+	events := make(chan clientEvent, 1)
+	events <- clientEvent{msg: &pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}}}
+	if err := runtime.waitForOpen(context.Background(), events); err != nil {
+		t.Fatalf("waitForOpen(ack) error = %v", err)
+	}
+	events = make(chan clientEvent, 1)
+	events <- clientEvent{err: os.ErrClosed}
+	if err := runtime.waitForOpen(context.Background(), events); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("waitForOpen(event error) = %v", err)
+	}
+	events = make(chan clientEvent)
+	if err := runtime.waitForOpen(context.Background(), events); !errors.Is(err, errClientOperationTimeout) {
+		t.Fatalf("waitForOpen(timeout) = %v", err)
+	}
+}
+
+func TestHandleDataValidation(t *testing.T) {
+	var stderr bytes.Buffer
+	runtime := &clientRuntime{cfg: &ClientConfig{Stdout: &bytes.Buffer{}, Stderr: &stderr}}
+	if err := runtime.handleData(&pb.Data{Type: pb.Data_TYPE_STDERR, Payload: &pb.Data_Data{Data: []byte("err")}}); err != nil {
+		t.Fatalf("handleData(stderr) error = %v", err)
+	}
+	if stderr.String() != "err" {
+		t.Fatalf("stderr payload = %q", stderr.String())
+	}
+	if err := runtime.handleData(nil); err == nil {
+		t.Fatalf("expected nil data error")
+	}
+	if err := runtime.handleData(&pb.Data{Type: pb.Data_TYPE_STDIN, Payload: &pb.Data_Data{Data: []byte("in")}}); err == nil {
+		t.Fatalf("expected unexpected stream error")
+	}
+	if err := runtime.handleData(&pb.Data{Type: pb.Data_TYPE_STDOUT}); err == nil {
+		t.Fatalf("expected unexpected payload error")
+	}
+}
+
+func TestWriteAllHandlesPartialWriters(t *testing.T) {
+	writer := &partialWriter{limit: 2}
+	if err := writeAll(writer, []byte("hello")); err != nil {
+		t.Fatalf("writeAll(partial) error = %v", err)
+	}
+	if got := writer.String(); got != "hello" {
+		t.Fatalf("partial writer got %q", got)
+	}
+	if err := writeAll(zeroWriter{}, []byte("x")); err == nil {
+		t.Fatalf("expected zero writer error")
+	}
+	if err := writeAll(errorWriter{}, []byte("x")); err == nil {
+		t.Fatalf("expected writer error")
+	}
+}
+
+type partialWriter struct {
+	bytes.Buffer
+	limit int
+}
+
+func (w *partialWriter) Write(p []byte) (int, error) {
+	if len(p) > w.limit {
+		p = p[:w.limit]
+	}
+	return w.Buffer.Write(p)
+}
+
+type zeroWriter struct{}
+
+func (zeroWriter) Write([]byte) (int, error) { return 0, nil }
+
+type errorWriter struct{}
+
+func (errorWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }

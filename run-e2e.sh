@@ -14,12 +14,40 @@ PASS=0
 FAIL=0
 SERVER_PID=
 SERVER_ADDR=
+REQUIRED_BINS=(
+  stream/server
+  stream/client
+  datagram/server
+  datagram/client
+  http/server
+  http/client
+  websocket/server
+  websocket/client
+  webtransport/server
+  webtransport/client
+)
 
 QUIC=0
 for arg in "$@"; do
   [ "$arg" = "--quic" ] && QUIC=1
 done
 [ "$QUIC" = "1" ] && export RSTREAM_QUIC_TRANSPORT=1
+
+preflight() {
+  local missing=0
+  local rel
+  if [ -z "${RSTREAM_CONTEXT:-}" ] && [ -z "${RSTREAM_ENGINE:-}" ]; then
+    printf "ERROR RSTREAM_CONTEXT or RSTREAM_ENGINE must be set before running e2e tests\n" >&2
+    missing=1
+  fi
+  for rel in "${REQUIRED_BINS[@]}"; do
+    if [ ! -x "$BIN/$rel" ]; then
+      printf "ERROR missing executable %s (run: make test-bins)\n" "$BIN/$rel" >&2
+      missing=1
+    fi
+  done
+  [ "$missing" -eq 0 ] || exit 2
+}
 
 cleanup() {
   [ -n "${SERVER_PID:-}" ] && kill "$SERVER_PID" 2>/dev/null || true
@@ -34,6 +62,8 @@ log_fail() {
   printf "FAIL %-35s  %s\n" "$1" "$2"
   FAIL=$((FAIL + 1))
 }
+
+preflight
 
 # start_server <label> <suite> [flags…]
 # Starts the server in background, waits for "READY <addr>", sets SERVER_ADDR.
@@ -122,6 +152,11 @@ fi
 
 if start_server "stream/tls-published-alpn-reject" stream/server --variant tls --publish --tls-alpn rstream-stream-echo; then
   run_client_expect_fail "stream/tls-published-alpn-reject" stream/client --variant tls --addr "$SERVER_ADDR" --tls-alpn rstream-stream-wrong
+  stop_server
+fi
+
+if start_server "stream/tls-published-passthrough" stream/server --variant tls --publish --tls-mode passthrough; then
+  run_client "stream/tls-published-passthrough" stream/client --variant tls --addr "$SERVER_ADDR"
   stop_server
 fi
 

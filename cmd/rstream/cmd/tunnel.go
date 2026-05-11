@@ -57,7 +57,7 @@ var tunnelListCmd = &cobra.Command{
 		if tunnelListQuiet {
 			for _, t := range *list {
 				if t.ID != nil && *t.ID != "" {
-					fmt.Fprintln(os.Stdout, *t.ID)
+					fmt.Fprintln(os.Stdout, terminalSafeDefault(*t.ID))
 				}
 			}
 			return nil
@@ -147,7 +147,16 @@ func printTunnelsTable(w io.Writer, list *rstream.ListTunnelsResponse) error {
 		} else if t.HTTPUseTLS != nil {
 			httptls = strconv.FormatBool(*t.HTTPUseTLS)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", id, name, tt, proto, pub, host, httpv, httptls)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			terminalSafeDefault(id),
+			terminalSafeDefault(name),
+			terminalSafeDefault(tt),
+			terminalSafeDefault(proto),
+			terminalSafeDefault(pub),
+			terminalSafeDefault(host),
+			terminalSafeDefault(httpv),
+			terminalSafeDefault(httptls),
+		)
 	}
 	return tw.Flush()
 }

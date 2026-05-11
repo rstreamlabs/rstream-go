@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/rstreamlabs/rstream-go"
@@ -142,14 +143,11 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 	var tlsModePtr *rstream.TLSMode
 	if cmd.Flags().Lookup("tls-mode").Changed {
 		val, _ := cmd.Flags().GetString("tls-mode")
-		switch val {
-		case "terminated":
-			tmp := rstream.TLSModeTerminated
-			tlsModePtr = &tmp
-		case "passthrough":
-			tmp := rstream.TLSModePassthrough
-			tlsModePtr = &tmp
+		tlsMode, err := parseForwardTLSMode(val)
+		if err != nil {
+			return nil, err
 		}
+		tlsModePtr = &tlsMode
 	}
 	var tlsALPNSlice []string
 	if cmd.Flags().Lookup("tls-alpn").Changed {
@@ -164,21 +162,23 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 	tlsMinVersionPtr := getStringPtr(cmd, "tls-min-version")
 	tlsCipherIDs := getStringSlice(cmd, "tls-ciphers")
 	mtlsPtr := getBoolPtr(cmd, "mtls")
-	mtlsCACertPtr := getStringPtr(cmd, "mtls-cacert-file")
+	var mtlsCACertPtr *string
+	if cmd.Flags().Lookup("mtls-cacert-file").Changed {
+		path, _ := cmd.Flags().GetString("mtls-cacert-file")
+		pem, err := readForwardPEMFile(path, "--mtls-cacert-file")
+		if err != nil {
+			return nil, err
+		}
+		mtlsCACertPtr = &pem
+	}
 	var httpVersionPtr *rstream.HTTPVersion
 	if cmd.Flags().Lookup("http-version").Changed {
 		val, _ := cmd.Flags().GetString("http-version")
-		switch val {
-		case string(rstream.HTTP1_1):
-			tmp := rstream.HTTP1_1
-			httpVersionPtr = &tmp
-		case "h2c":
-			tmp := rstream.HTTP2
-			httpVersionPtr = &tmp
-		case string(rstream.HTTP3):
-			tmp := rstream.HTTP3
-			httpVersionPtr = &tmp
+		httpVersion, err := parseForwardHTTPVersion(val)
+		if err != nil {
+			return nil, err
 		}
+		httpVersionPtr = &httpVersion
 	}
 	httpUseTLSPtr := getBoolPtr(cmd, "http-use-tls")
 	upstreamTLSPtr := getBoolPtr(cmd, "upstream-tls")
@@ -219,4 +219,44 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 		ChallengeMode: challengeModePtr,
 	}
 	return tunnelProperties, nil
+}
+
+func parseForwardTLSMode(value string) (rstream.TLSMode, error) {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case string(rstream.TLSModeTerminated):
+		return rstream.TLSModeTerminated, nil
+	case string(rstream.TLSModePassthrough):
+		return rstream.TLSModePassthrough, nil
+	default:
+		return "", fmt.Errorf("invalid --tls-mode %q (valid: terminated, passthrough)", value)
+	}
+}
+
+func parseForwardHTTPVersion(value string) (rstream.HTTPVersion, error) {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case string(rstream.HTTP1_1):
+		return rstream.HTTP1_1, nil
+	case "h2c":
+		return rstream.HTTP2, nil
+	case string(rstream.HTTP3):
+		return rstream.HTTP3, nil
+	default:
+		return "", fmt.Errorf("invalid --http-version %q (valid: http/1.1, h2c, h3)", value)
+	}
+}
+
+func readForwardPEMFile(path, flag string) (string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", fmt.Errorf("%s is empty", flag)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to read %s: %w", flag, err)
+	}
+	value := strings.TrimSpace(string(data))
+	if value == "" {
+		return "", fmt.Errorf("%s is empty", flag)
+	}
+	return value, nil
 }

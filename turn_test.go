@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func modePtr(mode TURNCredentialMode) *TURNCredentialMode {
@@ -70,7 +71,82 @@ func TestCreateTURNCredentialsFallsBackToAPIForLegacyPAT(t *testing.T) {
 	}
 }
 
-func turnTestToken(t *testing.T, claims map[string]string) string {
+func TestCreateTURNCredentialsExplicitAPIAcceptsOpaqueToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer opaque-token" {
+			t.Fatalf("authorization = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"username":"u","credential":"c","urls":["turn:example.com:3478?transport=udp"],"ttl":86400}`))
+	}))
+	defer server.Close()
+	res, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{
+		APIURL:          server.URL,
+		Token:           "opaque-token",
+		ProjectEndpoint: "bbc44f81",
+		Mode:            modePtr(TURNCredentialModeAPI),
+	})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	if res.Username != "u" || res.Credential != "c" {
+		t.Fatalf("unexpected response: %+v", res)
+	}
+}
+
+func TestPATTURNCredentialTTLIsBoundedByTokenExpiration(t *testing.T) {
+	now := time.Unix(1_900_000_000, 0)
+	expiresAt := now.Add(15 * time.Minute).Unix()
+	ttl, err := normalizePATTURNCredentialTTL(24*time.Hour, turnTokenClaims{ExpiresAt: &expiresAt}, now)
+	if err != nil {
+		t.Fatalf("normalizePATTURNCredentialTTL() error = %v", err)
+	}
+	if ttl != 15*time.Minute {
+		t.Fatalf("ttl = %v, want token remaining lifetime", ttl)
+	}
+	expiredAt := now.Add(-time.Second).Unix()
+	if _, err := normalizePATTURNCredentialTTL(time.Hour, turnTokenClaims{ExpiresAt: &expiredAt}, now); err == nil || err.Error() != "PAT token is expired" {
+		t.Fatalf("expired PAT should be rejected, got %v", err)
+	}
+}
+
+func TestPATTURNCredentialTTLIsCappedByServerMaximum(t *testing.T) {
+	now := time.Unix(1_900_000_000, 0)
+	ttl, err := normalizePATTURNCredentialTTL(24*time.Hour, turnTokenClaims{}, now)
+	if err != nil {
+		t.Fatalf("normalizePATTURNCredentialTTL() error = %v", err)
+	}
+	if ttl != maxTURNCredentialTTL {
+		t.Fatalf("ttl = %v, want server maximum", ttl)
+	}
+	expiresAt := now.Add(2 * time.Hour).Unix()
+	ttl, err = normalizePATTURNCredentialTTL(24*time.Hour, turnTokenClaims{ExpiresAt: &expiresAt}, now)
+	if err != nil {
+		t.Fatalf("normalizePATTURNCredentialTTL() with PAT exp error = %v", err)
+	}
+	if ttl != maxTURNCredentialTTL {
+		t.Fatalf("ttl = %v, want server maximum before PAT expiration", ttl)
+	}
+}
+
+func TestCreateTURNCredentialsPATRejectsExpiredToken(t *testing.T) {
+	token := turnTestToken(t, map[string]any{
+		"type":           "pat",
+		"token_endpoint": "b95faf7f",
+		"exp":            time.Now().Add(-time.Minute).Unix(),
+	})
+	_, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{
+		Token:           token,
+		ProjectEndpoint: "bbc44f81",
+		ClusterDomain:   "aws-eu-west-3-1.c.rstream.io",
+		Mode:            modePtr(TURNCredentialModePAT),
+	})
+	if err == nil || err.Error() != "PAT token is expired" {
+		t.Fatalf("expired PAT should be rejected, got %v", err)
+	}
+}
+
+func turnTestToken(t *testing.T, claims any) string {
 	t.Helper()
 	header, err := json.Marshal(map[string]string{"alg": "HS256"})
 	if err != nil {

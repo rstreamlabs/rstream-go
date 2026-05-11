@@ -8,24 +8,24 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/events"
-	"github.com/docker/docker/api/types/filters"
-	"github.com/docker/docker/client"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/events"
+	"github.com/moby/moby/client"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
 )
 
 type ContextLookup func(name string) (runmodel.ResolvedContext, error)
 
 type Source struct {
-	client   *client.Client
-	fallback runmodel.ResolvedContext
-	lookup   ContextLookup
-	network  string
-	logger   *slog.Logger
+	client             *client.Client
+	fallback           runmodel.ResolvedContext
+	lookup             ContextLookup
+	network            string
+	logger             *slog.Logger
+	allowContextLabels bool
 }
 
-func NewSource(socket, network string, fallback runmodel.ResolvedContext, lookup ContextLookup, logger *slog.Logger) (*Source, error) {
+func NewSource(socket, network string, fallback runmodel.ResolvedContext, lookup ContextLookup, allowContextLabels bool, logger *slog.Logger) (*Source, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -34,21 +34,22 @@ func NewSource(socket, network string, fallback runmodel.ResolvedContext, lookup
 		return nil, err
 	}
 	return &Source{
-		client:   cli,
-		fallback: fallback,
-		lookup:   lookup,
-		network:  network,
-		logger:   logger,
+		client:             cli,
+		fallback:           fallback,
+		lookup:             lookup,
+		network:            network,
+		logger:             logger,
+		allowContextLabels: allowContextLabels,
 	}, nil
 }
 
 func (s *Source) List(ctx context.Context) ([]runmodel.DesiredTunnel, error) {
-	containers, err := s.client.ContainerList(ctx, types.ContainerListOptions{})
+	result, err := s.client.ContainerList(ctx, client.ContainerListOptions{})
 	if err != nil {
 		return nil, err
 	}
 	out := []runmodel.DesiredTunnel{}
-	for _, c := range containers {
+	for _, c := range result.Items {
 		info := ContainerInfo{
 			ID:       c.ID,
 			Name:     containerName(c),
@@ -57,6 +58,9 @@ func (s *Source) List(ctx context.Context) ([]runmodel.DesiredTunnel, error) {
 		}
 		ctxResolved := s.fallback
 		if labelCtx := strings.TrimSpace(info.Labels["rstream.context"]); labelCtx != "" {
+			if !s.allowContextLabels {
+				return nil, fmt.Errorf("container %q uses rstream.context but Docker context labels are disabled", info.Name)
+			}
 			if s.lookup == nil {
 				return nil, fmt.Errorf("container %q requires context lookup", info.Name)
 			}
@@ -81,9 +85,8 @@ func (s *Source) List(ctx context.Context) ([]runmodel.DesiredTunnel, error) {
 }
 
 func (s *Source) Watch(ctx context.Context) (<-chan struct{}, error) {
-	f := filters.NewArgs()
-	f.Add("type", "container")
-	eventsCh, errCh := s.client.Events(ctx, types.EventsOptions{Filters: f})
+	f := make(client.Filters).Add("type", "container")
+	result := s.client.Events(ctx, client.EventsListOptions{Filters: f})
 	s.logger.Info("Watching Docker events")
 	out := make(chan struct{}, 1)
 	go func() {
@@ -92,13 +95,13 @@ func (s *Source) Watch(ctx context.Context) (<-chan struct{}, error) {
 			case <-ctx.Done():
 				close(out)
 				return
-			case err, ok := <-errCh:
+			case err, ok := <-result.Err:
 				if !ok {
 					close(out)
 					return
 				}
 				s.logger.Warn("Docker events error", "error", err)
-			case msg, ok := <-eventsCh:
+			case msg, ok := <-result.Messages:
 				if !ok {
 					close(out)
 					return
@@ -122,7 +125,7 @@ func (s *Source) Close() error {
 	return s.client.Close()
 }
 
-func containerName(c types.Container) string {
+func containerName(c container.Summary) string {
 	if len(c.Names) > 0 {
 		name := strings.TrimPrefix(c.Names[0], "/")
 		if name != "" {
@@ -138,7 +141,7 @@ func containerName(c types.Container) string {
 	return "unknown"
 }
 
-func containerNetworks(c types.Container) map[string]string {
+func containerNetworks(c container.Summary) map[string]string {
 	if c.NetworkSettings == nil || c.NetworkSettings.Networks == nil {
 		return nil
 	}
@@ -147,7 +150,9 @@ func containerNetworks(c types.Container) map[string]string {
 		if settings == nil {
 			continue
 		}
-		out[name] = settings.IPAddress
+		if settings.IPAddress.IsValid() {
+			out[name] = settings.IPAddress.String()
+		}
 	}
 	return out
 }

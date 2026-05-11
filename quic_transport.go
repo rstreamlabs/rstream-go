@@ -5,15 +5,21 @@ package rstream
 import (
 	"context"
 	"crypto/tls"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/quic-go/quic-go"
 )
+
+var errDatagramDeadlineUnsupported = errors.New("QUIC datagram PacketConn deadlines are not supported")
+
+const datagramChannelIDSize = 12
+
+type datagramChannelID [datagramChannelIDSize]byte
 
 // QUICTransport is a stateful Dialer that multiplexes all connections over a
 // single QUIC connection. The first call to Dial establishes the underlying
@@ -23,36 +29,83 @@ import (
 //
 // No reconnection on error — let the control channel error propagate naturally.
 type QUICTransport struct {
-	LocalAddr     *string
-	ForceIPv4     *bool
-	ForceIPv6     *bool
-	DNSOverride   *string
-	DNSOverTLS    *bool
-	DNSServerName *string
-	DNSSECEnabled *bool
-	mu            sync.Mutex
-	quicConn      *quic.Conn
-	pconn         net.PacketConn
+	LocalAddr       *string
+	ForceIPv4       *bool
+	ForceIPv6       *bool
+	DNSOverride     *string
+	DNSOverTLS      *bool
+	DNSServerName   *string
+	DNSSECEnabled   *bool
+	mu              sync.Mutex
+	connectMu       sync.Mutex
+	quicConn        *quic.Conn
+	pconn           net.PacketConn
+	origin          string
+	closeGeneration uint64
 }
 
 // Dial establishes or reuses a QUIC connection to addr, then opens and returns
 // a new QUIC stream wrapped as a net.Conn.
 func (t *QUICTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (net.Conn, error) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.quicConn == nil {
-		conn, pconn, err := t.connect(ctx, addr, tlsCfg)
-		if err != nil {
-			return nil, err
-		}
-		t.quicConn = conn
-		t.pconn = pconn
+	origin, err := quicTransportOrigin(addr, tlsCfg)
+	if err != nil {
+		return nil, err
 	}
-	stream, err := t.quicConn.OpenStreamSync(ctx)
+	conn, err := t.connection(ctx, addr, tlsCfg, origin)
+	if err != nil {
+		return nil, err
+	}
+	stream, err := conn.OpenStreamSync(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open QUIC stream: %w", err)
 	}
-	return &quicStreamConn{stream: stream, conn: t.quicConn}, nil
+	return &quicStreamConn{stream: stream, conn: conn}, nil
+}
+
+func (t *QUICTransport) connection(ctx context.Context, addr string, tlsCfg *tls.Config, origin string) (*quic.Conn, error) {
+	t.mu.Lock()
+	if t.quicConn != nil {
+		if t.origin != origin {
+			t.mu.Unlock()
+			return nil, fmt.Errorf("QUIC transport already connected to %s", t.origin)
+		}
+		conn := t.quicConn
+		t.mu.Unlock()
+		return conn, nil
+	}
+	t.mu.Unlock()
+	t.connectMu.Lock()
+	defer t.connectMu.Unlock()
+	t.mu.Lock()
+	if t.quicConn != nil {
+		if t.origin != origin {
+			t.mu.Unlock()
+			return nil, fmt.Errorf("QUIC transport already connected to %s", t.origin)
+		}
+		conn := t.quicConn
+		t.mu.Unlock()
+		return conn, nil
+	}
+	generation := t.closeGeneration
+	t.mu.Unlock()
+	conn, pconn, err := t.connect(ctx, addr, tlsCfg)
+	if err != nil {
+		return nil, err
+	}
+	t.mu.Lock()
+	if t.closeGeneration != generation {
+		t.mu.Unlock()
+		_ = conn.CloseWithError(0, "transport closed")
+		if pconn != nil {
+			_ = pconn.Close()
+		}
+		return nil, net.ErrClosed
+	}
+	t.quicConn = conn
+	t.pconn = pconn
+	t.origin = origin
+	t.mu.Unlock()
+	return conn, nil
 }
 
 // SendDatagram sends a datagram over the underlying QUIC connection.
@@ -83,11 +136,13 @@ func (t *QUICTransport) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 func (t *QUICTransport) Close() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.closeGeneration++
 	if t.quicConn == nil {
 		return nil
 	}
 	err := t.quicConn.CloseWithError(0, "transport closed")
 	t.quicConn = nil
+	t.origin = ""
 	if t.pconn != nil {
 		if pcErr := t.pconn.Close(); pcErr != nil && err == nil {
 			err = pcErr
@@ -95,6 +150,23 @@ func (t *QUICTransport) Close() error {
 		t.pconn = nil
 	}
 	return err
+}
+
+func quicTransportOrigin(addr string, tlsCfg *tls.Config) (string, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		if strings.Contains(addr, ":") {
+			return "", err
+		}
+		host = addr
+	}
+	serverName := ""
+	nextProtos := ""
+	if tlsCfg != nil {
+		serverName = tlsCfg.ServerName
+		nextProtos = strings.Join(tlsCfg.NextProtos, ",")
+	}
+	return strings.ToLower(host) + ":" + port + "|" + strings.ToLower(serverName) + "|" + nextProtos, nil
 }
 
 // connect creates the underlying QUIC connection. Must be called with t.mu held.
@@ -194,48 +266,62 @@ func (c *quicStreamConn) SetWriteDeadline(t time.Time) error {
 	return c.stream.SetWriteDeadline(t)
 }
 
-// datagramChannelIDFromStreamID derives a deterministic 4-byte channel ID from
-// a stream ID. The engine generates stream IDs as 24-character lowercase hex
-// strings; we parse the first 8 hex characters (4 bytes) and interpret them as
-// a big-endian uint32. This mirrors the engine's own datagramChannelIDFromStreamID
-// implementation so that both sides compute the same channel ID for a given
-// stream.
-func datagramChannelIDFromStreamID(streamID string) uint32 {
-	if len(streamID) < 8 {
-		return 0
+// datagramChannelIDFromStreamID derives the datagram routing key from the full
+// 12-byte stream ID emitted by the engine. A full-width key avoids routing
+// collisions between concurrent datagram streams that share the same 32-bit
+// prefix.
+func datagramChannelIDFromStreamID(streamID string) (datagramChannelID, error) {
+	var id datagramChannelID
+	streamID = strings.ReplaceAll(strings.TrimSpace(streamID), "-", "")
+	if len(streamID) < datagramChannelIDSize*2 {
+		return id, fmt.Errorf("stream ID %q is too short for QUIC datagram channel routing", streamID)
 	}
-	var b [4]byte
-	for i := 0; i < 4; i++ {
-		b[i] = (hexNibble(streamID[i*2]) << 4) | hexNibble(streamID[i*2+1])
+	for i := 0; i < datagramChannelIDSize; i++ {
+		hi, ok := hexNibble(streamID[i*2])
+		if !ok {
+			return id, fmt.Errorf("stream ID %q contains non-hex characters", streamID)
+		}
+		lo, ok := hexNibble(streamID[i*2+1])
+		if !ok {
+			return id, fmt.Errorf("stream ID %q contains non-hex characters", streamID)
+		}
+		id[i] = (hi << 4) | lo
 	}
-	return binary.BigEndian.Uint32(b[:])
+	return id, nil
 }
 
-func hexNibble(c byte) byte {
+func (id datagramChannelID) String() string {
+	return fmt.Sprintf("%x", id[:])
+}
+
+func hexNibble(c byte) (byte, bool) {
 	switch {
 	case c >= '0' && c <= '9':
-		return c - '0'
+		return c - '0', true
 	case c >= 'a' && c <= 'f':
-		return c - 'a' + 10
+		return c - 'a' + 10, true
 	case c >= 'A' && c <= 'F':
-		return c - 'A' + 10
+		return c - 'A' + 10, true
 	default:
-		return 0
+		return 0, false
 	}
 }
 
 // quicDatagramChannel implements net.PacketConn for a single datagram tunnel
-// channel identified by a 4-byte channel ID. Datagrams sent on WriteTo are
-// prefixed with the channel ID; incoming datagrams are received on recvCh after
-// the datagramReadLoop strips the channel ID prefix and routes them here.
+// channel identified by a full stream-derived channel ID. Datagrams sent on
+// WriteTo are prefixed with the channel ID; incoming datagrams are received on
+// recvCh after the datagramReadLoop strips the channel ID prefix and routes them
+// here.
 type quicDatagramChannel struct {
-	channelID uint32
+	channelID datagramChannelID
 	provider  DatagramProvider
 	laddr     net.Addr
 	raddr     net.Addr
 	recvCh    chan []byte
 	ctx       context.Context
 	cancel    context.CancelFunc
+	once      sync.Once
+	onClose   func(*quicDatagramChannel)
 }
 
 func (c *quicDatagramChannel) ReadFrom(p []byte) (int, net.Addr, error) {
@@ -252,10 +338,9 @@ func (c *quicDatagramChannel) ReadFrom(p []byte) (int, net.Addr, error) {
 }
 
 func (c *quicDatagramChannel) WriteTo(p []byte, addr net.Addr) (int, error) {
-	// Prepend 4-byte big-endian channel ID.
-	buf := make([]byte, 4+len(p))
-	binary.BigEndian.PutUint32(buf[:4], c.channelID)
-	copy(buf[4:], p)
+	buf := make([]byte, datagramChannelIDSize+len(p))
+	copy(buf[:datagramChannelIDSize], c.channelID[:])
+	copy(buf[datagramChannelIDSize:], p)
 	if err := c.provider.SendDatagram(buf); err != nil {
 		return 0, err
 	}
@@ -263,7 +348,12 @@ func (c *quicDatagramChannel) WriteTo(p []byte, addr net.Addr) (int, error) {
 }
 
 func (c *quicDatagramChannel) Close() error {
-	c.cancel()
+	c.once.Do(func() {
+		c.cancel()
+		if c.onClose != nil {
+			c.onClose(c)
+		}
+	})
 	return nil
 }
 
@@ -272,15 +362,15 @@ func (c *quicDatagramChannel) LocalAddr() net.Addr {
 }
 
 func (c *quicDatagramChannel) SetDeadline(t time.Time) error {
-	return nil
+	return errDatagramDeadlineUnsupported
 }
 
 func (c *quicDatagramChannel) SetReadDeadline(t time.Time) error {
-	return nil
+	return errDatagramDeadlineUnsupported
 }
 
 func (c *quicDatagramChannel) SetWriteDeadline(t time.Time) error {
-	return nil
+	return errDatagramDeadlineUnsupported
 }
 
 // quicDatagramListener implements PacketListener for datagram tunnels backed by

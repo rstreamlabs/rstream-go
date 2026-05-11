@@ -3,40 +3,94 @@
 package rstream
 
 import (
-	"strings"
+	"regexp"
 	"testing"
 )
 
-func TestGenerateStableDomainFromProjectEngine(t *testing.T) {
-	got, ok, err := GenerateStableDomain("f587ee53.c.localhost.rstream.io:443")
+func TestGenerateStableDomain(t *testing.T) {
+	got, ok, err := GenerateStableDomain("https://Project-42.edge.example.com:443")
 	if err != nil {
-		t.Fatalf("GenerateStableDomain failed: %v", err)
+		t.Fatalf("GenerateStableDomain() error = %v", err)
 	}
 	if !ok {
-		t.Fatal("expected stable domain")
+		t.Fatalf("GenerateStableDomain() ok = false, want true")
 	}
-	if !strings.HasSuffix(got, "-f587ee53.t.c.localhost.rstream.io") {
-		t.Fatalf("unexpected stable domain: %s", got)
-	}
-	label := strings.Split(got, ".")[0]
-	if len(label) > 63 {
-		t.Fatalf("label too long: %d", len(label))
+	pattern := regexp.MustCompile(`^r[0-9a-f]{8}-project-42\.t\.edge\.example\.com$`)
+	if !pattern.MatchString(got) {
+		t.Fatalf("GenerateStableDomain() = %q, want %s", got, pattern)
 	}
 }
 
-func TestGenerateStableDomainSkipsBaseEngine(t *testing.T) {
-	if got, ok, err := GenerateStableDomain("localhost:443"); err != nil || ok || got != "" {
-		t.Fatalf("GenerateStableDomain = %q, %t, %v; want empty false nil", got, ok, err)
+func TestGenerateStableDomainRejectsUnsupportedEngines(t *testing.T) {
+	tests := []string{
+		"",
+		"localhost:443",
+		"bad_label.example.com:443",
+		"project.bad_cluster.example.com:443",
+		"[2001:db8::1]:443",
+	}
+	for _, engine := range tests {
+		t.Run(engine, func(t *testing.T) {
+			got, ok, err := GenerateStableDomain(engine)
+			if err != nil {
+				t.Fatalf("GenerateStableDomain() error = %v", err)
+			}
+			if ok || got != "" {
+				t.Fatalf("GenerateStableDomain() = %q, %v; want empty, false", got, ok)
+			}
+		})
 	}
 }
 
-func TestMaybeSetGeneratedStableDomainSkipsPrivateTunnel(t *testing.T) {
-	publish := false
-	props := TunnelProperties{Publish: &publish}
-	if err := MaybeSetGeneratedStableDomain(&props, "f587ee53.c.localhost.rstream.io:443"); err != nil {
-		t.Fatalf("MaybeSetGeneratedStableDomain failed: %v", err)
+func TestMaybeSetGeneratedStableDomain(t *testing.T) {
+	t.Run("keeps explicit hostname", func(t *testing.T) {
+		props := TunnelProperties{Hostname: StringPtr("custom.example.com")}
+		if err := MaybeSetGeneratedStableDomain(&props, "project.edge.example.com:443"); err != nil {
+			t.Fatalf("MaybeSetGeneratedStableDomain() error = %v", err)
+		}
+		if props.Hostname == nil || *props.Hostname != "custom.example.com" {
+			t.Fatalf("Hostname = %#v, want explicit hostname", props.Hostname)
+		}
+	})
+	t.Run("keeps legacy host", func(t *testing.T) {
+		props := TunnelProperties{Host: StringPtr("legacy.example.com")}
+		if err := MaybeSetGeneratedStableDomain(&props, "project.edge.example.com:443"); err != nil {
+			t.Fatalf("MaybeSetGeneratedStableDomain() error = %v", err)
+		}
+		if props.Hostname != nil {
+			t.Fatalf("Hostname = %#v, want nil when Host is set", props.Hostname)
+		}
+	})
+	t.Run("skips unpublished tunnels", func(t *testing.T) {
+		props := TunnelProperties{Publish: BoolPtr(false)}
+		if err := MaybeSetGeneratedStableDomain(&props, "project.edge.example.com:443"); err != nil {
+			t.Fatalf("MaybeSetGeneratedStableDomain() error = %v", err)
+		}
+		if props.Hostname != nil {
+			t.Fatalf("Hostname = %#v, want nil for unpublished tunnel", props.Hostname)
+		}
+	})
+	t.Run("generates for published tunnel", func(t *testing.T) {
+		props := TunnelProperties{Publish: BoolPtr(true)}
+		if err := MaybeSetGeneratedStableDomain(&props, "project.edge.example.com:443"); err != nil {
+			t.Fatalf("MaybeSetGeneratedStableDomain() error = %v", err)
+		}
+		if props.Hostname == nil {
+			t.Fatalf("Hostname = nil, want generated hostname")
+		}
+	})
+}
+
+func TestStableHostnameCompatibilityWrappers(t *testing.T) {
+	got, ok, err := GenerateStableHostname("project.edge.example.com:443")
+	if err != nil || !ok || got == "" {
+		t.Fatalf("GenerateStableHostname() = %q, %v, %v", got, ok, err)
 	}
-	if props.Hostname != nil {
-		t.Fatalf("expected no hostname, got %q", *props.Hostname)
+	props := TunnelProperties{Publish: BoolPtr(true)}
+	if err := MaybeSetGeneratedStableHostname(&props, "project.edge.example.com:443"); err != nil {
+		t.Fatalf("MaybeSetGeneratedStableHostname() error = %v", err)
+	}
+	if props.Hostname == nil || *props.Hostname == "" {
+		t.Fatalf("Hostname was not generated: %#v", props.Hostname)
 	}
 }

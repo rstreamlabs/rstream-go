@@ -20,7 +20,8 @@ import (
 
 const defaultTURNPort = 3478
 const defaultTURNSPort = 5349
-const defaultTURNCredentialTTL = 24 * time.Hour
+const defaultTURNCredentialTTL = 10 * time.Minute
+const maxTURNCredentialTTL = time.Hour
 
 type TURNCredentials = controlplane.TURNCredentials
 
@@ -47,6 +48,7 @@ type CreateTURNCredentialsOptions struct {
 type turnTokenClaims struct {
 	Type          string `json:"type"`
 	TokenEndpoint string `json:"token_endpoint,omitempty"`
+	ExpiresAt     *int64 `json:"exp,omitempty"`
 }
 
 func CreateTURNCredentials(ctx context.Context, opts CreateTURNCredentialsOptions) (*TURNCredentials, error) {
@@ -101,10 +103,14 @@ func createPATTURNCredentials(opts CreateTURNCredentialsOptions, token string, c
 	if clusterDomain == "" {
 		return nil, errors.New("cluster domain is required for TURN PAT mode")
 	}
-	ttl := normalizeTURNCredentialTTL(opts.TTL)
+	now := time.Now()
+	ttl, err := normalizePATTURNCredentialTTL(opts.TTL, claims, now)
+	if err != nil {
+		return nil, err
+	}
 	username := fmt.Sprintf(
 		"v1:%d:pat:%s:%s",
-		time.Now().Unix()+int64(ttl/time.Second),
+		now.Add(ttl).Unix(),
 		projectEndpoint,
 		claims.TokenEndpoint,
 	)
@@ -124,30 +130,34 @@ func createPATTURNCredentials(opts CreateTURNCredentialsOptions, token string, c
 }
 
 func resolveTURNCredentialMode(token string, requested *TURNCredentialMode) (TURNCredentialMode, turnTokenClaims, error) {
+	if requested != nil {
+		switch *requested {
+		case TURNCredentialModeAPI:
+			return TURNCredentialModeAPI, turnTokenClaims{}, nil
+		case TURNCredentialModePAT:
+			claims, err := parseTURNTokenClaims(token)
+			if err != nil {
+				return "", turnTokenClaims{}, err
+			}
+			if claims.Type != "pat" {
+				return "", turnTokenClaims{}, errors.New("TURN PAT mode requires a PAT token")
+			}
+			if strings.TrimSpace(claims.TokenEndpoint) == "" {
+				return "", turnTokenClaims{}, errors.New("TURN PAT mode requires a PAT token carrying a token endpoint")
+			}
+			return TURNCredentialModePAT, claims, nil
+		default:
+			return "", turnTokenClaims{}, fmt.Errorf("invalid TURN credential mode %q", *requested)
+		}
+	}
 	claims, err := parseTURNTokenClaims(token)
 	if err != nil {
-		return "", turnTokenClaims{}, err
+		return TURNCredentialModeAPI, turnTokenClaims{}, nil
 	}
-	if requested == nil {
-		if claims.Type == "pat" && claims.TokenEndpoint != "" {
-			return TURNCredentialModePAT, claims, nil
-		}
-		return TURNCredentialModeAPI, claims, nil
-	}
-	switch *requested {
-	case TURNCredentialModeAPI:
-		return TURNCredentialModeAPI, claims, nil
-	case TURNCredentialModePAT:
-		if claims.Type != "pat" {
-			return "", turnTokenClaims{}, errors.New("TURN PAT mode requires a PAT token")
-		}
-		if strings.TrimSpace(claims.TokenEndpoint) == "" {
-			return "", turnTokenClaims{}, errors.New("TURN PAT mode requires a PAT token carrying a token endpoint")
-		}
+	if claims.Type == "pat" && claims.TokenEndpoint != "" {
 		return TURNCredentialModePAT, claims, nil
-	default:
-		return "", turnTokenClaims{}, fmt.Errorf("invalid TURN credential mode %q", *requested)
 	}
+	return TURNCredentialModeAPI, claims, nil
 }
 
 func parseTURNTokenClaims(token string) (turnTokenClaims, error) {
@@ -177,7 +187,28 @@ func normalizeTURNCredentialTTL(ttl time.Duration) time.Duration {
 	if ttl <= 0 {
 		return defaultTURNCredentialTTL
 	}
+	if ttl > maxTURNCredentialTTL {
+		return maxTURNCredentialTTL
+	}
 	return ttl
+}
+
+func normalizePATTURNCredentialTTL(ttl time.Duration, claims turnTokenClaims, now time.Time) (time.Duration, error) {
+	ttl = normalizeTURNCredentialTTL(ttl)
+	if claims.ExpiresAt == nil {
+		return ttl, nil
+	}
+	remaining := time.Until(time.Unix(*claims.ExpiresAt, 0))
+	if !now.IsZero() {
+		remaining = time.Unix(*claims.ExpiresAt, 0).Sub(now)
+	}
+	if remaining <= 0 {
+		return 0, errors.New("PAT token is expired")
+	}
+	if remaining < ttl {
+		return remaining, nil
+	}
+	return ttl, nil
 }
 
 func normalizeTURNPort(port, fallback int) int {

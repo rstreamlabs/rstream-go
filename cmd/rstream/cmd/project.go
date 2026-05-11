@@ -67,14 +67,14 @@ var projectListCmd = &cobra.Command{
 				_, _ = fmt.Fprintf(
 					w,
 					"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					project.Name,
-					project.Endpoint,
-					project.Status,
-					project.Plan,
-					project.Deployment,
-					project.Provider,
-					region,
-					project.ID,
+					terminalSafeDefault(project.Name),
+					terminalSafeDefault(project.Endpoint),
+					terminalSafeDefault(project.Status),
+					terminalSafeDefault(project.Plan),
+					terminalSafeDefault(project.Deployment),
+					terminalSafeDefault(project.Provider),
+					terminalSafeDefault(region),
+					terminalSafeDefault(project.ID),
 				)
 			}
 			return w.Flush()

@@ -18,14 +18,11 @@ var logoutCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		apiURL, err := resolveAPIURL(cmd, cfg)
+		resolved, err := resolveLogoutTarget(cmd, cfg)
 		if err != nil {
 			return err
 		}
-		env, _ := cfg.FindEnvironment(apiURL)
-		if env != nil {
-			clearEnvironmentToken(env)
-		}
+		clearLogoutCredentials(&cfg, resolved)
 		return config.WriteAtomic(path, cfg)
 	},
 }
@@ -34,4 +31,35 @@ func init() {
 	logoutCmd.Flags().SortFlags = false
 	logoutCmd.PersistentFlags().SortFlags = false
 	rootCmd.AddCommand(logoutCmd)
+}
+
+func resolveLogoutTarget(cmd *cobra.Command, cfg config.Config) (config.Resolved, error) {
+	flagAPIURL, _ := cmd.Flags().GetString("api-url")
+	flagContext, _ := cmd.Flags().GetString("context")
+	env := config.ReadEnv()
+	return config.Resolve(config.ResolveInput{
+		Config:      cfg,
+		FlagAPIURL:  flagAPIURL,
+		FlagContext: flagContext,
+		EnvAPIURL:   env.APIURL,
+		EnvContext:  env.Context,
+	})
+}
+
+func clearLogoutCredentials(cfg *config.Config, resolved config.Resolved) {
+	if env, _ := cfg.FindEnvironment(resolved.APIURL); env != nil {
+		clearEnvironmentToken(env)
+	}
+	for i := range cfg.Contexts {
+		if shouldClearContextAuth(cfg.Contexts[i], resolved) {
+			cfg.Contexts[i].Auth = nil
+		}
+	}
+}
+
+func shouldClearContextAuth(ctx config.Context, resolved config.Resolved) bool {
+	if ctx.APIURL != "" {
+		return config.NormalizeAPIURL(ctx.APIURL) == config.NormalizeAPIURL(resolved.APIURL)
+	}
+	return resolved.Context != nil && resolved.Context.APIURL == "" && ctx.Name == resolved.ContextName
 }

@@ -15,7 +15,6 @@ import (
 
 	"github.com/pion/dtls/v3"
 	"github.com/rstreamlabs/rstream-go/pb"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -282,16 +281,7 @@ func logProto(dir string, m proto.Message) {
 	if Channel != "dev" {
 		return
 	}
-	b, err := protojson.MarshalOptions{EmitDefaultValues: true}.Marshal(m)
-	if err != nil {
-		slog.With("component", "net").Debug("proto marshal error", slog.String("error", err.Error()))
-	} else {
-		slog.With("component", "net").Debug(
-			dir,
-			slog.String("type", string(m.ProtoReflect().Descriptor().FullName())),
-			slog.Any("message", rawJSON(b)),
-		)
-	}
+	slog.With("component", "net").Debug(dir, slog.String("type", string(m.ProtoReflect().Descriptor().FullName())))
 }
 
 func readPbMessage(r *bufio.Reader) (*pb.Message, error) {

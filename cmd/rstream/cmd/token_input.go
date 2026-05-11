@@ -12,18 +12,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func readTokenInputOptional(cmd *cobra.Command, args []string) (string, bool, error) {
-	if len(args) > 0 {
-		token := strings.TrimSpace(args[0])
-		if token == "" {
-			return "", false, errors.New("token is empty")
-		}
-		return token, true, nil
-	}
-	token, _ := cmd.Flags().GetString("token")
-	if strings.TrimSpace(token) != "" {
-		return strings.TrimSpace(token), true, nil
-	}
+func readTokenInputOptional(cmd *cobra.Command) (string, bool, error) {
 	stdin, _ := cmd.Flags().GetBool("stdin")
 	tokenStdin, _ := cmd.Flags().GetBool("token-stdin")
 	file, _ := cmd.Flags().GetString("token-file")

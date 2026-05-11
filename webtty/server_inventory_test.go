@@ -54,11 +54,11 @@ func TestParseServers(t *testing.T) {
 		if server.TunnelName == nil || *server.TunnelName != name {
 			t.Fatalf("unexpected tunnel name: %#v", server.TunnelName)
 		}
-		if server.Target != name {
-			t.Fatalf("unexpected target: got %q want %q", server.Target, name)
+		if server.Target != id {
+			t.Fatalf("unexpected target: got %q want %q", server.Target, id)
 		}
-		if server.RstreamURL != "rstrm://"+name {
-			t.Fatalf("unexpected rstream url: got %q want %q", server.RstreamURL, "rstrm://"+name)
+		if server.RstreamURL != "rstrm://"+id {
+			t.Fatalf("unexpected rstream url: got %q want %q", server.RstreamURL, "rstrm://"+id)
 		}
 		if !server.Publish {
 			t.Fatalf("expected published server")

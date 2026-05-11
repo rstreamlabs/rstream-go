@@ -171,8 +171,8 @@ func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {
 	noRetryPtr := getBoolPtr(cmd, "no-retry")
 	var autoReconnect *bool
 	switch {
-	case retryPtr != nil && *retryPtr:
-		autoReconnect = rstream.BoolPtr(true)
+	case retryPtr != nil:
+		autoReconnect = rstream.BoolPtr(*retryPtr)
 	case noRetryPtr != nil && *noRetryPtr:
 		autoReconnect = rstream.BoolPtr(false)
 	}
@@ -182,6 +182,9 @@ func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {
 	var reconnectTimeout *time.Duration
 	{
 		v, _ := cmd.Flags().GetInt64("retry-interval")
+		if v <= 0 {
+			return nil, fmt.Errorf("--retry-interval must be greater than 0")
+		}
 		d := time.Duration(v) * time.Millisecond
 		reconnectTimeout = &d
 	}

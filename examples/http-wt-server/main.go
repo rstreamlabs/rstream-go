@@ -25,6 +25,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/webtransport-go"
@@ -33,11 +34,18 @@ import (
 )
 
 func generateTLSConfig() (*tls.Config, error) {
-	key, err := rsa.GenerateKey(rand.Reader, 1024)
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, err
 	}
-	template := x509.Certificate{SerialNumber: big.NewInt(1)}
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		DNSNames:     []string{"wt-example", "localhost"},
+	}
 	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
 	if err != nil {
 		return nil, err
@@ -111,8 +119,10 @@ func run(ctx context.Context, client *rstream.Client, publish bool, publishedPro
 			return
 		}
 		go func() {
+			defer sess.CloseWithError(0, "")
+			sessionCtx := sess.Context()
 			for {
-				stream, err := sess.AcceptStream(r.Context())
+				stream, err := sess.AcceptStream(sessionCtx)
 				if err != nil {
 					return
 				}

@@ -210,6 +210,9 @@ func discoveryQueryForTarget(target Target) (discoveryQuery, bool) {
 }
 
 func exchangeDNSQuery(ctx context.Context, qname string, queryType uint16, opts ResolverOptions) (dnsResponse, error) {
+	if opts.DNSSECEnabled && !opts.DNSOverTLS {
+		return dnsResponse{}, fmt.Errorf("DNSSEC validation requires DNS over TLS with a verified resolver")
+	}
 	nameservers, err := nameserversForQuery(ctx, qname, opts)
 	if err != nil {
 		return dnsResponse{}, err
@@ -260,6 +263,10 @@ func exchangeDNSQuery(ctx context.Context, qname string, queryType uint16, opts 
 			}
 			return dnsResponse{answer: response.Answer}, nil
 		case dns.RcodeNameError:
+			if opts.DNSSECEnabled && !response.AuthenticatedData {
+				lastErr = fmt.Errorf("DNSSEC validation required but resolver did not authenticate denial for %s", qname)
+				continue
+			}
 			return dnsResponse{}, nil
 		default:
 			lastErr = fmt.Errorf("DNS query failed with rcode %s", dns.RcodeToString[response.Rcode])

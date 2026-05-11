@@ -17,7 +17,6 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	rstream "github.com/rstreamlabs/rstream-go"
@@ -162,8 +161,16 @@ func (s *session) copyStreamLoop(r io.Reader, t pb.Data_Type) {
 	buf := make([]byte, 4096)
 	for {
 		n, err := r.Read(buf)
+		if n > 0 {
+			s.mu.Lock()
+			ok := s.onReadStream(t, buf[:n], nil)
+			s.mu.Unlock()
+			if !ok {
+				return
+			}
+		}
 		s.mu.Lock()
-		ok := s.onReadStream(t, buf[:n], err)
+		ok := err == nil || s.onReadStream(t, nil, err)
 		s.mu.Unlock()
 		if !ok {
 			return
@@ -281,16 +288,25 @@ func (s *session) handleMessage(m *pb.Message) error {
 	if s.closed {
 		return errors.New("session is closed")
 	}
+	if m == nil {
+		return errors.New("missing message")
+	}
 	switch payload := m.Payload.(type) {
 	case *pb.Message_Open:
 		return s.handleOpen(payload.Open)
 	case *pb.Message_Data:
 		return s.handleData(payload.Data)
 	case *pb.Message_Error:
+		if payload.Error == nil || strings.TrimSpace(payload.Error.Msg) == "" {
+			return fmt.Errorf("client error")
+		}
 		return fmt.Errorf("client error (%s)", payload.Error.Msg)
 	case *pb.Message_Heartbeat:
 		return nil
 	case *pb.Message_Parameter:
+		if payload.Parameter == nil {
+			return fmt.Errorf("missing parameter")
+		}
 		switch parameter := payload.Parameter.Parameter.(type) {
 		case *pb.Parameter_TerminalSize:
 			return s.doResize(parameter.TerminalSize)
@@ -300,6 +316,21 @@ func (s *session) handleMessage(m *pb.Message) error {
 	default:
 		return fmt.Errorf("unexpected message payload type: %T", payload)
 	}
+}
+
+func (s *session) waitPipedProcessLoop(cmd *exec.Cmd, stdout, stderr io.Reader) {
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		s.copyStdoutLoop(stdout)
+	}()
+	go func() {
+		defer wg.Done()
+		s.copyStderrLoop(stderr)
+	}()
+	wg.Wait()
+	s.waitProcessLoop(cmd)
 }
 
 func (s *session) handleOpen(openCfg *pb.Open) error {
@@ -406,14 +437,12 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 				return err
 			}
 			s.streamsActive = 2
-			go s.waitProcessLoop(cmd)
 			if s.shutdownReq {
 				if err := s.signalChildInterruptLocked(); err != nil {
 					s.logger.Debug("failed to send child interrupt", "error", err)
 				}
 			}
-			go s.copyStdoutLoop(stdout)
-			go s.copyStderrLoop(stderr)
+			go s.waitPipedProcessLoop(cmd, stdout, stderr)
 		}
 		return nil
 	}
@@ -436,6 +465,9 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 func (s *session) handleData(d *pb.Data) error {
 	if s.closed {
 		return errors.New("session is closed")
+	}
+	if d == nil {
+		return errors.New("missing data message")
 	}
 	if d.Type != pb.Data_TYPE_STDIN {
 		return fmt.Errorf("unexpected data type: %v", d.Type)
@@ -467,6 +499,9 @@ func (s *session) handleData(d *pb.Data) error {
 func (s *session) doResize(ts *pb.TerminalSize) error {
 	if s.closed {
 		return errors.New("session is closed")
+	}
+	if ts == nil {
+		return fmt.Errorf("missing terminal size")
 	}
 	if s.ptyFile == nil {
 		return fmt.Errorf("no PTY file descriptor")
@@ -630,6 +665,12 @@ func (s *session) writeMessage(m *pb.Message) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal protobuf: %w", err)
 	}
+	if s.cfg.SessionCloseDeadline != nil && *s.cfg.SessionCloseDeadline > 0 {
+		if err := s.conn.SetWriteDeadline(time.Now().Add(*s.cfg.SessionCloseDeadline)); err != nil {
+			return err
+		}
+		defer s.conn.SetWriteDeadline(time.Time{})
+	}
 	return s.conn.WriteMessage(websocket.BinaryMessage, data)
 }
 
@@ -637,10 +678,5 @@ func (s *session) logProtoMessage(direction string, m *pb.Message) {
 	if !s.logProto {
 		return
 	}
-	payload, err := protojson.MarshalOptions{EmitDefaultValues: true}.Marshal(m)
-	if err != nil {
-		s.logger.Debug("failed to marshal protobuf for logs", "error", err)
-		return
-	}
-	s.logger.Debug("protobuf message", "direction", direction, "payload", string(payload))
+	s.logger.Debug("protobuf message", "direction", direction, "payload_type", webTTYMessageType(m))
 }

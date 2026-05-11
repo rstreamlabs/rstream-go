@@ -2,7 +2,13 @@
 
 package cmd
 
-import "testing"
+import (
+	"bytes"
+	"strings"
+	"testing"
+
+	"github.com/rstreamlabs/rstream-go"
+)
 
 func TestBuildClientListParams(t *testing.T) {
 	params, err := buildClientListParams("id=c1,status=online,user_id=u1,agent=rstream,os=linux,arch=arm64,protocol_version=1.0,labels.env=prod,label.service=*")
@@ -50,5 +56,32 @@ func TestBuildClientListParamsRejectsUnknownFilterKey(t *testing.T) {
 func TestBuildClientListParamsRejectsRemovedFilterKey(t *testing.T) {
 	if _, err := buildClientListParams("project_id=p1"); err == nil {
 		t.Fatal("expected removed filter key error")
+	}
+}
+
+func TestPrintClientsJSONAndTable(t *testing.T) {
+	list := rstream.ListClientsResponse{
+		{ID: "client-b", Status: "offline", Agent: rstream.StringPtr("agent-b")},
+		{ID: "client-a", Status: "online", UserID: rstream.StringPtr("user-a"), Agent: rstream.StringPtr("agent-a"), Channel: rstream.StringPtr("dev"), Version: rstream.StringPtr("1.2.3"), OS: rstream.StringPtr("linux"), Arch: rstream.StringPtr("arm64")},
+	}
+	var jsonOut bytes.Buffer
+	if err := printClientsJSON(&jsonOut, &list); err != nil {
+		t.Fatalf("printClientsJSON() error = %v", err)
+	}
+	if !strings.Contains(jsonOut.String(), `"id": "client-a"`) || !strings.Contains(jsonOut.String(), `"status": "offline"`) {
+		t.Fatalf("printClientsJSON() output = %s", jsonOut.String())
+	}
+	var tableOut bytes.Buffer
+	if err := printClientsTable(&tableOut, &list); err != nil {
+		t.Fatalf("printClientsTable() error = %v", err)
+	}
+	table := tableOut.String()
+	idxA := strings.Index(table, "client-a")
+	idxB := strings.Index(table, "client-b")
+	if idxA < 0 || idxB < 0 || idxA > idxB {
+		t.Fatalf("client table order/output = %q", table)
+	}
+	if !strings.Contains(table, "client-b  offline  -") {
+		t.Fatalf("client table should render missing pointers as placeholders: %q", table)
 	}
 }

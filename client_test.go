@@ -1,0 +1,1048 @@
+// See LICENSE file in the project root for license information.
+
+package rstream
+
+import (
+	"bufio"
+	"context"
+	"crypto/tls"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/rstreamlabs/rstream-go/pb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
+)
+
+func TestClientEngineAndDetailsResolution(t *testing.T) {
+	client := &Client{}
+	if _, err := client.getEngine(); err == nil || !strings.Contains(err.Error(), "engine URL is required") {
+		t.Fatalf("expected missing engine error, got %v", err)
+	}
+	engine := "engine.example.com:443"
+	client.EngineURL = &engine
+	got, err := client.getEngine()
+	if err != nil || got != &engine {
+		t.Fatalf("getEngine() = %v, %v", got, err)
+	}
+	if _, err := client.getClientDetails(&engine, nil); err == nil || !strings.Contains(err.Error(), "token is required") {
+		t.Fatalf("expected missing token error, got %v", err)
+	}
+	client.NoToken = BoolPtr(true)
+	details, err := client.getClientDetails(&engine, nil)
+	if err != nil {
+		t.Fatalf("getClientDetails() with NoToken error = %v", err)
+	}
+	if details.Token != nil {
+		t.Fatalf("NoToken client should not populate token: %#v", details.Token)
+	}
+	token := "token"
+	client.NoToken = nil
+	client.Token = &token
+	details, err = client.getClientDetails(&engine, nil)
+	if err != nil {
+		t.Fatalf("getClientDetails() with token error = %v", err)
+	}
+	if details.Token == nil || *details.Token != "token" {
+		t.Fatalf("token not propagated: %#v", details.Token)
+	}
+}
+
+func TestToServerDetails(t *testing.T) {
+	if toServerDetails(nil) != nil {
+		t.Fatalf("nil server details should stay nil")
+	}
+	got := toServerDetails(&pb.ServerDetails{
+		Agent:    stringPbValueOrNil(StringPtr("agent")),
+		Channel:  stringPbValueOrNil(StringPtr("dev")),
+		Version:  stringPbValueOrNil(StringPtr("1.2.3")),
+		Plan:     stringPbValueOrNil(StringPtr("pro")),
+		Provider: stringPbValueOrNil(StringPtr("aws")),
+		Region:   stringPbValueOrNil(StringPtr("eu-west-1")),
+		Update:   stringPbValueOrNil(StringPtr("available")),
+	})
+	if got.Agent == nil || *got.Agent != "agent" || got.Update == nil || *got.Update != "available" {
+		t.Fatalf("unexpected server details: %#v", got)
+	}
+}
+
+func TestIsNilDialerHandlesTypedNil(t *testing.T) {
+	var transport *Transport
+	if !isNilDialer(transport) {
+		t.Fatalf("typed nil transport should be treated as nil")
+	}
+	if !isNilDialer(nil) {
+		t.Fatalf("nil dialer should be treated as nil")
+	}
+	if isNilDialer(&Transport{}) {
+		t.Fatalf("non-nil transport should not be treated as nil")
+	}
+}
+
+func TestControlChannelConnectCreateTunnelAndClose(t *testing.T) {
+	serverErr := make(chan error, 1)
+	dialer := pipeDialer{serve: func(conn net.Conn) {
+		serverErr <- serveControlChannelLifecycle(conn)
+	}}
+	engine := "engine.example.com:443"
+	token := "token"
+	client := &Client{
+		EngineURL: &engine,
+		Token:     &token,
+		Transport: dialer,
+		TLSClientConfig: &tls.Config{
+			MaxVersion: tls.VersionTLS12,
+		},
+	}
+	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(false)})
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	details := channel.ServerDetails()
+	if details == nil || details.Agent == nil || *details.Agent != "engine" {
+		t.Fatalf("unexpected server details: %#v", details)
+	}
+	tunnel, err := channel.CreateTunnel(t.Context(), TunnelProperties{Name: StringPtr("web"), Type: TunnelTypePtr(TunnelTypeBytestream)})
+	if err != nil {
+		t.Fatalf("CreateTunnel() error = %v", err)
+	}
+	props, err := tunnel.Properties()
+	if err != nil {
+		t.Fatalf("Properties() error = %v", err)
+	}
+	if props.ID == nil || *props.ID != "tun-1" || props.Name == nil || *props.Name != "web" {
+		t.Fatalf("unexpected tunnel properties: %#v", props)
+	}
+	bytestream, ok := tunnel.(BytestreamTunnel)
+	if !ok {
+		t.Fatalf("CreateTunnel() returned %T, want BytestreamTunnel", tunnel)
+	}
+	if addr := bytestream.Addr().String(); addr != "tun-1" {
+		t.Fatalf("tunnel Addr() = %q", addr)
+	}
+	if err := channel.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatalf("server error = %v", err)
+	}
+	if got := channel.Err(); got != nil {
+		t.Fatalf("channel Err() = %v", got)
+	}
+	select {
+	case <-channel.Done():
+	default:
+		t.Fatalf("Done() should be closed after Close()")
+	}
+}
+
+func TestControlChannelCreateTunnelReportsEngineAndMalformedResponses(t *testing.T) {
+	tests := []struct {
+		name      string
+		response  *pb.OpenTunnelRsp
+		wantError string
+	}{
+		{
+			name: "engine error",
+			response: &pb.OpenTunnelRsp{Payload: &pb.OpenTunnelRsp_Error{Error: &pb.Error{
+				Code:    403,
+				Message: wrapperspb.String("forbidden"),
+			}}},
+			wantError: "engine error 403: forbidden",
+		},
+		{
+			name:      "missing tunnel id",
+			response:  &pb.OpenTunnelRsp{Payload: &pb.OpenTunnelRsp_TunnelProperties{TunnelProperties: toTunnelPropertiesPb(TunnelProperties{Name: StringPtr("web")})}},
+			wantError: "engine did not return a tunnel ID",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dialer := newQueuedDialer(1)
+			dialer.enqueue(func(conn net.Conn) error {
+				return serveCreateTunnelResponse(conn, tt.response)
+			})
+			client := newTestClientWithDialer(dialer)
+			channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(false)})
+			if err != nil {
+				t.Fatalf("Connect() error = %v", err)
+			}
+			if _, err := channel.CreateTunnel(t.Context(), TunnelProperties{Name: StringPtr("web")}); err == nil || !strings.Contains(err.Error(), tt.wantError) {
+				t.Fatalf("CreateTunnel() error = %v, want containing %q", err, tt.wantError)
+			}
+			if err := channel.Close(); err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+			dialer.wait(t, 1)
+		})
+	}
+}
+
+func TestControlChannelHeartbeatSendsPeriodicMessage(t *testing.T) {
+	heartbeatSeen := make(chan struct{}, 1)
+	serverErr := make(chan error, 1)
+	dialer := pipeDialer{serve: func(conn net.Conn) {
+		serverErr <- serveControlChannelHeartbeat(conn, heartbeatSeen)
+	}}
+	engine := "engine.example.com:443"
+	token := "token"
+	interval := 10 * time.Millisecond
+	client := &Client{EngineURL: &engine, Token: &token, Transport: dialer}
+	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(true), HeartbeatInterval: &interval})
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	select {
+	case <-heartbeatSeen:
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for heartbeat")
+	}
+	if err := channel.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestClientDialWaitsForStreamResponseAndUsesReturnedConnection(t *testing.T) {
+	dialer := newQueuedDialer(1)
+	dialer.enqueue(func(conn net.Conn) error {
+		return serveStreamDial(conn, "web", "token", "ping", "pong")
+	})
+	client := newTestClientWithDialer(dialer)
+	conn, err := client.Dial(t.Context(), Addr{IdOrName: "web"})
+	if err != nil {
+		t.Fatalf("Dial() error = %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatalf("stream write error = %v", err)
+	}
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("stream read error = %v", err)
+	}
+	if string(buf) != "pong" {
+		t.Fatalf("stream reply = %q, want pong", buf)
+	}
+	dialer.wait(t, 1)
+}
+
+func TestClientDialReportsStreamError(t *testing.T) {
+	dialer := newQueuedDialer(1)
+	dialer.enqueue(func(conn net.Conn) error {
+		reader := bufio.NewReader(conn)
+		writer := bufio.NewWriter(conn)
+		msg, err := readPbMessage(reader)
+		if err != nil {
+			return err
+		}
+		if msg.GetStreamReq() == nil {
+			return errUnexpectedTestMessage("StreamReq")
+		}
+		return writePbMessage(writer, &pb.Message{Payload: &pb.Message_StreamRsp{StreamRsp: &pb.StreamRsp{
+			Payload: &pb.StreamRsp_Error{Error: &pb.Error{
+				Code:    409,
+				Message: wrapperspb.String("denied"),
+			}},
+		}}})
+	})
+	client := newTestClientWithDialer(dialer)
+	_, err := client.Dial(t.Context(), Addr{IdOrName: "web"})
+	if err == nil || !strings.Contains(err.Error(), "engine error 409: denied") {
+		t.Fatalf("Dial() error = %v, want engine error", err)
+	}
+	dialer.wait(t, 1)
+}
+
+func TestClientPacketDialFramesPackets(t *testing.T) {
+	dialer := newQueuedDialer(1)
+	dialer.enqueue(func(conn net.Conn) error {
+		reader := bufio.NewReader(conn)
+		writer := bufio.NewWriter(conn)
+		if err := expectStreamReq(reader, "datagrams", "token"); err != nil {
+			return err
+		}
+		if err := writeStreamRsp(writer, "stream-1"); err != nil {
+			return err
+		}
+		payload, err := readMessage(reader)
+		if err != nil {
+			return err
+		}
+		if string(payload) != "packet" {
+			return fmt.Errorf("framed payload = %q, want packet", payload)
+		}
+		return writeMessage(writer, []byte("reply"))
+	})
+	client := newTestClientWithDialer(dialer)
+	packetConn, err := client.PacketDial(t.Context(), Addr{IdOrName: "datagrams"})
+	if err != nil {
+		t.Fatalf("PacketDial() error = %v", err)
+	}
+	defer packetConn.Close()
+	remote := Addr{IdOrName: "datagrams"}
+	if n, err := packetConn.WriteTo([]byte("packet"), &remote); err != nil || n != len("packet") {
+		t.Fatalf("WriteTo() = %d, %v; want %d, nil", n, err, len("packet"))
+	}
+	if err := packetConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline() error = %v", err)
+	}
+	buf := make([]byte, 16)
+	n, addr, err := packetConn.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("ReadFrom() error = %v", err)
+	}
+	if string(buf[:n]) != "reply" || addr.String() != "datagrams" {
+		t.Fatalf("ReadFrom() = %q from %v, want reply from datagrams", buf[:n], addr)
+	}
+	dialer.wait(t, 1)
+}
+
+func TestControlChannelAcceptsProxyConnectionAndClosesTunnel(t *testing.T) {
+	dialer := newQueuedDialer(2)
+	dialer.enqueue(serveControlChannelWithProxyConnection)
+	dialer.enqueue(serveProxyConnection)
+	client := newTestClientWithDialer(dialer)
+	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(false)})
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	tunnel, err := channel.CreateTunnel(t.Context(), TunnelProperties{Name: StringPtr("web"), Type: TunnelTypePtr(TunnelTypeBytestream)})
+	if err != nil {
+		t.Fatalf("CreateTunnel() error = %v", err)
+	}
+	listener, ok := tunnel.(BytestreamTunnel)
+	if !ok {
+		t.Fatalf("CreateTunnel() returned %T, want BytestreamTunnel", tunnel)
+	}
+	accepted := acceptBytestream(t, listener)
+	defer accepted.Close()
+	local, ok := accepted.LocalAddr().(*Addr)
+	if !ok {
+		t.Fatalf("LocalAddr() returned %T, want *Addr", accepted.LocalAddr())
+	}
+	if local.String() != "stream-1" || !local.SourceIP.Equal(net.IPv4(192, 0, 2, 10)) {
+		t.Fatalf("LocalAddr() = %#v, want stream-1 from 192.0.2.10", local)
+	}
+	if accepted.RemoteAddr().String() != "tun-1" {
+		t.Fatalf("RemoteAddr() = %q, want tun-1", accepted.RemoteAddr())
+	}
+	if err := accepted.SetDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("SetDeadline() error = %v", err)
+	}
+	if err := accepted.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline() error = %v", err)
+	}
+	if err := accepted.SetWriteDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("SetWriteDeadline() error = %v", err)
+	}
+	if _, err := accepted.Write([]byte("hello")); err != nil {
+		t.Fatalf("accepted connection write error = %v", err)
+	}
+	buf := make([]byte, 5)
+	if _, err := io.ReadFull(accepted, buf); err != nil {
+		t.Fatalf("accepted connection read error = %v", err)
+	}
+	if string(buf) != "world" {
+		t.Fatalf("accepted connection reply = %q, want world", buf)
+	}
+	if err := tunnel.Close(); err != nil {
+		t.Fatalf("tunnel Close() error = %v", err)
+	}
+	if err := channel.Close(); err != nil {
+		t.Fatalf("channel Close() error = %v", err)
+	}
+	dialer.wait(t, 2)
+}
+
+func TestControlChannelDatagramProxyRoutesPacketsAndClosesChannels(t *testing.T) {
+	dialer := newQueuedDatagramDialer(1)
+	dialer.enqueue(serveControlChannelWithDatagramProxyConnection)
+	client := newTestClientWithDatagramDialer(dialer)
+	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(false)})
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	ctrl := channel.(*controlChannelImpl)
+	tunnel, err := channel.CreateTunnel(t.Context(), TunnelProperties{Name: StringPtr("dns"), Type: TunnelTypePtr(TunnelTypeDatagram)})
+	if err != nil {
+		t.Fatalf("CreateTunnel() error = %v", err)
+	}
+	listener, ok := tunnel.(DatagramTunnel)
+	if !ok {
+		t.Fatalf("CreateTunnel() returned %T, want DatagramTunnel", tunnel)
+	}
+	if listener.Addr().String() != "tun-dgram" {
+		t.Fatalf("datagram listener Addr() = %v", listener.Addr())
+	}
+	if forwarding, err := tunnel.ForwardingAddress(); err != nil || forwarding == "" {
+		t.Fatalf("ForwardingAddress() = %q, %v", forwarding, err)
+	}
+	if props, err := tunnel.Properties(); err != nil || props.ID == nil || *props.ID != "tun-dgram" {
+		t.Fatalf("Properties() = %#v, %v", props, err)
+	}
+	packetConn, addr := acceptDatagram(t, listener)
+	channelID := mustDatagramChannelID(t, "01020304-0000-0000-0000-000000000000")
+	dialer.receiveDatagram(t, channelID, []byte("from-engine"))
+	buf := make([]byte, 32)
+	n, readAddr, err := packetConn.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("ReadFrom() error = %v", err)
+	}
+	if string(buf[:n]) != "from-engine" || readAddr.String() != "01020304-0000-0000-0000-000000000000" {
+		t.Fatalf("ReadFrom() = %q from %v", buf[:n], readAddr)
+	}
+	if n, err := packetConn.WriteTo([]byte("to-engine"), addr); err != nil || n != len("to-engine") {
+		t.Fatalf("WriteTo() = %d, %v; want %d, nil", n, err, len("to-engine"))
+	}
+	sent := dialer.sentDatagram(t)
+	if string(sent[:datagramChannelIDSize]) != string(channelID[:]) || string(sent[datagramChannelIDSize:]) != "to-engine" {
+		t.Fatalf("unexpected datagram frame: %#v", sent)
+	}
+	assertDatagramChannelPresent(t, ctrl, channelID, true)
+	if err := tunnel.Close(); err != nil {
+		t.Fatalf("tunnel Close() error = %v", err)
+	}
+	assertDatagramChannelPresent(t, ctrl, channelID, false)
+	if _, _, err := packetConn.ReadFrom(buf); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("ReadFrom() after tunnel close error = %v, want net.ErrClosed", err)
+	}
+	if err := channel.Close(); err != nil {
+		t.Fatalf("channel Close() error = %v", err)
+	}
+	dialer.wait(t, 1)
+}
+
+func TestDatagramChannelCloseUnregistersFromControlChannel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	channelID := mustDatagramChannelID(t, "010203040000000000000001")
+	ctrl := &controlChannelImpl{datagramChannels: make(map[datagramChannelID]*quicDatagramChannel)}
+	channel := &quicDatagramChannel{channelID: channelID, ctx: ctx, cancel: cancel, recvCh: make(chan []byte, 1)}
+	channel.onClose = func(ch *quicDatagramChannel) {
+		ctrl.unregisterDatagramChannel(channelID, ch)
+	}
+	ctrl.datagramChannels[channelID] = channel
+	if err := channel.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	assertDatagramChannelPresent(t, ctrl, channelID, false)
+	if err := channel.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+}
+
+func TestDatagramProxyRejectsInvalidAndCollidingStreamIDs(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	listenerCtx, listenerCancel := context.WithCancel(context.Background())
+	defer listenerCancel()
+	ctrl := &controlChannelImpl{
+		datagramProvider: &recordingDatagramProvider{},
+		datagramCtx:      ctx,
+		datagramChannels: make(map[datagramChannelID]*quicDatagramChannel),
+		datagramTunnels: map[string]*quicDatagramListener{
+			"tun-dgram": {
+				conns:  make(chan net.PacketConn, 4),
+				ctx:    listenerCtx,
+				cancel: listenerCancel,
+				laddr:  stubNetAddr("tun-dgram"),
+			},
+		},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	tunnel := &bytestreamTunnelImpl{tunnelID: "tun-dgram"}
+	if ctrl.handleDatagramProxyConnReq(&pb.ProxyConnReq{StreamId: "zzzzzzzz0000"}, tunnel) {
+		t.Fatalf("invalid stream ID should not be accepted")
+	}
+	if len(ctrl.datagramChannels) != 0 || len(ctrl.datagramTunnels["tun-dgram"].conns) != 0 {
+		t.Fatalf("invalid stream ID should not create channel")
+	}
+	if !ctrl.handleDatagramProxyConnReq(&pb.ProxyConnReq{StreamId: "010203040000000000000001"}, tunnel) {
+		t.Fatalf("valid stream ID should be accepted")
+	}
+	firstID := mustDatagramChannelID(t, "010203040000000000000001")
+	first := ctrl.datagramChannels[firstID]
+	if first == nil || len(ctrl.datagramTunnels["tun-dgram"].conns) != 1 {
+		t.Fatalf("first datagram channel was not registered")
+	}
+	secondID := mustDatagramChannelID(t, "01020304ffffffffffffffff")
+	if !ctrl.handleDatagramProxyConnReq(&pb.ProxyConnReq{StreamId: "01020304ffffffffffffffff"}, tunnel) {
+		t.Fatalf("same-prefix stream ID should be accepted with full-width channel routing")
+	}
+	if got := ctrl.datagramChannels[firstID]; got != first {
+		t.Fatalf("first datagram channel was replaced")
+	}
+	if got := ctrl.datagramChannels[secondID]; got == nil || got == first {
+		t.Fatalf("second datagram channel was not registered independently")
+	}
+	if len(ctrl.datagramTunnels["tun-dgram"].conns) != 2 {
+		t.Fatalf("second datagram channel was not delivered to listener")
+	}
+}
+
+type pipeDialer struct {
+	serve func(net.Conn)
+}
+
+func (d pipeDialer) Dial(_ context.Context, _ string, _ *tls.Config) (net.Conn, error) {
+	client, server := net.Pipe()
+	go d.serve(server)
+	return client, nil
+}
+
+type queuedDialer struct {
+	serves chan func(net.Conn) error
+	errs   chan error
+}
+
+type queuedDatagramDialer struct {
+	*queuedDialer
+	incoming chan []byte
+	sent     chan []byte
+}
+
+func newQueuedDatagramDialer(size int) *queuedDatagramDialer {
+	return &queuedDatagramDialer{
+		queuedDialer: newQueuedDialer(size),
+		incoming:     make(chan []byte, 8),
+		sent:         make(chan []byte, 8),
+	}
+}
+
+func (d *queuedDatagramDialer) SendDatagram(data []byte) error {
+	d.sent <- append([]byte(nil), data...)
+	return nil
+}
+
+func (d *queuedDatagramDialer) ReceiveDatagram(ctx context.Context) ([]byte, error) {
+	select {
+	case data := <-d.incoming:
+		return data, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (d *queuedDatagramDialer) receiveDatagram(t *testing.T, channelID datagramChannelID, payload []byte) {
+	t.Helper()
+	frame := make([]byte, datagramChannelIDSize+len(payload))
+	copy(frame[:datagramChannelIDSize], channelID[:])
+	copy(frame[datagramChannelIDSize:], payload)
+	select {
+	case d.incoming <- frame:
+	case <-time.After(time.Second):
+		t.Fatalf("timed out queueing datagram")
+	}
+}
+
+func (d *queuedDatagramDialer) sentDatagram(t *testing.T) []byte {
+	t.Helper()
+	select {
+	case data := <-d.sent:
+		return data
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for sent datagram")
+		return nil
+	}
+}
+
+func newQueuedDialer(size int) *queuedDialer {
+	return &queuedDialer{
+		serves: make(chan func(net.Conn) error, size),
+		errs:   make(chan error, size),
+	}
+}
+
+func (d *queuedDialer) enqueue(serve func(net.Conn) error) {
+	d.serves <- serve
+}
+
+func (d *queuedDialer) Dial(ctx context.Context, _ string, _ *tls.Config) (net.Conn, error) {
+	var serve func(net.Conn) error
+	select {
+	case serve = <-d.serves:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-time.After(2 * time.Second):
+		return nil, errors.New("test dialer has no server handler")
+	}
+	client, server := net.Pipe()
+	go func() {
+		defer server.Close()
+		d.errs <- serve(server)
+	}()
+	return client, nil
+}
+
+func (d *queuedDialer) wait(t *testing.T, count int) {
+	t.Helper()
+	for i := 0; i < count; i++ {
+		select {
+		case err := <-d.errs:
+			if err != nil {
+				t.Fatalf("server %d error = %v", i, err)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for server %d", i)
+		}
+	}
+}
+
+func newTestClientWithDialer(dialer *queuedDialer) *Client {
+	engine := "engine.example.com:443"
+	token := "token"
+	return &Client{
+		EngineURL: &engine,
+		Token:     &token,
+		ZeroRTT:   BoolPtr(false),
+		Transport: dialer,
+		TLSClientConfig: &tls.Config{
+			MaxVersion: tls.VersionTLS12,
+		},
+	}
+}
+
+func newTestClientWithDatagramDialer(dialer *queuedDatagramDialer) *Client {
+	engine := "engine.example.com:443"
+	token := "token"
+	return &Client{
+		EngineURL: &engine,
+		Token:     &token,
+		ZeroRTT:   BoolPtr(false),
+		Transport: dialer,
+		TLSClientConfig: &tls.Config{
+			MaxVersion: tls.VersionTLS12,
+		},
+	}
+}
+
+func serveControlChannelLifecycle(conn net.Conn) error {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	msg, err := readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetOpenControlChannelReq() == nil {
+		return errUnexpectedTestMessage("OpenControlChannelReq")
+	}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenControlChannelRsp{OpenControlChannelRsp: &pb.OpenControlChannelRsp{
+		Payload: &pb.OpenControlChannelRsp_Ok_{Ok: &pb.OpenControlChannelRsp_Ok{
+			ClientId: "client-1",
+			ServerDetails: &pb.ServerDetails{
+				Agent:   wrapperspb.String("engine"),
+				Version: wrapperspb.String("1.2.3"),
+			},
+		}},
+	}}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	openTunnelReq := msg.GetOpenTunnelReq()
+	if openTunnelReq == nil {
+		return errUnexpectedTestMessage("OpenTunnelReq")
+	}
+	props := toTunnelProperties(openTunnelReq.TunnelProperties)
+	if props.Name == nil || *props.Name != "web" {
+		return errUnexpectedTestMessage("OpenTunnelReq with web name")
+	}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenTunnelRsp{OpenTunnelRsp: &pb.OpenTunnelRsp{
+		RequestId: openTunnelReq.RequestId,
+		Payload: &pb.OpenTunnelRsp_TunnelProperties{TunnelProperties: toTunnelPropertiesPb(TunnelProperties{
+			ID:   StringPtr("tun-1"),
+			Name: props.Name,
+			Type: TunnelTypePtr(TunnelTypeBytestream),
+		})},
+	}}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetCloseControlChannelReq() == nil {
+		return errUnexpectedTestMessage("CloseControlChannelReq")
+	}
+	return writePbMessage(writer, &pb.Message{Payload: &pb.Message_CloseControlChannelRsp{CloseControlChannelRsp: &pb.CloseControlChannelRsp{}}})
+}
+
+func serveControlChannelHeartbeat(conn net.Conn, heartbeatSeen chan<- struct{}) error {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	msg, err := readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetOpenControlChannelReq() == nil {
+		return errUnexpectedTestMessage("OpenControlChannelReq")
+	}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenControlChannelRsp{OpenControlChannelRsp: &pb.OpenControlChannelRsp{
+		Payload: &pb.OpenControlChannelRsp_Ok_{Ok: &pb.OpenControlChannelRsp_Ok{ClientId: "client-1"}},
+	}}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetHeartbeat() == nil {
+		return errUnexpectedTestMessage("Heartbeat")
+	}
+	heartbeatSeen <- struct{}{}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetCloseControlChannelReq() == nil {
+		return errUnexpectedTestMessage("CloseControlChannelReq")
+	}
+	return writePbMessage(writer, &pb.Message{Payload: &pb.Message_CloseControlChannelRsp{CloseControlChannelRsp: &pb.CloseControlChannelRsp{}}})
+}
+
+func serveCreateTunnelResponse(conn net.Conn, rsp *pb.OpenTunnelRsp) error {
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	msg, err := readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetOpenControlChannelReq() == nil {
+		return errUnexpectedTestMessage("OpenControlChannelReq")
+	}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenControlChannelRsp{OpenControlChannelRsp: &pb.OpenControlChannelRsp{
+		Payload: &pb.OpenControlChannelRsp_Ok_{Ok: &pb.OpenControlChannelRsp_Ok{ClientId: "client-1"}},
+	}}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	openTunnelReq := msg.GetOpenTunnelReq()
+	if openTunnelReq == nil {
+		return errUnexpectedTestMessage("OpenTunnelReq")
+	}
+	rsp.RequestId = openTunnelReq.RequestId
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenTunnelRsp{OpenTunnelRsp: rsp}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetCloseControlChannelReq() == nil {
+		return errUnexpectedTestMessage("CloseControlChannelReq")
+	}
+	return writePbMessage(writer, &pb.Message{Payload: &pb.Message_CloseControlChannelRsp{CloseControlChannelRsp: &pb.CloseControlChannelRsp{}}})
+}
+
+func serveControlChannelWithProxyConnection(conn net.Conn) error {
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	msg, err := readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetOpenControlChannelReq() == nil {
+		return errUnexpectedTestMessage("OpenControlChannelReq")
+	}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenControlChannelRsp{OpenControlChannelRsp: &pb.OpenControlChannelRsp{
+		Payload: &pb.OpenControlChannelRsp_Ok_{Ok: &pb.OpenControlChannelRsp_Ok{ClientId: "client-1"}},
+	}}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	openTunnelReq := msg.GetOpenTunnelReq()
+	if openTunnelReq == nil {
+		return errUnexpectedTestMessage("OpenTunnelReq")
+	}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenTunnelRsp{OpenTunnelRsp: &pb.OpenTunnelRsp{
+		RequestId: openTunnelReq.RequestId,
+		Payload: &pb.OpenTunnelRsp_TunnelProperties{TunnelProperties: toTunnelPropertiesPb(TunnelProperties{
+			ID:   StringPtr("tun-1"),
+			Name: StringPtr("web"),
+			Type: TunnelTypePtr(TunnelTypeBytestream),
+		})},
+	}}}); err != nil {
+		return err
+	}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_ProxyConnReq{ProxyConnReq: &pb.ProxyConnReq{
+		TunnelId: "tun-1",
+		StreamId: "stream-1",
+		Secret:   wrapperspb.String("proxy-secret"),
+		SourceIp: &pb.IpAddress{Addr: &pb.IpAddress_V4{V4: 0xc000020a}},
+	}}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	proxyConnRsp := msg.GetProxyConnRsp()
+	if proxyConnRsp == nil || proxyConnRsp.StreamId != "stream-1" {
+		return errUnexpectedTestMessage("ProxyConnRsp for stream-1")
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	closeTunnelReq := msg.GetCloseTunnelReq()
+	if closeTunnelReq == nil || closeTunnelReq.TunnelId != "tun-1" {
+		return errUnexpectedTestMessage("CloseTunnelReq for tun-1")
+	}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_CloseTunnelRsp{CloseTunnelRsp: &pb.CloseTunnelRsp{
+		TunnelId: "tun-1",
+	}}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetCloseControlChannelReq() == nil {
+		return errUnexpectedTestMessage("CloseControlChannelReq")
+	}
+	return writePbMessage(writer, &pb.Message{Payload: &pb.Message_CloseControlChannelRsp{CloseControlChannelRsp: &pb.CloseControlChannelRsp{}}})
+}
+
+func serveControlChannelWithDatagramProxyConnection(conn net.Conn) error {
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	msg, err := readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetOpenControlChannelReq() == nil {
+		return errUnexpectedTestMessage("OpenControlChannelReq")
+	}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenControlChannelRsp{OpenControlChannelRsp: &pb.OpenControlChannelRsp{
+		Payload: &pb.OpenControlChannelRsp_Ok_{Ok: &pb.OpenControlChannelRsp_Ok{ClientId: "client-1"}},
+	}}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	openTunnelReq := msg.GetOpenTunnelReq()
+	if openTunnelReq == nil {
+		return errUnexpectedTestMessage("OpenTunnelReq")
+	}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenTunnelRsp{OpenTunnelRsp: &pb.OpenTunnelRsp{
+		RequestId: openTunnelReq.RequestId,
+		Payload: &pb.OpenTunnelRsp_TunnelProperties{TunnelProperties: toTunnelPropertiesPb(TunnelProperties{
+			ID:   StringPtr("tun-dgram"),
+			Name: StringPtr("dns"),
+			Type: TunnelTypePtr(TunnelTypeDatagram),
+		})},
+	}}}); err != nil {
+		return err
+	}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_ProxyConnReq{ProxyConnReq: &pb.ProxyConnReq{
+		TunnelId: "tun-dgram",
+		StreamId: "01020304-0000-0000-0000-000000000000",
+		Secret:   wrapperspb.String("unused-for-datagrams"),
+		SourceIp: &pb.IpAddress{Addr: &pb.IpAddress_V4{V4: 0xcb007101}},
+	}}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	proxyConnRsp := msg.GetProxyConnRsp()
+	if proxyConnRsp == nil || proxyConnRsp.StreamId != "01020304-0000-0000-0000-000000000000" {
+		return errUnexpectedTestMessage("ProxyConnRsp for datagram stream")
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	closeTunnelReq := msg.GetCloseTunnelReq()
+	if closeTunnelReq == nil || closeTunnelReq.TunnelId != "tun-dgram" {
+		return errUnexpectedTestMessage("CloseTunnelReq for tun-dgram")
+	}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_CloseTunnelRsp{CloseTunnelRsp: &pb.CloseTunnelRsp{TunnelId: "tun-dgram"}}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetCloseControlChannelReq() == nil {
+		return errUnexpectedTestMessage("CloseControlChannelReq")
+	}
+	return writePbMessage(writer, &pb.Message{Payload: &pb.Message_CloseControlChannelRsp{CloseControlChannelRsp: &pb.CloseControlChannelRsp{}}})
+}
+
+func serveProxyConnection(conn net.Conn) error {
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	msg, err := readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	proxyReq := msg.GetProxyReq()
+	if proxyReq == nil {
+		return errUnexpectedTestMessage("ProxyReq")
+	}
+	if proxyReq.StreamId != "stream-1" {
+		return fmt.Errorf("ProxyReq stream_id = %q, want stream-1", proxyReq.StreamId)
+	}
+	if got := proxyReq.GetClientDetails().GetToken().GetValue(); got != "proxy-secret" {
+		return fmt.Errorf("ProxyReq token = %q, want proxy-secret", got)
+	}
+	if proxyReq.GetZeroRtt().GetValue() {
+		return errors.New("ProxyReq zero_rtt = true, want false")
+	}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_ProxyRsp{ProxyRsp: &pb.ProxyRsp{}}}); err != nil {
+		return err
+	}
+	if err := readExactString(reader, "hello"); err != nil {
+		return err
+	}
+	if _, err := writer.WriteString("world"); err != nil {
+		return err
+	}
+	return writer.Flush()
+}
+
+func serveStreamDial(conn net.Conn, wantTunnel, wantToken, wantPayload, reply string) error {
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	if err := expectStreamReq(reader, wantTunnel, wantToken); err != nil {
+		return err
+	}
+	if err := writeStreamRsp(writer, "stream-1"); err != nil {
+		return err
+	}
+	if err := readExactString(reader, wantPayload); err != nil {
+		return err
+	}
+	if _, err := writer.WriteString(reply); err != nil {
+		return err
+	}
+	return writer.Flush()
+}
+
+func expectStreamReq(reader *bufio.Reader, wantTunnel, wantToken string) error {
+	msg, err := readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	streamReq := msg.GetStreamReq()
+	if streamReq == nil {
+		return errUnexpectedTestMessage("StreamReq")
+	}
+	if streamReq.TunnelIdName != wantTunnel {
+		return fmt.Errorf("StreamReq tunnel_id_name = %q, want %q", streamReq.TunnelIdName, wantTunnel)
+	}
+	if got := streamReq.GetClientDetails().GetToken().GetValue(); got != wantToken {
+		return fmt.Errorf("StreamReq token = %q, want %q", got, wantToken)
+	}
+	if streamReq.GetZeroRtt().GetValue() {
+		return errors.New("StreamReq zero_rtt = true, want false")
+	}
+	return nil
+}
+
+func writeStreamRsp(writer *bufio.Writer, streamID string) error {
+	return writePbMessage(writer, &pb.Message{Payload: &pb.Message_StreamRsp{StreamRsp: &pb.StreamRsp{
+		Payload: &pb.StreamRsp_StreamId{StreamId: streamID},
+	}}})
+}
+
+func readExactString(reader *bufio.Reader, want string) error {
+	buf := make([]byte, len(want))
+	if _, err := io.ReadFull(reader, buf); err != nil {
+		return err
+	}
+	if string(buf) != want {
+		return fmt.Errorf("read %q, want %q", buf, want)
+	}
+	return nil
+}
+
+func acceptBytestream(t *testing.T, listener BytestreamTunnel) net.Conn {
+	t.Helper()
+	type acceptResult struct {
+		conn net.Conn
+		err  error
+	}
+	resultCh := make(chan acceptResult, 1)
+	go func() {
+		conn, err := listener.Accept()
+		resultCh <- acceptResult{conn: conn, err: err}
+	}()
+	select {
+	case result := <-resultCh:
+		if result.err != nil {
+			t.Fatalf("Accept() error = %v", result.err)
+		}
+		return result.conn
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for Accept()")
+		return nil
+	}
+}
+
+func acceptDatagram(t *testing.T, listener DatagramTunnel) (net.PacketConn, net.Addr) {
+	t.Helper()
+	type acceptResult struct {
+		conn net.PacketConn
+		addr net.Addr
+		err  error
+	}
+	resultCh := make(chan acceptResult, 1)
+	go func() {
+		conn, addr, err := listener.Accept()
+		resultCh <- acceptResult{conn: conn, addr: addr, err: err}
+	}()
+	select {
+	case result := <-resultCh:
+		if result.err != nil {
+			t.Fatalf("Accept() error = %v", result.err)
+		}
+		return result.conn, result.addr
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for datagram Accept()")
+		return nil, nil
+	}
+}
+
+func assertDatagramChannelPresent(t *testing.T, ctrl *controlChannelImpl, channelID datagramChannelID, want bool) {
+	t.Helper()
+	ctrl.mu.Lock()
+	_, got := ctrl.datagramChannels[channelID]
+	ctrl.mu.Unlock()
+	if got != want {
+		t.Fatalf("datagram channel %s present = %v, want %v", channelID.String(), got, want)
+	}
+}
+
+func errUnexpectedTestMessage(want string) error {
+	return &unexpectedTestMessageError{want: want}
+}
+
+type unexpectedTestMessageError struct {
+	want string
+}
+
+func (e *unexpectedTestMessageError) Error() string {
+	return "expected " + e.want
+}

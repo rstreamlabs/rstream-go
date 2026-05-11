@@ -56,11 +56,7 @@ func parseServer(tunnel rstream.TunnelInventory) (ServerInfo, bool) {
 			return ServerInfo{}, false
 		}
 	}
-	target := id
 	name := trimStringPtr(tunnel.Name)
-	if name != "" {
-		target = name
-	}
 	host := trimStringPtr(tunnel.Hostname)
 	if host != "" && tunnel.Port != nil && *tunnel.Port != 443 {
 		host = net.JoinHostPort(host, strconv.FormatUint(uint64(*tunnel.Port), 10))
@@ -72,8 +68,8 @@ func parseServer(tunnel rstream.TunnelInventory) (ServerInfo, bool) {
 		Status:            strings.TrimSpace(tunnel.Status),
 		TunnelID:          id,
 		TunnelName:        cloneStringPtr(name),
-		Target:            target,
-		RstreamURL:        "rstrm://" + target,
+		Target:            id,
+		RstreamURL:        "rstrm://" + id,
 		Publish:           tunnel.Publish != nil && *tunnel.Publish,
 		Host:              cloneStringPtr(host),
 		TokenAuth:         tunnel.TokenAuth != nil && *tunnel.TokenAuth,

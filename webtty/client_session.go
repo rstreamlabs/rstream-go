@@ -29,6 +29,7 @@ type SessionConfig struct {
 	Workdir           *string
 	Username          *string
 	CmdArgs           []string
+	AuthToken         *string
 	MaxMessageSize    *int64
 	ReadBufferSize    *int
 	WriteBufferSize   *int
@@ -81,6 +82,7 @@ func (cfg *ClientConfig) sessionConfig() *SessionConfig {
 		Workdir:           cfg.Workdir,
 		Username:          cfg.Username,
 		CmdArgs:           append([]string(nil), cfg.CmdArgs...),
+		AuthToken:         cfg.AuthToken,
 		MaxMessageSize:    cfg.MaxMessageSize,
 		ReadBufferSize:    cfg.ReadBufferSize,
 		WriteBufferSize:   cfg.WriteBufferSize,
@@ -105,6 +107,7 @@ func (cfg *SessionConfig) clientConfig() *ClientConfig {
 		Workdir:           cfg.Workdir,
 		Username:          cfg.Username,
 		CmdArgs:           append([]string(nil), cfg.CmdArgs...),
+		AuthToken:         cfg.AuthToken,
 		MaxMessageSize:    cfg.MaxMessageSize,
 		ReadBufferSize:    cfg.ReadBufferSize,
 		WriteBufferSize:   cfg.WriteBufferSize,
@@ -174,7 +177,11 @@ func OpenClientSession(ctx context.Context, cfg *SessionConfig) (*ClientSession,
 		}
 		dialer.NetDialContext = resolved.DialContext
 	}
-	conn, resp, err := dialer.DialContext(ctx, endpoint.URL, nil)
+	header := http.Header{}
+	if resolved.AuthToken != nil && strings.TrimSpace(*resolved.AuthToken) != "" {
+		header.Set("Authorization", "Bearer "+strings.TrimSpace(*resolved.AuthToken))
+	}
+	conn, resp, err := dialer.DialContext(ctx, endpoint.URL, header)
 	if err != nil {
 		if resp != nil {
 			return nil, fmt.Errorf("websocket dial failed with status %d", resp.StatusCode)
@@ -298,6 +305,10 @@ func (s *ClientSession) run(readEvents <-chan clientEvent, loopErrCh <-chan erro
 				s.finalize(-1, event.err)
 				return
 			}
+			if event.msg == nil {
+				s.finalize(-1, errClientProtocol)
+				return
+			}
 			switch payload := event.msg.Payload.(type) {
 			case *pb.Message_Data:
 				sessionEvent, ok, err := decodeClientSessionEvent(payload.Data)
@@ -310,11 +321,16 @@ func (s *ClientSession) run(readEvents <-chan clientEvent, loopErrCh <-chan erro
 				}
 				s.events <- sessionEvent
 			case *pb.Message_Close:
+				if payload.Close == nil {
+					s.finalize(-1, errClientProtocol)
+					return
+				}
 				s.finalize(int(payload.Close.ReturnCode), nil)
 				return
 			case *pb.Message_Heartbeat:
 			case *pb.Message_Error:
-				if msg := stringsTrimSpace(payload.Error.Msg); msg != "" {
+				if payload.Error != nil && stringsTrimSpace(payload.Error.Msg) != "" {
+					msg := stringsTrimSpace(payload.Error.Msg)
 					s.finalize(-1, fmt.Errorf("%w: %s", errClientServer, msg))
 				} else {
 					s.finalize(-1, errClientServer)

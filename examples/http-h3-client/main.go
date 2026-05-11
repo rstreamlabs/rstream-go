@@ -19,6 +19,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -31,6 +32,7 @@ import (
 
 func main() {
 	publish := flag.Bool("publish", false, "connect to published host instead of using rstream dialer")
+	insecureDemoTLS := flag.Bool("insecure-demo-tls", false, "skip upstream TLS verification for the self-signed demo server certificate")
 	flag.Parse()
 	client, err := config.NewClientFromEnv()
 	if err != nil {
@@ -38,7 +40,8 @@ func main() {
 	}
 	// Create the HTTP client
 	httpClient := &http.Client{
-		Timeout: 5 * time.Second,
+		Timeout:       5 * time.Second,
+		CheckRedirect: rejectCrossHostRedirects,
 	}
 	name := "h3-example"
 	var url *string = nil
@@ -67,6 +70,9 @@ func main() {
 				if err != nil || host == "" {
 					return nil, fmt.Errorf("failed to extract host from address: %v", err)
 				}
+				if !strings.EqualFold(host, name) {
+					return nil, fmt.Errorf("redirect to unexpected tunnel host %q", host)
+				}
 				raddr := rstream.Addr{
 					IdOrName: host,
 				}
@@ -77,7 +83,7 @@ func main() {
 				return quic.DialEarly(ctx, conn, &raddr, tlsCfg, cfg)
 			},
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
+				InsecureSkipVerify: *insecureDemoTLS,
 				NextProtos:         []string{"h3"},
 			},
 		}
@@ -95,4 +101,14 @@ func main() {
 	}
 	fmt.Printf("Response status: %s\n", resp.Status)
 	fmt.Printf("Response body:\n%s", body)
+}
+
+func rejectCrossHostRedirects(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	if !strings.EqualFold(req.URL.Hostname(), via[0].URL.Hostname()) {
+		return http.ErrUseLastResponse
+	}
+	return nil
 }
