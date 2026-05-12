@@ -11,6 +11,7 @@ env:
   CHANNEL: "${{ github.ref_type == 'tag' && 'stable' || 'dev' }}"
   NPM_PACKAGE_NAME: "rstream-cli"
   PACKAGE_NAME: "rstream"
+  RSTREAM_CROSS_BUILD_JOBS: "2"
   RSTREAM_URL: "${{ github.ref_type == 'tag' && 'https://rstream.io' || 'https://dev.rstream.io' }}"
   VERSION: "${{ github.ref_name }}"
 permissions:
@@ -57,12 +58,25 @@ jobs:
       - name: Print Go version
         shell: bash
         run: go version
+      - name: Free runner disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h
+          sudo rm -rf /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/.ghcup /usr/local/lib/android /usr/share/dotnet
+          sudo docker system prune -af || true
+          df -h
       - name: Build
         shell: bash
         run: |
           set -euo pipefail
           if [[ "$CHANNEL" == stable || "$VERSION" == main ]]; then
-            make -j "$(getconf _NPROCESSORS_ONLN)" cross
+            for target in macos-cross freebsd-cross linux-cross netbsd-cross openbsd-cross windows-cross; do
+              make -j "$RSTREAM_CROSS_BUILD_JOBS" "$target"
+              go clean -cache
+              rm -rf "${GOTMPDIR:-/tmp}"/go-build*
+              df -h
+            done
           else
             make -j "$(getconf _NPROCESSORS_ONLN)"
           fi
