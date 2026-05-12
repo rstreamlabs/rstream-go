@@ -62,20 +62,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          df -h
           sudo rm -rf /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/.ghcup /usr/local/lib/android /usr/share/dotnet
-          sudo docker system prune -af || true
-          df -h
+          sudo docker system prune -af >/dev/null || true
       - name: Build
         shell: bash
         run: |
           set -euo pipefail
+          trap 'df -h / /tmp' ERR
           if [[ "$CHANNEL" == stable || "$VERSION" == main ]]; then
             for target in macos-cross freebsd-cross linux-cross netbsd-cross openbsd-cross windows-cross; do
               make -j "$RSTREAM_CROSS_BUILD_JOBS" "$target"
               go clean -cache
               rm -rf "${GOTMPDIR:-/tmp}"/go-build*
-              df -h
             done
           else
             make -j "$(getconf _NPROCESSORS_ONLN)"
