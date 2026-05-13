@@ -4,10 +4,12 @@
 import argparse
 import http.client
 import http.server
+import os
 import socket
 import socketserver
 import ssl
 import sys
+import time
 from urllib.parse import urlparse
 
 
@@ -41,16 +43,30 @@ class ThreadingTLSServer(ThreadingTCPServer):
 
 class HTTPHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path != "/ping":
-            self.send_response(404)
+        if self.path == "/ping":
+            body = b"pong\n"
+            self.send_response(200)
+            self.send_header("content-type", "text/plain")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if self.path == "/directory":
+            self.send_response(301)
+            self.send_header("location", "/directory/")
+            self.send_header("content-length", "0")
             self.end_headers()
             return
-        body = b"pong\n"
-        self.send_response(200)
-        self.send_header("content-type", "text/plain")
-        self.send_header("content-length", str(len(body)))
+        if self.path == "/directory/":
+            body = b"directory\n"
+            self.send_response(200)
+            self.send_header("content-type", "text/plain")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_response(404)
         self.end_headers()
-        self.wfile.write(body)
 
     def log_message(self, *_args):
         return
@@ -114,11 +130,20 @@ def parse_host_port(raw, default_port):
     return value, int(default_port)
 
 
-def check_tls_echo(args):
-    host, port = parse_host_port(args.addr, args.default_port)
+def client_tls_context(args):
     context = ssl.create_default_context()
     context.check_hostname = False
     context.verify_mode = ssl.CERT_NONE
+    if bool(args.cert) != bool(args.key):
+        raise ValueError("--cert and --key must be provided together")
+    if args.cert:
+        context.load_cert_chain(certfile=args.cert, keyfile=args.key)
+    return context
+
+
+def check_tls_echo(args):
+    host, port = parse_host_port(args.addr, args.default_port)
+    context = client_tls_context(args)
     if args.alpn:
         context.set_alpn_protocols([args.alpn])
     with socket.create_connection((host, port), timeout=args.timeout) as raw:
@@ -135,9 +160,7 @@ def check_tls_echo(args):
 
 def check_https_ping(args):
     host, port = parse_host_port(args.addr, args.default_port)
-    context = ssl.create_default_context()
-    context.check_hostname = False
-    context.verify_mode = ssl.CERT_NONE
+    context = client_tls_context(args)
     conn = http.client.HTTPSConnection(host, port, timeout=args.timeout, context=context)
     try:
         conn.request("GET", "/ping")
@@ -149,6 +172,171 @@ def check_https_ping(args):
             raise RuntimeError(f"body mismatch: got {body!r}, want b'pong\\n'")
     finally:
         conn.close()
+
+
+def h2_frame(frame_type, flags, stream_id, payload=b""):
+    length = len(payload)
+    return (
+        length.to_bytes(3, "big")
+        + bytes([frame_type, flags])
+        + (stream_id & 0x7FFFFFFF).to_bytes(4, "big")
+        + payload
+    )
+
+
+def h2_read_exact(conn, size):
+    out = bytearray()
+    while len(out) < size:
+        chunk = conn.recv(size - len(out))
+        if not chunk:
+            raise RuntimeError("HTTP/2 connection closed")
+        out.extend(chunk)
+    return bytes(out)
+
+
+def h2_read_frame(conn):
+    header = h2_read_exact(conn, 9)
+    length = int.from_bytes(header[:3], "big")
+    frame_type = header[3]
+    flags = header[4]
+    stream_id = int.from_bytes(header[5:9], "big") & 0x7FFFFFFF
+    return frame_type, flags, stream_id, h2_read_exact(conn, length)
+
+
+def h2_drain_server_settings(conn):
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        frame_type, _flags, _stream_id, _payload = h2_read_frame(conn)
+        if frame_type == 4:
+            conn.sendall(h2_frame(4, 1, 0))
+            return
+    raise RuntimeError("server HTTP/2 settings were not received")
+
+
+def h2_encode_literal(index, value):
+    raw = value.encode()
+    if len(raw) > 127:
+        raise ValueError("literal value is too long for the runtime probe")
+    return bytes([index, len(raw)]) + raw
+
+
+def h2_request_headers(authority, path):
+    return b"".join(
+        [
+            b"\x82",
+            b"\x87",
+            h2_encode_literal(4, path),
+            h2_encode_literal(1, authority),
+        ],
+    )
+
+
+def h2_send_get(conn, stream_id, authority, path):
+    conn.sendall(h2_frame(1, 5, stream_id, h2_request_headers(authority, path)))
+
+
+def h2_read_response_body(conn, stream_id):
+    body = bytearray()
+    while True:
+        frame_type, flags, got_stream_id, payload = h2_read_frame(conn)
+        if got_stream_id != stream_id:
+            continue
+        if frame_type == 0:
+            body.extend(payload)
+        if frame_type == 3:
+            raise RuntimeError(f"stream {stream_id} was reset")
+        if flags & 1:
+            return bytes(body)
+
+
+def parsed_https_target(raw):
+    parsed = urlparse(raw)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError(f"expected https URL, got {raw!r}")
+    port = parsed.port or 443
+    authority = parsed.netloc
+    path = parsed.path or "/"
+    if parsed.query:
+        path += "?" + parsed.query
+    return parsed.hostname, port, authority, path
+
+
+def wait_for_file(path, timeout):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if os.path.exists(path):
+            return
+        time.sleep(0.1)
+    raise RuntimeError(f"timed out waiting for {path}")
+
+
+def check_h2_reused_connection_routes(args):
+    first_host, first_port, first_authority, first_path = parsed_https_target(args.first)
+    _second_host, _second_port, second_authority, second_path = parsed_https_target(args.second)
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    context.set_alpn_protocols(["h2"])
+    with socket.create_connection((first_host, first_port), timeout=args.timeout) as raw:
+        with context.wrap_socket(raw, server_hostname=first_host) as conn:
+            conn.settimeout(args.timeout)
+            if conn.selected_alpn_protocol() != "h2":
+                raise RuntimeError(f"unexpected ALPN {conn.selected_alpn_protocol()!r}")
+            conn.sendall(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" + h2_frame(4, 0, 0))
+            h2_drain_server_settings(conn)
+            h2_send_get(conn, 1, first_authority, first_path)
+            first_body = h2_read_response_body(conn, 1)
+            if first_body != b"pong\n":
+                raise RuntimeError(f"first response mismatch: {first_body!r}")
+            print("READY h2", flush=True)
+            wait_for_file(args.trigger, args.timeout)
+            h2_send_get(conn, 3, second_authority, second_path)
+            second_body = h2_read_response_body(conn, 3)
+            if second_body != b"pong\n":
+                raise RuntimeError(f"second response mismatch: {second_body!r}")
+
+
+def check_h2_reused_connection_requires_mtls_handshake(args):
+    first_host, first_port, first_authority, first_path = parsed_https_target(args.first)
+    _second_host, _second_port, second_authority, second_path = parsed_https_target(args.second)
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    context.set_alpn_protocols(["h2"])
+    with socket.create_connection((first_host, first_port), timeout=args.timeout) as raw:
+        with context.wrap_socket(raw, server_hostname=first_host) as conn:
+            conn.settimeout(args.timeout)
+            if conn.selected_alpn_protocol() != "h2":
+                raise RuntimeError(f"unexpected ALPN {conn.selected_alpn_protocol()!r}")
+            conn.sendall(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" + h2_frame(4, 0, 0))
+            h2_drain_server_settings(conn)
+            h2_send_get(conn, 1, first_authority, first_path)
+            first_body = h2_read_response_body(conn, 1)
+            if first_body != b"pong\n":
+                raise RuntimeError(f"first response mismatch: {first_body!r}")
+            h2_send_get(conn, 3, second_authority, second_path)
+            second_body = h2_read_response_body(conn, 3)
+            if b"Misdirected Request" not in second_body:
+                raise RuntimeError(f"expected mTLS handshake rejection, got {second_body!r}")
+
+
+def check_h2_subpath_response(args):
+    host, port, authority, path = parsed_https_target(args.url)
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    context.set_alpn_protocols(["h2"])
+    with socket.create_connection((host, port), timeout=args.timeout) as raw:
+        with context.wrap_socket(raw, server_hostname=host) as conn:
+            conn.settimeout(args.timeout)
+            if conn.selected_alpn_protocol() != "h2":
+                raise RuntimeError(f"unexpected ALPN {conn.selected_alpn_protocol()!r}")
+            conn.sendall(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" + h2_frame(4, 0, 0))
+            h2_drain_server_settings(conn)
+            h2_send_get(conn, 1, authority, path)
+            body = h2_read_response_body(conn, 1)
+            if body != b"directory\n":
+                raise RuntimeError(f"subpath response mismatch: {body!r}")
 
 
 def print_hostport(args):
@@ -179,14 +367,33 @@ def main():
     tls_echo = check_subcommands.add_parser("tls-echo")
     tls_echo.add_argument("--addr", required=True)
     tls_echo.add_argument("--alpn", default="")
+    tls_echo.add_argument("--cert", default="")
+    tls_echo.add_argument("--key", default="")
     tls_echo.add_argument("--default-port", default="443")
     tls_echo.add_argument("--timeout", type=float, default=15.0)
     tls_echo.set_defaults(func=check_tls_echo)
     https_ping = check_subcommands.add_parser("https-ping")
     https_ping.add_argument("--addr", required=True)
+    https_ping.add_argument("--cert", default="")
+    https_ping.add_argument("--key", default="")
     https_ping.add_argument("--default-port", default="443")
     https_ping.add_argument("--timeout", type=float, default=15.0)
     https_ping.set_defaults(func=check_https_ping)
+    h2_reuse = check_subcommands.add_parser("h2-reuse-routes")
+    h2_reuse.add_argument("--first", required=True)
+    h2_reuse.add_argument("--second", required=True)
+    h2_reuse.add_argument("--trigger", required=True)
+    h2_reuse.add_argument("--timeout", type=float, default=15.0)
+    h2_reuse.set_defaults(func=check_h2_reused_connection_routes)
+    h2_mtls = check_subcommands.add_parser("h2-reuse-requires-mtls-handshake")
+    h2_mtls.add_argument("--first", required=True)
+    h2_mtls.add_argument("--second", required=True)
+    h2_mtls.add_argument("--timeout", type=float, default=15.0)
+    h2_mtls.set_defaults(func=check_h2_reused_connection_requires_mtls_handshake)
+    h2_subpath = check_subcommands.add_parser("h2-subpath-response")
+    h2_subpath.add_argument("--url", required=True)
+    h2_subpath.add_argument("--timeout", type=float, default=15.0)
+    h2_subpath.set_defaults(func=check_h2_subpath_response)
 
     hostport = subcommands.add_parser("hostport")
     hostport.add_argument("--addr", required=True)

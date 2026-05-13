@@ -3,6 +3,7 @@
 package config
 
 import (
+	"crypto/tls"
 	"path/filepath"
 	"testing"
 
@@ -45,9 +46,11 @@ func TestResolveFromEnvLoadsConfiguredFileAndAppliesEnvOverrides(t *testing.T) {
 
 func TestNewClientFromResolvedPropagatesTransportAndNoToken(t *testing.T) {
 	transport := &rstream.Transport{}
+	tlsCfg := &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{{1}}}}}
 	client, err := NewClientFromResolved(Resolved{
-		Engine:    "engine.example.com:443",
-		Transport: transport,
+		Engine:          "engine.example.com:443",
+		Transport:       transport,
+		TLSClientConfig: tlsCfg,
 	})
 	if err != nil {
 		t.Fatalf("NewClientFromResolved() error = %v", err)
@@ -57,6 +60,9 @@ func TestNewClientFromResolvedPropagatesTransportAndNoToken(t *testing.T) {
 	}
 	if client.Transport != transport {
 		t.Fatalf("Transport = %#v, want original transport", client.Transport)
+	}
+	if client.TLSClientConfig != tlsCfg {
+		t.Fatalf("TLSClientConfig = %#v, want original config", client.TLSClientConfig)
 	}
 	if client.NoToken == nil || !*client.NoToken {
 		t.Fatalf("NoToken = %#v, want true", client.NoToken)

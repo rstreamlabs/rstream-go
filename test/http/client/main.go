@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -256,6 +257,131 @@ func runH3(ctx context.Context, rstreamClient *rstream.Client, rawAddr string) e
 	return nil
 }
 
+func newPublishedH3ClientConn(ctx context.Context, rawURL string) (*http3.ClientConn, func(), error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse URL: %w", err)
+	}
+	if parsed.Scheme != "https" || parsed.Hostname() == "" {
+		return nil, nil, fmt.Errorf("expected https URL, got %q", rawURL)
+	}
+	port := parsed.Port()
+	if port == "" {
+		port = "443"
+	}
+	udpAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(parsed.Hostname(), port))
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve udp: %w", err)
+	}
+	pc, err := net.ListenPacket("udp", "0.0.0.0:0")
+	if err != nil {
+		return nil, nil, fmt.Errorf("listen packet: %w", err)
+	}
+	tlsCfg := &tls.Config{
+		InsecureSkipVerify: true,
+		NextProtos:         []string{"h3"},
+		ServerName:         parsed.Hostname(),
+	}
+	conn, err := quic.DialEarly(ctx, pc, udpAddr, tlsCfg, &quic.Config{EnableDatagrams: true})
+	if err != nil {
+		_ = pc.Close()
+		return nil, nil, fmt.Errorf("dial QUIC: %w", err)
+	}
+	transport := &http3.Transport{EnableDatagrams: true}
+	cleanup := func() {
+		_ = conn.CloseWithError(0, "")
+		_ = pc.Close()
+	}
+	return transport.NewClientConn(conn), cleanup, nil
+}
+
+func readExpectedResponse(resp *http.Response, want []byte) error {
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status: %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read body: %w", err)
+	}
+	if !bytes.Equal(body, want) {
+		return fmt.Errorf("body mismatch: got %q, want %q", string(body), string(want))
+	}
+	return nil
+}
+
+func readExpectedRedirect(resp *http.Response, locationContains string) error {
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("unexpected status: %d body=%q", resp.StatusCode, string(body))
+	}
+	location := resp.Header.Get("Location")
+	if !strings.Contains(location, locationContains) {
+		return fmt.Errorf("unexpected Location header: got %q, want to contain %q", location, locationContains)
+	}
+	return nil
+}
+
+func runPublishedH3URL(ctx context.Context, rawURL string, want []byte) error {
+	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
+	conn, cleanup, err := newPublishedH3ClientConn(ctx, rawURL)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return fmt.Errorf("new request: %w", err)
+	}
+	resp, err := conn.RoundTrip(req)
+	if err != nil {
+		return fmt.Errorf("round trip: %w", err)
+	}
+	return readExpectedResponse(resp, want)
+}
+
+func runPublishedH3Redirect(ctx context.Context, rawURL, locationContains string) error {
+	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
+	conn, cleanup, err := newPublishedH3ClientConn(ctx, rawURL)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return fmt.Errorf("new request: %w", err)
+	}
+	resp, err := conn.RoundTrip(req)
+	if err != nil {
+		return fmt.Errorf("round trip: %w", err)
+	}
+	return readExpectedRedirect(resp, locationContains)
+}
+
+func runPublishedH3Reuse(ctx context.Context, firstURL, secondURL string) error {
+	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
+	conn, cleanup, err := newPublishedH3ClientConn(ctx, firstURL)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	for _, rawURL := range []string{firstURL, secondURL} {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+		if err != nil {
+			return fmt.Errorf("new request: %w", err)
+		}
+		resp, err := conn.RoundTrip(req)
+		if err != nil {
+			return fmt.Errorf("round trip %s: %w", rawURL, err)
+		}
+		if err := readExpectedResponse(resp, []byte(pingPayload)); err != nil {
+			return fmt.Errorf("response %s: %w", rawURL, err)
+		}
+	}
+	return nil
+}
+
 type testCase struct {
 	name string
 	run  func(ctx context.Context) error
@@ -265,8 +391,38 @@ func main() {
 	upstream := flag.String("upstream", "all", "upstream variant: h1, h2c, h3, all")
 	addr := flag.String("addr", "", "server forwarding address (host:port) from server output")
 	tunnelName := flag.String("tunnel", "", "tunnel name to look up via API (for published mode)")
+	h3URL := flag.String("h3-url", "", "published HTTPS URL to request over one HTTP/3 connection")
+	h3RedirectURL := flag.String("h3-redirect-url", "", "published HTTPS URL expected to redirect over one HTTP/3 connection")
+	h3ReuseFirst := flag.String("h3-reuse-first", "", "first published HTTPS URL for HTTP/3 connection reuse")
+	h3ReuseSecond := flag.String("h3-reuse-second", "", "second published HTTPS URL for HTTP/3 connection reuse")
+	locationContains := flag.String("location-contains", "", "substring expected in redirect Location headers")
 	timeout := flag.Duration("timeout", 30*time.Second, "per-case timeout")
 	flag.Parse()
+	if *h3URL != "" || *h3RedirectURL != "" || *h3ReuseFirst != "" || *h3ReuseSecond != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+		defer cancel()
+		switch {
+		case *h3URL != "" && *h3RedirectURL == "" && *h3ReuseFirst == "" && *h3ReuseSecond == "":
+			if err := runPublishedH3URL(ctx, *h3URL, []byte("directory\n")); err != nil {
+				log.Fatalf("h3 url: %v", err)
+			}
+		case *h3URL == "" && *h3RedirectURL != "" && *h3ReuseFirst == "" && *h3ReuseSecond == "":
+			if *locationContains == "" {
+				log.Fatalf("--location-contains is required with --h3-redirect-url")
+			}
+			if err := runPublishedH3Redirect(ctx, *h3RedirectURL, *locationContains); err != nil {
+				log.Fatalf("h3 redirect: %v", err)
+			}
+		case *h3URL == "" && *h3RedirectURL == "" && *h3ReuseFirst != "" && *h3ReuseSecond != "":
+			if err := runPublishedH3Reuse(ctx, *h3ReuseFirst, *h3ReuseSecond); err != nil {
+				log.Fatalf("h3 reuse: %v", err)
+			}
+		default:
+			log.Fatalf("use --h3-url, --h3-redirect-url, or both --h3-reuse-first and --h3-reuse-second")
+		}
+		fmt.Println("PASS h3 published")
+		return
+	}
 	client, err := config.NewClientFromEnv()
 	if err != nil {
 		log.Fatalf("config: %v", err)

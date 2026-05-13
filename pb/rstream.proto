@@ -114,8 +114,8 @@ message TunnelProperties {
   repeated string tls_alpns = 12 [(access) = "read-write"];
   google.protobuf.StringValue tls_min_version = 13 [(access) = "read-write"];
   repeated string tls_ciphers = 14 [(access) = "read-write"];
-  google.protobuf.BoolValue mtls = 15 [(access) = "read-write"];
-  google.protobuf.StringValue mtls_cacert_pem = 16 [(access) = "read-write"];
+  google.protobuf.BoolValue mtls_auth = 15 [(access) = "read-write"];
+  google.protobuf.StringValue mtls_cacert_pem = 16 [(access) = "read-write", deprecated = true];
   google.protobuf.StringValue http_version = 17 [(access) = "read-write"];
   google.protobuf.BoolValue http_use_tls = 18 [(access) = "read-write", deprecated = true];
   google.protobuf.BoolValue token_auth = 19 [(access) = "read-write"];

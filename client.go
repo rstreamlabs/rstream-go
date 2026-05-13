@@ -70,6 +70,9 @@ func (c *Client) getEngine() (*string, error) {
 
 func (c *Client) getClientDetails(engine *string, token *string) (*ClientDetails, error) {
 	var err error
+	if token != nil && *token != "" && tlsConfigHasClientCertificate(c.TLSClientConfig) {
+		return nil, errors.New("token and mTLS authentication cannot be used together")
+	}
 	if engine == nil {
 		engine, err = c.getEngine()
 		if err != nil {
@@ -77,6 +80,9 @@ func (c *Client) getClientDetails(engine *string, token *string) (*ClientDetails
 		}
 	}
 	if token == nil {
+		if c.Token != nil && tlsConfigHasClientCertificate(c.TLSClientConfig) {
+			return nil, errors.New("token and mTLS authentication cannot be used together")
+		}
 		noToken := c.NoToken
 		if noToken == nil {
 			noToken = BoolPtr(false)
@@ -90,6 +96,21 @@ func (c *Client) getClientDetails(engine *string, token *string) (*ClientDetails
 		}
 	}
 	return getClientDetails(token)
+}
+
+func (c *Client) getProxyClientDetails(engine *string, secret *string) (*ClientDetails, error) {
+	if engine == nil {
+		resolved, err := c.getEngine()
+		if err != nil {
+			return nil, err
+		}
+		engine = resolved
+	}
+	return getClientDetails(secret)
+}
+
+func tlsConfigHasClientCertificate(cfg *tls.Config) bool {
+	return cfg != nil && (len(cfg.Certificates) > 0 || cfg.GetClientCertificate != nil)
 }
 
 func toServerDetails(details *pb.ServerDetails) *ServerDetails {
@@ -184,7 +205,13 @@ func (c *Client) dial(ctx context.Context, dialType dialType, raddr Addr, token 
 	if zeroRTT == nil {
 		zeroRTT = BoolPtr(true) // default to true
 	}
-	ClientDetails, cause := c.getClientDetails(engine, token)
+	var clientDetails *ClientDetails
+	var cause error
+	if dialType == dialTypeProxyReq {
+		clientDetails, cause = c.getProxyClientDetails(engine, token)
+	} else {
+		clientDetails, cause = c.getClientDetails(engine, token)
+	}
 	if cause != nil {
 		err = fmt.Errorf("failed to get client details: %w", cause)
 	}
@@ -193,7 +220,7 @@ func (c *Client) dial(ctx context.Context, dialType dialType, raddr Addr, token 
 			msg := &pb.Message{
 				Payload: &pb.Message_ProxyReq{
 					ProxyReq: &pb.ProxyReq{
-						ClientDetails: toClientDetailsPb(ClientDetails),
+						ClientDetails: toClientDetailsPb(clientDetails),
 						StreamId:      raddr.IdOrName,
 						ZeroRtt:       boolPbValueOrNil(zeroRTT),
 					},
@@ -206,7 +233,7 @@ func (c *Client) dial(ctx context.Context, dialType dialType, raddr Addr, token 
 			msg := &pb.Message{
 				Payload: &pb.Message_StreamReq{
 					StreamReq: &pb.StreamReq{
-						ClientDetails: toClientDetailsPb(ClientDetails),
+						ClientDetails: toClientDetailsPb(clientDetails),
 						TunnelIdName:  raddr.IdOrName,
 						ZeroRtt:       boolPbValueOrNil(zeroRTT),
 					},

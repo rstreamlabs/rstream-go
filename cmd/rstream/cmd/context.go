@@ -367,7 +367,7 @@ func init() {
 	contextCreateCmd.Flags().Bool("default", false, "set created context as default")
 	contextCreateCmd.Flags().String("project-endpoint", "", "associate a project endpoint with this context (optional)")
 	contextUpdateCmd.Flags().String("project-endpoint", "", "associate a project endpoint with this context (optional)")
-	contextCreateCmd.Flags().Bool("no-api-url", false, "do not associate this context with a control-plane API URL")
+	contextCreateCmd.Flags().Bool("no-api-url", false, "do not associate this context with a Control plane API URL")
 	contextGetCmd.Flags().Bool("no-api-url", false, "select an unlinked context")
 	contextUseCmd.Flags().Bool("no-api-url", false, "select an unlinked context")
 	contextDeleteCmd.Flags().Bool("no-api-url", false, "select an unlinked context")

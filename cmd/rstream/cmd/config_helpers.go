@@ -67,6 +67,8 @@ func resolveRuntime(cmd *cobra.Command, requireEngine, requireToken bool) (*reso
 		EnvContext:    env.Context,
 		EnvEngine:     env.Engine,
 		EnvToken:      env.Token,
+		EnvMTLSCert:   env.MTLSCert,
+		EnvMTLSKey:    env.MTLSKey,
 		RequireEngine: requireEngine,
 		RequireToken:  requireToken,
 		ResolveToken:  true,

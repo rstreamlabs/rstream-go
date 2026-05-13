@@ -86,7 +86,7 @@ func TestMapControlPlaneError(t *testing.T) {
 	}
 	other := errors.New("boom")
 	if got := mapControlPlaneError(other); got != other {
-		t.Fatalf("non-control-plane error should be returned as-is")
+		t.Fatalf("non-Control plane API error should be returned as-is")
 	}
 }
 

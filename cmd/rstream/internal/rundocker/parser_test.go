@@ -3,7 +3,6 @@
 package rundocker
 
 import (
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -100,23 +99,6 @@ func TestParseDesiredTunnels(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestTLSCACertFileDockerLabelIsRejected(t *testing.T) {
-	info := ContainerInfo{
-		ID:   "abc",
-		Name: "web",
-		Labels: map[string]string{
-			"rstream.tunnel.app.forward":            "8080",
-			"rstream.tunnel.app.tls.mtls":           "true",
-			"rstream.tunnel.app.tls.mtlsCACertFile": filepath.Join(t.TempDir(), "ca.pem"),
-		},
-		Networks: map[string]string{"default": "10.0.0.2"},
-	}
-	_, err := ParseDesiredTunnels(info, "default", runmodel.ResolvedContext{Engine: "engine", Token: "token"})
-	if err == nil || !strings.Contains(err.Error(), "mtlsCACertFile is not supported") {
-		t.Fatalf("ParseDesiredTunnels() error = %v, want mtlsCACertFile rejection", err)
 	}
 }
 
@@ -227,14 +209,6 @@ func TestParseDesiredTunnelsRejectsInvalidSecurityLabels(t *testing.T) {
 				"rstream.tunnel.app.http.upstreamTLS": "false",
 			},
 			wantError: "conflicts",
-		},
-		{
-			name: "missing mtls ca file",
-			labels: map[string]string{
-				"rstream.tunnel.app.forward":            "8080",
-				"rstream.tunnel.app.tls.mtlsCACertFile": filepath.Join(t.TempDir(), "missing.pem"),
-			},
-			wantError: "mtlsCACertFile is not supported",
 		},
 		{
 			name: "host loopback forward",

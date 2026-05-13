@@ -67,6 +67,7 @@ The token can be provided in either form:
 - A `rstream.token=<token>` query parameter
 
 This mechanism is intentionally scoped to HTTP tunnels, since it operates at the HTTP request layer. For non-HTTP tunnels (TLS/DTLS/QUIC), access control is enforced at the connection level (for example via TLS policy and mTLS on terminated TLS tunnels).
+Published tunnel policy can allow more than one authentication method. Each incoming request or connection must still authenticate with one unambiguous method; requests that combine multiple authentication proofs are rejected.
 
 ## TLS tunnels
 
@@ -78,7 +79,7 @@ With `tls_mode=passthrough`, the edge forwards encrypted bytes upstream without 
 
 ### mTLS
 
-When `mtls=true`, the edge requires client certificates and validates them using the CA bundle provided in `mtls_cacert_pem`. The CA bundle must be valid PEM and contain at least one readable X.509 certificate. mTLS requires TLS termination at the edge.
+When `mtls_auth=true`, the edge requires client certificate authentication for the published tunnel. Certificate admission is configured through mTLS credentials. mTLS requires TLS termination at the edge.
 
 ## Access policy
 

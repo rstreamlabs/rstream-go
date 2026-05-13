@@ -4,7 +4,7 @@ The examples use the same config/env resolution as the CLI via `config.NewClient
 
 ## Prerequisites
 
-Set a default context or `RSTREAM_ENGINE`. If your engine requires authentication, set `RSTREAM_AUTHENTICATION_TOKEN`.
+Set a default context or `RSTREAM_ENGINE`. If your engine requires token authentication, set `RSTREAM_AUTHENTICATION_TOKEN`. If it requires mTLS agent authentication, set `RSTREAM_MTLS_CERT_FILE` and `RSTREAM_MTLS_KEY_FILE` instead.
 
 Typical setup (CLI):
 
@@ -42,7 +42,7 @@ RSTREAM_PROJECT_ENDPOINT=9bfdaa8b \
 go run ./examples/turn-credentials
 ```
 
-When TURN routing fields are not already present in the local context, the SDK falls back to the control-plane API.
+When TURN routing fields are not already present in the local context, the SDK falls back to the Control plane API.
 
 ## CLI Run Examples
 

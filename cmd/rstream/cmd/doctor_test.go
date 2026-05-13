@@ -84,11 +84,11 @@ func TestDoctorContextAndTransportHelpers(t *testing.T) {
 		t.Fatalf("context should pass: %#v", report.Checks)
 	}
 	if !doctorUsesControlPlane(resolved) {
-		t.Fatalf("linked context should use control plane")
+		t.Fatalf("linked context should use Control plane API")
 	}
 	resolved.Context.APIURL = ""
 	if doctorUsesControlPlane(resolved) {
-		t.Fatalf("unlinked context should not use control plane")
+		t.Fatalf("unlinked context should not use Control plane API")
 	}
 	transport, ok := doctorQUICTransport(&rstream.QUICTransport{LocalAddr: rstream.StringPtr("127.0.0.1")})
 	if !ok || transport.LocalAddr == nil || *transport.LocalAddr != "127.0.0.1" {

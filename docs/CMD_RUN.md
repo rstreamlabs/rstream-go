@@ -61,7 +61,6 @@ tunnels:
         minVersion: "tls1.2"     # tls1.2|tls1.3
         alpns: ["postgres"]
         mtls: true
-        mtlsCACertFile: "/path/to/ca.pem"
 contexts:
   prod:
     external: true
@@ -130,9 +129,12 @@ labels:
 - `rstream.tunnel.<name>.tls.minVersion` (tls1.2|tls1.3)
 - `rstream.tunnel.<name>.tls.alpns` (comma-separated)
 - `rstream.tunnel.<name>.tls.mtls` (true|false)
-- `rstream.tunnel.<name>.tls.mtlsCACertFile` (path to PEM file)
 
 `http.auth.*` and `http.gate.*` are valid only for HTTP tunnels (`protocol=http`).
+
+`tls.mtls` enables mTLS for clients connecting to the published tunnel endpoint. It is separate from agent authentication, which controls how `rstream run` authenticates its own Engine API connection.
+
+For agent authentication, `rstream run` uses the selected CLI context or explicit environment variables. Token authentication and mTLS authentication are mutually exclusive on the Engine API connection. Inline `contexts.<name>.token` entries are supported for self-contained apply files; for mTLS agent authentication, use a named CLI configuration context with `auth.mtls`, or set `RSTREAM_MTLS_CERT_FILE` and `RSTREAM_MTLS_KEY_FILE` in the process environment.
 
 ### Forward Target Resolution (Docker)
 
