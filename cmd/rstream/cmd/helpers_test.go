@@ -3,7 +3,6 @@
 package cmd
 
 import (
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -97,20 +96,6 @@ func TestNewTunnelPropertiesFromFlagsLeavesExposureDefaultsUnset(t *testing.T) {
 	}
 }
 
-func TestNewTunnelPropertiesFromFlagsReadsMTLSCACertFile(t *testing.T) {
-	command := tunnelFlagsCommand()
-	cert := "-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----\n"
-	path := writeTempFile(t, cert)
-	mustSetFlag(t, command, "mtls-cacert-file", path)
-	props, err := newTunnelPropertiesFromFlags(command)
-	if err != nil {
-		t.Fatalf("newTunnelPropertiesFromFlags() error = %v", err)
-	}
-	if props.MTLSCACertPEM == nil || *props.MTLSCACertPEM != strings.TrimSpace(cert) {
-		t.Fatalf("mTLS CA cert should contain file contents, got %#v", props.MTLSCACertPEM)
-	}
-}
-
 func TestNewTunnelPropertiesFromFlagsRejectsInvalidForwardEnums(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -133,13 +118,18 @@ func TestNewTunnelPropertiesFromFlagsRejectsInvalidForwardEnums(t *testing.T) {
 	}
 }
 
-func TestNewTunnelPropertiesFromFlagsRejectsEmptyMTLSCACertFile(t *testing.T) {
+func TestNewTunnelPropertiesFromFlagsAllowsMultiplePublishedAuthMethods(t *testing.T) {
 	command := tunnelFlagsCommand()
-	path := writeTempFile(t, " \n\t")
-	mustSetFlag(t, command, "mtls-cacert-file", path)
-	_, err := newTunnelPropertiesFromFlags(command)
-	if err == nil || !strings.Contains(err.Error(), "--mtls-cacert-file is empty") {
-		t.Fatalf("expected empty mTLS CA cert error, got %v", err)
+	mustSetFlag(t, command, "http", "true")
+	mustSetFlag(t, command, "mtls", "true")
+	mustSetFlag(t, command, "token-auth", "true")
+	mustSetFlag(t, command, "rstream-auth", "true")
+	props, err := newTunnelPropertiesFromFlags(command)
+	if err != nil {
+		t.Fatalf("newTunnelPropertiesFromFlags() error = %v", err)
+	}
+	if props.MTLSAuth == nil || !*props.MTLSAuth || props.TokenAuth == nil || !*props.TokenAuth || props.RstreamAuth == nil || !*props.RstreamAuth {
+		t.Fatalf("expected published auth methods to be preserved, got %#v", props)
 	}
 }
 
@@ -173,7 +163,6 @@ func tunnelFlagsCommand() *cobra.Command {
 	command.Flags().String("tls-min-version", "", "")
 	command.Flags().StringSlice("tls-ciphers", nil, "")
 	command.Flags().Bool("mtls", false, "")
-	command.Flags().String("mtls-cacert-file", "", "")
 	command.Flags().String("http-version", "", "")
 	command.Flags().Bool("http-use-tls", false, "")
 	command.Flags().Bool("upstream-tls", false, "")
@@ -181,21 +170,6 @@ func tunnelFlagsCommand() *cobra.Command {
 	command.Flags().Bool("rstream-auth", false, "")
 	command.Flags().Bool("challenge-mode", false, "")
 	return command
-}
-
-func writeTempFile(t *testing.T, contents string) string {
-	t.Helper()
-	file, err := os.CreateTemp(t.TempDir(), "rstream-*")
-	if err != nil {
-		t.Fatalf("create temp file: %v", err)
-	}
-	if _, err := file.WriteString(contents); err != nil {
-		t.Fatalf("write temp file: %v", err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatalf("close temp file: %v", err)
-	}
-	return file.Name()
 }
 
 func mustSetFlag(t *testing.T, command *cobra.Command, name, value string) {

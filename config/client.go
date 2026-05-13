@@ -14,6 +14,8 @@ type ClientEnvOptions struct {
 	Context       string
 	Engine        string
 	Token         string
+	MTLSCert      string
+	MTLSKey       string
 	RequireEngine bool
 	RequireToken  bool
 }
@@ -47,10 +49,14 @@ func ResolveFromEnv(opts ClientEnvOptions) (ClientResolution, error) {
 		FlagContext:   strings.TrimSpace(opts.Context),
 		FlagEngine:    strings.TrimSpace(opts.Engine),
 		FlagToken:     strings.TrimSpace(opts.Token),
+		FlagMTLSCert:  strings.TrimSpace(opts.MTLSCert),
+		FlagMTLSKey:   strings.TrimSpace(opts.MTLSKey),
 		EnvAPIURL:     env.APIURL,
 		EnvContext:    env.Context,
 		EnvEngine:     env.Engine,
 		EnvToken:      env.Token,
+		EnvMTLSCert:   env.MTLSCert,
+		EnvMTLSKey:    env.MTLSKey,
 		RequireEngine: opts.RequireEngine,
 		RequireToken:  opts.RequireToken,
 		ResolveToken:  true,
@@ -84,6 +90,9 @@ func NewClientFromResolved(resolved Resolved) (*rstream.Client, error) {
 	}
 	if resolved.Transport != nil {
 		options.Transport = resolved.Transport
+	}
+	if resolved.TLSClientConfig != nil {
+		options.TLSClientConfig = resolved.TLSClientConfig
 	}
 	if resolved.Token == "" {
 		options.NoToken = true

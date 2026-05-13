@@ -52,8 +52,7 @@ type TunnelProperties struct {
 	TLSALPNs      []string          `json:"tls_alpns,omitempty"`
 	TLSMinVersion *string           `json:"tls_min_version,omitempty"`
 	TLSCiphers    []string          `json:"tls_ciphers,omitempty"`
-	MTLS          *bool             `json:"mtls,omitempty"`
-	MTLSCACertPEM *string           `json:"mtls_ca_cert_pem,omitempty"`
+	MTLSAuth      *bool             `json:"mtls_auth,omitempty"`
 	HTTPVersion   *HTTPVersion      `json:"http_version,omitempty"`
 	HTTPUseTLS    *bool             `json:"http_use_tls,omitempty"`
 	UpstreamTLS   *bool             `json:"upstream_tls,omitempty"`

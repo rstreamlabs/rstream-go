@@ -4,7 +4,7 @@ This example runs `rstream -v run --apply` on the host and forwards to a local `
 
 ## Prerequisites
 
-- A configured rstream context (default context), or set `RSTREAM_ENGINE` and `RSTREAM_AUTHENTICATION_TOKEN` in your shell.
+- A configured rstream context (default context), or set `RSTREAM_ENGINE` with either `RSTREAM_AUTHENTICATION_TOKEN` or the `RSTREAM_MTLS_CERT_FILE` / `RSTREAM_MTLS_KEY_FILE` pair in your shell.
 
 ## Run
 

@@ -220,7 +220,7 @@ func checkDoctorControlPlane(ctx context.Context, report *doctorReport, resolved
 	if whoami.Email != "" {
 		details["email"] = whoami.Email
 	}
-	report.add("control_plane_auth", doctorStatusPass, "control-plane token accepted", details)
+	report.add("control_plane_auth", doctorStatusPass, "Control plane API token accepted", details)
 }
 
 func checkDoctorProject(ctx context.Context, report *doctorReport, resolved config.Resolved) {

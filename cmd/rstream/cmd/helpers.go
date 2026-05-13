@@ -4,7 +4,6 @@ package cmd
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/rstreamlabs/rstream-go"
@@ -162,15 +161,6 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 	tlsMinVersionPtr := getStringPtr(cmd, "tls-min-version")
 	tlsCipherIDs := getStringSlice(cmd, "tls-ciphers")
 	mtlsPtr := getBoolPtr(cmd, "mtls")
-	var mtlsCACertPtr *string
-	if cmd.Flags().Lookup("mtls-cacert-file").Changed {
-		path, _ := cmd.Flags().GetString("mtls-cacert-file")
-		pem, err := readForwardPEMFile(path, "--mtls-cacert-file")
-		if err != nil {
-			return nil, err
-		}
-		mtlsCACertPtr = &pem
-	}
 	var httpVersionPtr *rstream.HTTPVersion
 	if cmd.Flags().Lookup("http-version").Changed {
 		val, _ := cmd.Flags().GetString("http-version")
@@ -209,8 +199,7 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 		TLSALPNs:      tlsALPNSlice,
 		TLSMinVersion: tlsMinVersionPtr,
 		TLSCiphers:    tlsCipherIDs,
-		MTLS:          mtlsPtr,
-		MTLSCACertPEM: mtlsCACertPtr,
+		MTLSAuth:      mtlsPtr,
 		HTTPVersion:   httpVersionPtr,
 		HTTPUseTLS:    httpUseTLSPtr,
 		UpstreamTLS:   upstreamTLSPtr,
@@ -243,20 +232,4 @@ func parseForwardHTTPVersion(value string) (rstream.HTTPVersion, error) {
 	default:
 		return "", fmt.Errorf("invalid --http-version %q (valid: http/1.1, h2c, h3)", value)
 	}
-}
-
-func readForwardPEMFile(path, flag string) (string, error) {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return "", fmt.Errorf("%s is empty", flag)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("failed to read %s: %w", flag, err)
-	}
-	value := strings.TrimSpace(string(data))
-	if value == "" {
-		return "", fmt.Errorf("%s is empty", flag)
-	}
-	return value, nil
 }

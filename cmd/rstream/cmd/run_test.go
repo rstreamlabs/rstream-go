@@ -112,8 +112,8 @@ func TestResolveNamedContextRequiresEngineAndToken(t *testing.T) {
 	if resolved.Engine != "engine.example.com:443" || resolved.Token != "env-token" {
 		t.Fatalf("unexpected resolved context: %#v", resolved)
 	}
-	if _, err := resolveNamedContext(cfg, config.EnvSettings{}, command, "prod"); err == nil || !strings.Contains(err.Error(), "token is required") {
-		t.Fatalf("resolveNamedContext(missing token) = %v, want token error", err)
+	if _, err := resolveNamedContext(cfg, config.EnvSettings{}, command, "prod"); err == nil || !strings.Contains(err.Error(), "authentication is required") {
+		t.Fatalf("resolveNamedContext(missing auth) = %v, want auth error", err)
 	}
 }
 

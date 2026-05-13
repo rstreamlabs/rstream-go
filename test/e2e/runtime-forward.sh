@@ -3,8 +3,9 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+. "$ROOT/test/e2e/runtime_common.sh"
 BIN="${BIN:-$ROOT/out/test}"
-RSTREAM_BIN="${RSTREAM_BIN:-$ROOT/out/cmd/rstream/dev/main/macos/arm64/release/bin/rstream}"
+RSTREAM_BIN=$(resolve_rstream_cli "$ROOT")
 PYTHON="${PYTHON:-python3}"
 TIMEOUT_SECONDS="${RSTREAM_RUNTIME_TIMEOUT:-60}"
 NAME_PREFIX="${RSTREAM_RUNTIME_NAME_PREFIX:-runtime-forward-$$}"
@@ -31,13 +32,6 @@ if [ "${1:-}" = "--quic-transport" ]; then
   export RSTREAM_QUIC_TRANSPORT=1
   shift
 fi
-
-require_executable() {
-  if [ ! -x "$1" ]; then
-    printf "ERROR missing executable: %s\n" "$1" >&2
-    exit 2
-  fi
-}
 
 require_executable "$RSTREAM_BIN"
 require_executable "$BIN/stream/client"
@@ -230,6 +224,85 @@ case_http_h1() {
   return "$rc"
 }
 
+case_http_h2_reused_connection_routes() {
+  local first_forward_pid first_forwarding second_forward_pid second_forwarding trigger checker_pid checker_log
+  local rc=0
+  trigger="$TMP_DIR/h2-reuse-trigger"
+  checker_log="$TMP_DIR/h2-reuse-checker.log"
+  start_upstream "http-h2-reuse-first" http
+  start_forward "http-h2-reuse-first" "$UPSTREAM_ADDR" 1 \
+    --bytestream --publish --http --name "$NAME_PREFIX-http-h2-reuse-first"
+  first_forward_pid=$FORWARD_PID
+  first_forwarding=$FORWARDING
+  start_upstream "http-h2-reuse-second" http
+  start_forward "http-h2-reuse-second" "$UPSTREAM_ADDR" 1 \
+    --bytestream --publish --http --name "$NAME_PREFIX-http-h2-reuse-second"
+  second_forward_pid=$FORWARD_PID
+  second_forwarding=$FORWARDING
+  "$PYTHON" "$ROOT/test/e2e/runtime_harness.py" check h2-reuse-routes \
+    --first "$first_forwarding/ping" \
+    --second "$second_forwarding/ping" \
+    --trigger "$trigger" >"$checker_log" 2>&1 &
+  checker_pid=$!
+  PIDS+=("$checker_pid")
+  if ! wait_ready "$checker_pid" "$checker_log" "http-h2-reuse-checker" >/dev/null; then
+    stop_pid "$first_forward_pid"
+    stop_pid "$second_forward_pid"
+    return 1
+  fi
+  stop_pid "$first_forward_pid"
+  sleep 1
+  : >"$trigger"
+  if ! wait "$checker_pid"; then
+    cat "$checker_log" >&2 || true
+    rc=1
+  fi
+  stop_pid "$second_forward_pid"
+  return "$rc"
+}
+
+case_http_h2_subpath_preserves_request_path() {
+  local rc=0
+  start_upstream "http-h2-subpath" http
+  start_forward "http-h2-subpath" "$UPSTREAM_ADDR" 1 \
+    --bytestream --publish --http --name "$NAME_PREFIX-http-h2-subpath"
+  "$PYTHON" "$ROOT/test/e2e/runtime_harness.py" check h2-subpath-response \
+    --url "$FORWARDING/directory/" || rc=$?
+  stop_pid "$FORWARD_PID"
+  return "$rc"
+}
+
+case_http_h3_subpath_preserves_request_path() {
+  local rc=0
+  start_upstream "http-h3-subpath" http
+  start_forward "http-h3-subpath" "$UPSTREAM_ADDR" 1 \
+    --bytestream --publish --http --name "$NAME_PREFIX-http-h3-subpath"
+  "$BIN/http/client" --h3-url "$FORWARDING/directory/" || rc=$?
+  stop_pid "$FORWARD_PID"
+  return "$rc"
+}
+
+case_http_h3_reused_connection_routes() {
+  local first_forward_pid first_forwarding second_forward_pid second_forwarding
+  local rc=0
+  start_upstream "http-h3-reuse-first" http
+  start_forward "http-h3-reuse-first" "$UPSTREAM_ADDR" 1 \
+    --bytestream --publish --http --name "$NAME_PREFIX-http-h3-reuse-first"
+  first_forward_pid=$FORWARD_PID
+  first_forwarding=$FORWARDING
+  start_upstream "http-h3-reuse-second" http
+  start_forward "http-h3-reuse-second" "$UPSTREAM_ADDR" 1 \
+    --bytestream --publish --http --name "$NAME_PREFIX-http-h3-reuse-second"
+  second_forward_pid=$FORWARD_PID
+  second_forwarding=$FORWARDING
+  "$BIN/http/client" \
+    --h3-reuse-first "$first_forwarding/ping" \
+    --h3-reuse-second "$second_forwarding/ping" || rc=$?
+  stop_pid "$first_forward_pid"
+  stop_pid "$second_forward_pid"
+  return "$rc"
+}
+
 case_dtls() {
   local upstream
   local rc=0
@@ -243,13 +316,35 @@ case_dtls() {
   return "$rc"
 }
 
+case_quic() {
+  local server_pid server_log forwarding
+  local rc=0
+  server_log="$TMP_DIR/quic-server.log"
+  "$BIN/datagram/server" --variant quic --publish \
+    --tls-alpn rstream-runtime-quic \
+    --name "$NAME_PREFIX-quic" >"$server_log" 2>&1 &
+  server_pid=$!
+  PIDS+=("$server_pid")
+  forwarding=$(wait_ready "$server_pid" "$server_log" "quic")
+  "$BIN/datagram/client" --variant quic \
+    --addr "$forwarding" \
+    --tls-alpn rstream-runtime-quic || rc=$?
+  stop_pid "$server_pid"
+  return "$rc"
+}
+
 make_cert
 run_case "forward/private bytestream plain" case_private_plain
 run_case "forward/tls terminated" case_tls_terminated
 run_case "forward/tls upstream tls" case_tls_upstream_tls
 run_case "forward/tls passthrough" case_tls_passthrough
 run_case "forward/http h1" case_http_h1
+run_case "forward/http h2 reused connection" case_http_h2_reused_connection_routes
+run_case "forward/http h2 subpath" case_http_h2_subpath_preserves_request_path
+run_case "forward/http h3 subpath" case_http_h3_subpath_preserves_request_path
+run_case "forward/http h3 reused connection" case_http_h3_reused_connection_routes
 run_case "forward/dtls" case_dtls
+run_case "forward/quic" case_quic
 
 printf "\nResults: %d passed, %d failed\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
