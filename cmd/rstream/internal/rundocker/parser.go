@@ -227,10 +227,8 @@ func (l *labelSpec) applyTLS(key, value string) error {
 		if err != nil {
 			return err
 		}
-		l.props.MTLS = &v
+		l.props.MTLSAuth = &v
 		return nil
-	case "mtlsCACertFile":
-		return fmt.Errorf("tls.mtlsCACertFile is not supported from Docker labels; use --apply for host file references")
 	default:
 		return fmt.Errorf("unknown tls label %q", key)
 	}

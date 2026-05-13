@@ -450,7 +450,8 @@ type TunnelProperties struct {
 	TlsAlpns      []string                `protobuf:"bytes,12,rep,name=tls_alpns,json=tlsAlpns,proto3" json:"tls_alpns,omitempty"`
 	TlsMinVersion *wrapperspb.StringValue `protobuf:"bytes,13,opt,name=tls_min_version,json=tlsMinVersion,proto3" json:"tls_min_version,omitempty"`
 	TlsCiphers    []string                `protobuf:"bytes,14,rep,name=tls_ciphers,json=tlsCiphers,proto3" json:"tls_ciphers,omitempty"`
-	Mtls          *wrapperspb.BoolValue   `protobuf:"bytes,15,opt,name=mtls,proto3" json:"mtls,omitempty"`
+	MtlsAuth      *wrapperspb.BoolValue   `protobuf:"bytes,15,opt,name=mtls_auth,json=mtlsAuth,proto3" json:"mtls_auth,omitempty"`
+	// Deprecated: Marked as deprecated in pb/rstream.proto.
 	MtlsCacertPem *wrapperspb.StringValue `protobuf:"bytes,16,opt,name=mtls_cacert_pem,json=mtlsCacertPem,proto3" json:"mtls_cacert_pem,omitempty"`
 	HttpVersion   *wrapperspb.StringValue `protobuf:"bytes,17,opt,name=http_version,json=httpVersion,proto3" json:"http_version,omitempty"`
 	// Deprecated: Marked as deprecated in pb/rstream.proto.
@@ -594,13 +595,14 @@ func (x *TunnelProperties) GetTlsCiphers() []string {
 	return nil
 }
 
-func (x *TunnelProperties) GetMtls() *wrapperspb.BoolValue {
+func (x *TunnelProperties) GetMtlsAuth() *wrapperspb.BoolValue {
 	if x != nil {
-		return x.Mtls
+		return x.MtlsAuth
 	}
 	return nil
 }
 
+// Deprecated: Marked as deprecated in pb/rstream.proto.
 func (x *TunnelProperties) GetMtlsCacertPem() *wrapperspb.StringValue {
 	if x != nil {
 		return x.MtlsCacertPem
@@ -1956,7 +1958,7 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\x04plan\x18\x04 \x01(\v2\x1c.google.protobuf.StringValueR\x04plan\x128\n" +
 	"\bprovider\x18\x05 \x01(\v2\x1c.google.protobuf.StringValueR\bprovider\x124\n" +
 	"\x06region\x18\x06 \x01(\v2\x1c.google.protobuf.StringValueR\x06region\x124\n" +
-	"\x06update\x18\a \x01(\v2\x1c.google.protobuf.StringValueR\x06update\"\xe4\r\n" +
+	"\x06update\x18\a \x01(\v2\x1c.google.protobuf.StringValueR\x06update\"\xef\r\n" +
 	"\x10TunnelProperties\x12;\n" +
 	"\x02id\x18\x01 \x01(\v2\x1c.google.protobuf.StringValueB\r\x92\x82\x19\tread-onlyR\x02id\x12N\n" +
 	"\rcreation_date\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampB\r\x92\x82\x19\tread-onlyR\fcreationDate\x12@\n" +
@@ -1985,11 +1987,11 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"read-writeR\rtlsMinVersion\x12/\n" +
 	"\vtls_ciphers\x18\x0e \x03(\tB\x0e\x92\x82\x19\n" +
 	"read-writeR\n" +
-	"tlsCiphers\x12>\n" +
-	"\x04mtls\x18\x0f \x01(\v2\x1a.google.protobuf.BoolValueB\x0e\x92\x82\x19\n" +
-	"read-writeR\x04mtls\x12T\n" +
-	"\x0fmtls_cacert_pem\x18\x10 \x01(\v2\x1c.google.protobuf.StringValueB\x0e\x92\x82\x19\n" +
-	"read-writeR\rmtlsCacertPem\x12O\n" +
+	"tlsCiphers\x12G\n" +
+	"\tmtls_auth\x18\x0f \x01(\v2\x1a.google.protobuf.BoolValueB\x0e\x92\x82\x19\n" +
+	"read-writeR\bmtlsAuth\x12V\n" +
+	"\x0fmtls_cacert_pem\x18\x10 \x01(\v2\x1c.google.protobuf.StringValueB\x10\x92\x82\x19\n" +
+	"read-write\x18\x01R\rmtlsCacertPem\x12O\n" +
 	"\fhttp_version\x18\x11 \x01(\v2\x1c.google.protobuf.StringValueB\x0e\x92\x82\x19\n" +
 	"read-writeR\vhttpVersion\x12N\n" +
 	"\fhttp_use_tls\x18\x12 \x01(\v2\x1a.google.protobuf.BoolValueB\x10\x92\x82\x19\n" +
@@ -2171,7 +2173,7 @@ var file_pb_rstream_proto_depIdxs = []int32{
 	25, // 23: rstream.io_rstrm.protobuf.TunnelProperties.host:type_name -> google.protobuf.StringValue
 	25, // 24: rstream.io_rstrm.protobuf.TunnelProperties.tls_mode:type_name -> google.protobuf.StringValue
 	25, // 25: rstream.io_rstrm.protobuf.TunnelProperties.tls_min_version:type_name -> google.protobuf.StringValue
-	27, // 26: rstream.io_rstrm.protobuf.TunnelProperties.mtls:type_name -> google.protobuf.BoolValue
+	27, // 26: rstream.io_rstrm.protobuf.TunnelProperties.mtls_auth:type_name -> google.protobuf.BoolValue
 	25, // 27: rstream.io_rstrm.protobuf.TunnelProperties.mtls_cacert_pem:type_name -> google.protobuf.StringValue
 	25, // 28: rstream.io_rstrm.protobuf.TunnelProperties.http_version:type_name -> google.protobuf.StringValue
 	27, // 29: rstream.io_rstrm.protobuf.TunnelProperties.http_use_tls:type_name -> google.protobuf.BoolValue

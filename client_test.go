@@ -51,6 +51,25 @@ func TestClientEngineAndDetailsResolution(t *testing.T) {
 	if details.Token == nil || *details.Token != "token" {
 		t.Fatalf("token not propagated: %#v", details.Token)
 	}
+	client.TLSClientConfig = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{{1}}}}}
+	if _, err := client.getClientDetails(&engine, nil); err == nil || !strings.Contains(err.Error(), "token and mTLS authentication cannot be used together") {
+		t.Fatalf("expected token/mTLS conflict, got %v", err)
+	}
+	proxySecret := "proxy-secret"
+	details, err = client.getProxyClientDetails(&engine, &proxySecret)
+	if err != nil {
+		t.Fatalf("getProxyClientDetails() with mTLS and proxy secret error = %v", err)
+	}
+	if details.Token == nil || *details.Token != proxySecret {
+		t.Fatalf("proxy secret not propagated: %#v", details.Token)
+	}
+	details, err = client.getProxyClientDetails(&engine, nil)
+	if err != nil {
+		t.Fatalf("getProxyClientDetails() with mTLS and no proxy secret error = %v", err)
+	}
+	if details.Token != nil {
+		t.Fatalf("proxy details without a secret should not fall back to agent token: %#v", details.Token)
+	}
 }
 
 func TestToServerDetails(t *testing.T) {

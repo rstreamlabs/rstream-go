@@ -36,8 +36,8 @@ func newRootCmd() *cobra.Command {
 	cmd.Flags().SortFlags = false
 	cmd.PersistentFlags().SortFlags = false
 	cmd.PersistentFlags().String("config", "", "path to rstream configuration file")
-	cmd.PersistentFlags().String("context", "", "override context name (data plane)")
-	cmd.PersistentFlags().String("api-url", "", "override API URL (control plane)")
+	cmd.PersistentFlags().String("context", "", "override Engine API context name")
+	cmd.PersistentFlags().String("api-url", "", "override Control plane API URL")
 	cmd.PersistentFlags().BoolVarP(&flagVerbose, "verbose", "v", false, "enable verbose mode")
 	cmd.PersistentFlags().StringVarP(&flagLogLevel, "log-level", "l", "info", "log level (debug, info, warn, error, none)")
 	cmd.PersistentFlags().StringVarP(&flagLogFormat, "log-format", "f", "auto", "log format (auto, json, json-pretty, text, text-pretty)")

@@ -7,7 +7,7 @@ Transport configuration is independent from tunnel properties. Tunnel properties
 ## Configuration
 
 Transport settings live in the YAML config file and can be defined at:
-- **Environment level** (`environments[].transport`) for defaults tied to a control-plane `apiUrl`
+- **Environment level** (`environments[].transport`) for defaults tied to a Control plane API `apiUrl`
 - **Context level** (`contexts[].transport`) for overrides on a specific runtime profile
 
 The effective transport used by the CLI is a safe merge: start from the environment transport (if the

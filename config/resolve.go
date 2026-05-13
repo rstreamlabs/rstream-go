@@ -3,6 +3,7 @@
 package config
 
 import (
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -30,10 +31,14 @@ type ResolveInput struct {
 	FlagContext          string
 	FlagEngine           string
 	FlagToken            string
+	FlagMTLSCert         string
+	FlagMTLSKey          string
 	EnvAPIURL            string
 	EnvContext           string
 	EnvEngine            string
 	EnvToken             string
+	EnvMTLSCert          string
+	EnvMTLSKey           string
 	IgnoreDefaultContext bool
 	RequireToken         bool
 	RequireEngine        bool
@@ -41,13 +46,14 @@ type ResolveInput struct {
 }
 
 type Resolved struct {
-	APIURL      string
-	ContextName string
-	Environment *Environment
-	Context     *Context
-	Engine      string
-	Token       string
-	Transport   rstream.Dialer
+	APIURL          string
+	ContextName     string
+	Environment     *Environment
+	Context         *Context
+	Engine          string
+	Token           string
+	Transport       rstream.Dialer
+	TLSClientConfig *tls.Config
 }
 
 func Resolve(input ResolveInput) (Resolved, error) {
@@ -106,10 +112,12 @@ func Resolve(input ResolveInput) (Resolved, error) {
 		engine = ctx.Engine
 	}
 	token := ""
-	shouldResolveToken := input.ResolveToken || input.RequireToken || input.FlagToken != "" || input.EnvToken != ""
+	explicitToken := input.FlagToken != "" || input.EnvToken != ""
+	explicitMTLS := input.FlagMTLSCert != "" || input.EnvMTLSCert != "" || input.FlagMTLSKey != "" || input.EnvMTLSKey != ""
+	shouldResolveToken := input.ResolveToken || input.RequireToken || explicitToken
 	if shouldResolveToken {
 		token = firstNonEmpty(input.FlagToken, input.EnvToken)
-		if token == "" {
+		if token == "" && !explicitMTLS {
 			var err error
 			token, err = resolveToken(ctx, env)
 			if err != nil {
@@ -119,6 +127,16 @@ func Resolve(input ResolveInput) (Resolved, error) {
 				return Resolved{}, errors.New("refusing to use a stored token with an explicit engine override; set RSTREAM_AUTHENTICATION_TOKEN or pass --token for the selected engine")
 			}
 		}
+	}
+	mtlsConfig, mtlsFromStoredConfig, err := resolveMTLSConfig(input, ctx, env)
+	if err != nil {
+		return Resolved{}, err
+	}
+	if token != "" && mtlsConfig != nil {
+		return Resolved{}, errors.New("token and mTLS authentication cannot be used together")
+	}
+	if mtlsConfig != nil && engineOverrideUsesStoredToken(engineOverride, ctx) && mtlsFromStoredConfig {
+		return Resolved{}, errors.New("refusing to use stored mTLS credentials with an explicit engine override; set RSTREAM_MTLS_CERT_FILE and RSTREAM_MTLS_KEY_FILE for the selected engine")
 	}
 	if token != "" {
 		expired, err := isTokenExpired(token, time.Now())
@@ -132,8 +150,8 @@ func Resolve(input ResolveInput) (Resolved, error) {
 	if input.RequireEngine && engine == "" {
 		return Resolved{}, errors.New("engine is required but not configured (set --engine or RSTREAM_ENGINE, or select a context via --context, RSTREAM_CONTEXT, or `rstream context use`)")
 	}
-	if input.RequireToken && token == "" {
-		return Resolved{}, errors.New("token is required but not configured (run rstream login or set RSTREAM_AUTHENTICATION_TOKEN)")
+	if input.RequireToken && token == "" && mtlsConfig == nil {
+		return Resolved{}, errors.New("authentication is required but not configured (run rstream login, set RSTREAM_AUTHENTICATION_TOKEN, or set RSTREAM_MTLS_CERT_FILE and RSTREAM_MTLS_KEY_FILE)")
 	}
 	var transport rstream.Dialer
 	if ctx != nil {
@@ -146,13 +164,14 @@ func Resolve(input ResolveInput) (Resolved, error) {
 		transport = FlattenTransport(merged)
 	}
 	return Resolved{
-		APIURL:      apiURL,
-		ContextName: contextName,
-		Environment: env,
-		Context:     ctx,
-		Engine:      engine,
-		Token:       token,
-		Transport:   transport,
+		APIURL:          apiURL,
+		ContextName:     contextName,
+		Environment:     env,
+		Context:         ctx,
+		Engine:          engine,
+		Token:           token,
+		Transport:       transport,
+		TLSClientConfig: mtlsConfig,
 	}, nil
 }
 
@@ -187,6 +206,84 @@ func resolveToken(ctx *Context, env *Environment) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+func resolveMTLSConfig(input ResolveInput, ctx *Context, env *Environment) (*tls.Config, bool, error) {
+	certFile := firstNonEmpty(input.FlagMTLSCert, input.EnvMTLSCert)
+	keyFile := firstNonEmpty(input.FlagMTLSKey, input.EnvMTLSKey)
+	if certFile != "" || keyFile != "" {
+		cfg, err := loadMTLSConfig("", "", certFile, keyFile)
+		return cfg, false, err
+	}
+	if ctx != nil {
+		if cfg, ok, err := MTLSConfigFromAuth(ctx.Auth); err != nil {
+			return nil, false, err
+		} else if ok {
+			return cfg, true, nil
+		}
+	}
+	if env != nil && (ctx == nil || NormalizeAPIURL(ctx.APIURL) == NormalizeAPIURL(env.APIURL)) {
+		if cfg, ok, err := MTLSConfigFromAuth(env.Auth); err != nil {
+			return nil, false, err
+		} else if ok {
+			return cfg, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func MTLSConfigFromAuth(auth *Auth) (*tls.Config, bool, error) {
+	if auth == nil || auth.MTLS == nil {
+		return nil, false, nil
+	}
+	if strings.TrimSpace(auth.MTLS.Certificate) == "" &&
+		strings.TrimSpace(auth.MTLS.Key) == "" &&
+		strings.TrimSpace(auth.MTLS.CertificateFile) == "" &&
+		strings.TrimSpace(auth.MTLS.KeyFile) == "" {
+		return nil, false, nil
+	}
+	cfg, err := loadMTLSConfig(
+		auth.MTLS.Certificate,
+		auth.MTLS.Key,
+		auth.MTLS.CertificateFile,
+		auth.MTLS.KeyFile,
+	)
+	if err != nil {
+		return nil, false, err
+	}
+	return cfg, true, nil
+}
+
+func loadMTLSConfig(certPEM string, keyPEM string, certFile string, keyFile string) (*tls.Config, error) {
+	certPEM = strings.TrimSpace(certPEM)
+	keyPEM = strings.TrimSpace(keyPEM)
+	certFile = strings.TrimSpace(certFile)
+	keyFile = strings.TrimSpace(keyFile)
+	hasInline := certPEM != "" || keyPEM != ""
+	hasFiles := certFile != "" || keyFile != ""
+	if hasInline && hasFiles {
+		return nil, errors.New("mTLS certificate and key must be configured either inline or with files, not both")
+	}
+	var certificate tls.Certificate
+	var err error
+	switch {
+	case hasInline:
+		if certPEM == "" || keyPEM == "" {
+			return nil, errors.New("mTLS inline certificate and key are both required")
+		}
+		certificate, err = tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	case hasFiles:
+		if certFile == "" || keyFile == "" {
+			return nil, errors.New("mTLS certificate and key files are both required")
+		}
+		certificate, err = tls.LoadX509KeyPair(certFile, keyFile)
+	default:
+		return nil, errors.New("mTLS certificate and key are required")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load mTLS certificate: %w", err)
+	}
+	return &tls.Config{Certificates: []tls.Certificate{certificate}}, nil
 }
 
 func TokenFromAuth(auth *Auth) (string, bool, error) {

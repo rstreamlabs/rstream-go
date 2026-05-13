@@ -20,6 +20,9 @@ func NewClient(options ClientOptions) (*Client, error) {
 	if options.Engine == "" {
 		return nil, errors.New("engine is required")
 	}
+	if options.Token != "" && tlsConfigHasClientCertificate(options.TLSClientConfig) {
+		return nil, errors.New("token and mTLS authentication cannot be used together")
+	}
 	engine := options.Engine
 	client := &Client{
 		EngineURL:       &engine,
@@ -32,6 +35,9 @@ func NewClient(options ClientOptions) (*Client, error) {
 		client.Token = &token
 	}
 	if options.NoToken {
+		client.NoToken = BoolPtr(true)
+	}
+	if options.Token == "" && tlsConfigHasClientCertificate(options.TLSClientConfig) {
 		client.NoToken = BoolPtr(true)
 	}
 	return client, nil

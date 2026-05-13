@@ -267,11 +267,6 @@ contexts:
 }
 
 func TestTunnelPropertiesFromSpecFullSurface(t *testing.T) {
-	dir := t.TempDir()
-	certPath := filepath.Join(dir, "ca.pem")
-	if err := os.WriteFile(certPath, []byte("PEM-FILE"), 0o600); err != nil {
-		t.Fatalf("write cert: %v", err)
-	}
 	props, err := tunnelPropertiesFromSpec(&TunnelSpec{
 		Publish:     rstream.BoolPtr(false),
 		Protocol:    "http",
@@ -287,11 +282,9 @@ func TestTunnelPropertiesFromSpecFullSurface(t *testing.T) {
 			Gate:    &HTTPGateSpec{Challenge: rstream.BoolPtr(true)},
 		},
 		TLS: &TLSSpec{
-			Mode:           "terminated",
-			MinVersion:     "tls1.3",
-			ALPNs:          []string{"h2"},
-			MTLS:           rstream.BoolPtr(true),
-			MTLSCACertFile: certPath,
+			Mode:       "terminated",
+			MinVersion: "tls1.3",
+			ALPNs:      []string{"h2"},
 		},
 	})
 	if err != nil {
@@ -321,20 +314,30 @@ func TestTunnelPropertiesFromSpecFullSurface(t *testing.T) {
 	if props.TLSMode == nil || *props.TLSMode != rstream.TLSModeTerminated || props.TLSMinVersion == nil || *props.TLSMinVersion != "tls1.3" {
 		t.Fatalf("unexpected TLS settings: %#v", props)
 	}
-	if props.MTLSCACertPEM == nil || *props.MTLSCACertPEM != "PEM-FILE" {
-		t.Fatalf("expected cert file contents, got %#v", props.MTLSCACertPEM)
-	}
 }
 
-func TestTunnelPropertiesFromSpecPrefersInlineCertificate(t *testing.T) {
+func TestTunnelPropertiesFromSpecReadsMTLSAuth(t *testing.T) {
 	props, err := tunnelPropertiesFromSpec(&TunnelSpec{
-		TLS: &TLSSpec{MTLSCACertInline: "  INLINE-PEM  ", MTLSCACertFile: "missing.pem"},
+		TLS: &TLSSpec{MTLS: rstream.BoolPtr(true)},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if props.MTLSCACertPEM == nil || *props.MTLSCACertPEM != "INLINE-PEM" {
-		t.Fatalf("inline cert should be trimmed and preferred, got %#v", props.MTLSCACertPEM)
+	if props.MTLSAuth == nil || !*props.MTLSAuth {
+		t.Fatalf("expected mTLS auth to be enabled, got %#v", props.MTLSAuth)
+	}
+}
+
+func TestTunnelPropertiesFromSpecAllowsMultiplePublishedAuthMethods(t *testing.T) {
+	props, err := tunnelPropertiesFromSpec(&TunnelSpec{
+		HTTP: &HTTPSpec{Auth: &HTTPAuthSpec{Token: rstream.BoolPtr(true)}},
+		TLS:  &TLSSpec{MTLS: rstream.BoolPtr(true)},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if props.TokenAuth == nil || !*props.TokenAuth || props.MTLSAuth == nil || !*props.MTLSAuth {
+		t.Fatalf("expected auth methods to be preserved, got %#v", props)
 	}
 }
 

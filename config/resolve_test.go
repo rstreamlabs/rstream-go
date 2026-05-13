@@ -3,8 +3,15 @@
 package config
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/base64"
 	"fmt"
+	"math/big"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -163,6 +170,96 @@ func TestResolveRejectsStoredTokenWithEngineOverride(t *testing.T) {
 	}
 	if resolved.Engine != "attacker.example:443" || resolved.Token != "explicit-token" {
 		t.Fatalf("unexpected resolved override: %#v", resolved)
+	}
+}
+
+func TestResolveSupportsMTLSAuthAndRejectsTokenConflict(t *testing.T) {
+	certFile, keyFile := writeTestClientCertificate(t)
+	certPEM, err := os.ReadFile(certFile)
+	if err != nil {
+		t.Fatalf("read cert: %v", err)
+	}
+	keyPEM, err := os.ReadFile(keyFile)
+	if err != nil {
+		t.Fatalf("read key: %v", err)
+	}
+	cfg := Config{
+		Defaults: Defaults{Context: &DefaultContext{Name: "primary"}},
+		Contexts: []Context{{
+			Name:   "primary",
+			Engine: "engine.example.com:443",
+			Auth:   &Auth{MTLS: &MTLS{CertificateFile: certFile, KeyFile: keyFile}},
+		}},
+	}
+	resolved, err := Resolve(ResolveInput{
+		Config:        cfg,
+		RequireEngine: true,
+		RequireToken:  true,
+	})
+	if err != nil {
+		t.Fatalf("Resolve(mTLS) error = %v", err)
+	}
+	if resolved.Token != "" || resolved.TLSClientConfig == nil || len(resolved.TLSClientConfig.Certificates) != 1 {
+		t.Fatalf("unexpected mTLS resolution: %#v", resolved)
+	}
+	cfg.Contexts[0].Auth = &Auth{MTLS: &MTLS{Certificate: string(certPEM), Key: string(keyPEM)}}
+	resolved, err = Resolve(ResolveInput{
+		Config:        cfg,
+		RequireEngine: true,
+		RequireToken:  true,
+	})
+	if err != nil {
+		t.Fatalf("Resolve(inline mTLS) error = %v", err)
+	}
+	if resolved.Token != "" || resolved.TLSClientConfig == nil || len(resolved.TLSClientConfig.Certificates) != 1 {
+		t.Fatalf("unexpected inline mTLS resolution: %#v", resolved)
+	}
+	_, err = Resolve(ResolveInput{
+		Config:       cfg,
+		FlagToken:    "token",
+		ResolveToken: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "token and mTLS authentication cannot be used together") {
+		t.Fatalf("expected token/mTLS conflict, got %v", err)
+	}
+}
+
+func TestResolveExplicitMTLSSuppressesStoredToken(t *testing.T) {
+	certFile, keyFile := writeTestClientCertificate(t)
+	cfg := Config{
+		Defaults: Defaults{Context: &DefaultContext{Name: "primary"}},
+		Contexts: []Context{{
+			Name:   "primary",
+			Engine: "engine.example.com:443",
+			Auth: &Auth{Token: &Token{Storage: &TokenStorage{
+				Kind:  TokenStorageInline,
+				Value: "stored-token",
+			}}},
+		}},
+	}
+	resolved, err := Resolve(ResolveInput{
+		Config:        cfg,
+		RequireEngine: true,
+		RequireToken:  true,
+		EnvMTLSCert:   certFile,
+		EnvMTLSKey:    keyFile,
+	})
+	if err != nil {
+		t.Fatalf("Resolve(explicit mTLS) error = %v", err)
+	}
+	if resolved.Token != "" || resolved.TLSClientConfig == nil {
+		t.Fatalf("explicit mTLS should suppress stored token: %#v", resolved)
+	}
+	_, err = Resolve(ResolveInput{
+		Config:        cfg,
+		RequireEngine: true,
+		RequireToken:  true,
+		EnvToken:      "env-token",
+		EnvMTLSCert:   certFile,
+		EnvMTLSKey:    keyFile,
+	})
+	if err == nil || !strings.Contains(err.Error(), "token and mTLS authentication cannot be used together") {
+		t.Fatalf("expected explicit token/mTLS conflict, got %v", err)
 	}
 }
 
@@ -357,4 +454,40 @@ func TestIsTokenExpired(t *testing.T) {
 
 func unsignedJWT(payload string) string {
 	return "header." + base64.RawURLEncoding.EncodeToString([]byte(payload)) + ".signature"
+}
+
+func writeTestClientCertificate(t *testing.T) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "rstream-test-client"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("CreateCertificate() error = %v", err)
+	}
+	certFile := filepath.Join(dir, "client.crt")
+	keyFile := filepath.Join(dir, "client.key")
+	if err := os.WriteFile(certFile, pemBlock("CERTIFICATE", der), 0o600); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+	if err := os.WriteFile(keyFile, pemBlock("RSA PRIVATE KEY", x509.MarshalPKCS1PrivateKey(key)), 0o600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+	return certFile, keyFile
+}
+
+func pemBlock(kind string, der []byte) []byte {
+	return []byte("-----BEGIN " + kind + "-----\n" +
+		base64.StdEncoding.EncodeToString(der) +
+		"\n-----END " + kind + "-----\n")
 }

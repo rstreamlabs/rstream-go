@@ -39,3 +39,24 @@ func TestNewClientValidatesAndCopiesOptions(t *testing.T) {
 		t.Fatalf("NoToken flag not applied")
 	}
 }
+
+func TestNewClientRejectsTokenAndMTLSCredentials(t *testing.T) {
+	tlsCfg := &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{{1}}}}}
+	if _, err := NewClient(ClientOptions{
+		Engine:          "engine.example.com:443",
+		Token:           "token",
+		TLSClientConfig: tlsCfg,
+	}); err == nil || !strings.Contains(err.Error(), "token and mTLS authentication cannot be used together") {
+		t.Fatalf("expected token/mTLS conflict, got %v", err)
+	}
+	client, err := NewClient(ClientOptions{
+		Engine:          "engine.example.com:443",
+		TLSClientConfig: tlsCfg,
+	})
+	if err != nil {
+		t.Fatalf("NewClient(mTLS) error = %v", err)
+	}
+	if client.NoToken == nil || !*client.NoToken {
+		t.Fatalf("mTLS client should suppress token auth details")
+	}
+}

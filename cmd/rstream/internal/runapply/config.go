@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/rstreamlabs/rstream-go"
@@ -58,12 +57,10 @@ type HTTPGateSpec struct {
 }
 
 type TLSSpec struct {
-	Mode             string   `yaml:"mode,omitempty"`
-	MinVersion       string   `yaml:"minVersion,omitempty"`
-	ALPNs            []string `yaml:"alpns,omitempty"`
-	MTLS             *bool    `yaml:"mtls,omitempty"`
-	MTLSCACertFile   string   `yaml:"mtlsCACertFile,omitempty"`
-	MTLSCACertInline string   `yaml:"mtlsCACertPEM,omitempty"`
+	Mode       string   `yaml:"mode,omitempty"`
+	MinVersion string   `yaml:"minVersion,omitempty"`
+	ALPNs      []string `yaml:"alpns,omitempty"`
+	MTLS       *bool    `yaml:"mtls,omitempty"`
 }
 
 type ContextEntry struct {
@@ -357,18 +354,7 @@ func tunnelPropertiesFromSpec(spec *TunnelSpec) (rstream.TunnelProperties, error
 			props.TLSALPNs = spec.TLS.ALPNs
 		}
 		if spec.TLS.MTLS != nil {
-			props.MTLS = spec.TLS.MTLS
-		}
-		if strings.TrimSpace(spec.TLS.MTLSCACertInline) != "" {
-			val := strings.TrimSpace(spec.TLS.MTLSCACertInline)
-			props.MTLSCACertPEM = &val
-		} else if strings.TrimSpace(spec.TLS.MTLSCACertFile) != "" {
-			pem, err := os.ReadFile(filepath.Clean(spec.TLS.MTLSCACertFile))
-			if err != nil {
-				return props, fmt.Errorf("failed to read mtlsCACertFile: %w", err)
-			}
-			val := string(pem)
-			props.MTLSCACertPEM = &val
+			props.MTLSAuth = spec.TLS.MTLS
 		}
 	}
 	return props, nil

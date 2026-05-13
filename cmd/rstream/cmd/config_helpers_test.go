@@ -140,7 +140,7 @@ func TestResolveControlPlaneIgnoresDefaultContext(t *testing.T) {
 		t.Fatalf("resolveControlPlane() error = %v", err)
 	}
 	if runtime.Resolved.Context != nil || runtime.Resolved.Token != "api-token" {
-		t.Fatalf("control-plane runtime should ignore default context: %#v", runtime.Resolved)
+		t.Fatalf("Control plane API runtime should ignore default context: %#v", runtime.Resolved)
 	}
 }
 

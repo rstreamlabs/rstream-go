@@ -46,7 +46,7 @@ func handleConnection(conn net.Conn) error {
 func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	name := "stream-echo"
 	if publish {
-		// List tunnels to find the published host using rstream API (data plane)
+		// List tunnels to find the published host using the Engine API.
 		tunnels, err := client.ListTunnels(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("failed to list tunnels: %w", err)

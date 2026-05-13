@@ -42,6 +42,7 @@ type Context struct {
 
 type Auth struct {
 	Token *Token `yaml:"token,omitempty"`
+	MTLS  *MTLS  `yaml:"mtls,omitempty"`
 }
 
 type Token struct {
@@ -51,6 +52,13 @@ type Token struct {
 type TokenStorage struct {
 	Kind  string `yaml:"kind,omitempty"`
 	Value string `yaml:"value,omitempty"`
+}
+
+type MTLS struct {
+	Certificate     string `yaml:"certificate,omitempty"`
+	CertificateFile string `yaml:"certificateFile,omitempty"`
+	Key             string `yaml:"key,omitempty"`
+	KeyFile         string `yaml:"keyFile,omitempty"`
 }
 
 func (c *Config) EnsureVersion() {

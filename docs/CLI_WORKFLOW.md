@@ -8,9 +8,9 @@ Tunnel creation is documented separately.
 
 ### Environment
 
-An **environment** represents a control-plane API URL. It stores:
-- the account-wide token for that control plane
-- transport defaults for data-plane connections
+An **environment** represents a Control plane API URL. It stores:
+- the account-wide token for that Control plane API
+- transport defaults for Engine API connections
 
 Environments are identified by `apiUrl`.
 
@@ -24,14 +24,14 @@ Projects are typically created and managed from the rstream dashboard.
 ### Context
 
 A **context** is a local, named configuration used by the CLI at runtime. It defines:
-- the engine endpoint to use (data plane)
+- the engine endpoint to use for Engine API operations
 - the authentication method and credentials
 
 A single machine can store multiple contexts and switch between them.
 
 Contexts are stored independently from environments. A context may optionally reference an environment via
 `apiUrl` to inherit the environment token and transport defaults. Contexts without an `apiUrl` are unlinked
-and do not inherit control-plane tokens.
+and do not inherit Control plane API tokens.
 
 The default context stores only the context name. If duplicate names exist, use `--api-url` to disambiguate
 or ensure context names are unique.
@@ -67,6 +67,27 @@ Appropriate for servers, CI runners, and embedded systems that must not rely on 
 - A **project-scoped token** is used.
 - A context is created explicitly with `--engine` and `--token`.
 - Credentials remain narrowly scoped to a single project.
+
+### Agent mTLS
+
+Use agent mTLS when the engine should authenticate the agent with a client certificate instead of a token.
+
+- The context can store `auth.mtls.certificate` and `auth.mtls.key` inline, or `auth.mtls.certificateFile` and `auth.mtls.keyFile` paths.
+- `RSTREAM_MTLS_CERT_FILE` and `RSTREAM_MTLS_KEY_FILE` can provide the certificate and key for automation.
+- Token authentication and mTLS authentication cannot be used together on the same engine connection.
+- When `RSTREAM_MTLS_CERT_FILE` and `RSTREAM_MTLS_KEY_FILE` are set, the resolver uses mTLS for the Engine API connection and does not fall back to a stored context token.
+- If mTLS variables are set together with `RSTREAM_AUTHENTICATION_TOKEN`, resolution fails before connecting.
+- Certificate and key inputs must be complete pairs. File-based and inline certificate material cannot be mixed in the same auth block.
+
+```yaml
+contexts:
+  - name: prod-mtls
+    engine: project.cluster.example:443
+    auth:
+      mtls:
+        certificateFile: /etc/rstream/client.pem
+        keyFile: /etc/rstream/client-key.pem
+```
 
 ## Developer machine path
 
@@ -120,6 +141,8 @@ Alternative token inputs:
 rstream context create <name> --engine <host:port> --stdin --default
 rstream context create <name> --engine <host:port> --token-file /path/to/token --default
 ```
+
+For mTLS agent authentication, store certificate paths in the selected config context or set `RSTREAM_MTLS_CERT_FILE` and `RSTREAM_MTLS_KEY_FILE`.
 
 ### 2) Forward a local port
 
@@ -200,7 +223,7 @@ Commands that wait for browser approval keep progress messages on stderr when `-
 
 ## Diagnostics
 
-Run `rstream doctor -o json` after setup changes or when troubleshooting. It checks local config, selected context, token claims, control-plane authentication, project resolution, engine address, DNS, TLS or QUIC transport, engine clients, and engine tunnels without printing token values.
+Run `rstream doctor -o json` after setup changes or when troubleshooting. It checks local config, selected context, token claims, Control plane API authentication, project resolution, engine address, DNS, TLS or QUIC transport, engine clients, and engine tunnels without printing token values.
 
 ## Logout
 

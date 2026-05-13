@@ -13,7 +13,7 @@ import (
 )
 
 func validateToken(ctx context.Context, apiURL, token string) error {
-	logger := slog.With("component", "control-plane.validate-token")
+	logger := slog.With("component", "control_plane_api.validate-token")
 	if strings.TrimSpace(token) == "" {
 		return errors.New("token is required")
 	}
