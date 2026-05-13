@@ -349,20 +349,10 @@ if env -u RSTREAM_CONTEXT -u RSTREAM_AUTHENTICATION_TOKEN \
   RSTREAM_ENGINE="$PRO_ENGINE" \
   RSTREAM_MTLS_CERT_FILE="$TMP_DIR/client.crt" \
   RSTREAM_MTLS_KEY_FILE="$TMP_DIR/client.key" \
-  "$RSTREAM_BIN" tunnel list -o json >/dev/null; then
-  pass "go agent mTLS authenticates Engine API"
-else
-  fail "go agent mTLS authenticates Engine API" "tunnel list failed"
-fi
-
-if env -u RSTREAM_CONTEXT -u RSTREAM_AUTHENTICATION_TOKEN \
-  RSTREAM_ENGINE="$BASIC_ENGINE" \
-  RSTREAM_MTLS_CERT_FILE="$TMP_DIR/client.crt" \
-  RSTREAM_MTLS_KEY_FILE="$TMP_DIR/client.key" \
   "$RSTREAM_BIN" tunnel list -o json >/dev/null 2>&1; then
-  fail "mTLS project grant denies another project" "Basic project accepted Pro-only credential"
+  fail "Engine HTTP API rejects certificate-only mTLS authentication" "certificate-only tunnel list succeeded"
 else
-  pass "mTLS project grant denies another project"
+  pass "Engine HTTP API rejects certificate-only mTLS authentication"
 fi
 
 if env -u RSTREAM_CONTEXT \
@@ -376,16 +366,6 @@ elif grep -q "token and mTLS authentication cannot be used together" "$TMP_DIR/c
   pass "go rejects token and mTLS agent auth conflict"
 else
   fail "go rejects token and mTLS agent auth conflict" "unexpected error: $(tail -1 "$TMP_DIR/conflict.log")"
-fi
-
-if env -u RSTREAM_CONTEXT -u RSTREAM_AUTHENTICATION_TOKEN \
-  RSTREAM_ENGINE="$PRO_ENGINE" \
-  RSTREAM_MTLS_CERT_FILE="$TMP_DIR/denied.crt" \
-  RSTREAM_MTLS_KEY_FILE="$TMP_DIR/denied.key" \
-  "$RSTREAM_BIN" tunnel list -o json >/dev/null 2>&1; then
-  fail "mTLS credential without Engine API permissions is denied" "permissionless credential listed tunnels"
-else
-  pass "mTLS credential without Engine API permissions is denied"
 fi
 
 start_upstream "mtls-published"
