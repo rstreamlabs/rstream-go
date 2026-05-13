@@ -4,7 +4,7 @@ The examples use the same config/env resolution as the CLI via `config.NewClient
 
 ## Prerequisites
 
-Set a default context or `RSTREAM_ENGINE`. If your engine requires token authentication, set `RSTREAM_AUTHENTICATION_TOKEN`. If it requires mTLS agent authentication, set `RSTREAM_MTLS_CERT_FILE` and `RSTREAM_MTLS_KEY_FILE` instead.
+Set a default context or `RSTREAM_ENGINE`. If your engine requires token authentication, set `RSTREAM_AUTHENTICATION_TOKEN`. If the example opens an agent control-channel connection and it requires mTLS agent authentication, set `RSTREAM_MTLS_CERT_FILE` and `RSTREAM_MTLS_KEY_FILE` instead. Examples that call the Engine HTTP API require token authentication.
 
 Typical setup (CLI):
 

@@ -146,11 +146,11 @@ These variables are shared across CLI and SDK configuration resolution. Prefer c
 - `RSTREAM_CONTEXT`: Select the context by name.
 - `RSTREAM_ENGINE`: Override the engine URL used for Engine API operations.
 - `RSTREAM_AUTHENTICATION_TOKEN`: Override the authentication token.
-- `RSTREAM_MTLS_CERT_FILE`: Client certificate file for mTLS engine authentication.
-- `RSTREAM_MTLS_KEY_FILE`: Client private key file for mTLS engine authentication.
+- `RSTREAM_MTLS_CERT_FILE`: Client certificate file for mTLS agent authentication.
+- `RSTREAM_MTLS_KEY_FILE`: Client private key file for mTLS agent authentication.
 - `RSTREAM_API_URL`: Override the Control plane API URL.
 
-Resolution behavior follows the same model used by `config.NewClientFromEnv()`: explicit SDK options are evaluated first, then environment overrides, then context/environment values from the config file. `RSTREAM_CONFIG` selects the config file path before fallback to the default config location. Token authentication and mTLS engine authentication are mutually exclusive. When the mTLS certificate and key variables are set, config-derived tokens are not used; setting mTLS variables together with `RSTREAM_AUTHENTICATION_TOKEN` is an error.
+Resolution behavior follows the same model used by `config.NewClientFromEnv()`: explicit SDK options are evaluated first, then environment overrides, then context/environment values from the config file. `RSTREAM_CONFIG` selects the config file path before fallback to the default config location. Token authentication and mTLS agent authentication are mutually exclusive for the control-channel connection. When the mTLS certificate and key variables are set, config-derived tokens are not used for that connection; setting mTLS variables together with `RSTREAM_AUTHENTICATION_TOKEN` is an error. Engine HTTP API requests use token authentication.
 
 ## Usage
 
@@ -315,7 +315,7 @@ make nupkg       # Create Windows NuGet packages
 
 ## Code examples
 
-The Go SDK enables applications to create and manage tunnels programmatically. The examples below use `config.NewClientFromEnv()` to read the same config and environment settings as the CLI. Ensure a default context (or `RSTREAM_ENGINE`) is set, and provide either `RSTREAM_AUTHENTICATION_TOKEN` or the mTLS certificate/key environment variables if the selected engine requires authentication.
+The Go SDK enables applications to create and manage tunnels programmatically. The examples below use `config.NewClientFromEnv()` to read the same config and environment settings as the CLI. Ensure a default context (or `RSTREAM_ENGINE`) is set, and provide either `RSTREAM_AUTHENTICATION_TOKEN` or the mTLS certificate/key environment variables if the selected agent control channel requires authentication. Engine HTTP API operations require token authentication.
 
 ### Managed TURN credentials
 
