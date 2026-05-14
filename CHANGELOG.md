@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.15.0](https://github.com/rstreamlabs/rstream-go/compare/v1.14.0...v1.15.0) (2026-05-14)
+
+
+### Features
+
+* add SCTP and SSE tunnel coverage ([a0fde77](https://github.com/rstreamlabs/rstream-go/commit/a0fde776383facece29e23109cdb8249d078bfd0))
+* support mTLS agent auth and runtime permission suites ([87e3480](https://github.com/rstreamlabs/rstream-go/commit/87e348093a83d48a1e0491822677bc05cb8be8f7))
+
+
+### Bug Fixes
+
+* clarify mtls agent authentication limits ([229e26d](https://github.com/rstreamlabs/rstream-go/commit/229e26dd5ad9e82e7e6d3da3ff5d053d6afb0d30))
+* harden go sdk runtime coverage ([ccef80b](https://github.com/rstreamlabs/rstream-go/commit/ccef80bb1bd259ad29bff31d4f5a1c2a962beeb7))
+
 ## [1.14.0](https://github.com/rstreamlabs/rstream-go/compare/v1.13.0...v1.14.0) (2026-05-01)
 
 
