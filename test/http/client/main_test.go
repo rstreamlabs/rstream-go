@@ -2,7 +2,14 @@
 
 package main
 
-import "testing"
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
 
 func TestHostPortFromPublishedHost(t *testing.T) {
 	tests := []struct {
@@ -25,5 +32,37 @@ func TestHostPortFromPublishedHost(t *testing.T) {
 				t.Fatalf("hostPortFromPublishedHost() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestSSEURLFromPingURL(t *testing.T) {
+	got := sseURLFromPingURL("https://example.com/ping")
+	if got != "https://example.com/events" {
+		t.Fatalf("sseURLFromPingURL() = %q", got)
+	}
+}
+
+func TestReadExpectedSSE(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for i := 1; i <= sseEventCount; i++ {
+			fmt.Fprintf(w, "id: %d\nevent: tick\ndata: event-%d\n\n", i, i)
+		}
+	}))
+	defer server.Close()
+	if err := readExpectedSSE(context.Background(), server.Client(), server.URL); err != nil {
+		t.Fatalf("readExpectedSSE() error = %v", err)
+	}
+}
+
+func TestReadExpectedSSERejectsWrongContentType(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintln(w, "data: event-1")
+	}))
+	defer server.Close()
+	err := readExpectedSSE(context.Background(), server.Client(), server.URL)
+	if err == nil || !strings.Contains(err.Error(), "content type") {
+		t.Fatalf("readExpectedSSE() error = %v", err)
 	}
 }

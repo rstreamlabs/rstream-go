@@ -4,9 +4,11 @@
 // matrix. It creates a DatagramTunnel and echoes incoming packets so the client
 // can verify relay through the engine.
 //
-// Variants: dtls, quic.
+// Variants: dtls, quic, sctp.
 // With --publish the tunnel is registered on the engine's DTLS or QUIC listener
-// with the matching Protocol; without it the SDK dialer path is used.
+// with the matching Protocol; without it the SDK dialer path is used. SCTP uses
+// pion/sctp on top of rstream datagrams, and uses the engine DTLS listener when
+// published.
 
 package main
 
@@ -28,6 +30,7 @@ import (
 	"syscall"
 
 	"github.com/pion/dtls/v3"
+	"github.com/pion/sctp"
 	"github.com/quic-go/quic-go"
 	rstream "github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
@@ -136,6 +139,42 @@ func handleQUICConn(conn *quic.Conn, expectedALPN string) {
 	}
 }
 
+func handleSCTPStream(stream *sctp.Stream) {
+	defer stream.Close()
+	buf := make([]byte, 2048)
+	for {
+		n, err := stream.Read(buf)
+		if n > 0 {
+			if _, werr := stream.WriteSCTP(buf[:n], sctp.PayloadTypeWebRTCString); werr != nil {
+				return
+			}
+		}
+		if err != nil {
+			if err != io.EOF {
+				log.Printf("sctp: stream read error: %v", err)
+			}
+			return
+		}
+	}
+}
+
+func handleSCTPConn(conn net.Conn) {
+	defer conn.Close()
+	assoc, err := sctp.Server(sctp.Config{NetConn: conn})
+	if err != nil {
+		log.Printf("sctp: association error: %v", err)
+		return
+	}
+	defer assoc.Close()
+	for {
+		stream, err := assoc.AcceptStream()
+		if err != nil {
+			return
+		}
+		go handleSCTPStream(stream)
+	}
+}
+
 func handleDTLSUpstreamConn(conn net.PacketConn, raddr net.Addr, certs []tls.Certificate, tlsALPN string) {
 	dtlsConn, err := dtls.Server(conn, raddr, &dtls.Config{Certificates: certs, SupportedProtocols: dtlsALPNs(tlsALPN)})
 	if err != nil {
@@ -156,6 +195,28 @@ func handleDTLSUpstreamConn(conn net.PacketConn, raddr net.Addr, certs []tls.Cer
 		}
 	}
 	handleDTLSConn(rstream.PacketConnFromDTLSConn(dtlsConn))
+}
+
+func handleSCTPDTLSUpstreamConn(conn net.PacketConn, raddr net.Addr, certs []tls.Certificate, tlsALPN string) {
+	dtlsConn, err := dtls.Server(conn, raddr, &dtls.Config{Certificates: certs, SupportedProtocols: dtlsALPNs(tlsALPN)})
+	if err != nil {
+		log.Printf("sctp dtls upstream: handshake error: %v", err)
+		conn.Close()
+		return
+	}
+	if err := dtlsConn.Handshake(); err != nil {
+		log.Printf("sctp dtls upstream: handshake error: %v", err)
+		dtlsConn.Close()
+		return
+	}
+	if tlsALPN != "" {
+		if state, ok := dtlsConn.ConnectionState(); !ok || state.NegotiatedProtocol != tlsALPN {
+			log.Printf("sctp dtls upstream: unexpected ALPN: got %q, want %q", state.NegotiatedProtocol, tlsALPN)
+			dtlsConn.Close()
+			return
+		}
+	}
+	handleSCTPConn(dtlsConn)
 }
 
 func createTunnel(ctx context.Context, client *rstream.Client, variant, name string, publish bool, hostname, tlsALPN string, upstreamTLS bool) (rstream.Tunnel, error) {
@@ -180,6 +241,11 @@ func createTunnel(ctx context.Context, client *rstream.Client, variant, name str
 			}
 		case "quic":
 			props.Protocol = rstream.ProtocolPtr(rstream.ProtocolQUIC)
+		case "sctp":
+			props.Protocol = rstream.ProtocolPtr(rstream.ProtocolDTLS)
+			if upstreamTLS {
+				props.UpstreamTLS = rstream.BoolPtr(true)
+			}
 		}
 		if tlsALPN != "" {
 			props.TLSALPNs = []string{tlsALPN}
@@ -277,11 +343,47 @@ func runQUIC(ctx context.Context, client *rstream.Client, name string, publish b
 	}
 }
 
+func runSCTP(ctx context.Context, client *rstream.Client, name string, publish bool, hostname, tlsALPN string, upstreamTLS bool) error {
+	tunnel, err := createTunnel(ctx, client, "sctp", name, publish, hostname, tlsALPN, upstreamTLS)
+	if err != nil {
+		return err
+	}
+	defer tunnel.Close()
+	host, err := tunnelReady(tunnel)
+	if err != nil {
+		return err
+	}
+	packetListener, ok := tunnel.(rstream.PacketListener)
+	if !ok {
+		return fmt.Errorf("tunnel does not implement rstream.PacketListener")
+	}
+	var certs []tls.Certificate
+	if upstreamTLS {
+		tlsCfg, err := generateTLSConfig("")
+		if err != nil {
+			return fmt.Errorf("tls config: %w", err)
+		}
+		certs = tlsCfg.Certificates
+	}
+	fmt.Printf("READY %s\n", host)
+	for {
+		conn, raddr, err := packetListener.Accept()
+		if err != nil {
+			return fmt.Errorf("accept: %w", err)
+		}
+		if upstreamTLS {
+			go handleSCTPDTLSUpstreamConn(conn, raddr, certs, tlsALPN)
+			continue
+		}
+		go handleSCTPConn(rstream.ConnFromPacketConn(conn, raddr))
+	}
+}
+
 func main() {
-	variant := flag.String("variant", "dtls", "variant: dtls, quic")
+	variant := flag.String("variant", "dtls", "variant: dtls, quic, sctp")
 	publish := flag.Bool("publish", false, "publish the tunnel on the engine's DTLS or QUIC listener")
 	hostname := flag.String("host", "", "requested tunnel hostname")
-	tlsALPN := flag.String("tls-alpn", "", "custom ALPN for published DTLS or QUIC tunnels")
+	tlsALPN := flag.String("tls-alpn", "", "custom ALPN for published DTLS, QUIC, or SCTP tunnels")
 	upstreamTLS := flag.Bool("upstream-tls", false, "connect from the edge to this server with upstream DTLS")
 	name := flag.String("name", "", "tunnel name (default: datagram-matrix-<variant>[-pub])")
 	flag.Parse()
@@ -312,7 +414,11 @@ func main() {
 		if err := runQUIC(ctx, client, *name, *publish, *hostname, *tlsALPN); err != nil {
 			log.Fatalf("server error: %v", err)
 		}
+	case "sctp":
+		if err := runSCTP(ctx, client, *name, *publish, *hostname, *tlsALPN, *upstreamTLS); err != nil {
+			log.Fatalf("server error: %v", err)
+		}
 	default:
-		log.Fatalf("unknown variant %q: must be dtls or quic", *variant)
+		log.Fatalf("unknown variant %q: must be dtls, quic, or sctp", *variant)
 	}
 }

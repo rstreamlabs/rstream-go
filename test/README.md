@@ -8,11 +8,11 @@ This directory contains end-to-end tests for the rstream Go SDK. Each subdirecto
 |-------|-------|----------------|
 | `websocket` | 9 | All upstream × downstream HTTP version combinations (H1, H2C, H3) |
 | `webtransport` | 1 | Aggregated WebTransport client run covering bidirectional streams, unidirectional streams, datagrams, multi-stream, and close codes |
-| `http` | 3 | HTTP tunnels over H1, H2C, and H3 |
+| `http` | 3 | HTTP tunnels over H1, H2C, and H3, including GET and SSE streaming |
 | `stream` | 7 | Bytestream tunnel: plain (unpublished), TLS via SDK dialer (unpublished), TLS via engine listener (published), TLS passthrough via engine listener, TLS via engine listener with upstream TLS, and ALPN rejection checks |
-| `datagram` | 8 | Datagram tunnel: DTLS via SDK dialer (unpublished), DTLS via engine listener (published, with and without upstream DTLS), QUIC via SDK dialer (unpublished), QUIC via engine listener (published), and ALPN rejection checks |
+| `datagram` | 12 | Datagram tunnel: DTLS via SDK dialer (unpublished), DTLS via engine listener (published, with and without upstream DTLS), QUIC via SDK dialer (unpublished), QUIC via engine listener (published), SCTP via pion/sctp over SDK datagrams and published DTLS, and ALPN rejection checks |
 
-**Total: 28 runner cases.** The WebTransport runner case contains multiple protocol subcases internally.
+**Total: 32 runner cases.** The WebTransport runner case contains multiple protocol subcases internally.
 
 The stream and datagram suites each cover two connectivity modes:
 
@@ -189,14 +189,14 @@ test/
 │   ├── server/   — WebTransport echo server
 │   └── client/   — runs all 10 test cases sequentially
 ├── http/
-│   ├── server/   — HTTP tunnel server (h1/h2c/h3)
-│   └── client/   — HTTP client exercising each variant
+│   ├── server/   — HTTP tunnel server (h1/h2c/h3, GET and SSE)
+│   └── client/   — HTTP client exercising GET and SSE for each variant
 ├── stream/
 │   ├── server/   — Bytestream echo server (plain / tls, published or not)
 │   └── client/   — Bytestream client (plain / tls, direct or via SDK dialer)
 └── datagram/
-    ├── server/   — Datagram echo server (dtls / quic, published or not)
-    └── client/   — Datagram client (dtls / quic, direct or via SDK dialer)
+    ├── server/   — Datagram echo server (dtls / quic / sctp, published or not)
+    └── client/   — Datagram client (dtls / quic / sctp, direct or via SDK dialer)
 ```
 
 ## Flags
@@ -226,10 +226,10 @@ test/
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--variant` | `dtls` | `dtls` or `quic` |
+| `--variant` | `dtls` | `dtls`, `quic`, or `sctp` |
 | `--publish` | false | Register on engine's DTLS/QUIC listener |
 | `--host` | — | Requested Stable domain hostname |
-| `--tls-alpn` | — | Custom ALPN for published DTLS or QUIC tunnels |
+| `--tls-alpn` | — | Custom ALPN for published DTLS, QUIC, or SCTP tunnels |
 | `--upstream-tls` | false | Use DTLS between the edge and the server for published DTLS tunnels |
 | `--name` | auto | Tunnel name |
 
@@ -237,7 +237,7 @@ test/
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--variant` | `dtls` | `dtls` or `quic` |
+| `--variant` | `dtls` | `dtls`, `quic`, or `sctp` |
 | `--addr` | — | Engine edge address for direct (published) connections |
-| `--tls-alpn` | — | Custom ALPN for published DTLS or QUIC connections |
+| `--tls-alpn` | — | Custom ALPN for published DTLS, QUIC, or SCTP connections |
 | `--tunnel` | `datagram-matrix` | Tunnel name prefix for SDK dialer |

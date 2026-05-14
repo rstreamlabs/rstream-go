@@ -1,12 +1,12 @@
 // See LICENSE file in the project root for license information.
 
-// http-ws-h3-server starts a WebSocket server over HTTP/3 behind an rstream
-// DatagramTunnel. Downstream clients connect with any standard WebSocket
-// client — rstream translates the incoming protocol (H1 or H2 or H3) to
-// Extended CONNECT over HTTP/3 (RFC 9220) toward this server transparently.
+// http-ws-h3-server starts a WebSocket server over HTTP/3 behind a published
+// rstream HTTP tunnel. Downstream clients connect with any standard WebSocket
+// client; rstream translates the public WebSocket request to Extended CONNECT
+// over HTTP/3 (RFC 9220) upstream.
 //
-// Run: go run . (internal only)
-// Client: use examples/http-ws-h1-client with -tunnel ws-h3-example.
+// Run: go run .
+// Client: use examples/http-ws-h1-client with -publish -tunnel ws-h3-example.
 
 package main
 
@@ -159,12 +159,13 @@ func run(ctx context.Context, client *rstream.Client) error {
 	}
 	defer ctrl.Close()
 	// Type: DatagramTunnel + HTTPVersion: HTTP3 configures an HTTP/3 upstream.
-	// Downstream clients use any standard WebSocket client; rstream translates
-	// from H1/H2/H3 WebSocket to Extended CONNECT (RFC 9220) toward this server.
+	// Downstream clients still use standard WebSocket over the published edge;
+	// rstream translates to Extended CONNECT (RFC 9220) upstream.
 	tunnel, err := ctrl.CreateTunnel(ctx, rstream.TunnelProperties{
 		Name:        rstream.StringPtr("ws-h3-example"),
 		Type:        rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
-		Publish:     rstream.BoolPtr(false),
+		Publish:     rstream.BoolPtr(true),
+		Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
 		HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP3),
 	})
 	if err != nil {

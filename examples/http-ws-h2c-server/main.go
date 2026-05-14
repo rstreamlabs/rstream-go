@@ -1,12 +1,12 @@
 // See LICENSE file in the project root for license information.
 
 // http-ws-h2c-server starts a WebSocket server over HTTP/2 cleartext (h2c)
-// behind an rstream BytestreamTunnel. Downstream clients connect using a
-// standard HTTP/1.1 or HTTP/2 WebSocket client — rstream translates protocols
-// transparently. The server uses Extended CONNECT (RFC 8441).
+// behind a published rstream HTTP tunnel. Downstream clients connect using a
+// standard WebSocket client; rstream translates the public WebSocket request to
+// h2c Extended CONNECT (RFC 8441) upstream.
 //
-// Run: GODEBUG=http2xconnect=1 go run . (internal only)
-// Client: use examples/http-ws-h1-client with -tunnel ws-h2c-example.
+// Run: GODEBUG=http2xconnect=1 go run .
+// Client: use examples/http-ws-h1-client with -publish -tunnel ws-h2c-example.
 
 package main
 
@@ -131,11 +131,12 @@ func run(ctx context.Context, client *rstream.Client) error {
 	}
 	defer ctrl.Close()
 	// HTTPVersion: rstream.HTTP2 tells the engine that the upstream speaks h2c.
-	// Downstream clients still connect using any standard WebSocket client —
-	// the engine handles the H1→H2C or H2→H2C protocol translation automatically.
+	// Downstream clients still use standard WebSocket over the published edge;
+	// the engine handles the H1/H2 -> H2C protocol translation.
 	tunnel, err := ctrl.CreateTunnel(ctx, rstream.TunnelProperties{
 		Name:        rstream.StringPtr("ws-h2c-example"),
-		Publish:     rstream.BoolPtr(false),
+		Publish:     rstream.BoolPtr(true),
+		Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
 		HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP2),
 	})
 	if err != nil {

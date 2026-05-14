@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -30,6 +31,7 @@ import (
 )
 
 const pingPayload = "pong\n"
+const sseEventCount = 3
 
 // hostFromAddr extracts "host:443" from a forwarding address like
 // "https://foo.rstream.io" → "foo.rstream.io:443".
@@ -83,7 +85,54 @@ func findTunnelHost(client *rstream.Client, name string) (string, error) {
 	return "", fmt.Errorf("tunnel %q not found or has no host", name)
 }
 
-func runH1(ctx context.Context, rstreamClient *rstream.Client, rawAddr string) error {
+func sseURLFromPingURL(rawURL string) string {
+	return strings.TrimSuffix(rawURL, "/ping") + "/events"
+}
+
+func readExpectedSSE(ctx context.Context, httpClient *http.Client, rawURL string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return fmt.Errorf("new request: %w", err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("do SSE request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected SSE status: %d", resp.StatusCode)
+	}
+	if contentType := resp.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/event-stream") {
+		return fmt.Errorf("unexpected SSE content type: %q", contentType)
+	}
+	scanner := bufio.NewScanner(resp.Body)
+	var events []string
+	for scanner.Scan() {
+		line := scanner.Text()
+		if data, ok := strings.CutPrefix(line, "data: "); ok {
+			events = append(events, data)
+			if len(events) == sseEventCount {
+				break
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read SSE stream: %w", err)
+	}
+	if len(events) != sseEventCount {
+		return fmt.Errorf("SSE event count = %d, want %d", len(events), sseEventCount)
+	}
+	for i, got := range events {
+		want := fmt.Sprintf("event-%d", i+1)
+		if got != want {
+			return fmt.Errorf("SSE event %d = %q, want %q", i+1, got, want)
+		}
+	}
+	return nil
+}
+
+func runH1(ctx context.Context, rstreamClient *rstream.Client, rawAddr string, checkSSE bool) error {
 	var targetURL string
 	var transport http.RoundTripper
 	if rawAddr != "" {
@@ -131,10 +180,13 @@ func runH1(ctx context.Context, rstreamClient *rstream.Client, rawAddr string) e
 	if string(body) != pingPayload {
 		return fmt.Errorf("body mismatch: got %q, want %q", string(body), pingPayload)
 	}
+	if checkSSE {
+		return readExpectedSSE(ctx, httpClient, sseURLFromPingURL(targetURL))
+	}
 	return nil
 }
 
-func runH2C(ctx context.Context, rstreamClient *rstream.Client, rawAddr string) error {
+func runH2C(ctx context.Context, rstreamClient *rstream.Client, rawAddr string, checkSSE bool) error {
 	var targetURL string
 	var transport http.RoundTripper
 	if rawAddr != "" {
@@ -183,10 +235,13 @@ func runH2C(ctx context.Context, rstreamClient *rstream.Client, rawAddr string) 
 	if string(body) != pingPayload {
 		return fmt.Errorf("body mismatch: got %q, want %q", string(body), pingPayload)
 	}
+	if checkSSE {
+		return readExpectedSSE(ctx, httpClient, sseURLFromPingURL(targetURL))
+	}
 	return nil
 }
 
-func runH3(ctx context.Context, rstreamClient *rstream.Client, rawAddr string) error {
+func runH3(ctx context.Context, rstreamClient *rstream.Client, rawAddr string, checkSSE bool) error {
 	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 	var targetURL string
 	var transport http.RoundTripper
@@ -253,6 +308,9 @@ func runH3(ctx context.Context, rstreamClient *rstream.Client, rawAddr string) e
 	}
 	if string(body) != pingPayload {
 		return fmt.Errorf("body mismatch: got %q, want %q", string(body), pingPayload)
+	}
+	if checkSSE {
+		return readExpectedSSE(ctx, httpClient, sseURLFromPingURL(targetURL))
 	}
 	return nil
 }
@@ -396,6 +454,7 @@ func main() {
 	h3ReuseFirst := flag.String("h3-reuse-first", "", "first published HTTPS URL for HTTP/3 connection reuse")
 	h3ReuseSecond := flag.String("h3-reuse-second", "", "second published HTTPS URL for HTTP/3 connection reuse")
 	locationContains := flag.String("location-contains", "", "substring expected in redirect Location headers")
+	checkSSE := flag.Bool("sse", false, "also verify /events as a Server-Sent Events stream")
 	timeout := flag.Duration("timeout", 30*time.Second, "per-case timeout")
 	flag.Parse()
 	if *h3URL != "" || *h3RedirectURL != "" || *h3ReuseFirst != "" || *h3ReuseSecond != "" {
@@ -444,19 +503,19 @@ func main() {
 		{
 			name: "h1",
 			run: func(ctx context.Context) error {
-				return runH1(ctx, client, rawAddr)
+				return runH1(ctx, client, rawAddr, *checkSSE)
 			},
 		},
 		{
 			name: "h2c",
 			run: func(ctx context.Context) error {
-				return runH2C(ctx, client, rawAddr)
+				return runH2C(ctx, client, rawAddr, *checkSSE)
 			},
 		},
 		{
 			name: "h3",
 			run: func(ctx context.Context) error {
-				return runH3(ctx, client, rawAddr)
+				return runH3(ctx, client, rawAddr, *checkSSE)
 			},
 		},
 	}
