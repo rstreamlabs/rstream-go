@@ -50,6 +50,12 @@ type connWrapper struct {
 	raddr net.Addr
 }
 
+type packetConnWrapper struct {
+	inner net.PacketConn
+	mu    sync.RWMutex
+	raddr net.Addr
+}
+
 type packetListenerWrapper struct {
 	mu     sync.Mutex
 	closed bool
@@ -93,6 +99,11 @@ func PacketConnFromConn(c net.Conn, raddr net.Addr, mode PacketMode) net.PacketC
 
 func PacketConnFromDTLSConn(c *dtls.Conn) net.PacketConn {
 	return PacketConnFromConn(c, nil, PacketModeRaw)
+}
+
+// ConnFromPacketConn adapts a PacketConn with a fixed remote address into a net.Conn.
+func ConnFromPacketConn(c net.PacketConn, raddr net.Addr) net.Conn {
+	return &packetConnWrapper{inner: c, raddr: raddr}
 }
 
 func (c *connWrapper) ReadFrom(p []byte) (int, net.Addr, error) {
@@ -141,6 +152,69 @@ func (c *connWrapper) SetReadDeadline(t time.Time) error {
 
 func (c *connWrapper) SetWriteDeadline(t time.Time) error {
 	return c.inner.SetWriteDeadline(t)
+}
+
+func (c *packetConnWrapper) Read(p []byte) (int, error) {
+	for {
+		n, raddr, err := c.inner.ReadFrom(p)
+		if err != nil {
+			return 0, err
+		}
+		c.mu.Lock()
+		if c.raddr == nil {
+			c.raddr = raddr
+			c.mu.Unlock()
+			return n, nil
+		}
+		same := sameAddr(c.raddr, raddr)
+		c.mu.Unlock()
+		if same {
+			return n, nil
+		}
+	}
+}
+
+func (c *packetConnWrapper) Write(p []byte) (int, error) {
+	c.mu.RLock()
+	raddr := c.raddr
+	c.mu.RUnlock()
+	if raddr == nil {
+		return 0, errors.New("remote address is not set")
+	}
+	return c.inner.WriteTo(p, raddr)
+}
+
+func (c *packetConnWrapper) Close() error {
+	return c.inner.Close()
+}
+
+func (c *packetConnWrapper) LocalAddr() net.Addr {
+	return c.inner.LocalAddr()
+}
+
+func (c *packetConnWrapper) RemoteAddr() net.Addr {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.raddr
+}
+
+func (c *packetConnWrapper) SetDeadline(t time.Time) error {
+	return c.inner.SetDeadline(t)
+}
+
+func (c *packetConnWrapper) SetReadDeadline(t time.Time) error {
+	return c.inner.SetReadDeadline(t)
+}
+
+func (c *packetConnWrapper) SetWriteDeadline(t time.Time) error {
+	return c.inner.SetWriteDeadline(t)
+}
+
+func sameAddr(a, b net.Addr) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Network() == b.Network() && a.String() == b.String()
 }
 
 func PacketConnFromPacketListener(l PacketListener) net.PacketConn {

@@ -33,6 +33,8 @@ import (
 	"golang.org/x/net/http2/h2c"
 )
 
+const sseEventCount = 3
+
 func generateTLSConfig() (*tls.Config, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
@@ -56,8 +58,27 @@ func handler(w http.ResponseWriter, _ *http.Request) {
 	fmt.Fprint(w, "pong\n")
 }
 
+func sseHandler(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	controller := http.NewResponseController(w)
+	for i := 1; i <= sseEventCount; i++ {
+		fmt.Fprintf(w, "id: %d\nevent: tick\ndata: event-%d\n\n", i, i)
+		if err := controller.Flush(); err != nil {
+			return
+		}
+	}
+}
+
+func newHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ping", handler)
+	mux.HandleFunc("/events", sseHandler)
+	return mux
+}
+
 func runH1(ctx context.Context, tunnel rstream.BytestreamTunnel) error {
-	srv := &http.Server{Handler: http.HandlerFunc(handler)}
+	srv := &http.Server{Handler: newHandler()}
 	go func() {
 		<-ctx.Done()
 		_ = srv.Close()
@@ -70,9 +91,7 @@ func runH1(ctx context.Context, tunnel rstream.BytestreamTunnel) error {
 }
 
 func runH2C(ctx context.Context, tunnel rstream.BytestreamTunnel) error {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/ping", handler)
-	srv := &http.Server{Handler: h2c.NewHandler(mux, &http2.Server{})}
+	srv := &http.Server{Handler: h2c.NewHandler(newHandler(), &http2.Server{})}
 	go func() {
 		<-ctx.Done()
 		_ = srv.Close()
@@ -89,11 +108,9 @@ func runH3(ctx context.Context, tunnel rstream.DatagramTunnel) error {
 	if err != nil {
 		return fmt.Errorf("TLS config: %w", err)
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("/ping", handler)
 	srv := &http3.Server{
 		TLSConfig: tlsCfg,
-		Handler:   mux,
+		Handler:   newHandler(),
 	}
 	errCh := make(chan error, 1)
 	go func() {

@@ -15,6 +15,7 @@ require (
 	github.com/moby/moby/api v1.54.2
 	github.com/moby/moby/client v0.4.1
 	github.com/pion/dtls/v3 v3.1.2
+	github.com/pion/sctp v1.9.5
 	github.com/rivo/tview v0.42.0
 	github.com/spf13/cobra v1.9.1
 	golang.org/x/net v0.53.0
@@ -51,6 +52,7 @@ require (
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
 	github.com/pion/logging v0.2.4 // indirect
+	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/transport/v4 v4.0.1 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect

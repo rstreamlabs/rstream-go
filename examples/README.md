@@ -27,6 +27,11 @@ Run an example:
 ./out/examples/http-h1-server --publish
 ```
 
+Useful protocol-focused examples:
+
+- `http-sse-server` / `http-sse-client`: Server-Sent Events over an HTTP tunnel.
+- `sctp-echo-server` / `sctp-echo-client`: SCTP streams with `pion/sctp` over datagram tunnels, and over the published DTLS edge.
+
 Generate managed TURN credentials from the active config context:
 
 ```bash

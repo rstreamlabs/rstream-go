@@ -181,6 +181,11 @@ if start_server "datagram/quic" datagram/server --variant quic; then
   stop_server
 fi
 
+if start_server "datagram/sctp" datagram/server --variant sctp; then
+  run_client "datagram/sctp" datagram/client --variant sctp
+  stop_server
+fi
+
 if start_server "datagram/dtls-published" datagram/server --variant dtls --publish --tls-alpn rstream-dtls-echo; then
   run_client "datagram/dtls-published" datagram/client --variant dtls --addr "$SERVER_ADDR" --tls-alpn rstream-dtls-echo
   stop_server
@@ -211,19 +216,34 @@ if start_server "datagram/quic-published-alpn-reject" datagram/server --variant 
   stop_server
 fi
 
+if start_server "datagram/sctp-published" datagram/server --variant sctp --publish --tls-alpn rstream-sctp-echo; then
+  run_client "datagram/sctp-published" datagram/client --variant sctp --addr "$SERVER_ADDR" --tls-alpn rstream-sctp-echo
+  stop_server
+fi
+
+if start_server "datagram/sctp-published-alpn-reject" datagram/server --variant sctp --publish --tls-alpn rstream-sctp-echo; then
+  run_client_expect_fail "datagram/sctp-published-alpn-reject" datagram/client --variant sctp --addr "$SERVER_ADDR" --tls-alpn rstream-sctp-wrong
+  stop_server
+fi
+
+if start_server "datagram/sctp-published-upstream-tls" datagram/server --variant sctp --publish --tls-alpn rstream-sctp-echo --upstream-tls; then
+  run_client "datagram/sctp-published-upstream-tls" datagram/client --variant sctp --addr "$SERVER_ADDR" --tls-alpn rstream-sctp-echo
+  stop_server
+fi
+
 echo "=== http ==="
 if start_server "http/h1" http/server --upstream h1; then
-  run_client "http/h1" http/client --upstream h1 --tunnel "http-matrix-h1"
+  run_client "http/h1" http/client --upstream h1 --tunnel "http-matrix-h1" --sse
   stop_server
 fi
 
 if start_server "http/h2c" http/server --upstream h2c; then
-  run_client "http/h2c" http/client --upstream h2c --tunnel "http-matrix-h2c"
+  run_client "http/h2c" http/client --upstream h2c --tunnel "http-matrix-h2c" --sse
   stop_server
 fi
 
 if start_server "http/h3" http/server --upstream h3; then
-  run_client "http/h3" http/client --upstream h3 --tunnel "http-matrix-h3"
+  run_client "http/h3" http/client --upstream h3 --tunnel "http-matrix-h3" --sse
   stop_server
 fi
 
