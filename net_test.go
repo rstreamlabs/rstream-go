@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/pion/sctp"
 )
 
 func TestPacketConnFromConnFramed(t *testing.T) {
@@ -148,6 +150,240 @@ func TestPacketListenerFromListenerAcceptsAndWrapsConnections(t *testing.T) {
 	}
 	if err := packetListener.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
+	}
+}
+
+func TestConnFromPacketConnWritesToFixedRemote(t *testing.T) {
+	server, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(server) error = %v", err)
+	}
+	defer server.Close()
+	client, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(client) error = %v", err)
+	}
+	defer client.Close()
+	conn := ConnFromPacketConn(client, server.LocalAddr())
+	defer conn.Close()
+	if conn.LocalAddr().String() != client.LocalAddr().String() {
+		t.Fatalf("LocalAddr() = %v, want %v", conn.LocalAddr(), client.LocalAddr())
+	}
+	if conn.RemoteAddr().String() != server.LocalAddr().String() {
+		t.Fatalf("RemoteAddr() = %v, want %v", conn.RemoteAddr(), server.LocalAddr())
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 16)
+		n, raddr, err := server.ReadFrom(buf)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		if string(buf[:n]) != "hello" {
+			errCh <- errors.New("unexpected request")
+			return
+		}
+		_, err = server.WriteTo([]byte("ack"), raddr)
+		errCh <- err
+	}()
+	if n, err := conn.Write([]byte("hello")); err != nil || n != 5 {
+		t.Fatalf("Write() = %d, %v; want 5, nil", n, err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline() error = %v", err)
+	}
+	buf := make([]byte, 16)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if string(buf[:n]) != "ack" {
+		t.Fatalf("Read() = %q, want ack", buf[:n])
+	}
+	if err := <-errCh; err != nil {
+		t.Fatalf("server error = %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if _, err := conn.Write([]byte("closed")); err == nil {
+		t.Fatalf("Write() after Close() error = nil")
+	}
+}
+
+func TestConnFromPacketConnLearnsRemoteAddress(t *testing.T) {
+	server, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(server) error = %v", err)
+	}
+	defer server.Close()
+	client, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(client) error = %v", err)
+	}
+	defer client.Close()
+	conn := ConnFromPacketConn(server, nil)
+	defer conn.Close()
+	if _, err := conn.Write([]byte("before-read")); err == nil || !strings.Contains(err.Error(), "remote address is not set") {
+		t.Fatalf("Write() before remote error = %v", err)
+	}
+	if _, err := client.WriteTo([]byte("hello"), server.LocalAddr()); err != nil {
+		t.Fatalf("client WriteTo() error = %v", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline() error = %v", err)
+	}
+	buf := make([]byte, 16)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if string(buf[:n]) != "hello" {
+		t.Fatalf("Read() = %q, want hello", buf[:n])
+	}
+	if conn.RemoteAddr().String() != client.LocalAddr().String() {
+		t.Fatalf("RemoteAddr() = %v, want %v", conn.RemoteAddr(), client.LocalAddr())
+	}
+	if _, err := conn.Write([]byte("ack")); err != nil {
+		t.Fatalf("Write() after remote error = %v", err)
+	}
+}
+
+func TestConnFromPacketConnSkipsUnexpectedRemote(t *testing.T) {
+	server, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(server) error = %v", err)
+	}
+	defer server.Close()
+	expected, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(expected) error = %v", err)
+	}
+	defer expected.Close()
+	noise, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(noise) error = %v", err)
+	}
+	defer noise.Close()
+	conn := ConnFromPacketConn(server, expected.LocalAddr())
+	defer conn.Close()
+	if _, err := noise.WriteTo([]byte("noise"), server.LocalAddr()); err != nil {
+		t.Fatalf("noise WriteTo() error = %v", err)
+	}
+	if _, err := expected.WriteTo([]byte("hello"), server.LocalAddr()); err != nil {
+		t.Fatalf("expected WriteTo() error = %v", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline() error = %v", err)
+	}
+	buf := make([]byte, 16)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+	if string(buf[:n]) != "hello" {
+		t.Fatalf("Read() = %q, want hello", buf[:n])
+	}
+}
+
+func TestConnFromPacketConnCarriesSCTP(t *testing.T) {
+	serverPacketConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(server) error = %v", err)
+	}
+	defer serverPacketConn.Close()
+	clientPacketConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(client) error = %v", err)
+	}
+	defer clientPacketConn.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	if err := serverPacketConn.SetDeadline(deadline); err != nil {
+		t.Fatalf("server SetDeadline() error = %v", err)
+	}
+	if err := clientPacketConn.SetDeadline(deadline); err != nil {
+		t.Fatalf("client SetDeadline() error = %v", err)
+	}
+	serverConn := ConnFromPacketConn(serverPacketConn, nil)
+	clientConn := ConnFromPacketConn(clientPacketConn, serverPacketConn.LocalAddr())
+	errCh := make(chan error, 1)
+	releaseServer := make(chan struct{})
+	go func() {
+		assoc, err := sctp.Server(sctp.Config{NetConn: serverConn})
+		if err != nil {
+			errCh <- err
+			return
+		}
+		defer assoc.Close()
+		stream, err := assoc.AcceptStream()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		defer stream.Close()
+		buf := make([]byte, 32)
+		n, err := stream.Read(buf)
+		if err != nil {
+			errCh <- err
+			return
+		}
+		_, err = stream.WriteSCTP(buf[:n], sctp.PayloadTypeWebRTCString)
+		if err == nil {
+			<-releaseServer
+		}
+		errCh <- err
+	}()
+	assoc, err := sctp.Client(sctp.Config{NetConn: clientConn})
+	if err != nil {
+		t.Fatalf("sctp.Client() error = %v", err)
+	}
+	defer assoc.Close()
+	stream, err := assoc.OpenStream(0, sctp.PayloadTypeWebRTCString)
+	if err != nil {
+		t.Fatalf("OpenStream() error = %v", err)
+	}
+	defer stream.Close()
+	if err := stream.SetDeadline(deadline); err != nil {
+		t.Fatalf("SetDeadline() error = %v", err)
+	}
+	if _, err := stream.Write([]byte("sctp-ping")); err != nil {
+		t.Fatalf("stream Write() error = %v", err)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("server SCTP write error = %v", err)
+		}
+		t.Fatalf("server SCTP exited before client read")
+	default:
+	}
+	readCh := make(chan []byte, 1)
+	readErrCh := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 32)
+		n, err := stream.Read(buf)
+		if err != nil {
+			readErrCh <- err
+			return
+		}
+		readCh <- append([]byte(nil), buf[:n]...)
+	}()
+	select {
+	case got := <-readCh:
+		if string(got) != "sctp-ping" {
+			t.Fatalf("stream Read() = %q, want sctp-ping", got)
+		}
+	case err := <-readErrCh:
+		t.Fatalf("stream Read() error = %v", err)
+	case err := <-errCh:
+		t.Fatalf("server SCTP error before echo = %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for SCTP echo")
+	}
+	close(releaseServer)
+	if err := <-errCh; err != nil {
+		t.Fatalf("server SCTP error = %v", err)
 	}
 }
 

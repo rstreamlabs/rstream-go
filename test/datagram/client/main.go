@@ -6,7 +6,7 @@
 //
 // Without --addr the rstream SDK dialer is used (unpublished path).
 // With --addr the client connects directly to the engine's edge endpoint:
-// pion/dtls for the dtls variant, quic-go for the quic variant.
+// pion/dtls for the dtls and sctp variants, quic-go for the quic variant.
 
 package main
 
@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pion/dtls/v3"
+	"github.com/pion/sctp"
 	"github.com/quic-go/quic-go"
 	rstream "github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
@@ -194,12 +195,81 @@ func quicEcho(ctx context.Context, conn *quic.Conn) error {
 	return nil
 }
 
+// ── SCTP ──────────────────────────────────────────────────────────────────────
+
+func runSCTPUnpublished(ctx context.Context, client *rstream.Client, tunnelName string) error {
+	raddr := rstream.Addr{IdOrName: tunnelName}
+	packetConn, err := client.PacketDial(ctx, raddr)
+	if err != nil {
+		return fmt.Errorf("PacketDial: %w", err)
+	}
+	return sctpEcho(rstream.ConnFromPacketConn(packetConn, &raddr))
+}
+
+func runSCTPPublished(ctx context.Context, addr, tlsALPN string) error {
+	hp := hostPortFromAddr(addr, "4433")
+	hostname, _, _ := net.SplitHostPort(hp)
+	udpAddr, err := net.ResolveUDPAddr("udp", hp)
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", hp, err)
+	}
+	conn, err := dtls.Dial("udp", udpAddr, &dtls.Config{
+		ServerName:         hostname,
+		InsecureSkipVerify: true,
+		SupportedProtocols: dtlsALPNs(tlsALPN),
+	})
+	if err != nil {
+		return fmt.Errorf("dtls dial %s: %w", hp, err)
+	}
+	if err := conn.HandshakeContext(ctx); err != nil {
+		conn.Close()
+		return fmt.Errorf("dtls handshake %s: %w", hp, err)
+	}
+	if tlsALPN != "" {
+		if state, ok := conn.ConnectionState(); !ok || state.NegotiatedProtocol != tlsALPN {
+			conn.Close()
+			return fmt.Errorf("unexpected DTLS ALPN: got %q, want %q", state.NegotiatedProtocol, tlsALPN)
+		}
+	}
+	return sctpEcho(conn)
+}
+
+func sctpEcho(conn net.Conn) error {
+	defer conn.Close()
+	assoc, err := sctp.Client(sctp.Config{NetConn: conn})
+	if err != nil {
+		return fmt.Errorf("sctp client: %w", err)
+	}
+	defer assoc.Close()
+	stream, err := assoc.OpenStream(0, sctp.PayloadTypeWebRTCString)
+	if err != nil {
+		return fmt.Errorf("open stream: %w", err)
+	}
+	defer stream.Close()
+	payload := []byte("ping-sctp")
+	if err := stream.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return fmt.Errorf("set stream deadline: %w", err)
+	}
+	if _, err := stream.Write(payload); err != nil {
+		return fmt.Errorf("stream write: %w", err)
+	}
+	buf := make([]byte, 2048)
+	n, err := stream.Read(buf)
+	if err != nil {
+		return fmt.Errorf("stream read: %w", err)
+	}
+	if !bytes.Equal(buf[:n], payload) {
+		return fmt.Errorf("stream echo mismatch: got %q, want %q", buf[:n], payload)
+	}
+	return nil
+}
+
 // ── main ──────────────────────────────────────────────────────────────────────
 
 func main() {
-	variant := flag.String("variant", "dtls", "variant: dtls, quic")
+	variant := flag.String("variant", "dtls", "variant: dtls, quic, sctp")
 	addr := flag.String("addr", "", "forwarding address for direct (published) connection")
-	tlsALPN := flag.String("tls-alpn", "", "custom ALPN for published DTLS or QUIC tunnels")
+	tlsALPN := flag.String("tls-alpn", "", "custom ALPN for published DTLS, QUIC, or SCTP tunnels")
 	tunnelPrefix := flag.String("tunnel", "datagram-matrix", "tunnel name prefix for SDK dialer")
 	timeout := flag.Duration("timeout", 30*time.Second, "per-case timeout")
 	flag.Parse()
@@ -236,8 +306,14 @@ func main() {
 		} else {
 			runErr = runQUICUnpublished(tctx, client, *tunnelPrefix+"-quic")
 		}
+	case "sctp":
+		if *addr != "" {
+			runErr = runSCTPPublished(tctx, *addr, *tlsALPN)
+		} else {
+			runErr = runSCTPUnpublished(tctx, client, *tunnelPrefix+"-sctp")
+		}
 	default:
-		log.Fatalf("unknown variant %q: must be dtls or quic", *variant)
+		log.Fatalf("unknown variant %q: must be dtls, quic, or sctp", *variant)
 	}
 	elapsed := time.Since(start)
 	if runErr != nil {
