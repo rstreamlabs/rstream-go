@@ -70,7 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           trap 'df -h / /tmp' ERR
-          if [[ "$CHANNEL" == stable || "$VERSION" == main ]]; then
+          if [[ "$CHANNEL" == stable ]]; then
             for target in macos-cross freebsd-cross linux-cross netbsd-cross openbsd-cross windows-cross; do
               make -j "$RSTREAM_CROSS_BUILD_JOBS" "$target"
               go clean -cache
