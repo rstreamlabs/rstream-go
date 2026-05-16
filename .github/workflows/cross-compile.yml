@@ -16,6 +16,7 @@ env:
   VERSION: "${{ github.ref_name }}"
 permissions:
   contents: read
+  id-token: write
 jobs:
   build:
     if: ${{ github.actor == vars.CI_ALLOWED_ACTOR && (github.ref_type == 'tag' || github.ref_name == 'main') }}
@@ -168,8 +169,10 @@ jobs:
           git -C homebrew config user.name 'CI automation'
           git -C homebrew config user.email 'ci@rstream.io'
           git -C homebrew add "Formula/${PACKAGE_NAME}${formula_suffix}.rb"
-          git -C homebrew commit -m "update ${PACKAGE_NAME}${formula_suffix} formula to ${VERSION}"
-          git -C homebrew push
+          if ! git -C homebrew diff --cached --quiet; then
+            git -C homebrew commit -m "update ${PACKAGE_NAME}${formula_suffix} formula to ${VERSION}"
+            git -C homebrew push
+          fi
       - name: Update winget manifests
         if: ${{ github.ref_type == 'tag' }}
         shell: bash
@@ -202,11 +205,10 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
       - name: Publish NPM package
         if: ${{ github.ref_type == 'tag' }}
         shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           PACKAGE_JSON="npm/${NPM_PACKAGE_NAME}/package.json"
@@ -215,8 +217,10 @@ jobs:
           git -C npm config user.name 'CI automation'
           git -C npm config user.email 'ci@rstream.io'
           git -C npm add "${NPM_PACKAGE_NAME}/package.json"
-          git -C npm commit -m "update ${NPM_PACKAGE_NAME} version to ${VERSION}"
-          git -C npm push
+          if ! git -C npm diff --cached --quiet; then
+            git -C npm commit -m "update ${NPM_PACKAGE_NAME} version to ${VERSION}"
+            git -C npm push
+          fi
           cd "./npm/${NPM_PACKAGE_NAME}"
           npm install --ignore-scripts
           npm publish
