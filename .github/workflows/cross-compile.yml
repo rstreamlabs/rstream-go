@@ -60,6 +60,7 @@ jobs:
         shell: bash
         run: go version
       - name: Free runner disk space
+        if: ${{ github.ref_type == 'tag' }}
         shell: bash
         run: |
           set -euo pipefail
