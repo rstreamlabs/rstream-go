@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.15.1](https://github.com/rstreamlabs/rstream-go/compare/v1.15.0...v1.15.1) (2026-05-16)
+
+
+### Bug Fixes
+
+* publish CLI release through trusted publishing ([2bca106](https://github.com/rstreamlabs/rstream-go/commit/2bca10601991d52257bbb7f41825c642b3a68587))
+
 ## [1.15.0](https://github.com/rstreamlabs/rstream-go/compare/v1.14.0...v1.15.0) (2026-05-14)
 
 
