@@ -21,8 +21,11 @@ func DefaultAPIURL() string {
 }
 
 const (
-	TokenStorageInline   = "inline"
-	TokenStorageKeychain = "keychain"
+	TokenStorageInline      = "inline"
+	TokenStorageKeychain    = "keychain"
+	CredentialProviderMacOS = "macos"
+	MTLSStorageKeychain     = "keychain"
+	MTLSStoragePKCS11       = "pkcs11"
 )
 
 type ResolveInput struct {
@@ -239,8 +242,19 @@ func MTLSConfigFromAuth(auth *Auth) (*tls.Config, bool, error) {
 	if strings.TrimSpace(auth.MTLS.Certificate) == "" &&
 		strings.TrimSpace(auth.MTLS.Key) == "" &&
 		strings.TrimSpace(auth.MTLS.CertificateFile) == "" &&
-		strings.TrimSpace(auth.MTLS.KeyFile) == "" {
+		strings.TrimSpace(auth.MTLS.KeyFile) == "" &&
+		auth.MTLS.Storage == nil {
 		return nil, false, nil
+	}
+	if auth.MTLS.Storage != nil {
+		if hasMTLSAlias(auth.MTLS) {
+			return nil, false, errors.New("mTLS storage cannot be mixed with certificate/key aliases")
+		}
+		cfg, err := loadMTLSStorageConfig(auth.MTLS.Storage)
+		if err != nil {
+			return nil, false, err
+		}
+		return cfg, true, nil
 	}
 	cfg, err := loadMTLSConfig(
 		auth.MTLS.Certificate,
@@ -286,6 +300,16 @@ func loadMTLSConfig(certPEM string, keyPEM string, certFile string, keyFile stri
 	return &tls.Config{Certificates: []tls.Certificate{certificate}}, nil
 }
 
+func hasMTLSAlias(mtls *MTLS) bool {
+	if mtls == nil {
+		return false
+	}
+	return strings.TrimSpace(mtls.Certificate) != "" ||
+		strings.TrimSpace(mtls.Key) != "" ||
+		strings.TrimSpace(mtls.CertificateFile) != "" ||
+		strings.TrimSpace(mtls.KeyFile) != ""
+}
+
 func TokenFromAuth(auth *Auth) (string, bool, error) {
 	if auth == nil || auth.Token == nil {
 		return "", false, nil
@@ -293,7 +317,7 @@ func TokenFromAuth(auth *Auth) (string, bool, error) {
 	if auth.Token.Storage == nil {
 		return "", false, errors.New("token storage kind is required")
 	}
-	kind := auth.Token.Storage.Kind
+	kind := strings.TrimSpace(auth.Token.Storage.Kind)
 	if kind == "" {
 		return "", false, errors.New("token storage kind is required")
 	}
@@ -301,7 +325,7 @@ func TokenFromAuth(auth *Auth) (string, bool, error) {
 	case TokenStorageInline:
 		return auth.Token.Storage.Value, auth.Token.Storage.Value != "", nil
 	case TokenStorageKeychain:
-		return "", false, fmt.Errorf("token storage kind %q is not supported yet", kind)
+		return tokenFromKeychainStorage(auth.Token.Storage)
 	default:
 		return "", false, fmt.Errorf("token storage kind %q is not supported", kind)
 	}

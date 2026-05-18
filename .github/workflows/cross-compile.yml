@@ -15,11 +15,58 @@ env:
   RSTREAM_URL: "${{ github.ref_type == 'tag' && 'https://rstream.io' || 'https://dev.rstream.io' }}"
   VERSION: "${{ github.ref_name }}"
 permissions:
+  actions: read
   contents: read
   id-token: write
 jobs:
+  build-macos:
+    if: ${{ github.actor == vars.CI_ALLOWED_ACTOR && github.ref_type == 'tag' }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            platforms: "macos/x86_64 macos/x86_64_v2 macos/x86_64_v3 macos/x86_64_v4"
+            artifact: macos-x86_64
+          - runner: macos-15
+            platforms: "macos/arm64"
+            artifact: macos-arm64
+    steps:
+      - shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$VERSION" =~ ^v?[0-9]+(\.[0-9]+){2}(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "invalid release tag: $VERSION" >&2
+            exit 1
+          fi
+          echo "VERSION=${VERSION#v}" >> "$GITHUB_ENV"
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Print Go version
+        shell: bash
+        run: go version
+      - name: Build macOS binaries with native credential backends
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -j "$(sysctl -n hw.ncpu)" PLATFORMS="${{ matrix.platforms }}" "${PACKAGE_NAME}-cross"
+          mkdir -p artifact
+          rsync -a "out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/macos" artifact/
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: artifact
+          if-no-files-found: error
+          retention-days: 1
   build:
-    if: ${{ github.actor == vars.CI_ALLOWED_ACTOR && (github.ref_type == 'tag' || github.ref_name == 'main') }}
+    needs: build-macos
+    if: ${{ always() && github.actor == vars.CI_ALLOWED_ACTOR && (github.ref_type == 'tag' || github.ref_name == 'main') && (github.ref_type != 'tag' || needs.build-macos.result == 'success') }}
     runs-on: ubuntu-latest
     steps:
       - shell: bash
@@ -72,7 +119,7 @@ jobs:
           set -euo pipefail
           trap 'df -h / /tmp' ERR
           if [[ "$CHANNEL" == stable ]]; then
-            for target in macos-cross freebsd-cross linux-cross netbsd-cross openbsd-cross windows-cross; do
+            for target in freebsd-cross linux-cross netbsd-cross openbsd-cross windows-cross; do
               make -j "$RSTREAM_CROSS_BUILD_JOBS" "$target"
               go clean -cache
               rm -rf "${GOTMPDIR:-/tmp}"/go-build*
@@ -80,6 +127,20 @@ jobs:
           else
             make -j "$(getconf _NPROCESSORS_ONLN)"
           fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: ${{ github.ref_type == 'tag' }}
+        with:
+          pattern: macos-*
+          path: out/cmd/${{ env.PACKAGE_NAME }}/${{ env.CHANNEL }}/${{ env.VERSION }}
+          merge-multiple: true
+      - name: Verify native macOS artifacts
+        if: ${{ github.ref_type == 'tag' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for platform in macos/arm64 macos/x86_64 macos/x86_64_v2 macos/x86_64_v3 macos/x86_64_v4; do
+            test -x "out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/${platform}/release/bin/${PACKAGE_NAME}"
+          done
       - name: Sign macos binaries
         if: ${{ github.ref_type == 'tag' }}
         shell: bash

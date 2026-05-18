@@ -37,6 +37,10 @@ X86_64_VARIANTS := v1 v2 v3 v4
 # Go Module
 GO_MODULE := $(shell go list -m)
 
+# Host platform
+HOST_GOOS := $(shell go env GOOS)
+HOST_GOARCH := $(shell go env GOARCH)
+
 # Path to goimports
 GOIMPORTS ?= $(shell go env GOPATH)/bin/goimports
 
@@ -69,6 +73,8 @@ LINUX_PLATFORMS := $(filter linux/%,$(PLATFORMS))
 
 # MacOS platforms
 MACOS_CODESIGN_MODE ?= certificate
+MACOS_CODE_IDENTIFIER ?= io.rstream
+MACOS_ENTITLEMENTS_FILE ?=
 MACOS_PLATFORMS := $(filter macos/%,$(PLATFORMS))
 
 # Windows platforms
@@ -191,12 +197,18 @@ define go_build_tags
 $(if $(CMD_TAGS_$1),-tags=$(CMD_TAGS_$1))
 endef
 
+CGO_ENABLED ?= auto
+
+define target_cgo_enabled
+$(if $(filter auto,$(CGO_ENABLED)),$(if $(and $(filter macos,$1),$(filter darwin,$(HOST_GOOS)),$(filter $(HOST_GOARCH),$2)),1,0),$(CGO_ENABLED))
+endef
+
 define build
 set -e ;\
 echo "Building $1/$2 for $3/$4" ;\
 $(eval GOARCH=$(if $(findstring armv,$(word 1,$(subst /, ,$4))),arm,$(if $(findstring x86_i,$4),386,$(if $(findstring x86_64,$4),amd64,$(word 1,$(subst /, ,$4)))))) \
 $(eval GOAMD64=$(if $(findstring x86_64,$4),$(if $(findstring _v,$4),$(lastword $(subst _, ,$4)),v1),)) \
-CGO_ENABLED=0 GOPRIVATE=github.com/rstreamlabs GOOS=$(subst macos,darwin,$3) GOARCH=$(GOARCH) $(if $(filter $(GOARCH),arm),GOARM=$(word 1,$(subst armv, ,$(word 1,$(subst hf, ,$4))))$(shell echo ,)$(if $(findstring hf,$4),hardfloat,softfloat),) $(if $(filter amd64,$(GOARCH)),GOAMD64=$(GOAMD64),) $(if $(findstring x86_i386,$4),GO386=softfloat,) go build -buildvcs=false -v $(if $(filter cmd,$1),$(call go_build_tags,$2),) -ldflags="-X '$(GO_MODULE).Agent=$(patsubst %-go,%,$(notdir $(shell printf '%s\n' "$(GO_MODULE)" | sed -E 's|/v[0-9]+$$||')))' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).OS=$3' -X '$(GO_MODULE).Arch=$4'" -o $$@ ./$1/$2
+CGO_ENABLED=$(call target_cgo_enabled,$3,$(GOARCH)) GOPRIVATE=github.com/rstreamlabs GOOS=$(subst macos,darwin,$3) GOARCH=$(GOARCH) $(if $(filter $(GOARCH),arm),GOARM=$(word 1,$(subst armv, ,$(word 1,$(subst hf, ,$4))))$(shell echo ,)$(if $(findstring hf,$4),hardfloat,softfloat),) $(if $(filter amd64,$(GOARCH)),GOAMD64=$(GOAMD64),) $(if $(findstring x86_i386,$4),GO386=softfloat,) go build -buildvcs=false -v $(if $(filter cmd,$1),$(call go_build_tags,$2),) -ldflags="-X '$(GO_MODULE).Agent=$(patsubst %-go,%,$(notdir $(shell printf '%s\n' "$(GO_MODULE)" | sed -E 's|/v[0-9]+$$||')))' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).OS=$3' -X '$(GO_MODULE).Arch=$4'" -o $$@ ./$1/$2
 endef
 
 define build_pkg
@@ -313,9 +325,10 @@ if [ "$(MACOS_CODESIGN_MODE)" = "adhoc" ]; then \
 echo "Signing $(call binary_path,$1,$2,$3) ..." ;\
 codesign \
 -f \
--i "io.rstream" \
+-i "$(MACOS_CODE_IDENTIFIER)" \
 -s "-" \
 -v \
+$(if $(strip $(MACOS_ENTITLEMENTS_FILE)),--entitlements "$(MACOS_ENTITLEMENTS_FILE)" \,)\
 $(call binary_path,$1,$2,$3) ;\
 else \
 [ -n "$(MACOS_CERTIFICATE_NAME)" ] || { echo "Error: MACOS_CERTIFICATE_NAME is required when MACOS_CODESIGN_MODE=certificate" >&2 ; exit 1 ; } ;\
@@ -328,9 +341,10 @@ codesign \
 --options=runtime \
 --timestamp \
 -f \
--i "io.rstream" \
+-i "$(MACOS_CODE_IDENTIFIER)" \
 -s "$(MACOS_CERTIFICATE_NAME)" \
 -v \
+$(if $(strip $(MACOS_ENTITLEMENTS_FILE)),--entitlements "$(MACOS_ENTITLEMENTS_FILE)" \,)\
 $(call binary_path,$1,$2,$3) ;\
 echo "Notarizing $(call binary_path,$1,$2,$3) ..." ;\
 ditto -c -k --keepParent $(call binary_path,$1,$2,$3) $$$$TMP_FILE ;\
@@ -349,7 +363,7 @@ exit 1 ;; \
 esac ;\
 if [ "$(MACOS_CODESIGN_MODE)" = "adhoc" ]; then \
 echo "Signing $(call binary_path,$1,$2,$3) ..." ;\
-rcodesign sign $(call binary_path,$1,$2,$3) ;\
+rcodesign sign --binary-identifier "$(MACOS_CODE_IDENTIFIER)" $(if $(strip $(MACOS_ENTITLEMENTS_FILE)),--entitlements-xml-file "$(MACOS_ENTITLEMENTS_FILE)") $(call binary_path,$1,$2,$3) ;\
 else \
 [ -n "$(MACOS_CERTIFICATE)" ] || { echo "Error: MACOS_CERTIFICATE is required when MACOS_CODESIGN_MODE=certificate" >&2 ; exit 1 ; } ;\
 [ -n "$(MACOS_CERTIFICATE_PWD)" ] || { echo "Error: MACOS_CERTIFICATE_PWD is required when MACOS_CODESIGN_MODE=certificate" >&2 ; exit 1 ; } ;\
@@ -362,7 +376,7 @@ else \
 	MACOS_APP_STORE_API_KEY_FILE="$$$$TMP_DIR/app-store-api-key.json" ;\
 	echo "Signing $(call binary_path,$1,$2,$3) ..." ;\
 	echo ${MACOS_CERTIFICATE} | base64 --decode > $$$$MACOS_CERTIFICATE_FILE ;\
-	rcodesign sign --p12-file "$$$$MACOS_CERTIFICATE_FILE" --p12-password "$(MACOS_CERTIFICATE_PWD)" --code-signature-flags runtime $(call binary_path,$1,$2,$3) ;\
+	rcodesign sign --p12-file "$$$$MACOS_CERTIFICATE_FILE" --p12-password "$(MACOS_CERTIFICATE_PWD)" --binary-identifier "$(MACOS_CODE_IDENTIFIER)" $(if $(strip $(MACOS_ENTITLEMENTS_FILE)),--entitlements-xml-file "$(MACOS_ENTITLEMENTS_FILE)") --code-signature-flags runtime $(call binary_path,$1,$2,$3) ;\
 	echo "Notarizing $(call binary_path,$1,$2,$3) ..." ;\
 	zip -j -q $$$$BINARY_ARCHIVE $(call binary_path,$1,$2,$3) ;\
 	echo ${MACOS_APP_STORE_API_KEY} | base64 --decode > $$$$MACOS_APP_STORE_API_KEY_FILE ;\

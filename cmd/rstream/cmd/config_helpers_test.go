@@ -38,6 +38,14 @@ func TestEnvironmentTokenHelpersAndOutputValidation(t *testing.T) {
 	if env.Auth != nil {
 		t.Fatalf("auth should be cleared after token removal: %#v", env.Auth)
 	}
+	env.Auth = &config.Auth{
+		Token: &config.Token{Storage: &config.TokenStorage{Kind: config.TokenStorageInline, Value: "token-value"}},
+		MTLS:  &config.MTLS{CertificateFile: "client.crt", KeyFile: "client.key"},
+	}
+	clearEnvironmentToken(&env)
+	if env.Auth == nil || env.Auth.Token != nil || env.Auth.MTLS == nil {
+		t.Fatalf("mTLS auth should be preserved after token removal: %#v", env.Auth)
+	}
 	if err := setEnvironmentToken(&env, ""); err == nil {
 		t.Fatalf("expected empty token error")
 	}
