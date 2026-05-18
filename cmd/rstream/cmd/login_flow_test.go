@@ -50,6 +50,29 @@ func TestStoreTokenValidatesAndPersistsEnvironmentToken(t *testing.T) {
 	}
 }
 
+func TestLoginTokenStorageFromFlags(t *testing.T) {
+	command := loginTokenStorageCommand()
+	storage, err := tokenStorageFromFlags(command, "https://api.example.com")
+	if err != nil {
+		t.Fatalf("tokenStorageFromFlags(inline) error = %v", err)
+	}
+	if storage.Kind != config.TokenStorageInline {
+		t.Fatalf("inline storage = %#v", storage)
+	}
+	command = loginTokenStorageCommand()
+	mustSetFlag(t, command, "token-storage", tokenStorageMacOSKeychain)
+	storage, err = tokenStorageFromFlags(command, "https://api.example.com")
+	if err != nil {
+		t.Fatalf("tokenStorageFromFlags(keychain) error = %v", err)
+	}
+	if storage.Kind != config.TokenStorageKeychain ||
+		storage.Provider != config.CredentialProviderMacOS ||
+		storage.Service != config.DefaultMacOSKeychainTokenService ||
+		storage.Account != "api:https://api.example.com" {
+		t.Fatalf("keychain storage = %#v", storage)
+	}
+}
+
 func TestWaitForLegacyDeviceLoginTokenTerminalStatuses(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -211,6 +234,12 @@ func legacyLoginClient(t *testing.T, h http.HandlerFunc) *controlplane.Client {
 func loginOutputCommand(output string) *cobra.Command {
 	command := &cobra.Command{Use: "login-test"}
 	command.Flags().String("output", output, "")
+	return command
+}
+
+func loginTokenStorageCommand() *cobra.Command {
+	command := &cobra.Command{Use: "login-token-storage-test"}
+	command.Flags().String("token-storage", tokenStorageInline, "")
 	return command
 }
 

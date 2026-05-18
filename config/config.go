@@ -50,15 +50,38 @@ type Token struct {
 }
 
 type TokenStorage struct {
-	Kind  string `yaml:"kind,omitempty"`
-	Value string `yaml:"value,omitempty"`
+	Kind     string `yaml:"kind,omitempty"`
+	Provider string `yaml:"provider,omitempty"`
+	Value    string `yaml:"value,omitempty"`
+	Service  string `yaml:"service,omitempty"`
+	Account  string `yaml:"account,omitempty"`
 }
 
 type MTLS struct {
-	Certificate     string `yaml:"certificate,omitempty"`
-	CertificateFile string `yaml:"certificateFile,omitempty"`
-	Key             string `yaml:"key,omitempty"`
-	KeyFile         string `yaml:"keyFile,omitempty"`
+	Certificate     string       `yaml:"certificate,omitempty"`
+	CertificateFile string       `yaml:"certificateFile,omitempty"`
+	Key             string       `yaml:"key,omitempty"`
+	KeyFile         string       `yaml:"keyFile,omitempty"`
+	Storage         *MTLSStorage `yaml:"storage,omitempty"`
+}
+
+type MTLSStorage struct {
+	Kind              string `yaml:"kind,omitempty"`
+	Provider          string `yaml:"provider,omitempty"`
+	Module            string `yaml:"module,omitempty"`
+	OpenSSLProvider   string `yaml:"opensslProvider,omitempty"`
+	TokenLabel        string `yaml:"tokenLabel,omitempty"`
+	TokenSerial       string `yaml:"tokenSerial,omitempty"`
+	Slot              *int   `yaml:"slot,omitempty"`
+	KeyLabel          string `yaml:"keyLabel,omitempty"`
+	KeyIDHex          string `yaml:"keyIdHex,omitempty"`
+	Certificate       string `yaml:"certificate,omitempty"`
+	CertificateFile   string `yaml:"certificateFile,omitempty"`
+	CertificateLabel  string `yaml:"certificateLabel,omitempty"`
+	CertificateIDHex  string `yaml:"certificateIdHex,omitempty"`
+	CertificateSHA256 string `yaml:"certificateSHA256,omitempty"`
+	PINEnv            string `yaml:"pinEnv,omitempty"`
+	MaxSessions       int    `yaml:"maxSessions,omitempty"`
 }
 
 func (c *Config) EnsureVersion() {

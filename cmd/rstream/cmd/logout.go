@@ -22,7 +22,9 @@ var logoutCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		clearLogoutCredentials(&cfg, resolved)
+		if err := clearLogoutCredentials(&cfg, resolved); err != nil {
+			return err
+		}
 		return config.WriteAtomic(path, cfg)
 	},
 }
@@ -46,15 +48,22 @@ func resolveLogoutTarget(cmd *cobra.Command, cfg config.Config) (config.Resolved
 	})
 }
 
-func clearLogoutCredentials(cfg *config.Config, resolved config.Resolved) {
+func clearLogoutCredentials(cfg *config.Config, resolved config.Resolved) error {
 	if env, _ := cfg.FindEnvironment(resolved.APIURL); env != nil {
+		if err := deleteAuthToken(env.Auth); err != nil {
+			return err
+		}
 		clearEnvironmentToken(env)
 	}
 	for i := range cfg.Contexts {
 		if shouldClearContextAuth(cfg.Contexts[i], resolved) {
+			if err := deleteAuthToken(cfg.Contexts[i].Auth); err != nil {
+				return err
+			}
 			cfg.Contexts[i].Auth = nil
 		}
 	}
+	return nil
 }
 
 func shouldClearContextAuth(ctx config.Context, resolved config.Resolved) bool {
@@ -62,4 +71,11 @@ func shouldClearContextAuth(ctx config.Context, resolved config.Resolved) bool {
 		return config.NormalizeAPIURL(ctx.APIURL) == config.NormalizeAPIURL(resolved.APIURL)
 	}
 	return resolved.Context != nil && resolved.Context.APIURL == "" && ctx.Name == resolved.ContextName
+}
+
+func deleteAuthToken(auth *config.Auth) error {
+	if auth == nil || auth.Token == nil || auth.Token.Storage == nil {
+		return nil
+	}
+	return config.DeleteToken(*auth.Token.Storage)
 }

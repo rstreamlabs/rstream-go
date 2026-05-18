@@ -28,18 +28,57 @@ const rstreamLoginPollInterval = 2 * time.Second
 const rstreamLoginTimeout = 10 * time.Minute
 const rstreamOAuthClientID = "rstream-cli"
 
+const (
+	tokenStorageInline        = "inline"
+	tokenStorageMacOSKeychain = "macos-keychain"
+)
+
 func storeToken(ctx context.Context, path string, cfg config.Config, apiURL, token string) error {
+	return storeTokenWithStorage(ctx, path, cfg, apiURL, token, config.TokenStorage{Kind: config.TokenStorageInline, Value: token})
+}
+
+func storeTokenFromFlags(cmd *cobra.Command, path string, cfg config.Config, apiURL, token string) error {
+	storage, err := tokenStorageFromFlags(cmd, apiURL)
+	if err != nil {
+		return err
+	}
+	return storeTokenWithStorage(cmd.Context(), path, cfg, apiURL, token, storage)
+}
+
+func storeTokenWithStorage(ctx context.Context, path string, cfg config.Config, apiURL, token string, storage config.TokenStorage) error {
 	if err := validateToken(ctx, apiURL, token); err != nil {
 		return err
 	}
 	env := cfg.EnsureEnvironment(apiURL)
-	if err := setEnvironmentToken(env, token); err != nil {
-		return err
+	switch storage.Kind {
+	case config.TokenStorageInline:
+		if err := setEnvironmentToken(env, token); err != nil {
+			return err
+		}
+	case config.TokenStorageKeychain:
+		if err := config.StoreToken(storage, token); err != nil {
+			return err
+		}
+		setEnvironmentTokenStorage(env, storage)
+	default:
+		return fmt.Errorf("token storage kind %q is not supported", storage.Kind)
 	}
 	if err := config.WriteAtomic(path, cfg); err != nil {
 		return err
 	}
 	return nil
+}
+
+func tokenStorageFromFlags(cmd *cobra.Command, apiURL string) (config.TokenStorage, error) {
+	storage, _ := cmd.Flags().GetString("token-storage")
+	switch storage {
+	case "", tokenStorageInline:
+		return config.TokenStorage{Kind: config.TokenStorageInline}, nil
+	case tokenStorageMacOSKeychain:
+		return config.NewMacOSKeychainTokenStorage(apiURL), nil
+	default:
+		return config.TokenStorage{}, fmt.Errorf("invalid --token-storage %q (valid: inline, macos-keychain)", storage)
+	}
 }
 
 func runLegacyDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL string) error {

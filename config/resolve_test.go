@@ -405,7 +405,7 @@ func TestTokenFromAuthErrors(t *testing.T) {
 	}{
 		{name: "missing storage", auth: &Auth{Token: &Token{}}},
 		{name: "missing kind", auth: &Auth{Token: &Token{Storage: &TokenStorage{}}}},
-		{name: "unsupported keychain", auth: &Auth{Token: &Token{Storage: &TokenStorage{Kind: TokenStorageKeychain}}}},
+		{name: "keychain missing provider", auth: &Auth{Token: &Token{Storage: &TokenStorage{Kind: TokenStorageKeychain}}}},
 		{name: "unknown kind", auth: &Auth{Token: &Token{Storage: &TokenStorage{Kind: "vault"}}}},
 	}
 	for _, tt := range tests {
@@ -422,6 +422,134 @@ func TestTokenFromAuthErrors(t *testing.T) {
 	token, ok, err = TokenFromAuth(&Auth{Token: &Token{Storage: &TokenStorage{Kind: TokenStorageInline}}})
 	if err != nil || ok || token != "" {
 		t.Fatalf("empty inline token should be absent: token=%q ok=%v err=%v", token, ok, err)
+	}
+}
+
+func TestMacOSKeychainTokenStorageValidation(t *testing.T) {
+	if got := DefaultMacOSKeychainTokenAccount(" https://api.example.com/ "); got != "api:https://api.example.com" {
+		t.Fatalf("DefaultMacOSKeychainTokenAccount() = %q", got)
+	}
+	if got := DefaultMacOSKeychainContextTokenAccount("prod", " https://api.example.com/ "); got != "context:https://api.example.com:prod" {
+		t.Fatalf("DefaultMacOSKeychainContextTokenAccount(linked) = %q", got)
+	}
+	if got := DefaultMacOSKeychainContextTokenAccount("local", ""); got != "context:local" {
+		t.Fatalf("DefaultMacOSKeychainContextTokenAccount(unlinked) = %q", got)
+	}
+	storage := NewMacOSKeychainTokenStorage("https://api.example.com")
+	if storage.Kind != TokenStorageKeychain || storage.Provider != CredentialProviderMacOS ||
+		storage.Service != DefaultMacOSKeychainTokenService || storage.Account != "api:https://api.example.com" {
+		t.Fatalf("unexpected storage: %#v", storage)
+	}
+	tests := []struct {
+		name    string
+		storage TokenStorage
+		wantErr string
+	}{
+		{name: "missing provider", storage: TokenStorage{Kind: TokenStorageKeychain, Service: "svc", Account: "acct"}, wantErr: "provider is required"},
+		{name: "unknown provider", storage: TokenStorage{Kind: TokenStorageKeychain, Provider: "windows", Service: "svc", Account: "acct"}, wantErr: "not supported"},
+		{name: "missing service", storage: TokenStorage{Kind: TokenStorageKeychain, Provider: CredentialProviderMacOS, Account: "acct"}, wantErr: "service is required"},
+		{name: "missing account", storage: TokenStorage{Kind: TokenStorageKeychain, Provider: CredentialProviderMacOS, Service: "svc"}, wantErr: "account is required"},
+		{name: "inline value", storage: TokenStorage{Kind: TokenStorageKeychain, Provider: CredentialProviderMacOS, Service: "svc", Account: "acct", Value: "token"}, wantErr: "inline value"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateMacOSKeychainTokenStorage(&tc.storage); err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("validateMacOSKeychainTokenStorage() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestMTLSStorageValidation(t *testing.T) {
+	certFile, _ := writeTestClientCertificate(t)
+	if err := validatePKCS11MTLSStorage(&MTLSStorage{
+		Kind:            MTLSStoragePKCS11,
+		Module:          "/tmp/pkcs11.so",
+		OpenSSLProvider: "pkcs11",
+		TokenLabel:      "token",
+		KeyLabel:        "key",
+		CertificateFile: certFile,
+		PINEnv:          "RSTREAM_TEST_PIN",
+	}); err != nil {
+		t.Fatalf("validatePKCS11MTLSStorage() error = %v", err)
+	}
+	tests := []struct {
+		name    string
+		mtls    *MTLS
+		wantErr string
+	}{
+		{
+			name: "storage mixed with alias",
+			mtls: &MTLS{
+				CertificateFile: certFile,
+				Storage:         &MTLSStorage{Kind: MTLSStoragePKCS11},
+			},
+			wantErr: "cannot be mixed",
+		},
+		{
+			name:    "missing kind",
+			mtls:    &MTLS{Storage: &MTLSStorage{}},
+			wantErr: "kind is required",
+		},
+		{
+			name: "pkcs11 missing token selector",
+			mtls: &MTLS{Storage: &MTLSStorage{
+				Kind:            MTLSStoragePKCS11,
+				Module:          "/tmp/pkcs11.so",
+				KeyLabel:        "key",
+				CertificateFile: certFile,
+				PINEnv:          "RSTREAM_TEST_PIN",
+			}},
+			wantErr: "exactly one token selector",
+		},
+		{
+			name: "pkcs11 mixed certificate sources",
+			mtls: &MTLS{Storage: &MTLSStorage{
+				Kind:             MTLSStoragePKCS11,
+				Module:           "/tmp/pkcs11.so",
+				TokenLabel:       "token",
+				KeyLabel:         "key",
+				CertificateFile:  certFile,
+				CertificateLabel: "cert",
+				PINEnv:           "RSTREAM_TEST_PIN",
+			}},
+			wantErr: "cannot mix PEM and token certificate sources",
+		},
+		{
+			name: "keychain missing provider",
+			mtls: &MTLS{Storage: &MTLSStorage{
+				Kind:              MTLSStorageKeychain,
+				CertificateSHA256: strings.Repeat("a", 64),
+			}},
+			wantErr: "provider is required",
+		},
+		{
+			name: "keychain invalid fingerprint",
+			mtls: &MTLS{Storage: &MTLSStorage{
+				Kind:              MTLSStorageKeychain,
+				Provider:          CredentialProviderMacOS,
+				CertificateSHA256: "not-hex",
+			}},
+			wantErr: "must be hexadecimal",
+		},
+		{
+			name: "keychain pkcs11 fields",
+			mtls: &MTLS{Storage: &MTLSStorage{
+				Kind:              MTLSStorageKeychain,
+				Provider:          CredentialProviderMacOS,
+				CertificateSHA256: strings.Repeat("a", 64),
+				Module:            "/tmp/pkcs11.so",
+			}},
+			wantErr: "contains pkcs11 fields",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ok, err := MTLSConfigFromAuth(&Auth{MTLS: tc.mtls})
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) || ok {
+				t.Fatalf("MTLSConfigFromAuth() ok=%v err=%v, want %q", ok, err, tc.wantErr)
+			}
+		})
 	}
 }
 

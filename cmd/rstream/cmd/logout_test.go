@@ -25,7 +25,9 @@ func TestClearLogoutCredentialsClearsEnvironmentAndMatchingContextTokens(t *test
 			{Name: "other", APIURL: "https://other.example.com", Auth: authWithInlineToken("other-ctx-token")},
 		},
 	}
-	clearLogoutCredentials(&cfg, config.Resolved{APIURL: "https://api.example.com"})
+	if err := clearLogoutCredentials(&cfg, config.Resolved{APIURL: "https://api.example.com"}); err != nil {
+		t.Fatalf("clearLogoutCredentials() error = %v", err)
+	}
 	if cfg.Environments[0].Auth != nil || cfg.Contexts[0].Auth != nil {
 		t.Fatalf("selected API credentials were not cleared: %#v %#v", cfg.Environments[0].Auth, cfg.Contexts[0].Auth)
 	}
@@ -46,7 +48,9 @@ func TestClearLogoutCredentialsNormalizesAPIURL(t *testing.T) {
 			Auth:   authWithInlineToken("ctx-token"),
 		}},
 	}
-	clearLogoutCredentials(&cfg, config.Resolved{APIURL: "https://api.example.com"})
+	if err := clearLogoutCredentials(&cfg, config.Resolved{APIURL: "https://api.example.com"}); err != nil {
+		t.Fatalf("clearLogoutCredentials() error = %v", err)
+	}
 	if cfg.Environments[0].Auth != nil || cfg.Contexts[0].Auth != nil {
 		t.Fatalf("normalized API credentials were not cleared: %#v %#v", cfg.Environments[0].Auth, cfg.Contexts[0].Auth)
 	}
@@ -59,11 +63,13 @@ func TestClearLogoutCredentialsClearsSelectedUnlinkedContextToken(t *testing.T) 
 			{Name: "other", Auth: authWithInlineToken("other-token")},
 		},
 	}
-	clearLogoutCredentials(&cfg, config.Resolved{
+	if err := clearLogoutCredentials(&cfg, config.Resolved{
 		APIURL:      config.DefaultAPIURL(),
 		ContextName: "local",
 		Context:     &config.Context{Name: "local"},
-	})
+	}); err != nil {
+		t.Fatalf("clearLogoutCredentials() error = %v", err)
+	}
 	if cfg.Contexts[0].Auth != nil {
 		t.Fatalf("selected unlinked context auth was not cleared: %#v", cfg.Contexts[0].Auth)
 	}
