@@ -69,6 +69,7 @@ func init() {
 	loginCmd.PersistentFlags().SortFlags = false
 	loginCmd.Flags().Bool("token-stdin", false, "read token from stdin")
 	loginCmd.Flags().String("token-file", "", "read token from file")
+	loginCmd.Flags().String("token-storage", tokenStorageInline, "token storage backend: inline or macos-keychain")
 	loginCmd.Flags().String("auth-flow", loginAuthFlowOAuth, "browser login flow: oauth or legacy")
 	loginCmd.Flags().StringP("output", "o", "text", "output mode (text, json)")
 	loginCmd.Flags().Bool("stdin", false, "read token from stdin (deprecated)")
@@ -79,7 +80,7 @@ func init() {
 }
 
 func completeLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL, token, authFlow string) error {
-	if err := storeToken(cmd.Context(), path, cfg, apiURL, token); err != nil {
+	if err := storeTokenFromFlags(cmd, path, cfg, apiURL, token); err != nil {
 		return err
 	}
 	return writeLoginResult(cmd, loginResult{Authenticated: true, APIURL: apiURL, AuthFlow: authFlow})

@@ -226,7 +226,11 @@ var contextCreateCmd = &cobra.Command{
 			if strings.TrimSpace(token) == "" {
 				return errors.New("token is empty")
 			}
-			setContextToken(&newCtx, token)
+			if err := setContextTokenFromFlags(cmd, &newCtx, token, newCtx.APIURL); err != nil {
+				return err
+			}
+		} else if cmd.Flags().Changed("token-storage") {
+			return errors.New("--token-storage requires --token, --token-stdin, or --token-file")
 		}
 		cfg.Contexts = append(cfg.Contexts, newCtx)
 		if setDefault, _ := cmd.Flags().GetBool("default"); setDefault {
@@ -308,6 +312,12 @@ var contextUpdateCmd = &cobra.Command{
 				ctx.ProjectEndpoint = endpoint
 			}
 		}
+		tokenAPIURL := ctx.APIURL
+		if noAPIURL || (apiURLFlagSet && apiURLValue == "") {
+			tokenAPIURL = ""
+		} else if applyAPIURL {
+			tokenAPIURL = apiURLValue
+		}
 		token, ok, err := readTokenFromFlags(cmd)
 		if err != nil {
 			return err
@@ -316,7 +326,11 @@ var contextUpdateCmd = &cobra.Command{
 			if strings.TrimSpace(token) == "" {
 				return errors.New("token is empty")
 			}
-			setContextToken(ctx, token)
+			if err := setContextTokenFromFlags(cmd, ctx, token, tokenAPIURL); err != nil {
+				return err
+			}
+		} else if cmd.Flags().Changed("token-storage") {
+			return errors.New("--token-storage requires --token, --token-stdin, or --token-file")
 		}
 		if noAPIURL || (apiURLFlagSet && apiURLValue == "") {
 			ctx.APIURL = ""
@@ -379,6 +393,7 @@ func addContextTransportFlags(cmd *cobra.Command) {
 	cmd.Flags().String("token", "", "authentication token")
 	cmd.Flags().Bool("token-stdin", false, "read token from stdin")
 	cmd.Flags().String("token-file", "", "read token from file")
+	cmd.Flags().String("token-storage", tokenStorageInline, "token storage backend: inline or macos-keychain")
 	cmd.MarkFlagsMutuallyExclusive("token", "token-stdin", "token-file")
 	cmd.Flags().String("engine", "", "engine URL (host:port)")
 	cmd.Flags().String("bind-address", "", "bind to a specific local address")
@@ -451,6 +466,50 @@ func setContextToken(ctx *config.Context, token string) {
 		ctx.Auth = &config.Auth{}
 	}
 	ctx.Auth.Token = &config.Token{Storage: &config.TokenStorage{Kind: config.TokenStorageInline, Value: token}}
+}
+
+func setContextTokenStorage(ctx *config.Context, storage config.TokenStorage) {
+	if ctx.Auth == nil {
+		ctx.Auth = &config.Auth{}
+	}
+	ctx.Auth.Token = &config.Token{Storage: &storage}
+}
+
+func setContextTokenFromFlags(cmd *cobra.Command, ctx *config.Context, token, apiURL string) error {
+	storage, err := contextTokenStorageFromFlags(cmd, ctx.Name, apiURL)
+	if err != nil {
+		return err
+	}
+	switch storage.Kind {
+	case config.TokenStorageInline:
+		setContextToken(ctx, token)
+	case config.TokenStorageKeychain:
+		if err := config.StoreToken(storage, token); err != nil {
+			return err
+		}
+		setContextTokenStorage(ctx, storage)
+	default:
+		return fmt.Errorf("token storage kind %q is not supported", storage.Kind)
+	}
+	return nil
+}
+
+func contextTokenStorageFromFlags(cmd *cobra.Command, name, apiURL string) (config.TokenStorage, error) {
+	storage, _ := cmd.Flags().GetString("token-storage")
+	switch storage {
+	case "", tokenStorageInline:
+		return config.TokenStorage{Kind: config.TokenStorageInline}, nil
+	case tokenStorageMacOSKeychain:
+		ref := config.TokenStorage{
+			Kind:     config.TokenStorageKeychain,
+			Provider: config.CredentialProviderMacOS,
+			Service:  config.DefaultMacOSKeychainTokenService,
+			Account:  config.DefaultMacOSKeychainContextTokenAccount(name, apiURL),
+		}
+		return ref, nil
+	default:
+		return config.TokenStorage{}, fmt.Errorf("invalid --token-storage %q (valid: inline, macos-keychain)", storage)
+	}
 }
 
 func redactContext(ctx config.Context) config.Context {

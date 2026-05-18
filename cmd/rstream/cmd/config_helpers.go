@@ -132,12 +132,22 @@ func setEnvironmentToken(env *config.Environment, token string) error {
 	return nil
 }
 
+func setEnvironmentTokenStorage(env *config.Environment, storage config.TokenStorage) {
+	if env.Auth == nil {
+		env.Auth = &config.Auth{}
+	}
+	if env.Auth.Token == nil {
+		env.Auth.Token = &config.Token{}
+	}
+	env.Auth.Token.Storage = &storage
+}
+
 func clearEnvironmentToken(env *config.Environment) {
 	if env == nil || env.Auth == nil || env.Auth.Token == nil {
 		return
 	}
 	env.Auth.Token = nil
-	if env.Auth != nil && env.Auth.Token == nil {
+	if env.Auth != nil && env.Auth.Token == nil && env.Auth.MTLS == nil {
 		env.Auth = nil
 	}
 }

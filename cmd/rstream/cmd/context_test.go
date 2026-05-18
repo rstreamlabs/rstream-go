@@ -129,6 +129,37 @@ func TestSetAndRedactContextToken(t *testing.T) {
 	}
 }
 
+func TestContextTokenStorageFromFlags(t *testing.T) {
+	command := &cobra.Command{Use: "test"}
+	addContextTransportFlags(command)
+	storage, err := contextTokenStorageFromFlags(command, "prod", "https://api.example.com")
+	if err != nil {
+		t.Fatalf("contextTokenStorageFromFlags(inline) error = %v", err)
+	}
+	if storage.Kind != config.TokenStorageInline {
+		t.Fatalf("inline storage = %#v", storage)
+	}
+	command = &cobra.Command{Use: "test"}
+	addContextTransportFlags(command)
+	mustSetFlag(t, command, "token-storage", tokenStorageMacOSKeychain)
+	storage, err = contextTokenStorageFromFlags(command, "prod", "https://api.example.com")
+	if err != nil {
+		t.Fatalf("contextTokenStorageFromFlags(keychain) error = %v", err)
+	}
+	if storage.Kind != config.TokenStorageKeychain ||
+		storage.Provider != config.CredentialProviderMacOS ||
+		storage.Service != config.DefaultMacOSKeychainTokenService ||
+		storage.Account != "context:https://api.example.com:prod" {
+		t.Fatalf("keychain storage = %#v", storage)
+	}
+	command = &cobra.Command{Use: "test"}
+	addContextTransportFlags(command)
+	mustSetFlag(t, command, "token-storage", "vault")
+	if _, err := contextTokenStorageFromFlags(command, "prod", ""); err == nil || !strings.Contains(err.Error(), "invalid --token-storage") {
+		t.Fatalf("expected invalid token storage error, got %v", err)
+	}
+}
+
 func TestRedactContextRedactsTransportProxySecrets(t *testing.T) {
 	ctx := config.Context{
 		Name: "prod",
