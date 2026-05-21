@@ -37,6 +37,8 @@ require_executable "$RSTREAM_BIN"
 require_executable "$BIN/stream/client"
 require_executable "$BIN/http/client"
 require_executable "$BIN/datagram/client"
+require_executable "$BIN/masque/client"
+require_executable "$BIN/connect/client"
 
 make_cert() {
   openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
@@ -333,6 +335,71 @@ case_quic() {
   return "$rc"
 }
 
+case_connect_udp() {
+  local server_pid server_log forwarding upstream
+  local rc=0
+  start_upstream "connect-udp-target" udp
+  upstream=$UPSTREAM_ADDR
+  server_log="$TMP_DIR/connect-udp-server.log"
+  "$BIN/masque/server" --variant connect-udp \
+    --name "$NAME_PREFIX-connect-udp" >"$server_log" 2>&1 &
+  server_pid=$!
+  PIDS+=("$server_pid")
+  forwarding=$(wait_ready "$server_pid" "$server_log" "connect-udp")
+  "$BIN/masque/client" --variant connect-udp \
+    --addr "$forwarding" \
+    --target "$upstream" || rc=$?
+  stop_pid "$server_pid"
+  return "$rc"
+}
+
+case_connect_ip() {
+  local server_pid server_log forwarding
+  local rc=0
+  server_log="$TMP_DIR/connect-ip-server.log"
+  "$BIN/masque/server" --variant connect-ip \
+    --name "$NAME_PREFIX-connect-ip" >"$server_log" 2>&1 &
+  server_pid=$!
+  PIDS+=("$server_pid")
+  forwarding=$(wait_ready "$server_pid" "$server_log" "connect-ip")
+  "$BIN/masque/client" --variant connect-ip \
+    --addr "$forwarding" || rc=$?
+  stop_pid "$server_pid"
+  return "$rc"
+}
+
+case_plain_connect() {
+  local upstream=$1
+  local downstream=$2
+  local target server_pid server_log forwarding
+  local rc=0
+  start_upstream "connect-$upstream-target" tcp
+  target=$UPSTREAM_ADDR
+  server_log="$TMP_DIR/connect-$upstream-server.log"
+  "$BIN/connect/server" --upstream "$upstream" \
+    --name "$NAME_PREFIX-connect-$upstream" >"$server_log" 2>&1 &
+  server_pid=$!
+  PIDS+=("$server_pid")
+  forwarding=$(wait_ready "$server_pid" "$server_log" "connect-$upstream")
+  "$BIN/connect/client" --downstream "$downstream" \
+    --addr "$forwarding" \
+    --target "$target" || rc=$?
+  stop_pid "$server_pid"
+  return "$rc"
+}
+
+case_plain_connect_h1() {
+  case_plain_connect h1 h1
+}
+
+case_plain_connect_h2() {
+  case_plain_connect h2c h2
+}
+
+case_plain_connect_h3() {
+  case_plain_connect h3 h3
+}
+
 make_cert
 run_case "forward/private bytestream plain" case_private_plain
 run_case "forward/tls terminated" case_tls_terminated
@@ -343,8 +410,13 @@ run_case "forward/http h2 reused connection" case_http_h2_reused_connection_rout
 run_case "forward/http h2 subpath" case_http_h2_subpath_preserves_request_path
 run_case "forward/http h3 subpath" case_http_h3_subpath_preserves_request_path
 run_case "forward/http h3 reused connection" case_http_h3_reused_connection_routes
+run_case "forward/http connect h1" case_plain_connect_h1
+run_case "forward/http connect h2" case_plain_connect_h2
+run_case "forward/http connect h3" case_plain_connect_h3
 run_case "forward/dtls" case_dtls
 run_case "forward/quic" case_quic
+run_case "forward/connect udp" case_connect_udp
+run_case "forward/connect ip" case_connect_ip
 
 printf "\nResults: %d passed, %d failed\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

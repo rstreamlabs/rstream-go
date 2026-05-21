@@ -13,14 +13,17 @@ func TestMergeTransportSafeOverride(t *testing.T) {
 		IPFamily: "ipv6",
 		DNS:      &DNSConfig{Override: "1.1.1.1:53", TLS: rstream.BoolPtr(true), ServerName: "dns.example.com", DNSSEC: rstream.BoolPtr(true)},
 		Proxy: &ProxyConfig{
-			HTTP:    "http://proxy.local:3128",
-			Headers: map[string]string{"X-Company": "acme"},
+			HTTP:            "http://proxy.local:3128",
+			SOCKS5:          "socks5://socks.local:1080",
+			Headers:         map[string]string{"X-Company": "acme"},
+			FromEnvironment: rstream.BoolPtr(false),
 		},
 	}
 	override := &TransportConfig{
 		DNS: &DNSConfig{Override: ""},
 		Proxy: &ProxyConfig{
-			Headers: map[string]string{"X-Env": "ci"},
+			Headers:         map[string]string{"X-Env": "ci"},
+			FromEnvironment: rstream.BoolPtr(true),
 		},
 	}
 	merged := MergeTransport(base, override)
@@ -36,8 +39,14 @@ func TestMergeTransportSafeOverride(t *testing.T) {
 	if merged.Proxy == nil || merged.Proxy.HTTP != "http://proxy.local:3128" {
 		t.Fatalf("expected proxy HTTP preserved, got %+v", merged.Proxy)
 	}
+	if merged.Proxy.SOCKS5 != "socks5://socks.local:1080" {
+		t.Fatalf("expected proxy SOCKS5 preserved, got %+v", merged.Proxy)
+	}
 	if merged.Proxy.Headers["X-Company"] != "acme" || merged.Proxy.Headers["X-Env"] != "ci" {
 		t.Fatalf("expected headers merged, got %+v", merged.Proxy.Headers)
+	}
+	if merged.Proxy.FromEnvironment == nil || !*merged.Proxy.FromEnvironment {
+		t.Fatalf("expected proxy fromEnvironment override, got %+v", merged.Proxy)
 	}
 }
 
@@ -66,10 +75,12 @@ func TestFlattenTransportBuildsTCPTransport(t *testing.T) {
 		DNS:      &DNSConfig{Override: "1.1.1.1:853", TLS: rstream.BoolPtr(true), ServerName: "cloudflare-dns.com", DNSSEC: rstream.BoolPtr(true)},
 		MPTCP:    rstream.BoolPtr(true),
 		Proxy: &ProxyConfig{
-			HTTP:     "https://proxy.local:8443",
-			Username: "user",
-			Password: "pass",
-			Headers:  map[string]string{"X-Trace": "abc"},
+			HTTP:            "https://proxy.local:8443",
+			SOCKS5:          "socks5://socks.local:1080",
+			Username:        "user",
+			Password:        "pass",
+			Headers:         map[string]string{"X-Trace": "abc"},
+			FromEnvironment: rstream.BoolPtr(true),
 		},
 	}
 	transport, ok := FlattenTransport(cfg).(*rstream.Transport)
@@ -88,8 +99,11 @@ func TestFlattenTransportBuildsTCPTransport(t *testing.T) {
 	if transport.MPTCPEnabled == nil || !*transport.MPTCPEnabled {
 		t.Fatalf("MPTCP setting not flattened")
 	}
-	if transport.ProxyHTTP == nil || *transport.ProxyHTTP != "https://proxy.local:8443" || transport.ProxyUsername == nil || *transport.ProxyUsername != "user" {
+	if transport.ProxyHTTP == nil || *transport.ProxyHTTP != "https://proxy.local:8443" || transport.ProxySOCKS5 == nil || *transport.ProxySOCKS5 != "socks5://socks.local:1080" || transport.ProxyUsername == nil || *transport.ProxyUsername != "user" {
 		t.Fatalf("proxy settings not flattened: %#v", transport)
+	}
+	if transport.ProxyFromEnvironment == nil || !*transport.ProxyFromEnvironment {
+		t.Fatalf("proxy fromEnvironment not flattened: %#v", transport)
 	}
 	if transport.ProxyHTTPHeaders["X-Trace"] != "abc" {
 		t.Fatalf("proxy headers not flattened: %#v", transport.ProxyHTTPHeaders)
@@ -106,7 +120,7 @@ func TestFlattenTransportBuildsQUICTransport(t *testing.T) {
 		Bind:     &BindConfig{Mode: "address", Address: "127.0.0.1"},
 		IPFamily: "ipv6",
 		DNS:      &DNSConfig{Override: "1.1.1.1:853", TLS: rstream.BoolPtr(true), ServerName: "cloudflare-dns.com", DNSSEC: rstream.BoolPtr(true)},
-		Proxy:    &ProxyConfig{HTTP: "http://ignored.local:3128"},
+		Proxy:    &ProxyConfig{HTTP: "https://masque.local:443", SOCKS5: "socks5://socks.local:1080", Headers: map[string]string{"X-Trace": "abc"}, FromEnvironment: rstream.BoolPtr(true)},
 	}
 	transport, ok := FlattenTransport(cfg).(*rstream.QUICTransport)
 	if !ok {
@@ -120,5 +134,14 @@ func TestFlattenTransportBuildsQUICTransport(t *testing.T) {
 	}
 	if transport.DNSServerName == nil || *transport.DNSServerName != "cloudflare-dns.com" || transport.DNSSECEnabled == nil || !*transport.DNSSECEnabled {
 		t.Fatalf("advanced DNS settings not flattened: %#v", transport)
+	}
+	if transport.ProxyHTTP == nil || *transport.ProxyHTTP != "https://masque.local:443" || transport.ProxySOCKS5 == nil || *transport.ProxySOCKS5 != "socks5://socks.local:1080" {
+		t.Fatalf("proxy settings not flattened: %#v", transport)
+	}
+	if transport.ProxyFromEnvironment == nil || !*transport.ProxyFromEnvironment {
+		t.Fatalf("proxy fromEnvironment not flattened: %#v", transport)
+	}
+	if transport.ProxyHTTPHeaders["X-Trace"] != "abc" {
+		t.Fatalf("proxy headers not flattened: %#v", transport.ProxyHTTPHeaders)
 	}
 }

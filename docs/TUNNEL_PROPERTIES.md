@@ -46,6 +46,8 @@ When no hostname is provided, the CLI generates a stable domain for reconnecting
 
 HTTP tunnels accept HTTP traffic at the edge and forward HTTP requests to your upstream service. Downstream clients may negotiate HTTP/1.1, HTTP/2, or HTTP/3 with the edge; this is independent from how the edge reaches your upstream.
 
+HTTP tunnels also carry plain authority-form CONNECT and Extended CONNECT protocols when the selected HTTP versions support them. Plain CONNECT follows normal HTTP tunnel version support and is documented in [HTTP_CONNECT.md](HTTP_CONNECT.md). WebSocket can be translated across HTTP/1.1 Upgrade, HTTP/2 Extended CONNECT, and HTTP/3 Extended CONNECT. WebTransport, CONNECT-UDP, and CONNECT-IP require an HTTP/3 upstream tunnel, which means `type=datagram`, `protocol=http`, and `http_version=h3` for published endpoints.
+
 ### Upstream HTTP mode
 
 The upstream hop supports two modes.
@@ -88,3 +90,22 @@ Access policy is evaluated at the edge before forwarding.
 Network-level restrictions apply to the connection itself. `trusted_ips` restricts access by source IP range (CIDR notation). `geoip` restricts access by country (ISO 3166-1 alpha-2 codes).
 
 Request-level controls apply to HTTP tunnels. `rstream_auth` requires end-user authentication via an rstream account before requests are forwarded. `challenge_mode` introduces an interactive step (challenge/captcha) before requests reach the upstream.
+
+## Extended CONNECT and MASQUE
+
+Published HTTP/3 datagram tunnels can carry WebTransport, CONNECT-UDP, and CONNECT-IP. WebTransport is an HTTP/3 session protocol with browser and native client implementations when draft versions match. CONNECT-UDP and CONNECT-IP are MASQUE protocols for UDP and IP proxying over HTTP, defined on top of HTTP Datagrams and the Capsule Protocol.
+
+The tunnel configuration for published MASQUE endpoints is:
+
+```go
+rstream.TunnelProperties{
+  Type:        rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
+  Publish:     rstream.BoolPtr(true),
+  Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
+  HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP3),
+}
+```
+
+The rstream engine relays MASQUE sessions but does not terminate UDP or IP proxy semantics itself. Your upstream service should implement CONNECT-UDP or CONNECT-IP using a protocol library such as `quic-go/masque-go` or `quic-go/connect-ip-go`.
+
+See [EXTENDED_CONNECT.md](EXTENDED_CONNECT.md) for SDK sample layout and runtime test coverage.

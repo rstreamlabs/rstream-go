@@ -20,13 +20,22 @@ type dnsResolverConfig struct {
 }
 
 func (c dnsResolverConfig) enabled() bool {
-	return c.override != "" || c.overTLS || c.dnssecEnabled
+	return c.override != "" || c.overTLS || c.dnssecEnabled || c.forceIPv4 || c.forceIPv6
 }
 
 func resolveDialAddress(ctx context.Context, addr string, cfg dnsResolverConfig) (string, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return "", fmt.Errorf("failed to split host:port from %q: %w", addr, err)
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		if cfg.forceIPv4 && ip.To4() == nil {
+			return "", fmt.Errorf("address %q is not IPv4", host)
+		}
+		if cfg.forceIPv6 && (ip.To16() == nil || ip.To4() != nil) {
+			return "", fmt.Errorf("address %q is not IPv6", host)
+		}
+		return net.JoinHostPort(host, port), nil
 	}
 	addrs, err := dnslookup.LookupHost(ctx, host, dnslookup.ResolverOptions{
 		DNSOverride:   cfg.override,

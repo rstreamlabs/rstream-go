@@ -28,6 +28,7 @@ environments:
         dnssec: true
       proxy:
         http: "http://proxy.corp:3128"
+        fromEnvironment: false
         headers:
           X-Company: "acme"
 contexts:
@@ -65,6 +66,28 @@ HTTP CONNECT proxy connectivity first connects to an HTTP proxy, issues a CONNEC
 
 The proxy hop itself may be plain TCP or protected with TLS depending on whether the proxy endpoint is configured as HTTP or HTTPS. Regardless of the proxy hop, the client-to-edge session remains TLS 1.3 once the CONNECT tunnel is established.
 
+SOCKS5 proxy connectivity is available with `proxy.socks5`. The TCP/TLS transport uses SOCKS5 CONNECT. QUIC transport uses SOCKS5 UDP ASSOCIATE.
+
+```yaml
+transport:
+  proxy:
+    socks5: "socks5://proxy.corp:1080"
+    username: "agent"
+    password: "<proxy-password>"
+```
+
+Only one proxy type may be configured at a time. Configurations that set both `proxy.http` and `proxy.socks5` are rejected before the engine session is established.
+
+`proxy.fromEnvironment: true` lets the SDK read the standard process proxy environment when no explicit `proxy.http` or `proxy.socks5` value is configured. The lookup honors `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, and `NO_PROXY` in upper- and lower-case forms. HTTP and HTTPS proxy URLs map to `proxy.http`; `socks5://` and `socks5h://` URLs map to `proxy.socks5`.
+
+```yaml
+transport:
+  proxy:
+    fromEnvironment: true
+```
+
+The SDK does not read macOS System Settings, Windows Internet Options, or desktop-session proxy stores directly. Long-lived agents and service processes need reproducible transport configuration; configure process environment variables or set the YAML proxy fields explicitly.
+
 ## Deterministic Egress
 
 Transport settings can bind the outbound connection to a specific local IP address or select an address from a specific network interface. This is useful on multi-homed hosts, split-routing setups, and environments where the default route is not the route you want for reaching the edge.
@@ -88,6 +111,10 @@ The transport DNS options are:
 These options are opt-in. Without them, the client uses the platform resolver configuration for ECH discovery and for direct hostname resolution.
 
 On macOS, rstream reads the active resolver configuration from the system DNS state so scoped per-domain resolvers are respected. On Linux and other Unix targets, the fallback source remains `/etc/resolv.conf`.
+
+When a proxy is configured without explicit DNS settings or address-family constraints, the proxy resolves the engine hostname whenever the proxy protocol supports remote names. This keeps HTTP CONNECT, MASQUE CONNECT-UDP, and SOCKS5 aligned with normal proxy behavior. When a custom DNS policy or `ipFamily` constraint is configured, the SDK resolves the engine name first and sends the selected IP address to the proxy. Use that mode when the client must rely on DNS over TLS, DNSSEC validation, IPv4-only/IPv6-only target selection, or a specific resolver path.
+
+Interface binding and address-family settings are applied to the client side of the proxy path. For TCP/TLS, the selected local address is used for the TCP connection to the HTTP or SOCKS5 proxy. For QUIC over SOCKS5, the same local address is used for the SOCKS5 control TCP connection and UDP socket. For QUIC over MASQUE, the local selection applies to the QUIC connection to the MASQUE proxy. Custom DNS settings and address-family constraints apply before dialing the proxy path and therefore also control which IP address is sent as the engine target.
 
 ## Resilience Options
 
@@ -125,6 +152,11 @@ client := &rstream.Client{
 - `DNSOverride` — use a custom resolver for the edge hostname.
 - `DNSOverTLS` / `DNSServerName` — protect DNS lookups with DNS over TLS.
 - `DNSSECEnabled` — require authenticated DNSSEC answers.
+- `ProxyHTTP` — use an HTTPS MASQUE CONNECT-UDP proxy for the QUIC engine session.
+- `ProxySOCKS5` — use SOCKS5 UDP ASSOCIATE for the QUIC engine session.
+- `ProxyFromEnvironment` — read process proxy variables when no explicit proxy URL is configured.
+
+For QUIC transport, `ProxyHTTP` must point at an HTTPS MASQUE proxy. If the URL path is empty, the SDK uses `/.well-known/masque/udp/{target_host}/{target_port}/`. A custom path must include both `{target_host}` and `{target_port}`.
 
 When QUIC transport is selected, `rstream doctor -o json` runs a `quic_transport` check against the engine. This catches the common case where TCP/TLS works but UDP is blocked by the local network, VPN, firewall, or proxy path.
 

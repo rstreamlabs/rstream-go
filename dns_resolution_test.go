@@ -26,7 +26,7 @@ func TestDNSResolverConfigFromTransports(t *testing.T) {
 		t.Fatalf("unexpected tcp dns config: %#v", tcpCfg)
 	}
 	quicCfg := dnsResolverOptionsFromQUICTransport(&QUICTransport{ForceIPv4: BoolPtr(true)})
-	if !quicCfg.forceIPv4 || quicCfg.enabled() {
+	if !quicCfg.forceIPv4 || !quicCfg.enabled() {
 		t.Fatalf("unexpected quic dns config: %#v", quicCfg)
 	}
 	if (dnsResolverConfig{}).enabled() {
@@ -52,6 +52,34 @@ func TestResolveDialAddressUsesConfiguredResolver(t *testing.T) {
 	}
 	if got != "192.0.2.77:8443" {
 		t.Fatalf("resolveDialAddress() = %q, want 192.0.2.77:8443", got)
+	}
+}
+
+func TestResolveDialAddressAcceptsMatchingIPLiteral(t *testing.T) {
+	got, err := resolveDialAddress(context.Background(), "127.0.0.1:443", dnsResolverConfig{forceIPv4: true})
+	if err != nil {
+		t.Fatalf("resolveDialAddress(IPv4) error = %v", err)
+	}
+	if got != "127.0.0.1:443" {
+		t.Fatalf("resolveDialAddress(IPv4) = %q", got)
+	}
+	got, err = resolveDialAddress(context.Background(), "[::1]:443", dnsResolverConfig{forceIPv6: true})
+	if err != nil {
+		t.Fatalf("resolveDialAddress(IPv6) error = %v", err)
+	}
+	if got != "[::1]:443" {
+		t.Fatalf("resolveDialAddress(IPv6) = %q", got)
+	}
+}
+
+func TestResolveDialAddressRejectsMismatchedIPFamily(t *testing.T) {
+	_, err := resolveDialAddress(context.Background(), "127.0.0.1:443", dnsResolverConfig{forceIPv6: true})
+	if err == nil || !strings.Contains(err.Error(), "is not IPv6") {
+		t.Fatalf("resolveDialAddress(IPv4 as IPv6) error = %v", err)
+	}
+	_, err = resolveDialAddress(context.Background(), "[::1]:443", dnsResolverConfig{forceIPv4: true})
+	if err == nil || !strings.Contains(err.Error(), "is not IPv4") {
+		t.Fatalf("resolveDialAddress(IPv6 as IPv4) error = %v", err)
 	}
 }
 
@@ -95,4 +123,18 @@ func startDNSResolutionTestServer(t *testing.T, handler dns.Handler) string {
 		_ = tcpServer.Shutdown()
 	})
 	return tcpListener.Addr().String()
+}
+
+func dnsAnswerAllA(ip string) dns.HandlerFunc {
+	return func(w dns.ResponseWriter, req *dns.Msg) {
+		resp := new(dns.Msg)
+		resp.SetReply(req)
+		question := req.Question[0]
+		if question.Qtype == dns.TypeA {
+			resp.Answer = []dns.RR{&dns.A{Hdr: dns.RR_Header{Name: question.Name, Rrtype: dns.TypeA, Class: dns.ClassINET}, A: net.ParseIP(ip)}}
+		} else {
+			resp.Rcode = dns.RcodeNameError
+		}
+		_ = w.WriteMsg(resp)
+	}
 }
