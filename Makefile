@@ -419,13 +419,14 @@ TEST_OUT := $(OUT_DIR)/test
 TEST_GOOS := $(shell go env GOOS)
 TEST_GOARCH := $(shell go env GOARCH)
 TEST_GOAMD64 := $(shell go env GOAMD64)
+TEST_COMMON_SOURCES := $(shell find . -maxdepth 1 -name '*.go' ! -name '*.pb.go' -print) $(shell find config internal pb webtty -name '*.go' 2>/dev/null)
 
 .PHONY: test-bins
 
 test-bins: $(foreach r,$(TEST_ROLES),$(TEST_OUT)/$(r))
 
 define template_test_bin
-$(TEST_OUT)/$1: $$(shell find test/$1 -name '*.go' 2>/dev/null)
+$(TEST_OUT)/$1: $$(shell find test/$1 -name '*.go' 2>/dev/null) $(TEST_COMMON_SOURCES)
 	@set -e; echo "Building test/$1 for $(CURRENT_OS)/$(CURRENT_ARCH)"; \
 	CGO_ENABLED=0 GOPRIVATE=github.com/rstreamlabs \
 	GOOS=$(TEST_GOOS) GOARCH=$(TEST_GOARCH) $(if $(filter amd64,$(TEST_GOARCH)),GOAMD64=$(TEST_GOAMD64),) \

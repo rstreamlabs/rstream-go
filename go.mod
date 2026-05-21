@@ -17,8 +17,11 @@ require (
 	github.com/moby/moby/client v0.4.1
 	github.com/pion/dtls/v3 v3.1.2
 	github.com/pion/sctp v1.9.5
+	github.com/quic-go/connect-ip-go v0.1.0
+	github.com/quic-go/masque-go v0.3.0
 	github.com/rivo/tview v0.42.0
 	github.com/spf13/cobra v1.9.1
+	github.com/yosida95/uritemplate/v3 v3.0.2
 	golang.org/x/net v0.53.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1

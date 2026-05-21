@@ -57,13 +57,21 @@ func TestAPIDialerClonesTransportState(t *testing.T) {
 }
 
 func TestAPIDialerMapsQUICTransportToTCPTransport(t *testing.T) {
+	headers := map[string]string{"X-Trace": "source"}
+	tlsCfg := &tls.Config{ServerName: "proxy.example.com"}
 	client := &Client{Transport: &QUICTransport{
-		LocalAddr:     StringPtr("127.0.0.1"),
-		ForceIPv6:     BoolPtr(true),
-		DNSOverride:   StringPtr("1.1.1.1:853"),
-		DNSOverTLS:    BoolPtr(true),
-		DNSServerName: StringPtr("cloudflare-dns.com"),
-		DNSSECEnabled: BoolPtr(true),
+		LocalAddr:        StringPtr("127.0.0.1"),
+		ForceIPv6:        BoolPtr(true),
+		DNSOverride:      StringPtr("1.1.1.1:853"),
+		DNSOverTLS:       BoolPtr(true),
+		DNSServerName:    StringPtr("cloudflare-dns.com"),
+		DNSSECEnabled:    BoolPtr(true),
+		ProxyHTTP:        StringPtr("https://masque.example.com:443"),
+		ProxySOCKS5:      StringPtr("socks5://socks.example.com:1080"),
+		ProxyUsername:    StringPtr("user"),
+		ProxyPassword:    StringPtr("pass"),
+		ProxyHTTPHeaders: headers,
+		TLSProxyConfig:   tlsCfg,
 	}}
 	dialer, ok := client.apiDialer().(*Transport)
 	if !ok {
@@ -77,6 +85,17 @@ func TestAPIDialerMapsQUICTransportToTCPTransport(t *testing.T) {
 	}
 	if dialer.DNSServerName == nil || *dialer.DNSServerName != "cloudflare-dns.com" || dialer.DNSSECEnabled == nil || !*dialer.DNSSECEnabled {
 		t.Fatalf("advanced DNS settings not preserved: %#v", dialer)
+	}
+	headers["X-Trace"] = "mutated"
+	tlsCfg.ServerName = "mutated.example.com"
+	if dialer.ProxyHTTP == nil || *dialer.ProxyHTTP != "https://masque.example.com:443" || dialer.ProxySOCKS5 == nil || *dialer.ProxySOCKS5 != "socks5://socks.example.com:1080" {
+		t.Fatalf("proxy settings not preserved: %#v", dialer)
+	}
+	if dialer.ProxyHTTPHeaders["X-Trace"] != "source" {
+		t.Fatalf("proxy headers should be cloned, got %#v", dialer.ProxyHTTPHeaders)
+	}
+	if dialer.TLSProxyConfig == tlsCfg || dialer.TLSProxyConfig.ServerName != "proxy.example.com" {
+		t.Fatalf("TLS proxy config should be cloned, got %#v", dialer.TLSProxyConfig)
 	}
 }
 

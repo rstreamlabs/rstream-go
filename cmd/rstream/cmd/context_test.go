@@ -28,6 +28,7 @@ func TestTransportFromFlags(t *testing.T) {
 	mustSetFlag(t, command, "proxy-username", "user")
 	mustSetFlag(t, command, "proxy-password", "pass")
 	mustSetFlag(t, command, "proxy-http-header", "X-Trace=abc")
+	mustSetFlag(t, command, "proxy-from-environment", "true")
 	cfg, err = transportFromFlags(command)
 	if err != nil {
 		t.Fatalf("transportFromFlags() error = %v", err)
@@ -46,6 +47,24 @@ func TestTransportFromFlags(t *testing.T) {
 	}
 	if cfg.Proxy.Headers["X-Trace"] != "abc" {
 		t.Fatalf("proxy headers not parsed: %#v", cfg.Proxy.Headers)
+	}
+	if cfg.Proxy.FromEnvironment == nil || !*cfg.Proxy.FromEnvironment {
+		t.Fatalf("proxy fromEnvironment flag not parsed: %#v", cfg.Proxy)
+	}
+	command = &cobra.Command{Use: "test"}
+	addContextTransportFlags(command)
+	mustSetFlag(t, command, "proxy-socks5", "socks5://socks.local:1080")
+	cfg, err = transportFromFlags(command)
+	if err != nil {
+		t.Fatalf("transportFromFlags(SOCKS5) error = %v", err)
+	}
+	if cfg.Proxy == nil || cfg.Proxy.SOCKS5 != "socks5://socks.local:1080" {
+		t.Fatalf("SOCKS5 proxy flag not parsed: %#v", cfg.Proxy)
+	}
+	mustSetFlag(t, command, "proxy-http-header", "X-Trace=abc")
+	_, err = transportFromFlags(command)
+	if err == nil || !strings.Contains(err.Error(), "--proxy-http-header") {
+		t.Fatalf("expected SOCKS5/header validation error, got %v", err)
 	}
 }
 

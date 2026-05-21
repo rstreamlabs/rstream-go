@@ -27,10 +27,12 @@ type DNSConfig struct {
 }
 
 type ProxyConfig struct {
-	HTTP     string            `yaml:"http,omitempty"`
-	Username string            `yaml:"username,omitempty"`
-	Password string            `yaml:"password,omitempty"`
-	Headers  map[string]string `yaml:"headers,omitempty"`
+	HTTP            string            `yaml:"http,omitempty"`
+	SOCKS5          string            `yaml:"socks5,omitempty"`
+	Username        string            `yaml:"username,omitempty"`
+	Password        string            `yaml:"password,omitempty"`
+	Headers         map[string]string `yaml:"headers,omitempty"`
+	FromEnvironment *bool             `yaml:"fromEnvironment,omitempty"`
 }
 
 func MergeTransport(base, override *TransportConfig) *TransportConfig {
@@ -110,11 +112,17 @@ func MergeTransport(base, override *TransportConfig) *TransportConfig {
 		if override.Proxy.HTTP != "" {
 			out.Proxy.HTTP = override.Proxy.HTTP
 		}
+		if override.Proxy.SOCKS5 != "" {
+			out.Proxy.SOCKS5 = override.Proxy.SOCKS5
+		}
 		if override.Proxy.Username != "" {
 			out.Proxy.Username = override.Proxy.Username
 		}
 		if override.Proxy.Password != "" {
 			out.Proxy.Password = override.Proxy.Password
+		}
+		if override.Proxy.FromEnvironment != nil {
+			out.Proxy.FromEnvironment = override.Proxy.FromEnvironment
 		}
 		if len(override.Proxy.Headers) > 0 {
 			if out.Proxy.Headers == nil {
@@ -132,7 +140,6 @@ func FlattenTransport(cfg *TransportConfig) rstream.Dialer {
 	if cfg == nil {
 		return nil
 	}
-	// If QUIC is requested, build a QUICTransport (no HTTP proxy support for QUIC).
 	if cfg.UseQUIC != nil && *cfg.UseQUIC {
 		var t rstream.QUICTransport
 		set := false
@@ -141,6 +148,11 @@ func FlattenTransport(cfg *TransportConfig) rstream.Dialer {
 			case "address", "":
 				if cfg.Bind.Address != "" {
 					t.LocalAddr = rstream.StringPtr(cfg.Bind.Address)
+					set = true
+				}
+			case "interface":
+				if cfg.Bind.Interface != "" {
+					t.NetworkInterface = rstream.StringPtr(cfg.Bind.Interface)
 					set = true
 				}
 			}
@@ -168,6 +180,35 @@ func FlattenTransport(cfg *TransportConfig) rstream.Dialer {
 		if cfg.DNS != nil && cfg.DNS.DNSSEC != nil {
 			t.DNSSECEnabled = cfg.DNS.DNSSEC
 			set = true
+		}
+		if cfg.Proxy != nil {
+			if cfg.Proxy.HTTP != "" {
+				t.ProxyHTTP = rstream.StringPtr(cfg.Proxy.HTTP)
+				set = true
+			}
+			if cfg.Proxy.SOCKS5 != "" {
+				t.ProxySOCKS5 = rstream.StringPtr(cfg.Proxy.SOCKS5)
+				set = true
+			}
+			if cfg.Proxy.Username != "" {
+				t.ProxyUsername = rstream.StringPtr(cfg.Proxy.Username)
+				set = true
+			}
+			if cfg.Proxy.Password != "" {
+				t.ProxyPassword = rstream.StringPtr(cfg.Proxy.Password)
+				set = true
+			}
+			if cfg.Proxy.FromEnvironment != nil {
+				t.ProxyFromEnvironment = cfg.Proxy.FromEnvironment
+				set = true
+			}
+			if len(cfg.Proxy.Headers) > 0 {
+				t.ProxyHTTPHeaders = make(map[string]string, len(cfg.Proxy.Headers))
+				for k, v := range cfg.Proxy.Headers {
+					t.ProxyHTTPHeaders[k] = v
+				}
+				set = true
+			}
 		}
 		if !set {
 			return &rstream.QUICTransport{}
@@ -224,12 +265,20 @@ func FlattenTransport(cfg *TransportConfig) rstream.Dialer {
 			transport.ProxyHTTP = rstream.StringPtr(cfg.Proxy.HTTP)
 			set = true
 		}
+		if cfg.Proxy.SOCKS5 != "" {
+			transport.ProxySOCKS5 = rstream.StringPtr(cfg.Proxy.SOCKS5)
+			set = true
+		}
 		if cfg.Proxy.Username != "" {
 			transport.ProxyUsername = rstream.StringPtr(cfg.Proxy.Username)
 			set = true
 		}
 		if cfg.Proxy.Password != "" {
 			transport.ProxyPassword = rstream.StringPtr(cfg.Proxy.Password)
+			set = true
+		}
+		if cfg.Proxy.FromEnvironment != nil {
+			transport.ProxyFromEnvironment = cfg.Proxy.FromEnvironment
 			set = true
 		}
 		if len(cfg.Proxy.Headers) > 0 {

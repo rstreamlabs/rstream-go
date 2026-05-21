@@ -11,8 +11,10 @@ This directory contains end-to-end tests for the rstream Go SDK. Each subdirecto
 | `http` | 3 | HTTP tunnels over H1, H2C, and H3, including GET and SSE streaming |
 | `stream` | 7 | Bytestream tunnel: plain (unpublished), TLS via SDK dialer (unpublished), TLS via engine listener (published), TLS passthrough via engine listener, TLS via engine listener with upstream TLS, and ALPN rejection checks |
 | `datagram` | 12 | Datagram tunnel: DTLS via SDK dialer (unpublished), DTLS via engine listener (published, with and without upstream DTLS), QUIC via SDK dialer (unpublished), QUIC via engine listener (published), SCTP via pion/sctp over SDK datagrams and published DTLS, and ALPN rejection checks |
+| `masque` | 2 | Published HTTP/3 datagram tunnels carrying CONNECT-UDP and CONNECT-IP Extended CONNECT sessions end-to-end |
+| `connect` | 3 | Published HTTP tunnels carrying plain authority-form CONNECT over H1, H2, and H3 downstream sessions |
 
-**Total: 32 runner cases.** The WebTransport runner case contains multiple protocol subcases internally.
+**Total: 37 runner cases.** The WebTransport runner case contains multiple protocol subcases internally.
 
 The stream and datagram suites each cover two connectivity modes:
 
@@ -26,7 +28,7 @@ The stream and datagram suites each cover two connectivity modes:
 - A running rstream engine accessible via the SDK.
 - The `RSTREAM_CONTEXT` environment variable set to the target context name, or `RSTREAM_ENGINE` plus the matching authentication environment.
 - All test binaries built (see below).
-- A project plan that supports the feature under test. The full `runtime-forward.sh` suite uses private tunnels, custom ALPN, DTLS, published QUIC, and published TLS/HTTP paths, so run it against a Pro or Enterprise project.
+- A project plan that supports the feature under test. The full `runtime-forward.sh` suite uses private tunnels, custom ALPN, DTLS, published QUIC, CONNECT-UDP, CONNECT-IP, and published TLS/HTTP paths, so run it against a Pro or Enterprise project.
 
 Runtime credential and permission suites also require:
 
@@ -49,7 +51,7 @@ Equivalent manual commands:
 
 ```sh
 make rstream
-mkdir -p out/test/{websocket,webtransport,http,stream,datagram}
+mkdir -p out/test/{websocket,webtransport,http,stream,datagram,masque,connect}
 go build -o out/test/websocket/server    ./test/websocket/server
 go build -o out/test/websocket/client    ./test/websocket/client
 go build -o out/test/webtransport/server ./test/webtransport/server
@@ -60,6 +62,10 @@ go build -o out/test/stream/server       ./test/stream/server
 go build -o out/test/stream/client       ./test/stream/client
 go build -o out/test/datagram/server     ./test/datagram/server
 go build -o out/test/datagram/client     ./test/datagram/client
+go build -o out/test/masque/server       ./test/masque/server
+go build -o out/test/masque/client       ./test/masque/client
+go build -o out/test/connect/server      ./test/connect/server
+go build -o out/test/connect/client      ./test/connect/client
 ```
 
 ### Run
@@ -84,7 +90,7 @@ export BIN=out/test
 bash test/e2e/runtime-forward.sh
 ```
 
-The forwarding suite covers private bytestreams, published TLS, HTTP, DTLS, and QUIC tunnels. It also validates published HTTP sub-path forwarding over HTTP/2 and HTTP/3, and verifies that reused HTTP/2 and HTTP/3 connections route each request by its current authority.
+The forwarding suite covers private bytestreams, published TLS, HTTP, DTLS, QUIC, CONNECT-UDP, and CONNECT-IP tunnels. It also validates published HTTP sub-path forwarding over HTTP/2 and HTTP/3, and verifies that reused HTTP/2 and HTTP/3 connections route each request by its current authority.
 
 Run the same runtime forwarding checks over QUIC control-channel transport:
 
@@ -94,6 +100,15 @@ export RSTREAM_AUTHENTICATION_TOKEN='<pat or auth token valid for the selected p
 export BIN=out/test
 bash test/e2e/runtime-forward.sh --quic-transport
 ```
+
+The SDK transport unit suite also exercises the agent-to-engine proxy matrix with live local servers and proxies:
+
+| Engine transport | Proxy path | Runtime path covered |
+|------------------|------------|----------------------|
+| TLS/TCP | HTTP CONNECT and HTTPS CONNECT | TCP proxy connection, CONNECT response handling, proxy authentication headers, end-to-end TLS to the engine target |
+| TLS/TCP | SOCKS5 CONNECT | SOCKS5 negotiation, username/password authentication, and end-to-end TLS to the engine target |
+| QUIC | HTTPS MASQUE CONNECT-UDP | HTTP/3 Extended CONNECT, HTTP datagrams, custom DNS for proxy and target, local bind/address-family selection, and end-to-end QUIC to the engine target |
+| QUIC | SOCKS5 UDP ASSOCIATE | SOCKS5 control channel, UDP relay framing, local bind/address-family selection, and end-to-end QUIC to the engine target |
 
 Run the challenge mode runtime suite:
 
@@ -177,7 +192,7 @@ Runtime suites create temporary auth tokens, temporary mTLS credentials, local u
 ```
 test/
 ├── e2e/
-│   ├── runtime-forward.sh             — runtime TLS, HTTP, DTLS, QUIC, sub-path forwarding, and HTTP/2/HTTP/3 connection reuse checks
+│   ├── runtime-forward.sh             — runtime TLS, HTTP, DTLS, QUIC, plain CONNECT, CONNECT-UDP/IP, sub-path forwarding, and HTTP/2/HTTP/3 connection reuse checks
 │   ├── runtime-challenge-mode.sh      — challenge API route and published HTTP challenge redirects over HTTP/2 and HTTP/3
 │   ├── runtime-token-permissions.sh   — Control plane API, Engine API, scopes, grants, watch, and published HTTP token checks
 │   ├── runtime-mtls-permissions.sh    — mTLS agent auth, mTLS published tunnel auth, and mTLS permission checks
@@ -194,9 +209,15 @@ test/
 ├── stream/
 │   ├── server/   — Bytestream echo server (plain / tls, published or not)
 │   └── client/   — Bytestream client (plain / tls, direct or via SDK dialer)
-└── datagram/
-    ├── server/   — Datagram echo server (dtls / quic / sctp, published or not)
-    └── client/   — Datagram client (dtls / quic / sctp, direct or via SDK dialer)
+├── datagram/
+│   ├── server/   — Datagram echo server (dtls / quic / sctp, published or not)
+│   └── client/   — Datagram client (dtls / quic / sctp, direct or via SDK dialer)
+├── masque/
+│   ├── server/   — CONNECT-UDP / CONNECT-IP server behind a published HTTP/3 datagram tunnel
+│   └── client/   — MASQUE clients using quic-go/masque-go and quic-go/connect-ip-go
+└── connect/
+    ├── server/   — HTTP forward proxy CONNECT server behind h1, h2c, or h3 rstream tunnels
+    └── client/   — CONNECT client for h1, h2, and h3 downstream sessions
 ```
 
 ## Flags
@@ -241,3 +262,35 @@ test/
 | `--addr` | — | Engine edge address for direct (published) connections |
 | `--tls-alpn` | — | Custom ALPN for published DTLS, QUIC, or SCTP connections |
 | `--tunnel` | `datagram-matrix` | Tunnel name prefix for SDK dialer |
+
+### masque/server
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--variant` | `connect-udp` | `connect-udp`, `connect-ip`, or `all` |
+| `--name` | `masque-runtime` | Tunnel name |
+| `--hostname` | — | Requested Stable domain hostname |
+
+### masque/client
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--variant` | `connect-udp` | `connect-udp` or `connect-ip` |
+| `--addr` | — | Published rstream forwarding address |
+| `--target` | — | UDP target host:port for `connect-udp` |
+| `--timeout` | `20s` | Test timeout |
+
+### connect/server
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--upstream` | `h1` | Upstream proxy protocol: `h1`, `h2c`, or `h3` |
+| `--name` | `connect-runtime` | Tunnel name |
+
+### connect/client
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--downstream` | `h1` | Downstream protocol to the published tunnel: `h1`, `h2`, or `h3` |
+| `--addr` | — | Published rstream forwarding address |
+| `--target` | — | TCP target host:port for the CONNECT tunnel |
