@@ -399,8 +399,26 @@ endef
 
 define deploy_nupkg
 set -e ;\
+NUGET_PACKAGE_URL="$(NUGET_SOURCE)Packages(Id='$1',Version='$(VERSION)')" ;\
 echo "Deploying $(call nupkg_path,$1)" ;\
-nuget push "$(call nupkg_path,$1)" "$(NUGET_API_KEY)" -Source "$(NUGET_SOURCE)" -NonInteractive -SkipDuplicate -Verbosity detailed
+if curl -fsSL "$$$$NUGET_PACKAGE_URL" >/dev/null ; then \
+echo "NuGet package $1 $(VERSION) already exists; skipping push" ;\
+exit 0 ;\
+fi ;\
+PUSH_LOG=$$$$(mktemp) ;\
+if nuget push "$(call nupkg_path,$1)" "$(NUGET_API_KEY)" -Source "$(NUGET_SOURCE)" -NonInteractive -SkipDuplicate -Verbosity detailed > "$$$$PUSH_LOG" 2>&1 ; then \
+cat "$$$$PUSH_LOG" ;\
+rm -f "$$$$PUSH_LOG" ;\
+else \
+STATUS=$$$$? ;\
+cat "$$$$PUSH_LOG" >&2 ;\
+rm -f "$$$$PUSH_LOG" ;\
+if curl -fsSL "$$$$NUGET_PACKAGE_URL" >/dev/null ; then \
+echo "NuGet package $1 $(VERSION) exists after failed push; treating it as a duplicate" ;\
+exit 0 ;\
+fi ;\
+exit "$$$$STATUS" ;\
+fi
 endef
 
 .PHONY: all
