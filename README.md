@@ -54,7 +54,7 @@ rstream supports two fundamental tunnel types:
 
 **Operational visibility**: Connection logs and metrics for traffic, enforcement decisions, and performance signals.
 
-**Transport configuration**: IPv4/IPv6 selection, DNS override, interface binding, and proxy support.
+**Transport configuration**: IPv4/IPv6 selection, DNS override, interface binding, HTTP CONNECT proxy support, SOCKS5 proxy support, and MASQUE proxy support for QUIC transport.
 
 **Resilience**: Long-lived agents, reconnect behavior, and transport-level multiplexing for stable connectivity.
 
@@ -64,7 +64,7 @@ rstream supports two fundamental tunnel types:
 
 **Secure transports**: TLS- and QUIC-based transports for agent-to-edge connectivity, plus DTLS and QUIC as published tunnel protocols when enabled by the deployment.
 
-**Network options**: IPv4/IPv6, MPTCP, proxy support, and custom DNS resolution.
+**Network options**: IPv4/IPv6, MPTCP, HTTP CONNECT, SOCKS5, MASQUE CONNECT-UDP for QUIC transport, and custom DNS resolution.
 
 ## Compatibility
 

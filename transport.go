@@ -15,20 +15,22 @@ import (
 
 // Default transport implementation
 type Transport struct {
-	LocalAddr        *string
-	NetworkInterface *string
-	ForceIPv4        *bool
-	ForceIPv6        *bool
-	DNSOverride      *string
-	DNSOverTLS       *bool
-	DNSServerName    *string
-	DNSSECEnabled    *bool
-	MPTCPEnabled     *bool
-	ProxyHTTP        *string
-	ProxyUsername    *string
-	ProxyPassword    *string
-	ProxyHTTPHeaders map[string]string
-	TLSProxyConfig   *tls.Config
+	LocalAddr            *string
+	NetworkInterface     *string
+	ForceIPv4            *bool
+	ForceIPv6            *bool
+	DNSOverride          *string
+	DNSOverTLS           *bool
+	DNSServerName        *string
+	DNSSECEnabled        *bool
+	MPTCPEnabled         *bool
+	ProxyHTTP            *string
+	ProxySOCKS5          *string
+	ProxyUsername        *string
+	ProxyPassword        *string
+	ProxyHTTPHeaders     map[string]string
+	TLSProxyConfig       *tls.Config
+	ProxyFromEnvironment *bool
 }
 
 func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (net.Conn, error) {
@@ -40,37 +42,9 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 		}
 		localAddr = &net.TCPAddr{IP: ip}
 	} else if d.NetworkInterface != nil {
-		iface, err := net.InterfaceByName(*d.NetworkInterface)
+		ip, err := selectInterfaceIP(*d.NetworkInterface, boolValue(d.ForceIPv4), boolValue(d.ForceIPv6))
 		if err != nil {
-			return nil, fmt.Errorf("failed to get interface by name: %w", err)
-		}
-		addrs, err := iface.Addrs()
-		if err != nil || len(addrs) == 0 {
-			return nil, errors.New("no usable address found for interface")
-		}
-		var ip net.IP
-		for _, addr := range addrs {
-			var ipNet *net.IPNet
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ipNet = v
-			case *net.IPAddr:
-				ipNet = &net.IPNet{IP: v.IP, Mask: v.IP.DefaultMask()}
-			}
-			if ipNet != nil {
-				if d.ForceIPv4 != nil && *d.ForceIPv4 && ipNet.IP.To4() != nil {
-					ip = ipNet.IP
-					break
-				}
-				if d.ForceIPv6 != nil && *d.ForceIPv6 && ipNet.IP.To16() != nil && ipNet.IP.To4() == nil {
-					ip = ipNet.IP
-					break
-				}
-				if d.ForceIPv4 == nil && d.ForceIPv6 == nil {
-					ip = ipNet.IP
-					break
-				}
-			}
+			return nil, err
 		}
 		if ip == nil {
 			return nil, errors.New("no matching IP for selected interface")
@@ -92,17 +66,36 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 	var conn net.Conn = nil
 	var err error = nil
 	dnsOpts := dnsResolverOptionsFromTransport(d)
-	if d.ProxyHTTP != nil {
-		proxyURL, err := url.Parse(*d.ProxyHTTP)
+	proxyHTTP, proxySOCKS5, err := effectiveProxyURLs(proxyValue(d.ProxyHTTP), proxyValue(d.ProxySOCKS5), d.ProxyFromEnvironment, addr)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case proxyHTTP != "" && proxySOCKS5 != "":
+		err = errors.New("only one proxy transport can be configured")
+	case proxySOCKS5 != "":
+		if len(d.ProxyHTTPHeaders) > 0 {
+			err = errors.New("proxy HTTP headers cannot be used with SOCKS5 proxy")
+		} else if d.TLSProxyConfig != nil {
+			err = errors.New("TLS proxy configuration cannot be used with SOCKS5 proxy")
+		} else {
+			conn, err = d.dialSOCKS5(ctx, dialer, network, proxySOCKS5, addr, dnsOpts)
+		}
+	case proxyHTTP != "":
+		var proxyURL *url.URL
+		proxyURL, err = url.Parse(proxyHTTP)
 		if err != nil {
 			err = fmt.Errorf("failed to parse HTTP proxy URL: %w", err)
 		}
+		if err == nil && proxyURL.Scheme != "http" && proxyURL.Scheme != "https" {
+			err = fmt.Errorf("unsupported HTTP proxy scheme %q", proxyURL.Scheme)
+		}
 		proxyDialAddr := ""
 		if err == nil {
-			proxyDialAddr = proxyURL.Host
-			if dnsOpts.enabled() {
-				proxyDialAddr, err = resolveDialAddress(ctx, proxyDialAddr, dnsOpts)
-			}
+			proxyDialAddr, err = httpProxyDialAddress(proxyURL)
+		}
+		if err == nil && dnsOpts.enabled() {
+			proxyDialAddr, err = resolveDialAddress(ctx, proxyDialAddr, dnsOpts)
 		}
 		if err == nil {
 			conn, err = dialer.DialContext(ctx, network, proxyDialAddr)
@@ -125,7 +118,7 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 					tlsProxyCfg.ServerName = proxyURL.Hostname()
 				}
 				tlsConn := tls.Client(conn, tlsProxyCfg)
-				err = tlsConn.Handshake()
+				err = withContextConnDeadline(ctx, tlsConn, tlsConn.Handshake)
 				if err != nil {
 					err = fmt.Errorf("failed to handshake with proxy: %w", err)
 				} else {
@@ -134,33 +127,51 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 			}
 		}
 		if err == nil {
-			req := &http.Request{
-				Method: http.MethodConnect,
-				URL:    proxyURL,
-				Host:   addr,
-				Header: make(http.Header),
+			username, password, ok, authErr := proxyCredentials(proxyURL, d.ProxyUsername, d.ProxyPassword)
+			if authErr != nil {
+				err = authErr
 			}
-			if d.ProxyUsername != nil && d.ProxyPassword != nil {
-				req.SetBasicAuth(*d.ProxyUsername, *d.ProxyPassword)
+			targetAddr := addr
+			if err == nil && dnsOpts.enabled() {
+				targetAddr, err = resolveDialAddress(ctx, addr, dnsOpts)
+				if err != nil {
+					err = fmt.Errorf("failed to resolve HTTP proxy target address: %w", err)
+				}
+			}
+			var req *http.Request
+			if err == nil {
+				req = &http.Request{
+					Method: http.MethodConnect,
+					URL:    &url.URL{Scheme: "https", Host: targetAddr},
+					Host:   targetAddr,
+					Header: make(http.Header),
+				}
+			}
+			if err == nil && ok {
+				req.SetBasicAuth(username, password)
 				req.Header.Set("Proxy-Authorization", req.Header.Get("Authorization"))
 				req.Header.Del("Authorization")
 			}
-			for k, v := range d.ProxyHTTPHeaders {
-				req.Header.Set(k, v)
-			}
-			err = req.Write(conn)
-			if err != nil {
-				err = fmt.Errorf("failed to write CONNECT request: %w", err)
-			} else {
-				resp, err := http.ReadResponse(bufio.NewReader(conn), req)
-				if err != nil {
-					err = fmt.Errorf("failed to read CONNECT response: %w", err)
-				} else if resp.StatusCode != http.StatusOK {
-					err = fmt.Errorf("failed to CONNECT: %s", resp.Status)
+			if err == nil {
+				for k, v := range d.ProxyHTTPHeaders {
+					req.Header.Set(k, v)
 				}
+				err = withContextConnDeadline(ctx, conn, func() error {
+					if writeErr := req.Write(conn); writeErr != nil {
+						return fmt.Errorf("failed to write CONNECT request: %w", writeErr)
+					}
+					resp, readErr := http.ReadResponse(bufio.NewReader(conn), req)
+					if readErr != nil {
+						return fmt.Errorf("failed to read CONNECT response: %w", readErr)
+					}
+					if resp.StatusCode != http.StatusOK {
+						return fmt.Errorf("failed to CONNECT: %s", resp.Status)
+					}
+					return nil
+				})
 			}
 		}
-	} else {
+	default:
 		dialAddr := addr
 		if dnsOpts.enabled() {
 			dialAddr, err = resolveDialAddress(ctx, addr, dnsOpts)
@@ -174,7 +185,7 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 	}
 	if err == nil && tlsCfg != nil {
 		tlsConn := tls.Client(conn, tlsCfg)
-		err = tlsConn.Handshake()
+		err = withContextConnDeadline(ctx, tlsConn, tlsConn.Handshake)
 		if err != nil {
 			err = fmt.Errorf("failed to handshake: %w", err)
 		} else {

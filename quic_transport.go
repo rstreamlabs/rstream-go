@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -29,19 +30,29 @@ type datagramChannelID [datagramChannelIDSize]byte
 //
 // No reconnection on error — let the control channel error propagate naturally.
 type QUICTransport struct {
-	LocalAddr       *string
-	ForceIPv4       *bool
-	ForceIPv6       *bool
-	DNSOverride     *string
-	DNSOverTLS      *bool
-	DNSServerName   *string
-	DNSSECEnabled   *bool
-	mu              sync.Mutex
-	connectMu       sync.Mutex
-	quicConn        *quic.Conn
-	pconn           net.PacketConn
-	origin          string
-	closeGeneration uint64
+	LocalAddr            *string
+	NetworkInterface     *string
+	ForceIPv4            *bool
+	ForceIPv6            *bool
+	DNSOverride          *string
+	DNSOverTLS           *bool
+	DNSServerName        *string
+	DNSSECEnabled        *bool
+	ProxyHTTP            *string
+	ProxySOCKS5          *string
+	ProxyUsername        *string
+	ProxyPassword        *string
+	ProxyHTTPHeaders     map[string]string
+	TLSProxyConfig       *tls.Config
+	ProxyFromEnvironment *bool
+	mu                   sync.Mutex
+	connectMu            sync.Mutex
+	quicConn             *quic.Conn
+	qtransport           *quic.Transport
+	pconn                net.PacketConn
+	proxyCloser          io.Closer
+	origin               string
+	closeGeneration      uint64
 }
 
 // Dial establishes or reuses a QUIC connection to addr, then opens and returns
@@ -88,7 +99,7 @@ func (t *QUICTransport) connection(ctx context.Context, addr string, tlsCfg *tls
 	}
 	generation := t.closeGeneration
 	t.mu.Unlock()
-	conn, pconn, err := t.connect(ctx, addr, tlsCfg)
+	conn, qtransport, pconn, proxyCloser, err := t.connect(ctx, addr, tlsCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -96,13 +107,13 @@ func (t *QUICTransport) connection(ctx context.Context, addr string, tlsCfg *tls
 	if t.closeGeneration != generation {
 		t.mu.Unlock()
 		_ = conn.CloseWithError(0, "transport closed")
-		if pconn != nil {
-			_ = pconn.Close()
-		}
+		_ = closeQUICTransportResources(qtransport, pconn, proxyCloser)
 		return nil, net.ErrClosed
 	}
 	t.quicConn = conn
+	t.qtransport = qtransport
 	t.pconn = pconn
+	t.proxyCloser = proxyCloser
 	t.origin = origin
 	t.mu.Unlock()
 	return conn, nil
@@ -143,13 +154,40 @@ func (t *QUICTransport) Close() error {
 	err := t.quicConn.CloseWithError(0, "transport closed")
 	t.quicConn = nil
 	t.origin = ""
-	if t.pconn != nil {
-		if pcErr := t.pconn.Close(); pcErr != nil && err == nil {
+	if closeErr := closeQUICTransportResources(t.qtransport, t.pconn, t.proxyCloser); closeErr != nil && err == nil {
+		err = closeErr
+	}
+	t.qtransport = nil
+	t.pconn = nil
+	t.proxyCloser = nil
+	return err
+}
+
+func closeQUICTransportResources(qtransport *quic.Transport, pconn net.PacketConn, proxyCloser io.Closer) error {
+	var err error
+	if qtransport != nil {
+		if transportErr := closeOwned(qtransport); transportErr != nil {
+			err = transportErr
+		}
+	}
+	if pconn != nil {
+		if pcErr := closeOwned(pconn); pcErr != nil && err == nil {
 			err = pcErr
 		}
-		t.pconn = nil
+	}
+	if proxyCloser != nil {
+		if proxyErr := closeOwned(proxyCloser); proxyErr != nil && err == nil {
+			err = proxyErr
+		}
 	}
 	return err
+}
+
+func closeOwned(closer io.Closer) error {
+	if err := closer.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		return err
+	}
+	return nil
 }
 
 func quicTransportOrigin(addr string, tlsCfg *tls.Config) (string, error) {
@@ -169,10 +207,10 @@ func quicTransportOrigin(addr string, tlsCfg *tls.Config) (string, error) {
 	return strings.ToLower(host) + ":" + port + "|" + strings.ToLower(serverName) + "|" + nextProtos, nil
 }
 
-// connect creates the underlying QUIC connection. Must be called with t.mu held.
-// It returns both the QUIC connection and the underlying UDP socket so the
-// caller can close the socket when the connection is torn down.
-func (t *QUICTransport) connect(ctx context.Context, addr string, tlsCfg *tls.Config) (*quic.Conn, net.PacketConn, error) {
+// connect creates the underlying QUIC connection. It returns the QUIC
+// transport, packet connection, and optional proxy closer so the caller can
+// tear down every owned resource when the connection is closed.
+func (t *QUICTransport) connect(ctx context.Context, addr string, tlsCfg *tls.Config) (*quic.Conn, *quic.Transport, net.PacketConn, io.Closer, error) {
 	network := "udp"
 	if t.ForceIPv4 != nil && *t.ForceIPv4 {
 		network = "udp4"
@@ -182,10 +220,17 @@ func (t *QUICTransport) connect(ctx context.Context, addr string, tlsCfg *tls.Co
 	dialAddr := addr
 	dnsOpts := dnsResolverOptionsFromQUICTransport(t)
 	var err error
-	if dnsOpts.enabled() {
+	proxyHTTP, proxySOCKS5, err := effectiveProxyURLs(proxyValue(t.ProxyHTTP), proxyValue(t.ProxySOCKS5), t.ProxyFromEnvironment, addr)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	if proxyHTTP != "" && proxySOCKS5 != "" {
+		return nil, nil, nil, nil, errors.New("only one proxy transport can be configured")
+	}
+	if proxySOCKS5 == "" && proxyHTTP == "" && dnsOpts.enabled() {
 		dialAddr, err = resolveDialAddress(ctx, addr, dnsOpts)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 	}
 	// Bind to a local UDP address.
@@ -193,35 +238,48 @@ func (t *QUICTransport) connect(ctx context.Context, addr string, tlsCfg *tls.Co
 	if t.LocalAddr != nil {
 		ip := net.ParseIP(*t.LocalAddr)
 		if ip == nil {
-			return nil, nil, fmt.Errorf("failed to parse local address %q", *t.LocalAddr)
+			return nil, nil, nil, nil, fmt.Errorf("failed to parse local address %q", *t.LocalAddr)
+		}
+		localUDPAddr = &net.UDPAddr{IP: ip}
+	} else if t.NetworkInterface != nil {
+		ip, err := selectInterfaceIP(*t.NetworkInterface, boolValue(t.ForceIPv4), boolValue(t.ForceIPv6))
+		if err != nil {
+			return nil, nil, nil, nil, err
+		}
+		if ip == nil {
+			return nil, nil, nil, nil, errors.New("no matching IP for selected interface")
 		}
 		localUDPAddr = &net.UDPAddr{IP: ip}
 	}
-	localNetwork := network
 	var pconn net.PacketConn
-	if localUDPAddr != nil {
-		pconn, err = net.ListenPacket(localNetwork, localUDPAddr.String())
-	} else {
-		pconn, err = net.ListenPacket(localNetwork, ":0")
-	}
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create UDP socket: %w", err)
-	}
-	// Resolve the remote address for quic.Dial.
-	udpAddr, err := net.ResolveUDPAddr(network, dialAddr)
-	if err != nil {
-		pconn.Close()
-		return nil, nil, fmt.Errorf("failed to resolve UDP address %q: %w", dialAddr, err)
-	}
 	quicCfg := &quic.Config{
 		EnableDatagrams: true,
 	}
-	conn, err := quic.Dial(ctx, pconn, udpAddr, tlsCfg, quicCfg)
-	if err != nil {
-		pconn.Close()
-		return nil, nil, fmt.Errorf("failed to establish QUIC connection: %w", err)
+	var remoteAddr net.Addr
+	var proxyCloser io.Closer
+	if proxyHTTP != "" {
+		quicCfg.InitialPacketSize = 1200
+		pconn, proxyCloser, remoteAddr, err = t.connectHTTPProxy(ctx, proxyHTTP, addr, tlsCfg, quicCfg, dnsOpts, network, localUDPAddr)
+	} else if proxySOCKS5 != "" {
+		quicCfg.InitialPacketSize = 1200
+		tcpDialer := &net.Dialer{}
+		if localUDPAddr != nil {
+			tcpDialer.LocalAddr = &net.TCPAddr{IP: localUDPAddr.IP}
+		}
+		pconn, remoteAddr, err = newSOCKS5UDPConn(ctx, tcpDialer, network, strings.Replace(network, "udp", "tcp", 1), localUDPAddr, proxySOCKS5, addr, dnsOpts, t.ProxyUsername, t.ProxyPassword)
+	} else {
+		pconn, remoteAddr, err = t.directPacketConn(network, localUDPAddr, dialAddr)
 	}
-	return conn, pconn, nil
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	qtransport := &quic.Transport{Conn: pconn}
+	conn, err := qtransport.Dial(ctx, remoteAddr, tlsCfg, quicCfg)
+	if err != nil {
+		_ = closeQUICTransportResources(qtransport, pconn, proxyCloser)
+		return nil, nil, nil, nil, fmt.Errorf("failed to establish QUIC connection: %w", err)
+	}
+	return conn, qtransport, pconn, proxyCloser, nil
 }
 
 // quicStreamConn wraps a quic.Stream as a net.Conn, delegating LocalAddr and

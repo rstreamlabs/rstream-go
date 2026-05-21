@@ -10,6 +10,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	rstream "github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
 	"github.com/rstreamlabs/rstream-go/controlplane"
 	"github.com/spf13/cobra"
@@ -403,10 +404,13 @@ func addContextTransportFlags(cmd *cobra.Command) {
 	cmd.Flags().String("dns-override", "", "override DNS server (e.g. 8.8.8.8:53)")
 	cmd.Flags().Bool("mptcp", false, "enable MPTCP support")
 	cmd.Flags().String("proxy-http", "", "HTTP proxy (http[s]://host[:port]) for CONNECT")
+	cmd.Flags().String("proxy-socks5", "", "SOCKS5 proxy (socks5://host[:port])")
 	cmd.Flags().String("proxy-username", "", "proxy username")
 	cmd.Flags().String("proxy-password", "", "proxy password")
 	cmd.MarkFlagsRequiredTogether("proxy-username", "proxy-password")
+	cmd.MarkFlagsMutuallyExclusive("proxy-http", "proxy-socks5")
 	cmd.Flags().StringArray("proxy-http-header", nil, "set proxy HTTP headers (key=value, might be specified multiple times)")
+	cmd.Flags().Bool("proxy-from-environment", false, "read HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, and NO_PROXY when no proxy is configured")
 }
 
 func transportFromFlags(cmd *cobra.Command) (*config.TransportConfig, error) {
@@ -442,14 +446,24 @@ func transportFromFlags(cmd *cobra.Command) (*config.TransportConfig, error) {
 		set = true
 	}
 	proxyHTTP, _ := cmd.Flags().GetString("proxy-http")
+	proxySOCKS5, _ := cmd.Flags().GetString("proxy-socks5")
 	proxyUsername, _ := cmd.Flags().GetString("proxy-username")
 	proxyPassword, _ := cmd.Flags().GetString("proxy-password")
+	proxyFromEnvironmentChanged := cmd.Flags().Changed("proxy-from-environment")
+	proxyFromEnvironment, _ := cmd.Flags().GetBool("proxy-from-environment")
 	proxyHeaders := getStringArrayMap(cmd, "proxy-http-header")
-	if proxyHTTP != "" || proxyUsername != "" || proxyPassword != "" || len(proxyHeaders) > 0 {
+	if proxySOCKS5 != "" && len(proxyHeaders) > 0 {
+		return nil, fmt.Errorf("--proxy-http-header can only be used with --proxy-http")
+	}
+	if proxyHTTP != "" || proxySOCKS5 != "" || proxyUsername != "" || proxyPassword != "" || len(proxyHeaders) > 0 || proxyFromEnvironmentChanged {
 		cfg.Proxy = &config.ProxyConfig{}
 		cfg.Proxy.HTTP = proxyHTTP
+		cfg.Proxy.SOCKS5 = proxySOCKS5
 		cfg.Proxy.Username = proxyUsername
 		cfg.Proxy.Password = proxyPassword
+		if proxyFromEnvironmentChanged {
+			cfg.Proxy.FromEnvironment = rstream.BoolPtr(proxyFromEnvironment)
+		}
 		if len(proxyHeaders) > 0 {
 			cfg.Proxy.Headers = proxyHeaders
 		}

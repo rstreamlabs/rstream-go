@@ -75,8 +75,9 @@ func TestNewClientFromEnvOptionsCanSelectQUICTransport(t *testing.T) {
 	if err := WriteAtomic(path, Config{
 		Defaults: Defaults{Context: &DefaultContext{Name: "dev"}},
 		Contexts: []Context{{
-			Name:   "dev",
-			Engine: "engine.example.com:443",
+			Name:      "dev",
+			Engine:    "engine.example.com:443",
+			Transport: &TransportConfig{Proxy: &ProxyConfig{SOCKS5: "socks5://proxy.example.com:1080"}},
 		}},
 	}); err != nil {
 		t.Fatalf("WriteAtomic() error = %v", err)
@@ -87,8 +88,12 @@ func TestNewClientFromEnvOptionsCanSelectQUICTransport(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClientFromEnvOptions() error = %v", err)
 	}
-	if _, ok := client.Transport.(*rstream.QUICTransport); !ok {
+	transport, ok := client.Transport.(*rstream.QUICTransport)
+	if !ok {
 		t.Fatalf("Transport = %T, want *rstream.QUICTransport", client.Transport)
+	}
+	if transport.ProxySOCKS5 == nil || *transport.ProxySOCKS5 != "socks5://proxy.example.com:1080" {
+		t.Fatalf("QUIC transport did not preserve proxy settings: %#v", transport)
 	}
 }
 

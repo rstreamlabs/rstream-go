@@ -5,6 +5,7 @@ package rstream
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -35,6 +36,13 @@ func cloneProxyHTTPHeaders(headers map[string]string) map[string]string {
 	return out
 }
 
+func cloneTLSConfig(cfg *tls.Config) *tls.Config {
+	if cfg == nil {
+		return nil
+	}
+	return cfg.Clone()
+}
+
 func (c *Client) apiDialer() Dialer {
 	switch transport := c.Transport.(type) {
 	case *Transport:
@@ -42,9 +50,7 @@ func (c *Client) apiDialer() Dialer {
 			return &Transport{}
 		}
 		out := *transport
-		if transport.TLSProxyConfig != nil {
-			out.TLSProxyConfig = transport.TLSProxyConfig.Clone()
-		}
+		out.TLSProxyConfig = cloneTLSConfig(transport.TLSProxyConfig)
 		out.ProxyHTTPHeaders = cloneProxyHTTPHeaders(transport.ProxyHTTPHeaders)
 		return &out
 	case *QUICTransport:
@@ -52,13 +58,21 @@ func (c *Client) apiDialer() Dialer {
 			return &Transport{}
 		}
 		return &Transport{
-			LocalAddr:     transport.LocalAddr,
-			ForceIPv4:     transport.ForceIPv4,
-			ForceIPv6:     transport.ForceIPv6,
-			DNSOverride:   transport.DNSOverride,
-			DNSOverTLS:    transport.DNSOverTLS,
-			DNSServerName: transport.DNSServerName,
-			DNSSECEnabled: transport.DNSSECEnabled,
+			LocalAddr:            transport.LocalAddr,
+			NetworkInterface:     transport.NetworkInterface,
+			ForceIPv4:            transport.ForceIPv4,
+			ForceIPv6:            transport.ForceIPv6,
+			DNSOverride:          transport.DNSOverride,
+			DNSOverTLS:           transport.DNSOverTLS,
+			DNSServerName:        transport.DNSServerName,
+			DNSSECEnabled:        transport.DNSSECEnabled,
+			ProxyHTTP:            transport.ProxyHTTP,
+			ProxySOCKS5:          transport.ProxySOCKS5,
+			ProxyUsername:        transport.ProxyUsername,
+			ProxyPassword:        transport.ProxyPassword,
+			ProxyHTTPHeaders:     cloneProxyHTTPHeaders(transport.ProxyHTTPHeaders),
+			TLSProxyConfig:       cloneTLSConfig(transport.TLSProxyConfig),
+			ProxyFromEnvironment: transport.ProxyFromEnvironment,
 		}
 	default:
 		return &Transport{}
