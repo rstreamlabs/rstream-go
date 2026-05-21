@@ -451,7 +451,10 @@ func (c *socks5UDPConn) ReadFrom(b []byte) (int, net.Addr, error) {
 		if err != nil {
 			continue
 		}
-		return copy(b, payload), socks5Addr{network: "udp", address: net.JoinHostPort(source.host, strconv.Itoa(source.port))}, nil
+		if source.port != c.target.port {
+			continue
+		}
+		return copy(b, payload), socks5Addr{network: "udp", address: net.JoinHostPort(c.target.host, strconv.Itoa(c.target.port))}, nil
 	}
 }
 

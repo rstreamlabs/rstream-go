@@ -17,6 +17,7 @@ func TestMergeTransportSafeOverride(t *testing.T) {
 			SOCKS5:          "socks5://socks.local:1080",
 			Headers:         map[string]string{"X-Company": "acme"},
 			FromEnvironment: rstream.BoolPtr(false),
+			TLS:             &ProxyTLSConfig{CAFile: "/base/ca.pem", ServerName: "base.proxy.local"},
 		},
 	}
 	override := &TransportConfig{
@@ -24,6 +25,7 @@ func TestMergeTransportSafeOverride(t *testing.T) {
 		Proxy: &ProxyConfig{
 			Headers:         map[string]string{"X-Env": "ci"},
 			FromEnvironment: rstream.BoolPtr(true),
+			TLS:             &ProxyTLSConfig{ServerName: "override.proxy.local", InsecureSkipVerify: rstream.BoolPtr(true)},
 		},
 	}
 	merged := MergeTransport(base, override)
@@ -48,6 +50,9 @@ func TestMergeTransportSafeOverride(t *testing.T) {
 	if merged.Proxy.FromEnvironment == nil || !*merged.Proxy.FromEnvironment {
 		t.Fatalf("expected proxy fromEnvironment override, got %+v", merged.Proxy)
 	}
+	if merged.Proxy.TLS == nil || merged.Proxy.TLS.CAFile != "/base/ca.pem" || merged.Proxy.TLS.ServerName != "override.proxy.local" || merged.Proxy.TLS.InsecureSkipVerify == nil || !*merged.Proxy.TLS.InsecureSkipVerify {
+		t.Fatalf("expected proxy TLS settings merged, got %+v", merged.Proxy.TLS)
+	}
 }
 
 func TestMergeTransportDeepCopiesNestedValues(t *testing.T) {
@@ -57,18 +62,21 @@ func TestMergeTransportDeepCopiesNestedValues(t *testing.T) {
 		Proxy: &ProxyConfig{
 			HTTP:    "http://proxy.local:3128",
 			Headers: map[string]string{"X-Trace": "source"},
+			TLS:     &ProxyTLSConfig{ServerName: "source.proxy.local"},
 		},
 	}
 	merged := MergeTransport(base, nil)
 	base.Bind.Address = "10.0.0.1"
 	base.DNS.Override = "8.8.8.8:53"
 	base.Proxy.Headers["X-Trace"] = "mutated"
-	if merged.Bind.Address != "127.0.0.1" || merged.DNS.Override != "1.1.1.1:53" || merged.Proxy.Headers["X-Trace"] != "source" {
+	base.Proxy.TLS.ServerName = "mutated.proxy.local"
+	if merged.Bind.Address != "127.0.0.1" || merged.DNS.Override != "1.1.1.1:53" || merged.Proxy.Headers["X-Trace"] != "source" || merged.Proxy.TLS.ServerName != "source.proxy.local" {
 		t.Fatalf("merged transport should be independent from base: %#v", merged)
 	}
 }
 
 func TestFlattenTransportBuildsTCPTransport(t *testing.T) {
+	certFile, _ := writeTestClientCertificate(t)
 	cfg := &TransportConfig{
 		Bind:     &BindConfig{Mode: "interface", Interface: "lo0"},
 		IPFamily: "ipv4",
@@ -76,16 +84,20 @@ func TestFlattenTransportBuildsTCPTransport(t *testing.T) {
 		MPTCP:    rstream.BoolPtr(true),
 		Proxy: &ProxyConfig{
 			HTTP:            "https://proxy.local:8443",
-			SOCKS5:          "socks5://socks.local:1080",
 			Username:        "user",
 			Password:        "pass",
 			Headers:         map[string]string{"X-Trace": "abc"},
 			FromEnvironment: rstream.BoolPtr(true),
+			TLS:             &ProxyTLSConfig{CAFile: certFile, ServerName: "proxy.local"},
 		},
 	}
-	transport, ok := FlattenTransport(cfg).(*rstream.Transport)
+	dialer, err := FlattenTransportWithError(cfg)
+	if err != nil {
+		t.Fatalf("FlattenTransportWithError() error = %v", err)
+	}
+	transport, ok := dialer.(*rstream.Transport)
 	if !ok {
-		t.Fatalf("FlattenTransport() returned %T, want *rstream.Transport", FlattenTransport(cfg))
+		t.Fatalf("FlattenTransportWithError() returned %T, want *rstream.Transport", dialer)
 	}
 	if transport.NetworkInterface == nil || *transport.NetworkInterface != "lo0" || transport.ForceIPv4 == nil || !*transport.ForceIPv4 {
 		t.Fatalf("bind/IP settings not flattened: %#v", transport)
@@ -99,7 +111,7 @@ func TestFlattenTransportBuildsTCPTransport(t *testing.T) {
 	if transport.MPTCPEnabled == nil || !*transport.MPTCPEnabled {
 		t.Fatalf("MPTCP setting not flattened")
 	}
-	if transport.ProxyHTTP == nil || *transport.ProxyHTTP != "https://proxy.local:8443" || transport.ProxySOCKS5 == nil || *transport.ProxySOCKS5 != "socks5://socks.local:1080" || transport.ProxyUsername == nil || *transport.ProxyUsername != "user" {
+	if transport.ProxyHTTP == nil || *transport.ProxyHTTP != "https://proxy.local:8443" || transport.ProxyUsername == nil || *transport.ProxyUsername != "user" {
 		t.Fatalf("proxy settings not flattened: %#v", transport)
 	}
 	if transport.ProxyFromEnvironment == nil || !*transport.ProxyFromEnvironment {
@@ -108,6 +120,9 @@ func TestFlattenTransportBuildsTCPTransport(t *testing.T) {
 	if transport.ProxyHTTPHeaders["X-Trace"] != "abc" {
 		t.Fatalf("proxy headers not flattened: %#v", transport.ProxyHTTPHeaders)
 	}
+	if transport.TLSProxyConfig == nil || transport.TLSProxyConfig.ServerName != "proxy.local" || transport.TLSProxyConfig.RootCAs == nil {
+		t.Fatalf("proxy TLS settings not flattened: %#v", transport.TLSProxyConfig)
+	}
 	cfg.Proxy.Headers["X-Trace"] = "mutated"
 	if transport.ProxyHTTPHeaders["X-Trace"] != "abc" {
 		t.Fatalf("flattened proxy headers should be copied")
@@ -115,16 +130,21 @@ func TestFlattenTransportBuildsTCPTransport(t *testing.T) {
 }
 
 func TestFlattenTransportBuildsQUICTransport(t *testing.T) {
+	certFile, _ := writeTestClientCertificate(t)
 	cfg := &TransportConfig{
 		UseQUIC:  rstream.BoolPtr(true),
 		Bind:     &BindConfig{Mode: "address", Address: "127.0.0.1"},
 		IPFamily: "ipv6",
 		DNS:      &DNSConfig{Override: "1.1.1.1:853", TLS: rstream.BoolPtr(true), ServerName: "cloudflare-dns.com", DNSSEC: rstream.BoolPtr(true)},
-		Proxy:    &ProxyConfig{HTTP: "https://masque.local:443", SOCKS5: "socks5://socks.local:1080", Headers: map[string]string{"X-Trace": "abc"}, FromEnvironment: rstream.BoolPtr(true)},
+		Proxy:    &ProxyConfig{HTTP: "https://masque.local:443", Headers: map[string]string{"X-Trace": "abc"}, FromEnvironment: rstream.BoolPtr(true), TLS: &ProxyTLSConfig{CAFile: certFile, ServerName: "masque.local"}},
 	}
-	transport, ok := FlattenTransport(cfg).(*rstream.QUICTransport)
+	dialer, err := FlattenTransportWithError(cfg)
+	if err != nil {
+		t.Fatalf("FlattenTransportWithError() error = %v", err)
+	}
+	transport, ok := dialer.(*rstream.QUICTransport)
 	if !ok {
-		t.Fatalf("FlattenTransport() returned %T, want *rstream.QUICTransport", FlattenTransport(cfg))
+		t.Fatalf("FlattenTransportWithError() returned %T, want *rstream.QUICTransport", dialer)
 	}
 	if transport.LocalAddr == nil || *transport.LocalAddr != "127.0.0.1" || transport.ForceIPv6 == nil || !*transport.ForceIPv6 {
 		t.Fatalf("bind/IP settings not flattened: %#v", transport)
@@ -135,7 +155,7 @@ func TestFlattenTransportBuildsQUICTransport(t *testing.T) {
 	if transport.DNSServerName == nil || *transport.DNSServerName != "cloudflare-dns.com" || transport.DNSSECEnabled == nil || !*transport.DNSSECEnabled {
 		t.Fatalf("advanced DNS settings not flattened: %#v", transport)
 	}
-	if transport.ProxyHTTP == nil || *transport.ProxyHTTP != "https://masque.local:443" || transport.ProxySOCKS5 == nil || *transport.ProxySOCKS5 != "socks5://socks.local:1080" {
+	if transport.ProxyHTTP == nil || *transport.ProxyHTTP != "https://masque.local:443" {
 		t.Fatalf("proxy settings not flattened: %#v", transport)
 	}
 	if transport.ProxyFromEnvironment == nil || !*transport.ProxyFromEnvironment {
@@ -143,5 +163,26 @@ func TestFlattenTransportBuildsQUICTransport(t *testing.T) {
 	}
 	if transport.ProxyHTTPHeaders["X-Trace"] != "abc" {
 		t.Fatalf("proxy headers not flattened: %#v", transport.ProxyHTTPHeaders)
+	}
+	if transport.TLSProxyConfig == nil || transport.TLSProxyConfig.ServerName != "masque.local" || transport.TLSProxyConfig.RootCAs == nil {
+		t.Fatalf("proxy TLS settings not flattened: %#v", transport.TLSProxyConfig)
+	}
+}
+
+func TestFlattenTransportRejectsInvalidProxyCAFile(t *testing.T) {
+	cfg := &TransportConfig{Proxy: &ProxyConfig{HTTP: "https://proxy.local:8443", TLS: &ProxyTLSConfig{CAFile: "/does/not/exist.pem"}}}
+	if _, err := FlattenTransportWithError(cfg); err == nil {
+		t.Fatalf("expected invalid proxy CA file error")
+	}
+}
+
+func TestFlattenTransportRejectsStandaloneProxyTLSConfig(t *testing.T) {
+	cfg := &TransportConfig{Proxy: &ProxyConfig{TLS: &ProxyTLSConfig{ServerName: "proxy.local"}}}
+	if _, err := FlattenTransportWithError(cfg); err == nil {
+		t.Fatalf("expected standalone proxy TLS error")
+	}
+	cfg = &TransportConfig{Proxy: &ProxyConfig{SOCKS5: "socks5://proxy.local:1080", TLS: &ProxyTLSConfig{ServerName: "proxy.local"}}}
+	if _, err := FlattenTransportWithError(cfg); err == nil {
+		t.Fatalf("expected SOCKS5 proxy TLS error")
 	}
 }

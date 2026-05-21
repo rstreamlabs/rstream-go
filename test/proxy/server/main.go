@@ -217,13 +217,13 @@ func handleSOCKSConnect(conn net.Conn, target string) {
 }
 
 func handleSOCKSUDP(conn net.Conn) {
-	relayConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	relayConn, err := net.ListenUDP("udp4", &net.UDPAddr{})
 	if err != nil {
 		_ = socksWriteReply(conn, 0x01, "0.0.0.0:0")
 		return
 	}
 	defer relayConn.Close()
-	_ = socksWriteReply(conn, 0x00, relayConn.LocalAddr().String())
+	_ = socksWriteReply(conn, 0x00, net.JoinHostPort("0.0.0.0", strconv.Itoa(relayConn.LocalAddr().(*net.UDPAddr).Port)))
 	done := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(io.Discard, conn)
