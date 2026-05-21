@@ -2,7 +2,14 @@
 
 package config
 
-import "github.com/rstreamlabs/rstream-go"
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"os"
+
+	"github.com/rstreamlabs/rstream-go"
+)
 
 type TransportConfig struct {
 	Bind     *BindConfig  `yaml:"bind,omitempty"`
@@ -33,6 +40,13 @@ type ProxyConfig struct {
 	Password        string            `yaml:"password,omitempty"`
 	Headers         map[string]string `yaml:"headers,omitempty"`
 	FromEnvironment *bool             `yaml:"fromEnvironment,omitempty"`
+	TLS             *ProxyTLSConfig   `yaml:"tls,omitempty"`
+}
+
+type ProxyTLSConfig struct {
+	CAFile             string `yaml:"caFile,omitempty"`
+	ServerName         string `yaml:"serverName,omitempty"`
+	InsecureSkipVerify *bool  `yaml:"insecureSkipVerify,omitempty"`
 }
 
 func MergeTransport(base, override *TransportConfig) *TransportConfig {
@@ -58,6 +72,10 @@ func MergeTransport(base, override *TransportConfig) *TransportConfig {
 					headers[k] = v
 				}
 				proxyCopy.Headers = headers
+			}
+			if base.Proxy.TLS != nil {
+				tlsCopy := *base.Proxy.TLS
+				proxyCopy.TLS = &tlsCopy
 			}
 			out.Proxy = &proxyCopy
 		}
@@ -124,6 +142,20 @@ func MergeTransport(base, override *TransportConfig) *TransportConfig {
 		if override.Proxy.FromEnvironment != nil {
 			out.Proxy.FromEnvironment = override.Proxy.FromEnvironment
 		}
+		if override.Proxy.TLS != nil {
+			if out.Proxy.TLS == nil {
+				out.Proxy.TLS = &ProxyTLSConfig{}
+			}
+			if override.Proxy.TLS.CAFile != "" {
+				out.Proxy.TLS.CAFile = override.Proxy.TLS.CAFile
+			}
+			if override.Proxy.TLS.ServerName != "" {
+				out.Proxy.TLS.ServerName = override.Proxy.TLS.ServerName
+			}
+			if override.Proxy.TLS.InsecureSkipVerify != nil {
+				out.Proxy.TLS.InsecureSkipVerify = override.Proxy.TLS.InsecureSkipVerify
+			}
+		}
 		if len(override.Proxy.Headers) > 0 {
 			if out.Proxy.Headers == nil {
 				out.Proxy.Headers = make(map[string]string)
@@ -137,8 +169,16 @@ func MergeTransport(base, override *TransportConfig) *TransportConfig {
 }
 
 func FlattenTransport(cfg *TransportConfig) rstream.Dialer {
+	transport, _ := FlattenTransportWithError(cfg)
+	return transport
+}
+
+func FlattenTransportWithError(cfg *TransportConfig) (rstream.Dialer, error) {
 	if cfg == nil {
-		return nil
+		return nil, nil
+	}
+	if err := validateProxyTLSConfig(cfg.Proxy); err != nil {
+		return nil, err
 	}
 	if cfg.UseQUIC != nil && *cfg.UseQUIC {
 		var t rstream.QUICTransport
@@ -209,11 +249,19 @@ func FlattenTransport(cfg *TransportConfig) rstream.Dialer {
 				}
 				set = true
 			}
+			proxyTLS, err := proxyTLSConfig(cfg.Proxy.TLS)
+			if err != nil {
+				return nil, err
+			}
+			if proxyTLS != nil {
+				t.TLSProxyConfig = proxyTLS
+				set = true
+			}
 		}
 		if !set {
-			return &rstream.QUICTransport{}
+			return &rstream.QUICTransport{}, nil
 		}
-		return &t
+		return &t, nil
 	}
 	// TLS transport (default).
 	var transport rstream.Transport
@@ -288,9 +336,72 @@ func FlattenTransport(cfg *TransportConfig) rstream.Dialer {
 			}
 			set = true
 		}
+		proxyTLS, err := proxyTLSConfig(cfg.Proxy.TLS)
+		if err != nil {
+			return nil, err
+		}
+		if proxyTLS != nil {
+			transport.TLSProxyConfig = proxyTLS
+			set = true
+		}
 	}
 	if !set {
+		return nil, nil
+	}
+	return &transport, nil
+}
+
+func validateProxyTLSConfig(proxy *ProxyConfig) error {
+	if proxy == nil || proxy.TLS == nil {
 		return nil
 	}
-	return &transport
+	if proxy.SOCKS5 != "" {
+		return fmt.Errorf("proxy TLS configuration can only be used with proxy.http or proxy.fromEnvironment")
+	}
+	if proxy.HTTP == "" && !boolPtrValue(proxy.FromEnvironment) {
+		return fmt.Errorf("proxy TLS configuration requires proxy.http or proxy.fromEnvironment")
+	}
+	return nil
+}
+
+func boolPtrValue(value *bool) bool {
+	return value != nil && *value
+}
+
+func proxyTLSConfig(cfg *ProxyTLSConfig) (*tls.Config, error) {
+	if cfg == nil {
+		return nil, nil
+	}
+	out := &tls.Config{}
+	set := false
+	if cfg.CAFile != "" {
+		certs, err := os.ReadFile(cfg.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read proxy CA file %q: %w", cfg.CAFile, err)
+		}
+		pool, err := x509.SystemCertPool()
+		if err != nil {
+			pool = x509.NewCertPool()
+		}
+		if pool == nil {
+			pool = x509.NewCertPool()
+		}
+		if !pool.AppendCertsFromPEM(certs) {
+			return nil, fmt.Errorf("proxy CA file %q does not contain a valid PEM certificate", cfg.CAFile)
+		}
+		out.RootCAs = pool
+		set = true
+	}
+	if cfg.ServerName != "" {
+		out.ServerName = cfg.ServerName
+		set = true
+	}
+	if cfg.InsecureSkipVerify != nil {
+		out.InsecureSkipVerify = *cfg.InsecureSkipVerify
+		set = true
+	}
+	if !set {
+		return nil, nil
+	}
+	return out, nil
 }

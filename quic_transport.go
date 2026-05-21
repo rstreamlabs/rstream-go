@@ -227,6 +227,9 @@ func (t *QUICTransport) connect(ctx context.Context, addr string, tlsCfg *tls.Co
 	if proxyHTTP != "" && proxySOCKS5 != "" {
 		return nil, nil, nil, nil, errors.New("only one proxy transport can be configured")
 	}
+	if proxyHTTP == "" && proxySOCKS5 == "" && t.TLSProxyConfig != nil {
+		return nil, nil, nil, nil, errors.New("TLS proxy configuration requires an HTTP or environment proxy")
+	}
 	if proxySOCKS5 == "" && proxyHTTP == "" && dnsOpts.enabled() {
 		dialAddr, err = resolveDialAddress(ctx, addr, dnsOpts)
 		if err != nil {
@@ -261,6 +264,9 @@ func (t *QUICTransport) connect(ctx context.Context, addr string, tlsCfg *tls.Co
 		quicCfg.InitialPacketSize = 1200
 		pconn, proxyCloser, remoteAddr, err = t.connectHTTPProxy(ctx, proxyHTTP, addr, tlsCfg, quicCfg, dnsOpts, network, localUDPAddr)
 	} else if proxySOCKS5 != "" {
+		if t.TLSProxyConfig != nil {
+			return nil, nil, nil, nil, errors.New("TLS proxy configuration cannot be used with SOCKS5 proxy")
+		}
 		quicCfg.InitialPacketSize = 1200
 		tcpDialer := &net.Dialer{}
 		if localUDPAddr != nil {

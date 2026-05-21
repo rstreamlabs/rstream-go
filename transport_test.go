@@ -247,6 +247,13 @@ func TestTransportDialRejectsAmbiguousProxy(t *testing.T) {
 	}
 }
 
+func TestTransportDialRejectsStandaloneProxyTLSConfig(t *testing.T) {
+	_, err := (&Transport{TLSProxyConfig: &tls.Config{ServerName: "proxy.local"}}).Dial(t.Context(), "target.example.com:443", nil)
+	if err == nil || !strings.Contains(err.Error(), "TLS proxy configuration") {
+		t.Fatalf("expected standalone proxy TLS error, got %v", err)
+	}
+}
+
 func TestTransportDialRejectsInvalidHTTPProxyScheme(t *testing.T) {
 	proxy := "socks5://proxy.local:1080"
 	_, err := (&Transport{ProxyHTTP: &proxy}).Dial(t.Context(), "target.example.com:443", nil)

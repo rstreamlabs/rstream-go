@@ -97,6 +97,12 @@ start_upstream() {
 
 write_config() {
   local path=$1 use_quic=$2 proxy_key=$3 proxy_url=$4
+  local proxy_tls=""
+  if [ "$use_quic" = "true" ] && [ "$proxy_key" = "http" ] && [ -n "$MASQUE_CERT" ]; then
+    proxy_tls="
+        tls:
+          caFile: \"$MASQUE_CERT\""
+  fi
   cat >"$path" <<EOF
 version: 1
 defaults:
@@ -114,6 +120,7 @@ contexts:
       useQuic: $use_quic
       proxy:
         $proxy_key: "$proxy_url"
+$proxy_tls
 EOF
 }
 

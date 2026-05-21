@@ -164,7 +164,10 @@ func Resolve(input ResolveInput) (Resolved, error) {
 		} else {
 			merged = MergeTransport(nil, ctxTransport(ctx))
 		}
-		transport = FlattenTransport(merged)
+		transport, err = FlattenTransportWithError(merged)
+		if err != nil {
+			return Resolved{}, err
+		}
 	}
 	return Resolved{
 		APIURL:          apiURL,

@@ -141,6 +141,9 @@ var contextDeleteCmd = &cobra.Command{
 			return err
 		}
 		deleted := *ctx
+		if err := deleteAuthToken(deleted.Auth); err != nil {
+			return err
+		}
 		cfg.Contexts = append(cfg.Contexts[:idx], cfg.Contexts[idx+1:]...)
 		if cfg.Defaults.Context != nil && cfg.Defaults.Context.Name == deleted.Name {
 			cfg.Defaults.Context = nil
@@ -410,6 +413,9 @@ func addContextTransportFlags(cmd *cobra.Command) {
 	cmd.MarkFlagsRequiredTogether("proxy-username", "proxy-password")
 	cmd.MarkFlagsMutuallyExclusive("proxy-http", "proxy-socks5")
 	cmd.Flags().StringArray("proxy-http-header", nil, "set proxy HTTP headers (key=value, might be specified multiple times)")
+	cmd.Flags().String("proxy-tls-ca-file", "", "PEM CA bundle used to verify HTTPS or MASQUE proxy TLS")
+	cmd.Flags().String("proxy-tls-server-name", "", "TLS server name used when verifying HTTPS or MASQUE proxy TLS")
+	cmd.Flags().Bool("proxy-tls-insecure-skip-verify", false, "skip HTTPS or MASQUE proxy TLS verification")
 	cmd.Flags().Bool("proxy-from-environment", false, "read HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, and NO_PROXY when no proxy is configured")
 }
 
@@ -452,10 +458,21 @@ func transportFromFlags(cmd *cobra.Command) (*config.TransportConfig, error) {
 	proxyFromEnvironmentChanged := cmd.Flags().Changed("proxy-from-environment")
 	proxyFromEnvironment, _ := cmd.Flags().GetBool("proxy-from-environment")
 	proxyHeaders := getStringArrayMap(cmd, "proxy-http-header")
+	proxyTLSCAFile, _ := cmd.Flags().GetString("proxy-tls-ca-file")
+	proxyTLSServerName, _ := cmd.Flags().GetString("proxy-tls-server-name")
+	proxyTLSInsecureChanged := cmd.Flags().Changed("proxy-tls-insecure-skip-verify")
+	proxyTLSInsecure, _ := cmd.Flags().GetBool("proxy-tls-insecure-skip-verify")
+	proxyTLSSet := proxyTLSCAFile != "" || proxyTLSServerName != "" || proxyTLSInsecureChanged
 	if proxySOCKS5 != "" && len(proxyHeaders) > 0 {
 		return nil, fmt.Errorf("--proxy-http-header can only be used with --proxy-http")
 	}
-	if proxyHTTP != "" || proxySOCKS5 != "" || proxyUsername != "" || proxyPassword != "" || len(proxyHeaders) > 0 || proxyFromEnvironmentChanged {
+	if proxySOCKS5 != "" && proxyTLSSet {
+		return nil, fmt.Errorf("--proxy-tls-* flags can only be used with --proxy-http or --proxy-from-environment")
+	}
+	if proxyTLSSet && proxyHTTP == "" && !proxyFromEnvironment {
+		return nil, fmt.Errorf("--proxy-tls-* flags require --proxy-http or --proxy-from-environment=true")
+	}
+	if proxyHTTP != "" || proxySOCKS5 != "" || proxyUsername != "" || proxyPassword != "" || len(proxyHeaders) > 0 || proxyTLSSet || proxyFromEnvironmentChanged {
 		cfg.Proxy = &config.ProxyConfig{}
 		cfg.Proxy.HTTP = proxyHTTP
 		cfg.Proxy.SOCKS5 = proxySOCKS5
@@ -466,6 +483,15 @@ func transportFromFlags(cmd *cobra.Command) (*config.TransportConfig, error) {
 		}
 		if len(proxyHeaders) > 0 {
 			cfg.Proxy.Headers = proxyHeaders
+		}
+		if proxyTLSSet {
+			cfg.Proxy.TLS = &config.ProxyTLSConfig{
+				CAFile:     proxyTLSCAFile,
+				ServerName: proxyTLSServerName,
+			}
+			if proxyTLSInsecureChanged {
+				cfg.Proxy.TLS.InsecureSkipVerify = rstream.BoolPtr(proxyTLSInsecure)
+			}
 		}
 		set = true
 	}

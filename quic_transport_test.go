@@ -242,6 +242,50 @@ func TestQUICTransportSOCKS5ProxyToQUICServer(t *testing.T) {
 	assertQUICEchoConn(t, conn)
 }
 
+func TestQUICTransportSOCKS5ProxyPreservesLogicalHostname(t *testing.T) {
+	server := newTestQUICEchoServer(t)
+	defer server.close()
+	_, port, err := net.SplitHostPort(server.addr)
+	if err != nil {
+		t.Fatalf("split QUIC server address: %v", err)
+	}
+	proxy := newTestSOCKS5UDPProxyWithOptions(t, testSOCKS5UDPProxyOptions{
+		assertTarget: func(target socks5Address) {
+			if target.host != "localhost" || strconv.Itoa(target.port) != port {
+				t.Errorf("SOCKS5 UDP target = %#v, want localhost:%s", target, port)
+			}
+		},
+	})
+	defer proxy.close()
+	transport := &QUICTransport{ProxySOCKS5: StringPtr("socks5://" + proxy.addr)}
+	defer transport.Close()
+	conn, err := transport.Dial(t.Context(), net.JoinHostPort("localhost", port), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{testQUICALPN}})
+	if err != nil {
+		t.Fatalf("Dial() through SOCKS5 UDP proxy error = %v", err)
+	}
+	defer conn.Close()
+	assertQUICEchoConn(t, conn)
+}
+
+func TestQUICTransportSOCKS5ProxyRejectsTLSProxyConfig(t *testing.T) {
+	transport := &QUICTransport{
+		ProxySOCKS5:    StringPtr("socks5://proxy.example.com:1080"),
+		TLSProxyConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+	_, err := transport.Dial(t.Context(), "127.0.0.1:443", &tls.Config{InsecureSkipVerify: true, NextProtos: []string{testQUICALPN}})
+	if err == nil || !strings.Contains(err.Error(), "TLS proxy configuration") {
+		t.Fatalf("Dial() error = %v, want TLS proxy config validation", err)
+	}
+}
+
+func TestQUICTransportRejectsStandaloneProxyTLSConfig(t *testing.T) {
+	transport := &QUICTransport{TLSProxyConfig: &tls.Config{ServerName: "proxy.local"}}
+	_, err := transport.Dial(t.Context(), "127.0.0.1:443", &tls.Config{InsecureSkipVerify: true, NextProtos: []string{testQUICALPN}})
+	if err == nil || !strings.Contains(err.Error(), "TLS proxy configuration") {
+		t.Fatalf("Dial() error = %v, want TLS proxy config validation", err)
+	}
+}
+
 func TestQUICTransportMASQUEProxyToQUICServer(t *testing.T) {
 	server := newTestQUICEchoServer(t)
 	defer server.close()
@@ -673,6 +717,9 @@ func relaySOCKS5UDP(t *testing.T, relay *net.UDPConn, assertTarget func(socks5Ad
 				return
 			}
 			if _, err := relay.WriteToUDP(payload, targetAddr); err != nil {
+				if errors.Is(err, net.ErrClosed) {
+					return
+				}
 				t.Errorf("write SOCKS5 UDP target: %v", err)
 				return
 			}
@@ -688,6 +735,9 @@ func relaySOCKS5UDP(t *testing.T, relay *net.UDPConn, assertTarget func(socks5Ad
 			return
 		}
 		if _, err := relay.WriteToUDP(packet, clientAddr); err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
 			t.Errorf("write SOCKS5 UDP client: %v", err)
 			return
 		}
