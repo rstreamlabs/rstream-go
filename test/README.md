@@ -101,7 +101,7 @@ export BIN=out/test
 bash test/e2e/runtime-forward.sh --quic-transport
 ```
 
-The SDK transport unit suite also exercises the agent-to-engine proxy matrix with live local servers and proxies:
+The runtime transport proxy suite exercises the agent-to-engine proxy matrix with live local servers and proxies:
 
 | Engine transport | Proxy path | Runtime path covered |
 |------------------|------------|----------------------|
@@ -109,6 +109,17 @@ The SDK transport unit suite also exercises the agent-to-engine proxy matrix wit
 | TLS/TCP | SOCKS5 CONNECT | SOCKS5 negotiation, username/password authentication, and end-to-end TLS to the engine target |
 | QUIC | HTTPS MASQUE CONNECT-UDP | HTTP/3 Extended CONNECT, HTTP datagrams, custom DNS for proxy and target, local bind/address-family selection, and end-to-end QUIC to the engine target |
 | QUIC | SOCKS5 UDP ASSOCIATE | SOCKS5 control channel, UDP relay framing, local bind/address-family selection, and end-to-end QUIC to the engine target |
+
+Run it with:
+
+```sh
+export RSTREAM_CONTEXT=<context>
+export RSTREAM_AUTHENTICATION_TOKEN='<pat or auth token valid for the selected project>'
+export RSTREAM_RUNTIME_MASQUE_PROXY_CERT_FILE=/path/to/masque-proxy.crt
+export RSTREAM_RUNTIME_MASQUE_PROXY_KEY_FILE=/path/to/masque-proxy.key
+export BIN=out/test
+bash test/e2e/runtime-transport-proxy.sh
+```
 
 Run the challenge mode runtime suite:
 

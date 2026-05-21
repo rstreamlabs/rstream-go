@@ -257,10 +257,14 @@ func resolveInlineContext(engine, token string, transport *config.TransportConfi
 	if token == "" {
 		return runmodel.ResolvedContext{}, fmt.Errorf("token is required")
 	}
+	dialer, err := config.FlattenTransportWithError(transport)
+	if err != nil {
+		return runmodel.ResolvedContext{}, err
+	}
 	return runmodel.ResolvedContext{
 		Engine:    engine,
 		Token:     token,
-		Transport: config.FlattenTransport(transport),
+		Transport: dialer,
 	}, nil
 }
 

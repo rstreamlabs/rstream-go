@@ -73,6 +73,8 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 	switch {
 	case proxyHTTP != "" && proxySOCKS5 != "":
 		err = errors.New("only one proxy transport can be configured")
+	case proxyHTTP == "" && proxySOCKS5 == "" && d.TLSProxyConfig != nil:
+		err = errors.New("TLS proxy configuration requires an HTTP or environment proxy")
 	case proxySOCKS5 != "":
 		if len(d.ProxyHTTPHeaders) > 0 {
 			err = errors.New("proxy HTTP headers cannot be used with SOCKS5 proxy")

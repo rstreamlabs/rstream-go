@@ -78,6 +78,20 @@ transport:
 
 Only one proxy type may be configured at a time. Configurations that set both `proxy.http` and `proxy.socks5` are rejected before the engine session is established.
 
+HTTPS and MASQUE proxy verification uses the system trust store by default. Private proxy PKI can be configured with a dedicated CA bundle, and the setting applies only to the proxy hop; the rstream edge TLS verification remains independent.
+
+```yaml
+transport:
+  proxy:
+    http: "https://masque.proxy.corp"
+    tls:
+      caFile: "/etc/rstream/proxy-ca.pem"
+      serverName: "masque.proxy.corp"
+      insecureSkipVerify: false
+```
+
+The proxy TLS block follows the usual TLS client shape: `caFile` adds a PEM trust bundle for the proxy certificate, `serverName` overrides the SNI and verification name, and `insecureSkipVerify` disables proxy certificate verification. `insecureSkipVerify` is intended for diagnostics and controlled labs; production agents should use `caFile` or the system trust store.
+
 `proxy.fromEnvironment: true` lets the SDK read the standard process proxy environment when no explicit `proxy.http` or `proxy.socks5` value is configured. The lookup honors `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, and `NO_PROXY` in upper- and lower-case forms. HTTP and HTTPS proxy URLs map to `proxy.http`; `socks5://` and `socks5h://` URLs map to `proxy.socks5`.
 
 ```yaml
