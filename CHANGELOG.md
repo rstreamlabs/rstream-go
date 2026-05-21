@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.2](https://github.com/rstreamlabs/rstream-go/compare/v1.16.1...v1.16.2) (2026-05-21)
+
+
+### Bug Fixes
+
+* make NuGet release deployment idempotent ([1b46702](https://github.com/rstreamlabs/rstream-go/commit/1b467021def675b0bf39b3441c78e5dea0dfac13))
+
 ## [1.16.1](https://github.com/rstreamlabs/rstream-go/compare/v1.16.0...v1.16.1) (2026-05-21)
 
 
