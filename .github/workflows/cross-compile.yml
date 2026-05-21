@@ -1,4 +1,4 @@
-name: build, package and deploy
+name: cross-compile, package, and deploy
 
 on:
   push:
@@ -20,6 +20,7 @@ permissions:
   id-token: write
 jobs:
   build-macos:
+    name: macOS native binaries (${{ matrix.artifact }})
     if: ${{ github.actor == vars.CI_ALLOWED_ACTOR && github.ref_type == 'tag' }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -65,6 +66,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
   build:
+    name: ${{ github.ref_type == 'tag' && 'build non-macOS targets, sign, and publish' || 'build development targets' }}
     needs: build-macos
     if: ${{ always() && github.actor == vars.CI_ALLOWED_ACTOR && (github.ref_type == 'tag' || github.ref_name == 'main') && (github.ref_type != 'tag' || needs.build-macos.result == 'success') }}
     runs-on: ubuntu-latest
@@ -113,7 +115,7 @@ jobs:
           set -euo pipefail
           sudo rm -rf /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/.ghcup /usr/local/lib/android /usr/share/dotnet
           sudo docker system prune -af >/dev/null || true
-      - name: Build
+      - name: Build non-macOS targets
         shell: bash
         run: |
           set -euo pipefail
@@ -131,16 +133,46 @@ jobs:
         if: ${{ github.ref_type == 'tag' }}
         with:
           pattern: macos-*
-          path: out/cmd/${{ env.PACKAGE_NAME }}/${{ env.CHANNEL }}/${{ env.VERSION }}
-          merge-multiple: true
+          path: native-macos-artifacts
+      - name: Install native macOS artifacts
+        if: ${{ github.ref_type == 'tag' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          destination="out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}"
+          mkdir -p "${destination}/macos"
+          shopt -s nullglob
+          artifact_dirs=(native-macos-artifacts/macos-*)
+          if ((${#artifact_dirs[@]} == 0)); then
+            echo "no native macOS artifacts were downloaded" >&2
+            exit 1
+          fi
+          for artifact_dir in "${artifact_dirs[@]}"; do
+            if [[ ! -d "${artifact_dir}/macos" ]]; then
+              echo "native macOS artifact is missing macos directory: ${artifact_dir}" >&2
+              find "${artifact_dir}" -maxdepth 4 -print >&2
+              exit 1
+            fi
+            rsync -a "${artifact_dir}/macos/" "${destination}/macos/"
+          done
+          find "${destination}/macos" -path "*/release/bin/${PACKAGE_NAME}" -type f -exec chmod 0755 {} +
       - name: Verify native macOS artifacts
         if: ${{ github.ref_type == 'tag' }}
         shell: bash
         run: |
           set -euo pipefail
+          missing=0
           for platform in macos/arm64 macos/x86_64 macos/x86_64_v2 macos/x86_64_v3 macos/x86_64_v4; do
-            test -x "out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/${platform}/release/bin/${PACKAGE_NAME}"
+            binary="out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/${platform}/release/bin/${PACKAGE_NAME}"
+            if [[ ! -x "${binary}" ]]; then
+              echo "missing or non-executable native macOS binary: ${binary}" >&2
+              missing=1
+            fi
           done
+          if ((missing)); then
+            find "out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/macos" -maxdepth 5 -print >&2 || true
+            exit 1
+          fi
       - name: Sign macos binaries
         if: ${{ github.ref_type == 'tag' }}
         shell: bash
