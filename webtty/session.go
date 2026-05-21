@@ -66,11 +66,18 @@ func newSession(conn *websocket.Conn, cfg *ServerConfig, logger *slog.Logger) *s
 		s.heartbeatTicker = time.NewTicker(*cfg.HeartbeatInterval)
 	}
 	if cfg.SessionOpenDeadline != nil && *cfg.SessionOpenDeadline > 0 {
-		s.openTimer = time.AfterFunc(*cfg.SessionOpenDeadline, func() {
+		timer := time.AfterFunc(*cfg.SessionOpenDeadline, func() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 			s.onOpenTimeout()
 		})
+		s.mu.Lock()
+		if s.closed {
+			timer.Stop()
+		} else {
+			s.openTimer = timer
+		}
+		s.mu.Unlock()
 	}
 	return s
 }
