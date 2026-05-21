@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.16.0](https://github.com/rstreamlabs/rstream-go/compare/v1.15.1...v1.16.0) (2026-05-21)
+
+
+### Features
+
+* add CONNECT UDP/IP and proxy transport support ([5fd2411](https://github.com/rstreamlabs/rstream-go/commit/5fd241162af90f4fdb8f645baaa27fb42534af06))
+* support hardened credential storage ([6d194d2](https://github.com/rstreamlabs/rstream-go/commit/6d194d2a16e62a2511660076812f4e59e121b99e))
+
+
+### Bug Fixes
+
+* guard webtty open timer assignment ([101bde4](https://github.com/rstreamlabs/rstream-go/commit/101bde453ce99d641c42d9abf76b5e2cc9e16d22))
+
 ## [1.15.1](https://github.com/rstreamlabs/rstream-go/compare/v1.15.0...v1.15.1) (2026-05-16)
 
 
