@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.16.1](https://github.com/rstreamlabs/rstream-go/compare/v1.16.0...v1.16.1) (2026-05-21)
+
+
+### Bug Fixes
+
+* harden native macOS release artifact installation ([3ddb43d](https://github.com/rstreamlabs/rstream-go/commit/3ddb43dec773a0e073695090825364230d53f722))
+
 ## [1.16.0](https://github.com/rstreamlabs/rstream-go/compare/v1.15.1...v1.16.0) (2026-05-21)
 
 
