@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.0](https://github.com/rstreamlabs/rstream-go/compare/v1.16.2...v1.17.0) (2026-05-21)
+
+
+### Features
+
+* support proxy TLS configuration ([9e17de9](https://github.com/rstreamlabs/rstream-go/commit/9e17de9aae9d304cf7631b7dc6f746ac54a6a048))
+
 ## [1.16.2](https://github.com/rstreamlabs/rstream-go/compare/v1.16.1...v1.16.2) (2026-05-21)
 
 
