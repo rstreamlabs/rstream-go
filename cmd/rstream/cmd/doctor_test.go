@@ -42,16 +42,16 @@ func TestDoctorReportSummaryAndAddressHelpers(t *testing.T) {
 func TestDoctorTokenParsingAndChecks(t *testing.T) {
 	expiresAt := time.Now().Add(time.Hour).Unix()
 	token := doctorToken(map[string]any{
-		"exp":           expiresAt,
-		"permissions":   []string{"write", "read"},
-		"scope":         "openid profile",
-		"tunnelsGrants": map[string]any{"create": true},
+		"exp":         expiresAt,
+		"permissions": []string{"write", "read"},
+		"scope":       "openid profile",
+		"resources":   map[string]any{"tunnels": map[string]any{"projects": []string{"project-1"}}},
 	})
 	info, err := parseDoctorTokenInfo(token)
 	if err != nil {
 		t.Fatalf("parseDoctorTokenInfo() error = %v", err)
 	}
-	if info.ExpiresAt == nil || !info.HasTunnelGrants || strings.Join(info.Permissions, ",") != "read,write" || strings.Join(info.Scopes, ",") != "openid,profile" {
+	if info.ExpiresAt == nil || !info.HasResources || strings.Join(info.Permissions, ",") != "read,write" || strings.Join(info.Scopes, ",") != "openid,profile" {
 		t.Fatalf("unexpected token info: %#v", info)
 	}
 	report := doctorReport{}
