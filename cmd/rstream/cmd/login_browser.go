@@ -21,7 +21,8 @@ var rstreamLoginPermissions = []string{
 	"tunnels.tunnels.create-delete",
 	"tunnels.streams.create-delete",
 	"tunnels.resources.read-only",
-	"network.turn-server-credentials.create",
+	"turn.credentials.create",
+	"turn.relay.allocate",
 }
 
 const rstreamLoginPollInterval = 2 * time.Second

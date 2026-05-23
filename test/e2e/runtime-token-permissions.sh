@@ -93,15 +93,15 @@ def request_json(base_url, token, method, path, body=None, insecure_tls=False, q
 def control_request(token, method, path, body=None, expect=(200,)):
     return request_json(api_url, token, method, path, body, False, False, expect)
 
-def create_token(permissions, grants=None, token=control_token):
+def create_token(permissions, resources=None, token=control_token):
     body = {"permissions": permissions}
-    if grants is not None:
-        body["tunnelsGrants"] = grants
+    if resources is not None:
+        body["resources"] = {"tunnels": resources}
     return control_request(token, "POST", "/api/tokens", body)["token"]
 
-def create_named_token(name, permissions, grants=None, token=control_token):
+def create_named_token(name, permissions, resources=None, token=control_token):
     try:
-        return create_token(permissions, grants, token)
+        return create_token(permissions, resources, token)
     except Exception as exc:
         raise RuntimeError(f"failed to create {name} token: {exc}") from exc
 
@@ -121,7 +121,7 @@ def project_selection():
         raise RuntimeError("no Basic project found; set RSTREAM_RUNTIME_PROJECT_ENDPOINT")
     return project
 
-def project_grant(project_id, scopes):
+def project_resource(project_id, scopes):
     return {"AND": [{"projects": [project_id]}, {"scopes": {"tunnels": scopes}}]}
 
 def setup():
@@ -149,15 +149,15 @@ def setup():
             "params": {"path": {"exact": "/ping"}},
         }
     }
-    invalid_grant_rejected = False
+    invalid_resource_rejected = False
     status, _ = request_status(
         api_url,
         control_token,
         "POST",
         "/api/tokens",
-        {"permissions": ["tunnels.resources.read-only"], "tunnelsGrants": [{"projects": [project_id]}]},
+        {"permissions": ["tunnels.resources.read-only"], "resources": {"tunnels": [{"projects": [project_id]}]}},
     )
-    invalid_grant_rejected = status == 400
+    invalid_resource_rejected = status == 400
     status, _ = request_status(
         api_url,
         control_token,
@@ -165,21 +165,21 @@ def setup():
         "/api/tokens",
         {
             "permissions": ["tunnels.resources.read-only"],
-            "tunnelsGrants": project_grant(project_id, {"list": False}),
+            "resources": {"tunnels": project_resource(project_id, {"list": False})},
         },
     )
-    permission_grant_mismatch_rejected = status == 400
+    permission_resource_mismatch_rejected = status == 400
     tokens = {
         "controlProjectsRead": create_named_token("controlProjectsRead", ["account.projects.read-only"]),
         "controlCredentialsRead": create_named_token("controlCredentialsRead", ["account.credentials.read-only"]),
         "tokenCreator": create_named_token("tokenCreator", ["account.tokens.create"]),
         "emptyPermissions": create_named_token("emptyPermissions", []),
-        "engineReadOnly": create_named_token("engineReadOnly", ["tunnels.resources.read-only"], project_grant(project_id, {"list": True})),
-        "createForced": create_named_token("createForced", ["tunnels.tunnels.create-delete"], project_grant(project_id, {"create": {"filters": create_filters}})),
+        "engineReadOnly": create_named_token("engineReadOnly", ["tunnels.resources.read-only"], project_resource(project_id, {"list": True})),
+        "createForced": create_named_token("createForced", ["tunnels.tunnels.create-delete"], project_resource(project_id, {"create": {"filters": create_filters}})),
         "listSelected": create_named_token(
             "listSelected",
             ["tunnels.resources.read-only"],
-            project_grant(project_id, {
+            project_resource(project_id, {
                 "list": {
                     "filters": {"name": {"exact": allowed_name}},
                     "select": {"name": True, "host": True},
@@ -206,14 +206,14 @@ def setup():
                 ]},
             ]},
         ),
-        "connectAllowedPath": create_named_token("connectAllowedPath", ["tunnels.streams.create-delete"], project_grant(project_id, connect_scope)),
-        "connectNoPermission": create_named_token("connectNoPermission", [], project_grant(project_id, connect_scope)),
+        "connectAllowedPath": create_named_token("connectAllowedPath", ["tunnels.streams.create-delete"], project_resource(project_id, connect_scope)),
+        "connectNoPermission": create_named_token("connectNoPermission", [], project_resource(project_id, connect_scope)),
     }
     print(json.dumps({
         "project": project,
         "tokens": tokens,
-        "invalidGrantRejected": invalid_grant_rejected,
-        "permissionGrantMismatchRejected": permission_grant_mismatch_rejected,
+        "invalidResourceRejected": invalid_resource_rejected,
+        "permissionResourceMismatchRejected": permission_resource_mismatch_rejected,
     }))
 
 def split_host_port(value):
@@ -513,16 +513,16 @@ LIST_OR_NAMES_TOKEN="$(json_get "$TMP_DIR/setup.json" tokens.listOrNames)"
 CONNECT_ALLOWED_TOKEN="$(json_get "$TMP_DIR/setup.json" tokens.connectAllowedPath)"
 CONNECT_NO_PERMISSION_TOKEN="$(json_get "$TMP_DIR/setup.json" tokens.connectNoPermission)"
 
-if [ "$(json_get "$TMP_DIR/setup.json" invalidGrantRejected)" = "True" ]; then
-  pass "invalid tunnel grant shape is rejected"
+if [ "$(json_get "$TMP_DIR/setup.json" invalidResourceRejected)" = "True" ]; then
+  pass "invalid tunnel resource shape is rejected"
 else
-  fail "invalid tunnel grant shape is rejected" "root array was accepted"
+  fail "invalid tunnel resource shape is rejected" "root array was accepted"
 fi
 
-if [ "$(json_get "$TMP_DIR/setup.json" permissionGrantMismatchRejected)" = "True" ]; then
-  pass "token mint rejects grants that do not allow requested permission"
+if [ "$(json_get "$TMP_DIR/setup.json" permissionResourceMismatchRejected)" = "True" ]; then
+  pass "token mint rejects resources that do not allow requested permission"
 else
-  fail "token mint rejects grants that do not allow requested permission" "grant/permission mismatch was accepted"
+  fail "token mint rejects resources that do not allow requested permission" "resource/permission mismatch was accepted"
 fi
 
 status=$(control_status "$CONTROL_PROJECTS_TOKEN" GET "/api/projects/tunnels?pageSize=1")
@@ -614,12 +614,12 @@ status=$(engine_status "$PROJECT_ENGINE" "$CREATE_FORCED_TOKEN" "/api/tunnels")
 if [ "$status" = "403" ]; then pass "create-only Engine API token cannot list tunnels"; else fail "create-only Engine API token cannot list tunnels" "status=$status"; fi
 
 status=$(engine_status "$PROJECT_ENGINE" "$LIST_AND_DENIED_PROJECT_TOKEN" "/api/tunnels")
-if [ "$status" = "403" ]; then pass "AND grant denies other project branch"; else fail "AND grant denies other project branch" "status=$status"; fi
+if [ "$status" = "403" ]; then pass "AND resource denies other project branch"; else fail "AND resource denies other project branch" "status=$status"; fi
 
 if "$PYTHON" "$TMP_DIR/runtime_api.py" engine-list-check "$PROJECT_ENGINE" "$LIST_OR_NAMES_TOKEN" --expect "$ALLOWED_NAME" --expect "$DENIED_NAME"; then
-  pass "OR grant allows either listed tunnel name"
+  pass "OR resource allows either listed tunnel name"
 else
-  fail "OR grant allows either listed tunnel name" "unexpected tunnel list"
+  fail "OR resource allows either listed tunnel name" "unexpected tunnel list"
 fi
 
 status=$(engine_status "$PROJECT_ENGINE" "$LIST_SELECTED_TOKEN" "/api/tunnels" --query-token)
