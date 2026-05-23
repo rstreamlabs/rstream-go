@@ -60,10 +60,10 @@ type doctorReport struct {
 }
 
 type doctorTokenInfo struct {
-	ExpiresAt       *time.Time `json:"expiresAt,omitempty"`
-	Permissions     []string   `json:"permissions,omitempty"`
-	Scopes          []string   `json:"scopes,omitempty"`
-	HasTunnelGrants bool       `json:"hasTunnelGrants"`
+	ExpiresAt    *time.Time `json:"expiresAt,omitempty"`
+	Permissions  []string   `json:"permissions,omitempty"`
+	Scopes       []string   `json:"scopes,omitempty"`
+	HasResources bool       `json:"hasResources"`
 }
 
 var doctorCmd = &cobra.Command{
@@ -197,8 +197,8 @@ func checkDoctorToken(report *doctorReport, token string) {
 	if len(info.Scopes) > 0 {
 		details["scopes"] = strings.Join(info.Scopes, " ")
 	}
-	if info.HasTunnelGrants {
-		details["tunnelGrants"] = "present"
+	if info.HasResources {
+		details["resources"] = "present"
 	}
 	report.add("token", doctorStatusPass, "token is configured", details)
 }
@@ -463,8 +463,10 @@ func parseDoctorTokenInfo(token string) (doctorTokenInfo, error) {
 		expiresAt := time.Unix(int64(exp), 0).UTC()
 		info.ExpiresAt = &expiresAt
 	}
-	if _, ok := claims["tunnelsGrants"]; ok {
-		info.HasTunnelGrants = true
+	if resources, ok := claims["resources"].(map[string]any); ok {
+		if _, ok := resources["tunnels"]; ok {
+			info.HasResources = true
+		}
 	}
 	sort.Strings(info.Permissions)
 	sort.Strings(info.Scopes)

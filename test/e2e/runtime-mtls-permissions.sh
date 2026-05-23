@@ -108,14 +108,15 @@ def create_mtls(name, cert_path, project_id, permissions):
                 "mode": "select" if permissions else "none",
                 "permissions": permissions,
             },
+            "turn": {"mode": "none", "permissions": []},
         },
-        "tunnelsGrants": {"projects": [project_id]},
+        "resources": {"tunnels": {"projects": [project_id]}},
     })
 
-def create_token(permissions, grants):
+def create_token(permissions, resources):
     return request("POST", "/api/tokens", {
         "permissions": permissions,
-        "tunnelsGrants": grants,
+        "resources": {"tunnels": resources},
     })["token"]
 
 def setup():
