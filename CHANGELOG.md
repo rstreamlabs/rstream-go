@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.17.1](https://github.com/rstreamlabs/rstream-go/compare/v1.17.0...v1.17.1) (2026-05-23)
+
+
+### Bug Fixes
+
+* align runtime resource diagnostics ([7f9585e](https://github.com/rstreamlabs/rstream-go/commit/7f9585e6ddf72bed04b1ca592bd5418920cf2cb4))
+
 ## [1.17.0](https://github.com/rstreamlabs/rstream-go/compare/v1.16.2...v1.17.0) (2026-05-21)
 
 
