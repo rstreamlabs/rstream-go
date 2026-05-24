@@ -4,7 +4,6 @@ package webtty
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -209,23 +208,7 @@ func (h *Handler) Shutdown(ctx context.Context) error {
 }
 
 func (h *Handler) authorize(r *http.Request) bool {
-	if h.cfg.AllowUnauthenticated != nil && *h.cfg.AllowUnauthenticated {
-		return true
-	}
-	if h.cfg.AuthToken == nil || strings.TrimSpace(*h.cfg.AuthToken) == "" {
-		return false
-	}
-	got := bearerToken(r.Header.Get("Authorization"))
-	want := strings.TrimSpace(*h.cfg.AuthToken)
-	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
-}
-
-func bearerToken(header string) string {
-	parts := strings.Fields(header)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
-		return ""
-	}
-	return parts[1]
+	return authorizeBearerRequest(r, h.cfg.AuthToken, h.cfg.AllowUnauthenticated != nil && *h.cfg.AllowUnauthenticated)
 }
 
 func webTTYOriginAllowed(r *http.Request, allowed []string, allowSameHost bool) bool {

@@ -122,6 +122,12 @@ func (c *Client) CreateProjectTURNCredentialsByEndpoint(ctx context.Context, end
 	return out, err
 }
 
+func (c *Client) CreateToken(ctx context.Context, request CreateTokenRequest) (CreateTokenResponse, error) {
+	var out CreateTokenResponse
+	_, err := c.doJSONBody(ctx, http.MethodPost, "/api/tokens", nil, request, &out)
+	return out, err
+}
+
 func (c *Client) requestURL(path string, query url.Values) (string, error) {
 	if c.apiURL == "" {
 		return "", errors.New("API URL is required")

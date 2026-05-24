@@ -200,14 +200,26 @@ rstream webtty client --url wss://example.rstream.io/ -- whoami
 # Connect through the native rstream dialer using a tunnel name or ID
 rstream webtty client --url rstrm://shell -- whoami
 
+# Execute a command with JSON output for agents and scripts
+rstream webtty exec --url rstrm://shell -- uname -a
+
+# Expose a WebDAV filesystem sidecar rooted at $HOME
+rstream webtty server --rstream --name shell --fs-root "$HOME"
+
+# Read a file through the filesystem sidecar
+rstream webtty fs read --url rstrm://shell /README.md
+
 # List the available WebTTY servers
 rstream webtty list
+
+# Register local rstream MCP tools for Codex
+rstream codex setup
 
 # Open the live terminal UI for clients, tunnels, and WebTTY servers
 rstream ui
 ```
 
-Published WebTTY tunnels can be reached either through their forwarding `wss://` address or through the native `rstrm://<tunnel-id-or-name>` form. Private WebTTY tunnels are reachable only through the native `rstrm://` form.
+Published WebTTY tunnels can be reached either through their forwarding `wss://` address or through the native `rstrm://<tunnel-id-or-name>` form. Private WebTTY tunnels are reachable only through the native `rstrm://` form. WebTTY servers advertise capabilities through labels: `exec` is available at `/`, and the optional filesystem sidecar is available at `/fs` when `--fs-root` is set.
 
 ### Netcat-style TCP and rstream streams
 Use `rstream netcat` for bytestream sessions over plain TCP or native rstream tunnels. The command is also available as `rstream ncat` and `rstream nc`.

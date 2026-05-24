@@ -154,6 +154,44 @@ func TestCreateProjectTURNCredentialsByEndpointEscapesPath(t *testing.T) {
 	}
 }
 
+func TestCreateTokenPostsPermissionsAndResources(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens" {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer token" {
+			http.Error(w, "missing authorization", http.StatusBadRequest)
+			return
+		}
+		var payload map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		if string(payload["permissions"]) != `["tunnels.resources.read-only"]` {
+			http.Error(w, "unexpected permissions", http.StatusBadRequest)
+			return
+		}
+		if !strings.Contains(string(payload["resources"]), `"tunnels"`) {
+			http.Error(w, "unexpected resources", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(CreateTokenResponse{Token: "minted"})
+	}))
+	defer server.Close()
+	perms := []string{"tunnels.resources.read-only"}
+	resources := json.RawMessage(`{"tunnels":{"projects":{"p1":{"scopes":["connect"]}}}}`)
+	response, err := NewClient(server.URL, "token").CreateToken(context.Background(), CreateTokenRequest{Permissions: &perms, Resources: &resources})
+	if err != nil {
+		t.Fatalf("CreateToken returned error: %v", err)
+	}
+	if response.Token != "minted" {
+		t.Fatalf("unexpected token response: %#v", response)
+	}
+}
+
 func TestListProjectsQueryParamsAndParsing(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()

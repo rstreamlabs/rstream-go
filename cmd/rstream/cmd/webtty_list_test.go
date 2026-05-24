@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/webtty"
 )
 
@@ -68,5 +69,23 @@ func TestWebTTYDisplayHelpers(t *testing.T) {
 	pretty := "Ubuntu"
 	if got := webTTYSystem(webtty.ServerInfo{OSPrettyName: &pretty, OSFamily: &family}); got != "Ubuntu" {
 		t.Fatalf("pretty system = %q", got)
+	}
+}
+
+func TestEnsureWebTTYListParamsAppliesRequiredFilters(t *testing.T) {
+	env := "prod"
+	params := ensureWebTTYListParams(&rstream.ListTunnelsParams{Filters: &rstream.ListTunnelsFilters{Labels: map[string]*string{"env": &env}}})
+	status := "online"
+	applicationProtocol := webtty.WebTTYApplicationProtocol
+	params.Filters.Status = &status
+	params.Filters.Labels[webtty.WebTTYApplicationProtocolKey] = &applicationProtocol
+	if params.Filters.Status == nil || *params.Filters.Status != "online" {
+		t.Fatalf("unexpected status filter: %#v", params.Filters.Status)
+	}
+	if params.Filters.Labels["env"] == nil || *params.Filters.Labels["env"] != "prod" {
+		t.Fatalf("expected env filter to be preserved: %#v", params.Filters.Labels)
+	}
+	if params.Filters.Labels[webtty.WebTTYApplicationProtocolKey] == nil || *params.Filters.Labels[webtty.WebTTYApplicationProtocolKey] != webtty.WebTTYApplicationProtocol {
+		t.Fatalf("expected webtty protocol filter: %#v", params.Filters.Labels)
 	}
 }

@@ -27,6 +27,10 @@ func TestParseServers(t *testing.T) {
 					TokenAuth: &tokenAuth,
 					Labels: map[string]string{
 						webTTYApplicationProtocolKey:       WebTTYApplicationProtocol,
+						webTTYCapabilitiesLabel:            WebTTYCapabilityExec + "," + WebTTYCapabilityFS,
+						webTTYExecPathLabel:                WebTTYDefaultExecPath,
+						webTTYFSPathLabel:                  WebTTYDefaultFSPath,
+						webTTYFSModeLabel:                  WebTTYFSModeReadWrite,
 						webTTYHostnameLabel:                "prod-01",
 						webTTYOSPrettyNameLabel:            "Ubuntu 24.04.2 LTS",
 						webTTYOSFamilyLabel:                "linux",
@@ -68,6 +72,18 @@ func TestParseServers(t *testing.T) {
 		}
 		if !server.TokenAuth {
 			t.Fatalf("expected token auth to be enabled")
+		}
+		if len(server.Capabilities) != 2 || server.Capabilities[0] != WebTTYCapabilityExec || server.Capabilities[1] != WebTTYCapabilityFS {
+			t.Fatalf("unexpected capabilities: %#v", server.Capabilities)
+		}
+		if server.ExecPath == nil || *server.ExecPath != WebTTYDefaultExecPath {
+			t.Fatalf("unexpected exec path: %#v", server.ExecPath)
+		}
+		if server.FSPath == nil || *server.FSPath != WebTTYDefaultFSPath {
+			t.Fatalf("unexpected fs path: %#v", server.FSPath)
+		}
+		if server.FSMode == nil || *server.FSMode != WebTTYFSModeReadWrite {
+			t.Fatalf("unexpected fs mode: %#v", server.FSMode)
 		}
 		if server.Hostname == nil || *server.Hostname != "prod-01" {
 			t.Fatalf("unexpected hostname: %#v", server.Hostname)
@@ -116,8 +132,37 @@ func TestParseServers(t *testing.T) {
 		if server.TunnelName != nil {
 			t.Fatalf("expected tunnel name to be absent, got %#v", server.TunnelName)
 		}
+		if len(server.Capabilities) != 1 || server.Capabilities[0] != WebTTYCapabilityExec {
+			t.Fatalf("expected default exec capability, got %#v", server.Capabilities)
+		}
+		if server.ExecPath == nil || *server.ExecPath != WebTTYDefaultExecPath {
+			t.Fatalf("expected default exec path, got %#v", server.ExecPath)
+		}
 		if server.Publish {
 			t.Fatalf("expected private server")
+		}
+	})
+	t.Run("capabilities keep a canonical known set", func(t *testing.T) {
+		id := "tunnel-capabilities"
+		publish := false
+		list := ParseServers([]rstream.TunnelInventory{
+			{
+				TunnelProperties: rstream.TunnelProperties{
+					ID:      &id,
+					Publish: &publish,
+					Labels: map[string]string{
+						webTTYApplicationProtocolKey: WebTTYApplicationProtocol,
+						webTTYCapabilitiesLabel:      WebTTYCapabilityFS + ",unknown," + WebTTYCapabilityExec + "," + WebTTYCapabilityFS,
+					},
+				},
+				Status: "online",
+			},
+		})
+		if len(list) != 1 {
+			t.Fatalf("expected one server, got %d", len(list))
+		}
+		if len(list[0].Capabilities) != 2 || list[0].Capabilities[0] != WebTTYCapabilityExec || list[0].Capabilities[1] != WebTTYCapabilityFS {
+			t.Fatalf("unexpected capabilities: %#v", list[0].Capabilities)
 		}
 	})
 	t.Run("skip non webtty or invalid published tunnel", func(t *testing.T) {

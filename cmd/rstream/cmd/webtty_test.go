@@ -20,6 +20,10 @@ func newTestWebTTYServerCommand() *cobra.Command {
 	cmd.Flags().Bool("no-publish", false, "")
 	cmd.Flags().String("auth-token-file", "", "")
 	cmd.Flags().Bool("allow-unauthenticated", false, "")
+	cmd.Flags().StringArray("label", nil, "")
+	cmd.Flags().String("fs-root", "", "")
+	cmd.Flags().Bool("fs-read-only", false, "")
+	cmd.Flags().Int64("fs-max-upload-size", defaultWebTTYFSMaxUploadSize, "")
 	return cmd
 }
 
@@ -91,6 +95,30 @@ func TestValidateWebTTYServerFlags(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "fs read only requires fs root",
+			config: func(cmd *cobra.Command) error {
+				return cmd.Flags().Set("fs-read-only", "true")
+			},
+			wantErr: true,
+		},
+		{
+			name: "fs max upload requires fs root",
+			config: func(cmd *cobra.Command) error {
+				return cmd.Flags().Set("fs-max-upload-size", "1024")
+			},
+			wantErr: true,
+		},
+		{
+			name: "fs root accepts fs settings",
+			config: func(cmd *cobra.Command) error {
+				if err := cmd.Flags().Set("fs-root", "."); err != nil {
+					return err
+				}
+				return cmd.Flags().Set("fs-read-only", "true")
+			},
+			wantErr: false,
+		},
+		{
 			name: "rstream without listen override is valid",
 			config: func(cmd *cobra.Command) error {
 				if err := cmd.Flags().Set("rstream", "true"); err != nil {
@@ -137,6 +165,12 @@ func TestNewWebTTYServerTunnelProperties(t *testing.T) {
 		if got := props.Labels[webtty.WebTTYApplicationProtocolKey]; got != webtty.WebTTYApplicationProtocol {
 			t.Fatalf("unexpected application-protocol label: got %q want %q", got, webtty.WebTTYApplicationProtocol)
 		}
+		if got := props.Labels[webtty.WebTTYCapabilitiesLabelKey]; got != webtty.WebTTYCapabilityExec {
+			t.Fatalf("unexpected capabilities label: got %q want %q", got, webtty.WebTTYCapabilityExec)
+		}
+		if got := props.Labels[webtty.WebTTYExecPathLabelKey]; got != webtty.WebTTYDefaultExecPath {
+			t.Fatalf("unexpected exec path label: got %q want %q", got, webtty.WebTTYDefaultExecPath)
+		}
 	})
 	t.Run("private tunnel omits HTTP edge settings", func(t *testing.T) {
 		cmd := newTestWebTTYServerCommand()
@@ -161,6 +195,35 @@ func TestNewWebTTYServerTunnelProperties(t *testing.T) {
 		}
 		if props.TokenAuth != nil {
 			t.Fatalf("expected token auth to be unset for private tunnel, got %#v", props.TokenAuth)
+		}
+	})
+	t.Run("filesystem sidecar adds capability labels", func(t *testing.T) {
+		cmd := newTestWebTTYServerCommand()
+		if err := cmd.Flags().Set("fs-root", "."); err != nil {
+			t.Fatalf("failed to set --fs-root: %v", err)
+		}
+		if err := cmd.Flags().Set("fs-read-only", "true"); err != nil {
+			t.Fatalf("failed to set --fs-read-only: %v", err)
+		}
+		props := newWebTTYServerTunnelProperties(cmd)
+		if got := props.Labels[webtty.WebTTYCapabilitiesLabelKey]; got != "exec,fs" {
+			t.Fatalf("unexpected capabilities label: got %q want exec,fs", got)
+		}
+		if got := props.Labels[webtty.WebTTYFSPathLabelKey]; got != webtty.WebTTYDefaultFSPath {
+			t.Fatalf("unexpected fs path label: got %q want %q", got, webtty.WebTTYDefaultFSPath)
+		}
+		if got := props.Labels[webtty.WebTTYFSModeLabelKey]; got != webtty.WebTTYFSModeReadOnly {
+			t.Fatalf("unexpected fs mode label: got %q want %q", got, webtty.WebTTYFSModeReadOnly)
+		}
+	})
+	t.Run("custom labels are scoped to webtty inventory", func(t *testing.T) {
+		cmd := newTestWebTTYServerCommand()
+		if err := cmd.Flags().Set("label", "role=codex"); err != nil {
+			t.Fatalf("failed to set --label: %v", err)
+		}
+		props := newWebTTYServerTunnelProperties(cmd)
+		if got := props.Labels[webtty.WebTTYCustomLabelPrefix+"role"]; got != "codex" {
+			t.Fatalf("unexpected custom label: got %q want codex", got)
 		}
 	})
 }

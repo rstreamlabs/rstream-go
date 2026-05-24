@@ -43,15 +43,17 @@ func DefaultLabels() map[string]string {
 	info := getOSDetails()
 	labels := map[string]string{
 		webTTYApplicationProtocolKey: WebTTYApplicationProtocol,
+		webTTYCapabilitiesLabel:      WebTTYCapabilityExec,
+		webTTYExecPathLabel:          WebTTYDefaultExecPath,
 	}
 	set := func(k, v string) {
 		if v != "" {
 			labels[k] = v
 		}
 	}
-	runtime_identity := rstream.RuntimeIdentity()
-	set(webTTYOSFamilyLabel, runtime_identity.OS)
-	set(webTTYArchLabel, runtime_identity.Arch)
+	runtimeIdentity := rstream.RuntimeIdentity()
+	set(webTTYOSFamilyLabel, runtimeIdentity.OS)
+	set(webTTYArchLabel, runtimeIdentity.Arch)
 	set(webTTYOSIDLabel, info.id)
 	set(webTTYOSVersionIDLabel, info.versionID)
 	set(webTTYOSVersionCodenameLabel, info.codename)

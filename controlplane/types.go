@@ -2,6 +2,8 @@
 
 package controlplane
 
+import "encoding/json"
+
 type Whoami struct {
 	ID          string   `json:"id"`
 	Role        string   `json:"role"`
@@ -50,4 +52,13 @@ type ListProjectsParams struct {
 	PageSize *int
 	Sort     string
 	Order    string
+}
+
+type CreateTokenRequest struct {
+	Permissions *[]string        `json:"permissions"`
+	Resources   *json.RawMessage `json:"resources,omitempty"`
+}
+
+type CreateTokenResponse struct {
+	Token string `json:"token"`
 }
