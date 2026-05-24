@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.18.0](https://github.com/rstreamlabs/rstream-go/compare/v1.17.1...v1.18.0) (2026-05-24)
+
+
+### Features
+
+* add Codex WebTTY automation tools ([438c4b8](https://github.com/rstreamlabs/rstream-go/commit/438c4b801a9cb3183bd10fe47b0372d01959d8a5))
+
+
+### Bug Fixes
+
+* normalize WebTTY origin ports ([d631950](https://github.com/rstreamlabs/rstream-go/commit/d6319500c7828b118ea7db458cc105e4f61fd90c))
+
 ## [1.17.1](https://github.com/rstreamlabs/rstream-go/compare/v1.17.0...v1.17.1) (2026-05-23)
 
 
