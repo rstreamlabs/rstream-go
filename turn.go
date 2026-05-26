@@ -81,12 +81,17 @@ func createAPITURNCredentials(ctx context.Context, opts CreateTURNCredentialsOpt
 		clientOpts = append(clientOpts, controlplane.WithHTTPClient(opts.HTTPClient))
 	}
 	client := controlplane.NewClient(apiURL, token, clientOpts...)
+	request := controlplane.CreateTURNCredentialsRequest{}
+	if opts.TTL > 0 {
+		ttlSeconds := int(normalizeTURNCredentialTTL(opts.TTL) / time.Second)
+		request.TTLSeconds = &ttlSeconds
+	}
 	var res TURNCredentials
 	var err error
 	if projectID != "" {
-		res, err = client.CreateProjectTURNCredentials(ctx, projectID)
+		res, err = client.CreateProjectTURNCredentialsWithOptions(ctx, projectID, request)
 	} else {
-		res, err = client.CreateProjectTURNCredentialsByEndpoint(ctx, projectEndpoint)
+		res, err = client.CreateProjectTURNCredentialsByEndpointWithOptions(ctx, projectEndpoint, request)
 	}
 	if err != nil {
 		return nil, err

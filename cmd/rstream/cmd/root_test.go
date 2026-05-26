@@ -16,6 +16,12 @@ func TestInitLoggerValidatesLoggingFlags(t *testing.T) {
 	if err := initLogger(command); err != nil {
 		t.Fatalf("initLogger(defaults) error = %v", err)
 	}
+	if err := root.PersistentFlags().Set("log-level", "none"); err != nil {
+		t.Fatalf("set log-level flag: %v", err)
+	}
+	if err := initLogger(command); err != nil {
+		t.Fatalf("initLogger(none) error = %v", err)
+	}
 	if err := root.PersistentFlags().Set("log-level", "invalid"); err != nil {
 		t.Fatalf("set log-level flag: %v", err)
 	}

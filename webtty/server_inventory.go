@@ -19,6 +19,10 @@ type ServerInfo struct {
 	Publish           bool              `json:"publish"`
 	Host              *string           `json:"host,omitempty"`
 	TokenAuth         bool              `json:"token_auth"`
+	Capabilities      []string          `json:"capabilities,omitempty"`
+	ExecPath          *string           `json:"exec_path,omitempty"`
+	FSPath            *string           `json:"fs_path,omitempty"`
+	FSMode            *string           `json:"fs_mode,omitempty"`
 	OSFamily          *string           `json:"os_family,omitempty"`
 	Arch              *string           `json:"arch,omitempty"`
 	OSID              *string           `json:"os_id,omitempty"`
@@ -73,6 +77,7 @@ func parseServer(tunnel rstream.TunnelInventory) (ServerInfo, bool) {
 		Publish:           tunnel.Publish != nil && *tunnel.Publish,
 		Host:              cloneStringPtr(host),
 		TokenAuth:         tunnel.TokenAuth != nil && *tunnel.TokenAuth,
+		Capabilities:      parseWebTTYCapabilities(labels[webTTYCapabilitiesLabel]),
 		OSFamily:          cloneStringPtr(labels[webTTYOSFamilyLabel]),
 		Arch:              cloneStringPtr(labels[webTTYArchLabel]),
 		OSID:              cloneStringPtr(labels[webTTYOSIDLabel]),
@@ -81,6 +86,16 @@ func parseServer(tunnel rstream.TunnelInventory) (ServerInfo, bool) {
 		OSPrettyName:      cloneStringPtr(labels[webTTYOSPrettyNameLabel]),
 		KernelRelease:     cloneStringPtr(labels[webTTYKernelReleaseLabel]),
 		Hostname:          cloneStringPtr(labels[webTTYHostnameLabel]),
+	}
+	if len(info.Capabilities) == 0 {
+		info.Capabilities = []string{WebTTYCapabilityExec}
+	}
+	if serverHasCapability(info.Capabilities, WebTTYCapabilityExec) {
+		info.ExecPath = cloneStringPtr(firstNonEmpty(labels[webTTYExecPathLabel], WebTTYDefaultExecPath))
+	}
+	if serverHasCapability(info.Capabilities, WebTTYCapabilityFS) {
+		info.FSPath = cloneStringPtr(firstNonEmpty(labels[webTTYFSPathLabel], WebTTYDefaultFSPath))
+		info.FSMode = cloneStringPtr(firstNonEmpty(labels[webTTYFSModeLabel], WebTTYDefaultFSMode))
 	}
 	customLabels := make(map[string]string)
 	for key, value := range labels {
@@ -97,6 +112,46 @@ func parseServer(tunnel rstream.TunnelInventory) (ServerInfo, bool) {
 		info.Labels = customLabels
 	}
 	return info, true
+}
+
+func parseWebTTYCapabilities(raw string) []string {
+	parts := strings.Split(raw, ",")
+	values := map[string]struct{}{}
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		values[value] = struct{}{}
+	}
+	known := []string{WebTTYCapabilityExec, WebTTYCapabilityFS}
+	out := make([]string, 0, len(known))
+	for _, value := range known {
+		if _, ok := values[value]; !ok {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
+func serverHasCapability(list []string, capability string) bool {
+	for _, item := range list {
+		if item == capability {
+			return true
+		}
+	}
+	return false
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func trimStringPtr(value *string) string {

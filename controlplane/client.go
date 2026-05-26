@@ -79,6 +79,12 @@ func (c *Client) Whoami(ctx context.Context) (Whoami, error) {
 	return out, err
 }
 
+func (c *Client) ListWorkspaces(ctx context.Context) (ListWorkspacesResponse, error) {
+	var out ListWorkspacesResponse
+	_, err := c.doJSON(ctx, http.MethodGet, "/api/workspaces", nil, &out)
+	return out, err
+}
+
 func (c *Client) ListProjects(ctx context.Context, params ListProjectsParams) (ListProjectsResponse, error) {
 	var out ListProjectsResponse
 	query := url.Values{}
@@ -108,17 +114,230 @@ func (c *Client) ResolveProjectByEndpoint(ctx context.Context, endpoint string) 
 	return out, err
 }
 
+func (c *Client) ListWorkspaceProjects(ctx context.Context, workspaceID string, params ListProjectsParams) (ListProjectsResponse, error) {
+	var out ListProjectsResponse
+	query := url.Values{}
+	if params.Query != "" {
+		query.Set("q", params.Query)
+	}
+	if params.Page != nil {
+		query.Set("page", strconv.Itoa(*params.Page))
+	}
+	if params.PageSize != nil {
+		query.Set("pageSize", strconv.Itoa(*params.PageSize))
+	}
+	if params.Sort != "" {
+		query.Set("sort", params.Sort)
+	}
+	if params.Order != "" {
+		query.Set("order", params.Order)
+	}
+	path := "/api/workspaces/" + url.PathEscape(workspaceID) + "/projects/tunnels"
+	_, err := c.doJSON(ctx, http.MethodGet, path, query, &out)
+	return out, err
+}
+
+func (c *Client) ProjectCreationOptions(ctx context.Context, workspaceID string) (ProjectCreationOptionsResponse, error) {
+	var out ProjectCreationOptionsResponse
+	path := "/api/workspaces/" + url.PathEscape(workspaceID) + "/projects/tunnels/plan/config"
+	_, err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) GetProjectPlan(ctx context.Context, projectID string) (ProjectPlan, error) {
+	var out ProjectPlan
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/plan"
+	_, err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) CreateProject(ctx context.Context, workspaceID string, request CreateProjectRequest) (Project, error) {
+	var out Project
+	path := "/api/workspaces/" + url.PathEscape(workspaceID) + "/projects/tunnels"
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
+	return out, err
+}
+
+func (c *Client) CreateProjectCheckout(ctx context.Context, workspaceID string, request CreateProjectRequest) (CreateProjectCheckoutResponse, error) {
+	var out CreateProjectCheckoutResponse
+	path := "/api/workspaces/" + url.PathEscape(workspaceID) + "/projects/tunnels/payment-checkout"
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
+	return out, err
+}
+
 func (c *Client) CreateProjectTURNCredentials(ctx context.Context, projectID string) (TURNCredentials, error) {
+	return c.CreateProjectTURNCredentialsWithOptions(ctx, projectID, CreateTURNCredentialsRequest{})
+}
+
+func (c *Client) CreateProjectTURNCredentialsWithOptions(ctx context.Context, projectID string, request CreateTURNCredentialsRequest) (TURNCredentials, error) {
 	var out TURNCredentials
 	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/turn-server/credentials"
-	_, err := c.doJSON(ctx, http.MethodPost, path, nil, &out)
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
 	return out, err
 }
 
 func (c *Client) CreateProjectTURNCredentialsByEndpoint(ctx context.Context, endpoint string) (TURNCredentials, error) {
+	return c.CreateProjectTURNCredentialsByEndpointWithOptions(ctx, endpoint, CreateTURNCredentialsRequest{})
+}
+
+func (c *Client) CreateProjectTURNCredentialsByEndpointWithOptions(ctx context.Context, endpoint string, request CreateTURNCredentialsRequest) (TURNCredentials, error) {
 	var out TURNCredentials
 	path := "/api/projects/tunnels/resolve/" + url.PathEscape(endpoint) + "/turn-server/credentials"
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
+	return out, err
+}
+
+func (c *Client) CreateToken(ctx context.Context, request CreateTokenRequest) (CreateTokenResponse, error) {
+	var out CreateTokenResponse
+	_, err := c.doJSONBody(ctx, http.MethodPost, "/api/tokens", nil, request, &out)
+	return out, err
+}
+
+func (c *Client) GetProjectUsage(ctx context.Context, projectID string) (ProjectUsage, error) {
+	var out ProjectUsage
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/usage"
+	_, err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) GetProjectTURNUsage(ctx context.Context, projectID string) (ProjectTURNUsage, error) {
+	var out ProjectTURNUsage
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/turn/usage"
+	_, err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) ListProjectDomains(ctx context.Context, projectID string, params ListProjectDomainsParams) (ListProjectDomainsResponse, error) {
+	var out ListProjectDomainsResponse
+	query := url.Values{}
+	if params.Query != "" {
+		query.Set("q", params.Query)
+	}
+	if params.Page != nil {
+		query.Set("page", strconv.Itoa(*params.Page))
+	}
+	if params.PageSize != nil {
+		query.Set("pageSize", strconv.Itoa(*params.PageSize))
+	}
+	if params.Sort != "" {
+		query.Set("sort", params.Sort)
+	}
+	if params.Order != "" {
+		query.Set("order", params.Order)
+	}
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/domains"
+	_, err := c.doJSON(ctx, http.MethodGet, path, query, &out)
+	return out, err
+}
+
+func (c *Client) CreateProjectDomain(ctx context.Context, projectID string, request CreateProjectDomainRequest) (ProjectDomain, error) {
+	var out ProjectDomain
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/domains"
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
+	return out, err
+}
+
+func (c *Client) GetProjectDomain(ctx context.Context, projectID string, domainID string) (ProjectDomain, error) {
+	var out ProjectDomain
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/domains/" + url.PathEscape(domainID)
+	_, err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) DeleteProjectDomain(ctx context.Context, projectID string, domainID string) (ProjectDomain, error) {
+	var out ProjectDomain
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/domains/" + url.PathEscape(domainID)
+	_, err := c.doJSON(ctx, http.MethodDelete, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) VerifyProjectDomain(ctx context.Context, projectID string, domainID string) (ProjectDomain, error) {
+	var out ProjectDomain
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/domains/" + url.PathEscape(domainID) + "/verify"
 	_, err := c.doJSON(ctx, http.MethodPost, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) GetProjectDomainConnect(ctx context.Context, projectID string, domainID string) (DomainConnectResponse, error) {
+	var out DomainConnectResponse
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/domains/" + url.PathEscape(domainID) + "/domain-connect"
+	_, err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) ListProjectLogs(ctx context.Context, projectID string, params ProjectLogsParams) (ProjectLogsResponse, error) {
+	var out ProjectLogsResponse
+	query := url.Values{}
+	if params.Timeline != "" {
+		query.Set("timeline", params.Timeline)
+	}
+	if params.Start != "" {
+		query.Set("start", params.Start)
+	}
+	if params.End != "" {
+		query.Set("end", params.End)
+	}
+	if params.EventType != "" {
+		query.Set("eventType", params.EventType)
+	}
+	if params.AfterEventID != "" {
+		query.Set("afterEventId", params.AfterEventID)
+	}
+	if params.Page != nil {
+		query.Set("page", strconv.Itoa(*params.Page))
+	}
+	if params.PageSize != nil {
+		query.Set("pageSize", strconv.Itoa(*params.PageSize))
+	}
+	if params.Order != "" {
+		query.Set("order", params.Order)
+	}
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/logs"
+	_, err := c.doJSON(ctx, http.MethodGet, path, query, &out)
+	return out, err
+}
+
+func (c *Client) GetProjectSettings(ctx context.Context, projectID string) (ProjectSettings, error) {
+	var out ProjectSettings
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/settings"
+	_, err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) PatchProjectSettings(ctx context.Context, projectID string, settings ProjectSettings) (ProjectSettings, error) {
+	var out ProjectSettings
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/settings"
+	_, err := c.doJSONBody(ctx, http.MethodPatch, path, nil, settings, &out)
+	return out, err
+}
+
+func (c *Client) ResetProjectSettings(ctx context.Context, projectID string) (ProjectSettings, error) {
+	var out ProjectSettings
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/settings"
+	_, err := c.doJSON(ctx, http.MethodDelete, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) ListWorkspaceMembers(ctx context.Context, workspaceID string, params WorkspaceMembersParams) (WorkspaceMembersResponse, error) {
+	var out WorkspaceMembersResponse
+	query := url.Values{}
+	if params.Query != "" {
+		query.Set("q", params.Query)
+	}
+	if params.Page != nil {
+		query.Set("page", strconv.Itoa(*params.Page))
+	}
+	if params.PageSize != nil {
+		query.Set("pageSize", strconv.Itoa(*params.PageSize))
+	}
+	if params.Sort != "" {
+		query.Set("sort", params.Sort)
+	}
+	if params.Order != "" {
+		query.Set("order", params.Order)
+	}
+	path := "/api/workspaces/" + url.PathEscape(workspaceID) + "/members"
+	_, err := c.doJSON(ctx, http.MethodGet, path, query, &out)
 	return out, err
 }
 
