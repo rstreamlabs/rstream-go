@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rstreamlabs/rstream-go"
 )
@@ -85,6 +86,15 @@ func TestCreateTURNCredentialsFromEnvFallsBackToAPIWithoutTURNContext(t *testing
 		if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer ") {
 			t.Fatalf("missing authorization: %q", got)
 		}
+		var payload struct {
+			TTLSeconds *int `json:"ttlSeconds,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if payload.TTLSeconds == nil || *payload.TTLSeconds != 120 {
+			t.Fatalf("ttlSeconds = %#v, want 120", payload.TTLSeconds)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		if err := json.NewEncoder(w).Encode(rstream.TURNCredentials{
 			Username:   "u",
@@ -117,6 +127,7 @@ func TestCreateTURNCredentialsFromEnvFallsBackToAPIWithoutTURNContext(t *testing
 	})
 	res, err := CreateTURNCredentialsFromEnv(context.Background(), TURNCredentialsEnvOptions{
 		ConfigPath: path,
+		TTL:        2 * time.Minute,
 	})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)

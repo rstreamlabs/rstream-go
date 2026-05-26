@@ -20,6 +20,7 @@ import (
 var (
 	webttyListOutput string
 	webttyListQuiet  bool
+	webttyListFilter string
 )
 
 var webttyListCmd = &cobra.Command{
@@ -37,7 +38,7 @@ var webttyListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		list, err := listWebTTYServers(cmd.Context(), client)
+		list, err := listWebTTYServers(cmd.Context(), client, webttyListFilter)
 		if err != nil {
 			return fmt.Errorf("failed to list webtty servers: %w", err)
 		}
@@ -63,21 +64,21 @@ func init() {
 	webttyListCmd.PersistentFlags().SortFlags = false
 	webttyListCmd.Flags().StringVarP(&webttyListOutput, "output", "o", "table", "output mode (table, json)")
 	webttyListCmd.Flags().BoolVarP(&webttyListQuiet, "quiet", "q", false, "Only display rstream URLs")
+	webttyListCmd.Flags().StringVar(&webttyListFilter, "filter", "", "additional tunnel filters (key=value, labels.key=value)")
 	webttyListCmd.MarkFlagsMutuallyExclusive("output", "quiet")
 	webttyCmd.AddCommand(webttyListCmd)
 }
 
-func listWebTTYServers(ctx context.Context, client *rstream.Client) ([]webtty.ServerInfo, error) {
+func listWebTTYServers(ctx context.Context, client *rstream.Client, filter string) ([]webtty.ServerInfo, error) {
 	status := "online"
 	applicationProtocol := webtty.WebTTYApplicationProtocol
-	params := &rstream.ListTunnelsParams{
-		Filters: &rstream.ListTunnelsFilters{
-			Status: &status,
-			Labels: map[string]*string{
-				webtty.WebTTYApplicationProtocolKey: &applicationProtocol,
-			},
-		},
+	params, err := buildTunnelListParams(filter)
+	if err != nil {
+		return nil, err
 	}
+	params = ensureWebTTYListParams(params)
+	params.Filters.Status = &status
+	params.Filters.Labels[webtty.WebTTYApplicationProtocolKey] = &applicationProtocol
 	list, err := client.ListTunnels(ctx, params)
 	if err != nil {
 		return nil, err
@@ -88,6 +89,19 @@ func listWebTTYServers(ctx context.Context, client *rstream.Client) ([]webtty.Se
 	servers := webtty.ParseServers(*list)
 	sortWebTTYServers(servers)
 	return servers, nil
+}
+
+func ensureWebTTYListParams(params *rstream.ListTunnelsParams) *rstream.ListTunnelsParams {
+	if params == nil {
+		params = &rstream.ListTunnelsParams{}
+	}
+	if params.Filters == nil {
+		params.Filters = &rstream.ListTunnelsFilters{}
+	}
+	if params.Filters.Labels == nil {
+		params.Filters.Labels = map[string]*string{}
+	}
+	return params
 }
 
 func sortWebTTYServers(list []webtty.ServerInfo) {

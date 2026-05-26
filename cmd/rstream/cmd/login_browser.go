@@ -17,10 +17,14 @@ import (
 )
 
 var rstreamLoginPermissions = []string{
+	"account.plan.read-only",
 	"account.projects.read-only",
-	"tunnels.tunnels.create-delete",
-	"tunnels.streams.create-delete",
+	"account.tokens.create",
+	"account.workspaces.read-only",
+	"network.streams.read-only",
 	"tunnels.resources.read-only",
+	"tunnels.streams.create-delete",
+	"tunnels.tunnels.create-delete",
 	"turn.credentials.create",
 	"turn.relay.allocate",
 }

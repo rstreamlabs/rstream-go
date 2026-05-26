@@ -53,6 +53,7 @@ Appropriate for installations tied to a physical user (laptops, workstations).
 
 The account-wide token can be obtained via:
 - `rstream login`, which uses OAuth 2.0 Device Authorization Grant by default
+- local MCP tools `rstream_auth_start` and `rstream_auth_poll`, which initiate the same OAuth flow for Codex without returning the approved token to the prompt
 - `rstream login --auth-flow legacy`, which keeps the older rstream-specific login flow available for compatibility tests
 - token generated from the rstream dashboard
 - token generated via the rstream API
@@ -97,6 +98,18 @@ contexts:
 ```bash
 rstream login
 ```
+
+If this is a new account, the browser step opened by `rstream login` is also the signup/sign-in step. The CLI uses OAuth Device Authorization Grant by default and stores the approved account-wide token locally after the user completes the hosted flow.
+
+When Codex is using local MCP tools, the equivalent flow is:
+
+```text
+rstream_auth_start -> user opens login_url -> rstream_auth_poll
+```
+
+`rstream_auth_start` returns the browser approval URL, user code, expiry, requested scopes, and local auth session ID. `rstream_auth_poll` exchanges the approved device code and stores the token in the same local config file used by the CLI. The token is never returned through MCP.
+
+The default `rstream_auth_start` scope is intentionally limited to common CLI and agent setup operations. When a user explicitly asks Codex to create projects or update project settings, pass an explicit `permissions` array such as `account.projects.read-write` and `account.plan.read-only`; the browser approval page is the user confirmation point for that broader grant.
 
 Alternative token inputs:
 
@@ -221,6 +234,32 @@ rstream events -o json
 ```
 
 Commands that wait for browser approval keep progress messages on stderr when `-o json` is selected, so stdout remains machine-readable.
+
+## Codex and local MCP
+
+For a Codex workstation, either complete the normal developer-machine path first or register the local MCP server before login and let Codex initiate OAuth.
+
+```bash
+rstream codex setup
+```
+
+`rstream codex setup` writes a Codex MCP server entry that runs `rstream mcp serve`. The local MCP server reuses the selected rstream configuration and can expose OAuth login start/poll tools, runtime status, workspace/project discovery, project creation options, explicit project creation or checkout start, project plan inspection, project logs, usage, TURN usage, short-lived TURN credential minting, stable domain inspection and management, project settings, short-lived token creation, persistent preview tunnels, WebTTY command execution, WebTTY filesystem sidecar operations, remote network exposure through WebTTY, and remote MCP surface discovery and invocation.
+
+MCP does not create a rstream account anonymously. On a clean workstation, login remains the user-approved boundary; if the user does not already have an account, the hosted browser step handles signup or sign-in.
+
+### Remote network and MCP bridge
+
+When a machine already exposes WebTTY, Codex can use the local MCP server to ask that machine to run `rstream forward` for a service that is local to the remote host. This fills the third side of the remote access model: WebTTY provides command execution, the WebDAV sidecar provides filesystem access when enabled, and `rstream_remote_expose` provides network access to HTTP, TCP, UDP, TLS, DTLS, or QUIC services on the same machine. Agents should read `exec_path`, `fs_path`, and `fs_mode` from WebTTY inventory and pass those values to the matching MCP tools instead of assuming `/` or `/fs`.
+
+The WebDAV sidecar rejects symlinks that resolve outside its configured `--fs-root`, but it is not a sandbox. It is still WebTTY-process filesystem access, so long-lived servers should use a dedicated OS user and the narrowest useful root.
+
+For published exposures, the protocol is an edge-facing tunnel protocol. For private exposures, there is no public edge protocol: HTTP/1.x, HTTP/2, MCP, TCP, and TLS ride over a private bytestream tunnel, while UDP, HTTP/3, DTLS, and QUIC ride over a private datagram tunnel.
+
+For non-MCP published remote services, set `token_auth=true` or `rstream_auth=true` in the MCP call when the endpoint must not be open to the internet. Remote MCP exposures default to token authentication when `mcp_path` is set.
+
+The remote host must have a usable `rstream` binary and context, or the MCP call must pass the required environment with the `env` argument. The persistent remote runner currently expects a POSIX shell on the WebTTY host. The remote expose process is tracked under `$HOME/.rstream/remote-exposes` on the remote host and can be stopped with `rstream_remote_expose_stop`.
+
+For local MCP servers running on devices or robots, pass `mcp_path=/mcp` to `rstream_remote_expose`. The created tunnel is labeled with `application-protocol=rstream.mcp`, `rstream.mcp.transport=streamable-http`, and `rstream.mcp.path=<path>`. Codex can then discover the surface with `rstream_remote_mcp_discover`, list its tools with `rstream_remote_mcp_tools`, and call a tool with `rstream_remote_mcp_call`.
 
 ## Diagnostics
 

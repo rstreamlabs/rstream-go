@@ -4,10 +4,10 @@ package webtty
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -208,23 +208,7 @@ func (h *Handler) Shutdown(ctx context.Context) error {
 }
 
 func (h *Handler) authorize(r *http.Request) bool {
-	if h.cfg.AllowUnauthenticated != nil && *h.cfg.AllowUnauthenticated {
-		return true
-	}
-	if h.cfg.AuthToken == nil || strings.TrimSpace(*h.cfg.AuthToken) == "" {
-		return false
-	}
-	got := bearerToken(r.Header.Get("Authorization"))
-	want := strings.TrimSpace(*h.cfg.AuthToken)
-	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
-}
-
-func bearerToken(header string) string {
-	parts := strings.Fields(header)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
-		return ""
-	}
-	return parts[1]
+	return authorizeBearerRequest(r, h.cfg.AuthToken, h.cfg.AllowUnauthenticated != nil && *h.cfg.AllowUnauthenticated)
 }
 
 func webTTYOriginAllowed(r *http.Request, allowed []string, allowSameHost bool) bool {
@@ -237,7 +221,10 @@ func webTTYOriginAllowed(r *http.Request, allowed []string, allowSameHost bool) 
 		return false
 	}
 	originValue := strings.ToLower(origin)
-	originHost := strings.ToLower(u.Host)
+	originHost, ok := normalizeWebTTYOriginHost(u.Host, u.Scheme)
+	if !ok {
+		return false
+	}
 	for _, allowedOrigin := range allowed {
 		allowedOrigin = strings.ToLower(strings.TrimSpace(allowedOrigin))
 		if allowedOrigin == "*" {
@@ -246,12 +233,69 @@ func webTTYOriginAllowed(r *http.Request, allowed []string, allowSameHost bool) 
 		if allowedOrigin != "" && allowedOrigin == originValue {
 			return true
 		}
-		if allowedOrigin != "" && allowedOrigin == originHost {
+		if webTTYAllowedOriginMatches(allowedOrigin, originHost, u.Scheme) {
 			return true
 		}
 	}
 	if !allowSameHost {
 		return false
 	}
-	return originHost == strings.ToLower(r.Host)
+	requestHost, ok := normalizeWebTTYOriginHost(r.Host, u.Scheme)
+	return ok && originHost == requestHost
+}
+
+func webTTYAllowedOriginMatches(allowedOrigin string, originHost string, scheme string) bool {
+	if allowedOrigin == "" {
+		return false
+	}
+	parsed, err := url.Parse(allowedOrigin)
+	if err == nil && parsed.Scheme != "" && parsed.Host != "" {
+		if !strings.EqualFold(parsed.Scheme, scheme) {
+			return false
+		}
+		allowedHost, ok := normalizeWebTTYOriginHost(parsed.Host, parsed.Scheme)
+		return ok && allowedHost == originHost
+	}
+	allowedHost, ok := normalizeWebTTYOriginHost(allowedOrigin, scheme)
+	return ok && allowedHost == originHost
+}
+
+func normalizeWebTTYOriginHost(host string, scheme string) (string, bool) {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return "", false
+	}
+	hostname := host
+	port := ""
+	if strings.Contains(host, ":") {
+		splitHost, splitPort, err := net.SplitHostPort(host)
+		if err == nil {
+			hostname = splitHost
+			port = splitPort
+		} else if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+			hostname = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+		} else {
+			return "", false
+		}
+	}
+	hostname = strings.TrimSpace(hostname)
+	if hostname == "" {
+		return "", false
+	}
+	hostname = strings.ToLower(hostname)
+	if port == "" || port == defaultWebTTYOriginPort(scheme) {
+		return hostname, true
+	}
+	return strings.ToLower(net.JoinHostPort(hostname, port)), true
+}
+
+func defaultWebTTYOriginPort(scheme string) string {
+	switch strings.ToLower(strings.TrimSpace(scheme)) {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	default:
+		return ""
+	}
 }

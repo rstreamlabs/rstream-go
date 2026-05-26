@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/rstreamlabs/rstream-go/controlplane"
 )
 
 func modePtr(mode TURNCredentialMode) *TURNCredentialMode {
@@ -91,6 +93,34 @@ func TestCreateTURNCredentialsExplicitAPIAcceptsOpaqueToken(t *testing.T) {
 	}
 	if res.Username != "u" || res.Credential != "c" {
 		t.Fatalf("unexpected response: %+v", res)
+	}
+}
+
+func TestCreateTURNCredentialsAPIModeForwardsExplicitTTL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload controlplane.CreateTURNCredentialsRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if payload.TTLSeconds == nil || *payload.TTLSeconds != 120 {
+			t.Fatalf("ttlSeconds = %#v, want 120", payload.TTLSeconds)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"username":"u","credential":"c","urls":["turn:example.com:3478?transport=udp"],"ttl":120}`))
+	}))
+	defer server.Close()
+	res, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{
+		APIURL:          server.URL,
+		Token:           "opaque-token",
+		ProjectEndpoint: "bbc44f81",
+		TTL:             2 * time.Minute,
+		Mode:            modePtr(TURNCredentialModeAPI),
+	})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	if res.TTL != 120 {
+		t.Fatalf("TTL = %d, want 120", res.TTL)
 	}
 }
 

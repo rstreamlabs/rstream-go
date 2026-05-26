@@ -3,13 +3,16 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -20,9 +23,26 @@ import (
 )
 
 const webTTYAuthTokenEnv = "RSTREAM_WEBTTY_AUTH_TOKEN"
+const defaultWebTTYFSMaxUploadSize int64 = 64 * 1024 * 1024
 
 type commandExitError struct {
 	code int
+}
+
+type webTTYClientRunOptions struct {
+	DefaultOutput      string
+	ForceNoInteractive bool
+	ForceNoTTY         bool
+	Subcommand         string
+}
+
+type webTTYClientResult struct {
+	URL        string   `json:"url"`
+	Command    []string `json:"command,omitempty"`
+	ExitCode   int      `json:"exit_code"`
+	Stdout     string   `json:"stdout"`
+	Stderr     string   `json:"stderr"`
+	DurationMS int64    `json:"duration_ms"`
 }
 
 func (e *commandExitError) Error() string {
@@ -106,13 +126,17 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 	if useRstream && authToken == nil {
 		allowUnauthenticated = true
 	}
-	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{
+	terminalHandler := webtty.NewWebTTYHandler(&webtty.ServerConfig{
 		SessionCloseDeadline: &shutdownTimeout,
 		AuthToken:            authToken,
 		AllowUnauthenticated: &allowUnauthenticated,
 		AllowedOrigins:       webTTYServerAllowedOrigins(useRstream),
 		Logger:               logger,
 	})
+	handler, err := newWebTTYServerHTTPHandler(cmd, terminalHandler, authToken, allowUnauthenticated, logger)
+	if err != nil {
+		return err
+	}
 	server := &http.Server{Handler: handler}
 	var listener net.Listener
 	address := ""
@@ -171,11 +195,11 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 			logger.Info("stopping webtty server", "reason", reason)
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 			defer cancel()
-			handler.BeginDrain()
+			terminalHandler.BeginDrain()
 			if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				logger.Warn("http server shutdown failed", "error", err)
 			}
-			if err := handler.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			if err := terminalHandler.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				logger.Warn("session shutdown failed", "error", err)
 			}
 		})
@@ -207,6 +231,16 @@ var webttyClientCmd = &cobra.Command{
 	},
 }
 
+var webttyExecCmd = &cobra.Command{
+	Use:          "exec [--] cmd...",
+	Short:        "Execute a command through a WebTTY server",
+	SilenceUsage: true,
+	Args:         cobra.MinimumNArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return runWebTTYClientWithOptions(cmd, "", args, webTTYClientRunOptions{DefaultOutput: "json", ForceNoInteractive: true, ForceNoTTY: true, Subcommand: "exec"})
+	},
+}
+
 func init() {
 	webttyCmd.Flags().SortFlags = false
 	webttyCmd.PersistentFlags().SortFlags = false
@@ -232,25 +266,42 @@ func init() {
 	webttyServerCmd.Flags().Int64("shutdown-timeout", 5000, "graceful shutdown timeout in ms")
 	webttyServerCmd.Flags().String("auth-token-file", "", "read local WebTTY bearer token from file")
 	webttyServerCmd.Flags().Bool("allow-unauthenticated", false, "allow unauthenticated local WebTTY access")
+	webttyServerCmd.Flags().StringArray("label", nil, "set WebTTY inventory labels (key=value, may be specified multiple times)")
+	webttyServerCmd.Flags().String("fs-root", "", "serve a WebDAV filesystem sidecar rooted at this directory")
+	webttyServerCmd.Flags().Bool("fs-read-only", false, "serve the WebDAV filesystem sidecar in read-only mode")
+	webttyServerCmd.Flags().Int64("fs-max-upload-size", defaultWebTTYFSMaxUploadSize, "maximum WebDAV upload size in bytes")
 	webttyCmd.AddCommand(webttyServerCmd)
 }
 
 func init() {
 	webttyClientCmd.Flags().SortFlags = false
 	webttyClientCmd.PersistentFlags().SortFlags = false
-	webttyClientCmd.Flags().String("url", "ws://127.0.0.1:8080", "websocket endpoint URL (ws://, wss://, or rstrm://<tunnel-id-or-name>)")
-	webttyClientCmd.Flags().BoolP("interactive", "i", false, "enable interactive mode")
-	webttyClientCmd.Flags().BoolP("no-interactive", "I", false, "disable interactive mode")
-	webttyClientCmd.MarkFlagsMutuallyExclusive("interactive", "no-interactive")
-	webttyClientCmd.Flags().BoolP("tty", "t", false, "enable TTY allocation")
-	webttyClientCmd.Flags().BoolP("no-tty", "T", false, "disable TTY allocation")
-	webttyClientCmd.MarkFlagsMutuallyExclusive("tty", "no-tty")
-	webttyClientCmd.Flags().BoolP("no-heartbeat", "H", false, "disable heartbeat mechanism")
-	webttyClientCmd.Flags().StringArrayP("env", "e", nil, "pass environment variable (KEY or KEY=VALUE)")
-	webttyClientCmd.Flags().StringP("workdir", "w", "", "set the working directory")
-	webttyClientCmd.Flags().StringP("user", "u", "", "username or UID")
-	webttyClientCmd.Flags().String("auth-token-file", "", "read local WebTTY bearer token from file")
+	addWebTTYClientFlags(webttyClientCmd, "text")
 	webttyCmd.AddCommand(webttyClientCmd)
+}
+
+func init() {
+	webttyExecCmd.Flags().SortFlags = false
+	webttyExecCmd.PersistentFlags().SortFlags = false
+	addWebTTYClientFlags(webttyExecCmd, "json")
+	webttyCmd.AddCommand(webttyExecCmd)
+}
+
+func addWebTTYClientFlags(cmd *cobra.Command, outputDefault string) {
+	cmd.Flags().String("url", "ws://127.0.0.1:8080", "websocket endpoint URL (ws://, wss://, or rstrm://<tunnel-id-or-name>)")
+	cmd.Flags().BoolP("interactive", "i", false, "enable interactive mode")
+	cmd.Flags().BoolP("no-interactive", "I", false, "disable interactive mode")
+	cmd.MarkFlagsMutuallyExclusive("interactive", "no-interactive")
+	cmd.Flags().BoolP("tty", "t", false, "enable TTY allocation")
+	cmd.Flags().BoolP("no-tty", "T", false, "disable TTY allocation")
+	cmd.MarkFlagsMutuallyExclusive("tty", "no-tty")
+	cmd.Flags().BoolP("no-heartbeat", "H", false, "disable heartbeat mechanism")
+	cmd.Flags().StringArrayP("env", "e", nil, "pass environment variable (KEY or KEY=VALUE)")
+	cmd.Flags().StringP("workdir", "w", "", "set the working directory")
+	cmd.Flags().StringP("user", "u", "", "username or UID")
+	cmd.Flags().StringP("output", "o", outputDefault, "output mode (text, json)")
+	cmd.Flags().String("auth-token-file", "", "read local WebTTY bearer token from file")
+	cmd.Flags().String("exec-path", "", "advertised WebTTY exec path to append to the endpoint URL")
 }
 
 func webttyServerUsesRstream(cmd *cobra.Command) bool {
@@ -267,11 +318,16 @@ func validateWebTTYServerFlags(cmd *cobra.Command) error {
 	if useRstream && cmd.Flags().Changed("listen") {
 		return fmt.Errorf("--listen cannot be used with --rstream")
 	}
-	if useRstream {
-		return nil
-	}
-	if cmd.Flags().Changed("name") || cmd.Flags().Changed("publish") || cmd.Flags().Changed("no-publish") {
+	if !useRstream && (cmd.Flags().Changed("name") || cmd.Flags().Changed("publish") || cmd.Flags().Changed("no-publish")) {
 		return fmt.Errorf("--name, --publish and --no-publish require --rstream")
+	}
+	fsRoot, _ := cmd.Flags().GetString("fs-root")
+	if strings.TrimSpace(fsRoot) == "" && (cmd.Flags().Changed("fs-read-only") || cmd.Flags().Changed("fs-max-upload-size")) {
+		return fmt.Errorf("--fs-read-only and --fs-max-upload-size require --fs-root")
+	}
+	fsMaxUploadSize, _ := cmd.Flags().GetInt64("fs-max-upload-size")
+	if strings.TrimSpace(fsRoot) != "" && fsMaxUploadSize <= 0 {
+		return fmt.Errorf("--fs-max-upload-size must be greater than zero")
 	}
 	return nil
 }
@@ -305,6 +361,24 @@ func webTTYServerAllowedOrigins(useRstream bool) []string {
 	return nil
 }
 
+func newWebTTYServerHTTPHandler(cmd *cobra.Command, terminalHandler *webtty.Handler, authToken *string, allowUnauthenticated bool, logger *slog.Logger) (http.Handler, error) {
+	fsRoot, _ := cmd.Flags().GetString("fs-root")
+	if strings.TrimSpace(fsRoot) == "" {
+		return terminalHandler, nil
+	}
+	fsReadOnly, _ := cmd.Flags().GetBool("fs-read-only")
+	fsMaxUploadSize, _ := cmd.Flags().GetInt64("fs-max-upload-size")
+	fsHandler, err := webtty.NewFileSystemHandler(&webtty.FileSystemConfig{Root: fsRoot, ReadOnly: fsReadOnly, MaxUploadSize: &fsMaxUploadSize, Logger: logger})
+	if err != nil {
+		return nil, err
+	}
+	mux := http.NewServeMux()
+	mux.Handle(webtty.WebTTYDefaultFSPath, webtty.NewBearerAuthHandler(fsHandler, authToken, allowUnauthenticated))
+	mux.Handle(webtty.WebTTYDefaultFSPath+"/", webtty.NewBearerAuthHandler(fsHandler, authToken, allowUnauthenticated))
+	mux.Handle("/", terminalHandler)
+	return mux, nil
+}
+
 func newWebTTYServerTunnelProperties(cmd *cobra.Command) rstream.TunnelProperties {
 	publish := true
 	if noPublishPtr := getBoolPtr(cmd, "no-publish"); noPublishPtr != nil && *noPublishPtr {
@@ -315,6 +389,7 @@ func newWebTTYServerTunnelProperties(cmd *cobra.Command) rstream.TunnelPropertie
 		Publish: rstream.BoolPtr(publish),
 		Labels:  webtty.DefaultLabels(),
 	}
+	applyWebTTYServerLabels(cmd, props.Labels)
 	if publish {
 		props.Protocol = rstream.ProtocolPtr(rstream.ProtocolHTTP)
 		props.HTTPVersion = rstream.HTTPVersionPtr(rstream.HTTP1_1)
@@ -323,9 +398,85 @@ func newWebTTYServerTunnelProperties(cmd *cobra.Command) rstream.TunnelPropertie
 	return props
 }
 
+func applyWebTTYServerLabels(cmd *cobra.Command, labels map[string]string) {
+	for key, value := range getStringArrayMap(cmd, "label") {
+		labels[webtty.WebTTYCustomLabelPrefix+key] = value
+	}
+	fsRoot, _ := cmd.Flags().GetString("fs-root")
+	if strings.TrimSpace(fsRoot) == "" {
+		return
+	}
+	fsReadOnly, _ := cmd.Flags().GetBool("fs-read-only")
+	fsMode := webtty.WebTTYFSModeReadWrite
+	if fsReadOnly {
+		fsMode = webtty.WebTTYFSModeReadOnly
+	}
+	labels[webtty.WebTTYCapabilitiesLabelKey] = webtty.WebTTYCapabilityExec + "," + webtty.WebTTYCapabilityFS
+	labels[webtty.WebTTYFSModeLabelKey] = fsMode
+	labels[webtty.WebTTYFSPathLabelKey] = webtty.WebTTYDefaultFSPath
+}
+
 func webttyClientUsesRstream(raw string) bool {
 	raw = strings.TrimSpace(raw)
 	return strings.HasPrefix(strings.ToLower(raw), "rstrm://")
+}
+
+func resolveWebTTYExecURL(raw string, execPath string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if strings.TrimSpace(execPath) == "" {
+		return raw, nil
+	}
+	endpoint, err := normalizeWebTTYEndpointPath(execPath)
+	if err != nil {
+		return "", err
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "ws://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("invalid WebTTY exec URL: %w", err)
+	}
+	switch strings.ToLower(strings.TrimSpace(u.Scheme)) {
+	case "ws", "wss", "rstrm":
+	default:
+		return "", fmt.Errorf("unsupported WebTTY exec URL scheme %q", u.Scheme)
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("WebTTY exec URL is missing host")
+	}
+	u.Path = webTTYEndpointPath(u.Path, endpoint)
+	u.Fragment = ""
+	return u.String(), nil
+}
+func normalizeWebTTYEndpointPath(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "." {
+		return "/", nil
+	}
+	if strings.ContainsAny(value, "?#") {
+		return "", fmt.Errorf("WebTTY endpoint path must not include query or fragment")
+	}
+	if !strings.HasPrefix(value, "/") {
+		value = "/" + value
+	}
+	return path.Clean(value), nil
+}
+func webTTYEndpointPath(current string, endpoint string) string {
+	base := strings.TrimRight(current, "/")
+	if endpoint == "/" {
+		if base == "" {
+			return "/"
+		}
+		return base
+	}
+	if base == "" || base == "/" {
+		return endpoint
+	}
+	if base == endpoint || strings.HasPrefix(base, endpoint+"/") {
+		return base
+	}
+	return path.Join(base, endpoint)
 }
 
 func newWebTTYClientDialContext(client *rstream.Client) func(context.Context, string, string) (net.Conn, error) {
@@ -354,8 +505,12 @@ func extractWebTTYTunnelTarget(addr string) (string, error) {
 }
 
 func runWebTTYClient(cmd *cobra.Command, urlOverride string, args []string) error {
+	return runWebTTYClientWithOptions(cmd, urlOverride, args, webTTYClientRunOptions{DefaultOutput: "text", Subcommand: "client"})
+}
+
+func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []string, options webTTYClientRunOptions) error {
 	ctx := cmd.Context()
-	logger := slog.With("cmd", "webtty", "subcmd", "client")
+	logger := slog.With("cmd", "webtty", "subcmd", options.Subcommand)
 	urlValue := strings.TrimSpace(urlOverride)
 	if urlValue == "" {
 		urlValue, _ = cmd.Flags().GetString("url")
@@ -363,10 +518,17 @@ func runWebTTYClient(cmd *cobra.Command, urlOverride string, args []string) erro
 	if urlValue == "" {
 		urlValue = "ws://127.0.0.1:8080"
 	}
+	execPath, _ := cmd.Flags().GetString("exec-path")
+	urlValue, err := resolveWebTTYExecURL(urlValue, execPath)
+	if err != nil {
+		return err
+	}
 	interactivePtr := getBoolPtr(cmd, "interactive")
 	noInteractivePtr := getBoolPtr(cmd, "no-interactive")
 	interactive := false
 	switch {
+	case options.ForceNoInteractive:
+		interactive = false
 	case interactivePtr != nil && *interactivePtr:
 		interactive = true
 	case noInteractivePtr != nil && *noInteractivePtr:
@@ -378,6 +540,8 @@ func runWebTTYClient(cmd *cobra.Command, urlOverride string, args []string) erro
 	noTTYPtr := getBoolPtr(cmd, "no-tty")
 	allocateTTY := false
 	switch {
+	case options.ForceNoTTY:
+		allocateTTY = false
 	case ttyPtr != nil && *ttyPtr:
 		allocateTTY = true
 	case noTTYPtr != nil && *noTTYPtr:
@@ -400,6 +564,11 @@ func runWebTTYClient(cmd *cobra.Command, urlOverride string, args []string) erro
 		CmdArgs:       args,
 		Logger:        logger,
 	}
+	outputMode := options.DefaultOutput
+	if cmd.Flags().Changed("output") {
+		outputMode, _ = cmd.Flags().GetString("output")
+	}
+	outputMode = strings.ToLower(strings.TrimSpace(outputMode))
 	authToken, err := readWebTTYAuthToken(cmd)
 	if err != nil {
 		return err
@@ -416,6 +585,24 @@ func runWebTTYClient(cmd *cobra.Command, urlOverride string, args []string) erro
 		}
 		clientCfg.DialContext = newWebTTYClientDialContext(client)
 	}
+	if outputMode == "json" {
+		result, err := runWebTTYClientCapture(ctx, clientCfg)
+		if result != nil {
+			if encodeErr := writeStructuredOutput("json", result); encodeErr != nil && err == nil {
+				err = encodeErr
+			}
+		}
+		if err != nil {
+			return err
+		}
+		if result.ExitCode != 0 {
+			return &commandExitError{code: result.ExitCode}
+		}
+		return nil
+	}
+	if outputMode != "text" {
+		return fmt.Errorf("invalid --output %q (valid: text, json)", outputMode)
+	}
 	exitCode, err := webtty.RunClient(ctx, clientCfg)
 	if err != nil {
 		return err
@@ -424,4 +611,65 @@ func runWebTTYClient(cmd *cobra.Command, urlOverride string, args []string) erro
 		return &commandExitError{code: exitCode}
 	}
 	return nil
+}
+
+func runWebTTYClientCapture(ctx context.Context, cfg *webtty.ClientConfig) (*webTTYClientResult, error) {
+	start := time.Now()
+	session, err := webtty.OpenClientSession(ctx, webTTYSessionConfigFromClientConfig(cfg))
+	if err != nil {
+		return nil, err
+	}
+	defer session.Close()
+	stdout := bytes.Buffer{}
+	stderr := bytes.Buffer{}
+	waitCh := make(chan struct {
+		exitCode int
+		err      error
+	}, 1)
+	go func() {
+		exitCode, err := session.Wait()
+		waitCh <- struct {
+			exitCode int
+			err      error
+		}{exitCode: exitCode, err: err}
+	}()
+	for {
+		select {
+		case event, ok := <-session.Events():
+			if ok {
+				if event.Stream == webtty.ClientSessionStderr {
+					stderr.Write(event.Data)
+				} else {
+					stdout.Write(event.Data)
+				}
+			}
+		case result := <-waitCh:
+			return &webTTYClientResult{URL: cfg.URL, Command: append([]string(nil), cfg.CmdArgs...), ExitCode: result.exitCode, Stdout: stdout.String(), Stderr: stderr.String(), DurationMS: time.Since(start).Milliseconds()}, result.err
+		case <-ctx.Done():
+			_ = session.CloseWithError(ctx.Err())
+			return &webTTYClientResult{URL: cfg.URL, Command: append([]string(nil), cfg.CmdArgs...), ExitCode: -1, Stdout: stdout.String(), Stderr: stderr.String(), DurationMS: time.Since(start).Milliseconds()}, ctx.Err()
+		}
+	}
+}
+
+func webTTYSessionConfigFromClientConfig(cfg *webtty.ClientConfig) *webtty.SessionConfig {
+	return &webtty.SessionConfig{
+		URL:               cfg.URL,
+		DialContext:       cfg.DialContext,
+		Interactive:       cfg.Interactive,
+		AllocateTTY:       cfg.AllocateTTY,
+		SendHeartbeat:     cfg.SendHeartbeat,
+		EnvVars:           append([]string(nil), cfg.EnvVars...),
+		Workdir:           cfg.Workdir,
+		Username:          cfg.Username,
+		CmdArgs:           append([]string(nil), cfg.CmdArgs...),
+		AuthToken:         cfg.AuthToken,
+		MaxMessageSize:    cfg.MaxMessageSize,
+		ReadBufferSize:    cfg.ReadBufferSize,
+		WriteBufferSize:   cfg.WriteBufferSize,
+		OpenDeadline:      cfg.OpenDeadline,
+		CloseDeadline:     cfg.CloseDeadline,
+		HeartbeatInterval: cfg.HeartbeatInterval,
+		Logger:            cfg.Logger,
+	}
 }

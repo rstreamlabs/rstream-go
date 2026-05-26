@@ -270,6 +270,22 @@ func TestWebTTYOriginRejectsSameHostWhenUnauthenticated(t *testing.T) {
 	}
 }
 
+func TestWebTTYOriginNormalizesDefaultPorts(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, "https://terminal.example/webtty", nil)
+	request.Host = "terminal.example"
+	request.Header.Set("Origin", "https://terminal.example:443")
+	if !webTTYOriginAllowed(request, nil, true) {
+		t.Fatalf("same-host origin with default HTTPS port should be allowed")
+	}
+	if !webTTYOriginAllowed(request, []string{"https://terminal.example"}, false) {
+		t.Fatalf("explicit allowed origin should allow default HTTPS port")
+	}
+	request.Header.Set("Origin", "https://terminal.example:444")
+	if webTTYOriginAllowed(request, nil, true) {
+		t.Fatalf("same-host origin with non-default port should be rejected")
+	}
+}
+
 func testServerConfig(cfg ServerConfig) *ServerConfig {
 	allow := true
 	cfg.AllowUnauthenticated = &allow

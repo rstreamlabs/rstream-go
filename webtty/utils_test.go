@@ -78,6 +78,12 @@ func TestDefaultLabelsIncludesStableRuntimeIdentity(t *testing.T) {
 	if labels[webTTYApplicationProtocolKey] != WebTTYApplicationProtocol {
 		t.Fatalf("protocol label = %q, want %q", labels[webTTYApplicationProtocolKey], WebTTYApplicationProtocol)
 	}
+	if labels[webTTYCapabilitiesLabel] != WebTTYCapabilityExec {
+		t.Fatalf("capabilities label = %q, want %q", labels[webTTYCapabilitiesLabel], WebTTYCapabilityExec)
+	}
+	if labels[webTTYExecPathLabel] != WebTTYDefaultExecPath {
+		t.Fatalf("exec path label = %q, want %q", labels[webTTYExecPathLabel], WebTTYDefaultExecPath)
+	}
 	if labels[webTTYOSFamilyLabel] == "" || labels[webTTYArchLabel] == "" {
 		t.Fatalf("runtime labels missing OS/arch: %#v", labels)
 	}
