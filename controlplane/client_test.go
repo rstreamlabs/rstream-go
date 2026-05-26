@@ -97,6 +97,73 @@ func TestResolveProjectByEndpointEscapesPath(t *testing.T) {
 	}
 }
 
+func TestWorkspaceProjectCreationEndpoints(t *testing.T) {
+	workspaceID := "workspace/with space"
+	expectedPrefix := "/api/workspaces/" + url.PathEscape(workspaceID) + "/projects/tunnels"
+	seen := map[string]bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer token" {
+			http.Error(w, "missing authorization", http.StatusBadRequest)
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/api/workspaces":
+			seen["workspaces"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ListWorkspacesResponse{Workspaces: []Workspace{{ID: "ws1", Name: "Workspace", Type: "personal"}}})
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == expectedPrefix:
+			seen["workspace_projects"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ListProjectsResponse{Projects: []Project{{ID: "p1", Name: "Project"}}})
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == expectedPrefix+"/plan/config":
+			seen["options"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProjectCreationOptionsResponse{Plans: []ProjectCreationOption{{Plan: "basic", Available: true, CreationFingerprint: "abc"}}})
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/api/projects/tunnels/p1/plan":
+			seen["project_plan"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProjectPlan{"id": "basic", "features": []string{"HTTPS tunnels"}})
+		case r.Method == http.MethodPost && r.URL.EscapedPath() == expectedPrefix:
+			seen["create"] = true
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(Project{ID: "p2", Name: "Created"})
+		case r.Method == http.MethodPost && r.URL.EscapedPath() == expectedPrefix+"/payment-checkout":
+			seen["checkout"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(CreateProjectCheckoutResponse{URL: "https://checkout.example", ProjectID: "p3"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "token")
+	if _, err := client.ListWorkspaces(context.Background()); err != nil {
+		t.Fatalf("ListWorkspaces returned error: %v", err)
+	}
+	if _, err := client.ListWorkspaceProjects(context.Background(), workspaceID, ListProjectsParams{}); err != nil {
+		t.Fatalf("ListWorkspaceProjects returned error: %v", err)
+	}
+	if _, err := client.ProjectCreationOptions(context.Background(), workspaceID); err != nil {
+		t.Fatalf("ProjectCreationOptions returned error: %v", err)
+	}
+	if _, err := client.GetProjectPlan(context.Background(), "p1"); err != nil {
+		t.Fatalf("GetProjectPlan returned error: %v", err)
+	}
+	request := CreateProjectRequest{Name: "Created", Provider: "aws", Region: "eu-west-3", Plan: "basic", CreationFingerprint: "abc", IdempotencyKey: "idem"}
+	if _, err := client.CreateProject(context.Background(), workspaceID, request); err != nil {
+		t.Fatalf("CreateProject returned error: %v", err)
+	}
+	if _, err := client.CreateProjectCheckout(context.Background(), workspaceID, request); err != nil {
+		t.Fatalf("CreateProjectCheckout returned error: %v", err)
+	}
+	for _, key := range []string{"workspaces", "workspace_projects", "options", "project_plan", "create", "checkout"} {
+		if !seen[key] {
+			t.Fatalf("endpoint %q was not called", key)
+		}
+	}
+}
+
 func TestCreateProjectTURNCredentialsEscapesProjectID(t *testing.T) {
 	projectID := "workspace/project id"
 	expectedPath := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/turn-server/credentials"
@@ -109,12 +176,18 @@ func TestCreateProjectTURNCredentialsEscapesProjectID(t *testing.T) {
 			http.Error(w, "unexpected path", http.StatusBadRequest)
 			return
 		}
+		var payload CreateTURNCredentialsRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.TTLSeconds == nil || *payload.TTLSeconds != 60 {
+			http.Error(w, "unexpected credential request", http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(TURNCredentials{Username: "u", Credential: "c", URLs: []string{"turn:example.com"}, TTL: 60})
 	}))
 	defer server.Close()
 	client := NewClient(server.URL, "token")
-	res, err := client.CreateProjectTURNCredentials(context.Background(), projectID)
+	ttl := 60
+	res, err := client.CreateProjectTURNCredentialsWithOptions(context.Background(), projectID, CreateTURNCredentialsRequest{TTLSeconds: &ttl})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
@@ -151,6 +224,186 @@ func TestCreateProjectTURNCredentialsByEndpointEscapesPath(t *testing.T) {
 	}
 	if res.Username != "u" || res.Credential != "c" || res.TTL != 86400 {
 		t.Fatalf("unexpected response: %+v", res)
+	}
+}
+
+func TestCreateTokenPostsPermissionsAndResources(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens" {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer token" {
+			http.Error(w, "missing authorization", http.StatusBadRequest)
+			return
+		}
+		var payload map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		if string(payload["permissions"]) != `["tunnels.resources.read-only"]` {
+			http.Error(w, "unexpected permissions", http.StatusBadRequest)
+			return
+		}
+		if !strings.Contains(string(payload["resources"]), `"tunnels"`) {
+			http.Error(w, "unexpected resources", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(CreateTokenResponse{Token: "minted"})
+	}))
+	defer server.Close()
+	perms := []string{"tunnels.resources.read-only"}
+	resources := json.RawMessage(`{"tunnels":{"projects":["p1"],"scopes":{"tunnels":{"connect":true}}}}`)
+	response, err := NewClient(server.URL, "token").CreateToken(context.Background(), CreateTokenRequest{Permissions: &perms, Resources: &resources})
+	if err != nil {
+		t.Fatalf("CreateToken returned error: %v", err)
+	}
+	if response.Token != "minted" {
+		t.Fatalf("unexpected token response: %#v", response)
+	}
+}
+
+func TestProjectOperationsAndWorkspaceMembersEndpoints(t *testing.T) {
+	projectID := "workspace/project id"
+	domainID := "domain/with space"
+	workspaceID := "workspace/with space"
+	projectPrefix := "/api/projects/tunnels/" + url.PathEscape(projectID)
+	domainPath := projectPrefix + "/domains/" + url.PathEscape(domainID)
+	workspaceMembersPath := "/api/workspaces/" + url.PathEscape(workspaceID) + "/members"
+	seen := map[string]bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer token" {
+			http.Error(w, "missing authorization", http.StatusBadRequest)
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == projectPrefix+"/logs":
+			seen["logs"] = true
+			if r.URL.Query().Get("timeline") != "1h" || r.URL.Query().Get("eventType") != "connection.closed" || r.URL.Query().Get("pageSize") != "5" {
+				http.Error(w, "unexpected logs query", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProjectLogsResponse{Events: []ProjectLogEvent{{"eventType": "connection.closed"}}, Page: 1, PageSize: 5, Total: 1, TotalPages: 1})
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == projectPrefix+"/usage":
+			seen["usage"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProjectUsage{"metrics": map[string]any{"bandwidthTunnels": map[string]any{"value": 1}}})
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == projectPrefix+"/turn/usage":
+			seen["turn_usage"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProjectTURNUsage{"totals30d": map[string]any{"relayBytesTotal": 42}})
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == projectPrefix+"/domains":
+			seen["domains_list"] = true
+			if r.URL.Query().Get("q") != "codex" || r.URL.Query().Get("pageSize") != "10" {
+				http.Error(w, "unexpected domains query", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ListProjectDomainsResponse{Domains: []ProjectDomain{{"id": domainID, "hostname": "codex.example.com"}}, Page: 1, PageSize: 10, Total: 1, TotalPages: 1})
+		case r.Method == http.MethodPost && r.URL.EscapedPath() == projectPrefix+"/domains":
+			seen["domain_create"] = true
+			var payload CreateProjectDomainRequest
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Hostname != "codex.example.com" {
+				http.Error(w, "unexpected domain create", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProjectDomain{"id": domainID, "hostname": payload.Hostname})
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == domainPath:
+			seen["domain_get"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProjectDomain{"id": domainID, "hostname": "codex.example.com"})
+		case r.Method == http.MethodDelete && r.URL.EscapedPath() == domainPath:
+			seen["domain_delete"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProjectDomain{"id": domainID})
+		case r.Method == http.MethodPost && r.URL.EscapedPath() == domainPath+"/verify":
+			seen["domain_verify"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProjectDomain{"id": domainID, "status": "active"})
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == domainPath+"/domain-connect":
+			seen["domain_connect"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(DomainConnectResponse{"supported": true, "applyUrl": "https://dns.example/apply"})
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == projectPrefix+"/settings":
+			seen["settings_get"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProjectSettings{"publicAccessPolicy": "allowed"})
+		case r.Method == http.MethodPatch && r.URL.EscapedPath() == projectPrefix+"/settings":
+			seen["settings_patch"] = true
+			var payload ProjectSettings
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload["publicAccessPolicy"] != "forbidden" {
+				http.Error(w, "unexpected settings patch", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProjectSettings{"publicAccessPolicy": "forbidden"})
+		case r.Method == http.MethodDelete && r.URL.EscapedPath() == projectPrefix+"/settings":
+			seen["settings_reset"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProjectSettings{"publicAccessPolicy": "allowed"})
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == workspaceMembersPath:
+			seen["members"] = true
+			if r.URL.Query().Get("q") != "admin" || r.URL.Query().Get("pageSize") != "10" {
+				http.Error(w, "unexpected members query", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(WorkspaceMembersResponse{Members: []WorkspaceMember{{ID: "m1", Email: "admin@example.test", Role: "admin", Status: "active"}}, Page: 1, PageSize: 10, Total: 1, TotalPages: 1})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	pageSize := 5
+	memberPageSize := 10
+	client := NewClient(server.URL, "token")
+	if _, err := client.ListProjectLogs(context.Background(), projectID, ProjectLogsParams{Timeline: "1h", EventType: "connection.closed", PageSize: &pageSize}); err != nil {
+		t.Fatalf("ListProjectLogs returned error: %v", err)
+	}
+	if _, err := client.GetProjectUsage(context.Background(), projectID); err != nil {
+		t.Fatalf("GetProjectUsage returned error: %v", err)
+	}
+	if _, err := client.GetProjectTURNUsage(context.Background(), projectID); err != nil {
+		t.Fatalf("GetProjectTURNUsage returned error: %v", err)
+	}
+	if _, err := client.ListProjectDomains(context.Background(), projectID, ListProjectDomainsParams{Query: "codex", PageSize: &memberPageSize}); err != nil {
+		t.Fatalf("ListProjectDomains returned error: %v", err)
+	}
+	if _, err := client.CreateProjectDomain(context.Background(), projectID, CreateProjectDomainRequest{Hostname: "codex.example.com"}); err != nil {
+		t.Fatalf("CreateProjectDomain returned error: %v", err)
+	}
+	if _, err := client.GetProjectDomain(context.Background(), projectID, domainID); err != nil {
+		t.Fatalf("GetProjectDomain returned error: %v", err)
+	}
+	if _, err := client.DeleteProjectDomain(context.Background(), projectID, domainID); err != nil {
+		t.Fatalf("DeleteProjectDomain returned error: %v", err)
+	}
+	if _, err := client.VerifyProjectDomain(context.Background(), projectID, domainID); err != nil {
+		t.Fatalf("VerifyProjectDomain returned error: %v", err)
+	}
+	if _, err := client.GetProjectDomainConnect(context.Background(), projectID, domainID); err != nil {
+		t.Fatalf("GetProjectDomainConnect returned error: %v", err)
+	}
+	if _, err := client.GetProjectSettings(context.Background(), projectID); err != nil {
+		t.Fatalf("GetProjectSettings returned error: %v", err)
+	}
+	if _, err := client.PatchProjectSettings(context.Background(), projectID, ProjectSettings{"publicAccessPolicy": "forbidden"}); err != nil {
+		t.Fatalf("PatchProjectSettings returned error: %v", err)
+	}
+	if _, err := client.ResetProjectSettings(context.Background(), projectID); err != nil {
+		t.Fatalf("ResetProjectSettings returned error: %v", err)
+	}
+	if _, err := client.ListWorkspaceMembers(context.Background(), workspaceID, WorkspaceMembersParams{Query: "admin", PageSize: &memberPageSize}); err != nil {
+		t.Fatalf("ListWorkspaceMembers returned error: %v", err)
+	}
+	for _, key := range []string{"logs", "usage", "turn_usage", "domains_list", "domain_create", "domain_get", "domain_delete", "domain_verify", "domain_connect", "settings_get", "settings_patch", "settings_reset", "members"} {
+		if !seen[key] {
+			t.Fatalf("endpoint %q was not called", key)
+		}
 	}
 }
 

@@ -152,6 +152,31 @@ func TestResolveControlPlaneIgnoresDefaultContext(t *testing.T) {
 	}
 }
 
+func TestResolveControlPlaneHonorsExplicitContext(t *testing.T) {
+	clearRstreamTestEnv(t)
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	cfg := config.Config{
+		Environments: []config.Environment{{APIURL: "http://localhost:3000", Auth: &config.Auth{Token: &config.Token{Storage: &config.TokenStorage{
+			Kind:  config.TokenStorageInline,
+			Value: "local-token",
+		}}}}},
+		Contexts: []config.Context{{Name: "tests", APIURL: "http://localhost:3000", Engine: "tests.c.localhost.rstream.io:443"}},
+	}
+	if err := config.WriteAtomic(path, cfg); err != nil {
+		t.Fatalf("WriteAtomic() error = %v", err)
+	}
+	command := runtimeFlagsCommand()
+	t.Setenv("RSTREAM_CONFIG", path)
+	t.Setenv("RSTREAM_CONTEXT", "tests")
+	runtime, err := resolveControlPlane(command, true)
+	if err != nil {
+		t.Fatalf("resolveControlPlane() error = %v", err)
+	}
+	if runtime.Resolved.Context == nil || runtime.Resolved.Context.Name != "tests" || runtime.Resolved.APIURL != "http://localhost:3000" || runtime.Resolved.Token != "local-token" {
+		t.Fatalf("Control plane API runtime should honor explicit context: %#v", runtime.Resolved)
+	}
+}
+
 func TestResolveControlPlaneTokenPrecedence(t *testing.T) {
 	clearRstreamTestEnv(t)
 	cfg := config.Config{Environments: []config.Environment{{APIURL: "https://api.example.com", Auth: &config.Auth{Token: &config.Token{Storage: &config.TokenStorage{
