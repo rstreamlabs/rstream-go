@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.18.0](https://github.com/rstreamlabs/rstream-go/compare/v1.17.1...v1.18.0) (2026-05-26)
+
+
+### Features
+
+* add agent-native MCP and WebTTY filesystem tools ([fcc3a28](https://github.com/rstreamlabs/rstream-go/commit/fcc3a2865cba1c256df470e34ea2a4036af2ed21))
+
 ## [1.17.1](https://github.com/rstreamlabs/rstream-go/compare/v1.17.0...v1.17.1) (2026-05-23)
 
 
