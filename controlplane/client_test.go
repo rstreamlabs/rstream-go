@@ -34,7 +34,7 @@ func TestNewClientOptionsAndRequireToken(t *testing.T) {
 	}
 }
 
-func TestWhoamiAuthorizationAndUnauthorizedWrapping(t *testing.T) {
+func TestWhoamiAuthorizationAndAuthErrorWrapping(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/whoami":
@@ -66,7 +66,11 @@ func TestWhoamiAuthorizationAndUnauthorizedWrapping(t *testing.T) {
 		t.Fatalf("unexpected whoami: %+v", whoami)
 	}
 	_, err = NewClient(server.URL, "").ListProjects(context.Background(), ListProjectsParams{})
-	if !errors.Is(err, ErrUnauthorized) || !strings.Contains(err.Error(), "forbidden") {
+	if !errors.Is(err, ErrForbidden) || !strings.Contains(err.Error(), "forbidden") {
+		t.Fatalf("expected forbidden wrapped error, got %v", err)
+	}
+	_, err = NewClient(server.URL, "bad").Whoami(context.Background())
+	if !errors.Is(err, ErrUnauthorized) || !strings.Contains(err.Error(), "401 Unauthorized") {
 		t.Fatalf("expected unauthorized wrapped error, got %v", err)
 	}
 }
@@ -132,6 +136,9 @@ func TestWorkspaceProjectCreationEndpoints(t *testing.T) {
 			seen["checkout"] = true
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(CreateProjectCheckoutResponse{URL: "https://checkout.example", ProjectID: "p3"})
+		case r.Method == http.MethodDelete && r.URL.EscapedPath() == "/api/projects/tunnels/p2":
+			seen["delete"] = true
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(w, r)
 		}
@@ -157,7 +164,10 @@ func TestWorkspaceProjectCreationEndpoints(t *testing.T) {
 	if _, err := client.CreateProjectCheckout(context.Background(), workspaceID, request); err != nil {
 		t.Fatalf("CreateProjectCheckout returned error: %v", err)
 	}
-	for _, key := range []string{"workspaces", "workspace_projects", "options", "project_plan", "create", "checkout"} {
+	if err := client.DeleteProject(context.Background(), "p2"); err != nil {
+		t.Fatalf("DeleteProject returned error: %v", err)
+	}
+	for _, key := range []string{"workspaces", "workspace_projects", "options", "project_plan", "create", "checkout", "delete"} {
 		if !seen[key] {
 			t.Fatalf("endpoint %q was not called", key)
 		}
@@ -197,7 +207,7 @@ func TestCreateProjectTURNCredentialsEscapesProjectID(t *testing.T) {
 }
 
 func TestCreateProjectTURNCredentialsByEndpointEscapesPath(t *testing.T) {
-	endpoint := "bbc44f81.aws-eu-west-3-1.c.rstream.io"
+	endpoint := "abc12345.aws-eu-west-3-1.c.rstream.io"
 	expectedPath := "/api/projects/tunnels/resolve/" + url.PathEscape(endpoint) + "/turn-server/credentials"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.URL.EscapedPath(); got != expectedPath {

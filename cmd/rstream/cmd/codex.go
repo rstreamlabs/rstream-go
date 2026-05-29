@@ -92,7 +92,7 @@ func codexRstreamMCPBlock(commandPath string) string {
 
 func codexRstreamMCPBlockWithEnv(commandPath string, env map[string]string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "[mcp_servers.rstream]\ncommand = %s\nargs = [\"mcp\", \"serve\"]\nstartup_timeout_sec = 30\n", tomlString(commandPath))
+	fmt.Fprintf(&b, "[mcp_servers.rstream]\ncommand = %s\nargs = [\"mcp\", \"serve\"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 300\n", tomlString(commandPath))
 	keys := make([]string, 0, len(env))
 	for key, value := range env {
 		if strings.TrimSpace(key) != "" && strings.TrimSpace(value) != "" {

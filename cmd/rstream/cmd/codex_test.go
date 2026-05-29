@@ -11,7 +11,7 @@ import (
 
 func TestCodexRstreamMCPBlock(t *testing.T) {
 	block := codexRstreamMCPBlock(`/tmp/rstream`)
-	for _, want := range []string{`[mcp_servers.rstream]`, `command = "/tmp/rstream"`, `args = ["mcp", "serve"]`} {
+	for _, want := range []string{`[mcp_servers.rstream]`, `command = "/tmp/rstream"`, `args = ["mcp", "serve"]`, `startup_timeout_sec = 30`, `tool_timeout_sec = 300`} {
 		if !strings.Contains(block, want) {
 			t.Fatalf("block missing %q:\n%s", want, block)
 		}

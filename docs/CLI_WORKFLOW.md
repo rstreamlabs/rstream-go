@@ -107,7 +107,7 @@ When Codex is using local MCP tools, the equivalent flow is:
 rstream_auth_start -> user opens login_url -> rstream_auth_poll
 ```
 
-`rstream_auth_start` returns the browser approval URL, user code, expiry, requested scopes, and local auth session ID. `rstream_auth_poll` exchanges the approved device code and stores the token in the same local config file used by the CLI. The token is never returned through MCP.
+`rstream_auth_start` returns the browser approval URL, expiry, requested scopes, and local auth session ID. A separate user code is returned only when the provider cannot embed it in the approval URL. `rstream_auth_poll` exchanges the approved device code and stores the token in the same local config file used by the CLI. The token is never returned through MCP.
 
 The default `rstream_auth_start` scope is intentionally limited to common CLI and agent setup operations. When a user explicitly asks Codex to create projects or update project settings, pass an explicit `permissions` array such as `account.projects.read-write` and `account.plan.read-only`; the browser approval page is the user confirmation point for that broader grant.
 
@@ -243,9 +243,13 @@ For a Codex workstation, either complete the normal developer-machine path first
 rstream codex setup
 ```
 
-`rstream codex setup` writes a Codex MCP server entry that runs `rstream mcp serve`. The local MCP server reuses the selected rstream configuration and can expose OAuth login start/poll tools, runtime status, workspace/project discovery, project creation options, explicit project creation or checkout start, project plan inspection, project logs, usage, TURN usage, short-lived TURN credential minting, stable domain inspection and management, project settings, short-lived token creation, persistent preview tunnels, WebTTY command execution, WebTTY filesystem sidecar operations, remote network exposure through WebTTY, and remote MCP surface discovery and invocation.
+`rstream codex setup` writes a Codex MCP server entry that runs `rstream mcp serve`. The local MCP server reuses the selected rstream configuration and can expose OAuth login start/poll tools, runtime preparation for a selected project, runtime status, workspace/project discovery, project creation options, explicit project creation or checkout start, project plan inspection, project logs, usage, TURN usage, short-lived TURN credential minting, stable domain inspection and management, project settings, short-lived delegated token creation, managed local tunnels, WebTTY command execution, WebTTY filesystem sidecar operations, remote network exposure through WebTTY, and remote MCP surface discovery and invocation.
+
+Use rstream CLI 1.18.1 or later for the full Codex MCP workflow, including runtime preparation, WebTTY filesystem tools, remote exposure, and longer MCP tool timeouts for user-approved login.
 
 MCP does not create a rstream account anonymously. On a clean workstation, login remains the user-approved boundary; if the user does not already have an account, the hosted browser step handles signup or sign-in.
+
+After login, Codex should prepare a project with `rstream_runtime_prepare` before managed local tunnels, WebTTY, remote exposure, or remote MCP calls when no context is ready or the selected context is stale. That tool creates or repairs the local project context with the long-lived developer-machine login token. If several tunnel projects are available and the prompt did not name one, Codex should list the choices and ask instead of inferring from naming conventions alone or adding a preferred example. It must not call `rstream_token_create` for workstation setup; that token endpoint is for short-lived delegated handoff flows.
 
 ### Remote network and MCP bridge
 
@@ -279,6 +283,7 @@ Logout does not delete contexts. Contexts created for remote devices may remain 
 
 - **Projects** are managed in rstream and selected via **project endpoint**.
 - **Contexts** are local and define engine endpoint selection and authentication; they can be linked (by `apiUrl`) or unlinked.
-- **Developer machine**: `rstream login` then `rstream project use <project-endpoint>` (linked contexts).
-- **Remote device**: `rstream context create ... --engine ... --token ...` with a project-scoped token (unlinked context).
+- **Developer machine**: `rstream login` then `rstream project use <project-endpoint>` or `rstream_runtime_prepare` through MCP (linked contexts using the long-lived login token).
+- **Remote device**: `rstream context create ... --engine ... --token ...` with a project-scoped token (unlinked context; scoped does not necessarily mean short-lived).
+- **Short-lived delegated tokens**: use them for immediate URL, browser, or runtime handoff flows, not as the stored workstation credential.
 - Once a default context exists: `rstream forward <port>` creates a tunnel and forwards traffic to `localhost:<port>`.
