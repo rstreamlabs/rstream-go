@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.19.0](https://github.com/rstreamlabs/rstream-go/compare/v1.18.0...v1.19.0) (2026-05-29)
+
+
+### Features
+
+* improve Codex MCP tunnel workflows ([95c0f12](https://github.com/rstreamlabs/rstream-go/commit/95c0f12aaf9c1ed96d795ff6ab27cd42b2746f47))
+
 ## [1.18.0](https://github.com/rstreamlabs/rstream-go/compare/v1.17.1...v1.18.0) (2026-05-26)
 
 
