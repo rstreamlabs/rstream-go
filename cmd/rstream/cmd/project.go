@@ -236,6 +236,9 @@ func mapControlPlaneError(err error) error {
 	if errors.Is(err, controlplane.ErrUnauthorized) {
 		return errors.New("not authenticated (run rstream login or set RSTREAM_AUTHENTICATION_TOKEN)")
 	}
+	if errors.Is(err, controlplane.ErrForbidden) {
+		return errors.New("not authorized (check token permissions and project access)")
+	}
 	return err
 }
 

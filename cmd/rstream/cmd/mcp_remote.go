@@ -76,7 +76,7 @@ func mcpRemoteExpose(ctx context.Context, args map[string]json.RawMessage) (map[
 		return nil, err
 	}
 	command := []string{"/bin/sh", "-lc", remoteExposeShellScript(expose)}
-	result, err := runMCPWebTTYCommand(ctx, expose.URL, expose.ExecPath, command, expose.Env, expose.Workdir, expose.User)
+	result, err := runMCPWebTTYCommand(ctx, args, expose.URL, expose.ExecPath, command, expose.Env, expose.Workdir, expose.User)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func mcpRemoteExpose(ctx context.Context, args map[string]json.RawMessage) (map[
 	if err != nil {
 		return nil, err
 	}
-	return mcpJSONResult(parsed, parsed.Status != "online")
+	return mcpJSONResourceLinkResult(parsed, parsed.Status != "online", remoteExposeForwardingURL(parsed), parsed.ID, "Public rstream remote exposure URL", "text/html")
 }
 
 func mcpRemoteExposeStop(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
@@ -114,7 +114,7 @@ func mcpRemoteExposeStop(ctx context.Context, args map[string]json.RawMessage) (
 	}
 	id := safeRemoteExposeID(rawID)
 	script := "set -eu; id=" + shellSingleQuote(id) + "; dir=${RSTREAM_REMOTE_EXPOSE_DIR:-$HOME/.rstream/remote-exposes}; pidfile=\"$dir/$id.pid\"; if [ ! -f \"$pidfile\" ]; then echo stopped=false; echo reason=not_found; exit 0; fi; pid=$(cat \"$pidfile\"); stopped=false; if kill -0 \"$pid\" 2>/dev/null; then kill \"$pid\"; sleep 1; if kill -0 \"$pid\" 2>/dev/null; then kill -KILL \"$pid\" 2>/dev/null || true; fi; stopped=true; fi; rm -f \"$pidfile\"; echo stopped=$stopped; echo pid=$pid"
-	result, err := runMCPWebTTYCommand(ctx, rawURL, execPath, []string{"/bin/sh", "-lc", script}, envVars, workdir, username)
+	result, err := runMCPWebTTYCommand(ctx, args, rawURL, execPath, []string{"/bin/sh", "-lc", script}, envVars, workdir, username)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func mcpRemoteExposeStop(ctx context.Context, args map[string]json.RawMessage) (
 }
 
 func mcpRemoteMCPDiscover(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	runtime, err := resolveMCPRuntime(true, true)
+	runtime, err := resolveMCPRuntimeForArgs(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -146,7 +146,7 @@ func mcpRemoteMCPDiscover(ctx context.Context, args map[string]json.RawMessage) 
 }
 
 func mcpRemoteMCPTools(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	endpoint, token, err := remoteMCPEndpointFromArgs(args)
+	endpoint, token, err := remoteMCPEndpointFromArgs(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +158,7 @@ func mcpRemoteMCPTools(ctx context.Context, args map[string]json.RawMessage) (ma
 }
 
 func mcpRemoteMCPCall(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	endpoint, token, err := remoteMCPEndpointFromArgs(args)
+	endpoint, token, err := remoteMCPEndpointFromArgs(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -366,14 +366,14 @@ func remoteExposeShellScript(expose remoteExposeArgs) string {
 	return "set -eu; id=" + shellSingleQuote(safeRemoteExposeID(expose.ID)) + "; dir=${RSTREAM_REMOTE_EXPOSE_DIR:-$HOME/.rstream/remote-exposes}; mkdir -p \"$dir\"; chmod 700 \"$dir\"; log=\"$dir/$id.log\"; pidfile=\"$dir/$id.pid\"; : > \"$log\"; nohup " + cmd + " > \"$log\" 2>&1 & pid=$!; echo \"$pid\" > \"$pidfile\"; deadline=$(($(date +%s)+" + timeout + ")); while kill -0 \"$pid\" 2>/dev/null; do line=$(grep -m 1 '\"status\":\"online\"' \"$log\" || true); if [ -n \"$line\" ]; then printf '%s\\n' " + shellSingleQuote(remoteExposeStatusLine+"online") + "; printf 'RSTREAM_REMOTE_EXPOSE_ID=%s\\n' \"$id\"; printf 'RSTREAM_REMOTE_EXPOSE_PID=%s\\n' \"$pid\"; printf 'RSTREAM_REMOTE_EXPOSE_LOG=%s\\n' \"$log\"; printf '%s%s\\n' " + shellSingleQuote(remoteExposeStatusJSONLine) + " \"$line\"; printf '%s\\n' " + shellSingleQuote(remoteExposeStatusJSONEnd) + "; exit 0; fi; if [ \"$(date +%s)\" -ge \"$deadline\" ]; then printf '%s\\n' " + shellSingleQuote(remoteExposeStatusLine+"starting") + "; printf 'RSTREAM_REMOTE_EXPOSE_ID=%s\\n' \"$id\"; printf 'RSTREAM_REMOTE_EXPOSE_PID=%s\\n' \"$pid\"; printf 'RSTREAM_REMOTE_EXPOSE_LOG=%s\\n' \"$log\"; tail -n 20 \"$log\" || true; exit 0; fi; sleep 1; done; printf '%s\\n' " + shellSingleQuote(remoteExposeStatusLine+"failed") + "; printf 'RSTREAM_REMOTE_EXPOSE_ID=%s\\n' \"$id\"; printf 'RSTREAM_REMOTE_EXPOSE_PID=%s\\n' \"$pid\"; printf 'RSTREAM_REMOTE_EXPOSE_LOG=%s\\n' \"$log\"; tail -n 40 \"$log\" || true; exit 1"
 }
 
-func runMCPWebTTYCommand(ctx context.Context, rawURL string, execPath string, command []string, envVars []string, workdir *string, username *string) (*webTTYClientResult, error) {
+func runMCPWebTTYCommand(ctx context.Context, runtimeArgs map[string]json.RawMessage, rawURL string, execPath string, command []string, envVars []string, workdir *string, username *string) (*webTTYClientResult, error) {
 	urlValue, err := resolveWebTTYExecURL(rawURL, execPath)
 	if err != nil {
 		return nil, err
 	}
 	cfg := &webtty.ClientConfig{URL: urlValue, Interactive: false, AllocateTTY: false, SendHeartbeat: true, EnvVars: envVars, Workdir: workdir, Username: username, CmdArgs: command}
 	if webttyClientUsesRstream(urlValue) {
-		runtime, err := resolveMCPRuntime(true, true)
+		runtime, err := resolveMCPRuntimeForArgs(ctx, runtimeArgs)
 		if err != nil {
 			return nil, err
 		}
@@ -410,6 +410,13 @@ func parseRemoteExposeResult(expose remoteExposeArgs, command []string, result *
 		parsed.Status = "failed"
 	}
 	return parsed, nil
+}
+
+func remoteExposeForwardingURL(result remoteExposeResult) string {
+	if result.Forward != nil && result.Forward.Forwarding != nil {
+		return strings.TrimSpace(*result.Forward.Forwarding)
+	}
+	return ""
 }
 
 func remoteMCPListParams(filter string) (*rstream.ListTunnelsParams, error) {
@@ -464,7 +471,7 @@ func remoteMCPTunnelTarget(tunnel rstream.TunnelInventory) string {
 	return statusString(tunnel.ID)
 }
 
-func remoteMCPEndpointFromArgs(args map[string]json.RawMessage) (remoteMCPEndpoint, string, error) {
+func remoteMCPEndpointFromArgs(ctx context.Context, args map[string]json.RawMessage) (remoteMCPEndpoint, string, error) {
 	rawURL, err := mcpRequiredStringArg(args, "url")
 	if err != nil {
 		return remoteMCPEndpoint{}, "", err
@@ -473,11 +480,11 @@ func remoteMCPEndpointFromArgs(args map[string]json.RawMessage) (remoteMCPEndpoi
 	if err != nil {
 		return remoteMCPEndpoint{}, "", err
 	}
-	endpoint, err := resolveRemoteMCPEndpoint(rawURL, args)
+	endpoint, err := resolveRemoteMCPEndpoint(ctx, rawURL, args)
 	return endpoint, token, err
 }
 
-func resolveRemoteMCPEndpoint(rawURL string, args map[string]json.RawMessage) (remoteMCPEndpoint, error) {
+func resolveRemoteMCPEndpoint(ctx context.Context, rawURL string, args map[string]json.RawMessage) (remoteMCPEndpoint, error) {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
 		return remoteMCPEndpoint{}, err
@@ -495,7 +502,7 @@ func resolveRemoteMCPEndpoint(rawURL string, args map[string]json.RawMessage) (r
 				return remoteMCPEndpoint{}, err
 			}
 		}
-		runtime, err := resolveMCPRuntime(true, true)
+		runtime, err := resolveMCPRuntimeForArgs(ctx, args)
 		if err != nil {
 			return remoteMCPEndpoint{}, err
 		}

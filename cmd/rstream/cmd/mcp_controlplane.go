@@ -5,6 +5,7 @@ package cmd
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -34,7 +35,7 @@ func mcpLoadConfig() (string, config.Config, error) {
 }
 
 func mcpControlPlaneClient() (*controlplane.Client, *resolvedRuntime, error) {
-	runtime, err := resolveMCPRuntime(false, true)
+	runtime, err := resolveMCPControlPlaneRuntime(true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -77,7 +78,7 @@ func mcpContextGet(args map[string]json.RawMessage) (map[string]any, error) {
 		name = mcpSelectedContextName(cfg)
 	}
 	if strings.TrimSpace(name) == "" {
-		return nil, fmt.Errorf("no context name provided and no default context is configured")
+		return mcpJSONResult(map[string]any{"found": false, "ready": false, "needs_context": true, "suggested_next_tool": "rstream_runtime_prepare", "message": "No default rstream context is configured. If a login token exists, prepare a project context with rstream_runtime_prepare."}, false)
 	}
 	ctx, _, err := cfg.FindContextByName(name)
 	if err != nil {
@@ -95,27 +96,63 @@ func mcpRuntimeStatus() (map[string]any, error) {
 		return nil, err
 	}
 	runtime, resolveErr := resolveMCPRuntime(false, false)
+	controlRuntime, controlErr := resolveMCPControlPlaneRuntime(false)
 	defaultContext := ""
 	if cfg.Defaults.Context != nil {
 		defaultContext = cfg.Defaults.Context.Name
 	}
-	payload := map[string]any{"config_path": path, "default_context": defaultContext, "selected_context": mcpSelectedContextName(cfg), "contexts": len(cfg.Contexts)}
+	payload := map[string]any{"config_path": path, "default_context": defaultContext, "selected_context": mcpSelectedContextName(cfg), "contexts": len(cfg.Contexts), "agent_guidance": mcpAgentGuidance()}
+	if controlErr == nil {
+		payload["api_url"] = controlRuntime.Resolved.APIURL
+		payload["has_login_token"] = controlRuntime.Resolved.Token != ""
+	} else {
+		payload["control_plane_error"] = controlErr.Error()
+	}
 	if resolveErr != nil {
 		payload["ready"] = false
 		payload["error"] = resolveErr.Error()
+		if loginToken, ok := payload["has_login_token"].(bool); ok && loginToken {
+			payload["needs_context"] = true
+			payload["suggested_next_tool"] = "rstream_runtime_prepare"
+		} else {
+			payload["needs_login"] = true
+			payload["suggested_next_tool"] = "rstream_auth_start"
+		}
 		return mcpJSONResult(payload, false)
 	}
-	payload["api_url"] = runtime.Resolved.APIURL
 	payload["engine"] = runtime.Resolved.Engine
 	payload["has_token"] = runtime.Resolved.Token != ""
-	payload["ready"] = runtime.Resolved.Token != ""
+	payload["ready"] = runtime.Resolved.Token != "" && runtime.Resolved.Engine != ""
 	if runtime.Resolved.Token == "" {
 		payload["needs_login"] = true
+		payload["suggested_next_tool"] = "rstream_auth_start"
+	} else if runtime.Resolved.Engine == "" {
+		payload["needs_context"] = true
+		payload["suggested_next_tool"] = "rstream_runtime_prepare"
 	}
 	if runtime.Resolved.Context != nil {
 		payload["project_endpoint"] = runtime.Resolved.Context.ProjectEndpoint
 	}
 	return mcpJSONResult(payload, false)
+}
+
+func mcpAgentGuidance() map[string]any {
+	return map[string]any{
+		"application_runtime": "For application-owned tunnel lifecycle, prefer SDKs over MCP or shelling out. Node.js tunnel runtimes use @rstreamlabs/runtime with Client, createTunnel, serve, private dial, AbortSignal cancellation, and tunnel close/cleanup. Node.js API and inventory code uses @rstreamlabs/tunnels for Engine inventory, watch streams, scoped tokens, and TURN helpers. Go services and devices use github.com/rstreamlabs/rstream-go with Connect, CreateTunnel, Dial, context cancellation, and Close. Native C++ applications use the rstream C++ SDK from github.com/rstreamlabs/rstream-cpp with io_rstrm::client, async_create_tunnel, async_accept, io_rstrm::socket, and io_rstrm::endpoint. MCP is an operator/workstation integration for setup, diagnostics, managed local tunnels, and remote operations.",
+		"sdk_api_map": map[string]any{
+			"nodejs_runtime": []string{"@rstreamlabs/runtime", "Client", "client.createTunnel(...)", "tunnel.serve(server)", "client.dial(...) for private tunnels", "AbortController/AbortSignal cancellation", "tunnel.close() cleanup"},
+			"nodejs_api":     []string{"@rstreamlabs/tunnels", "Engine inventory", "watch streams", "scoped token workflows", "TURN helpers"},
+			"go_runtime":     []string{"github.com/rstreamlabs/rstream-go", "config.NewClientFromEnv()", "client.Connect(ctx, nil)", "ctrl.CreateTunnel(ctx, props)", "client.Dial(ctx, rstream.Addr{...})", "context cancellation", "ctrl.Close()", "tunnel.Close()"},
+			"cpp_runtime":    []string{"github.com/rstreamlabs/rstream-cpp", "io_rstrm::client", "client.async_create_tunnel(...)", "tunnel.async_accept(...)", "io_rstrm::socket", "io_rstrm::endpoint"},
+		},
+		"engine_api_auth": map[string]any{
+			"bearer_endpoints":      []string{"/api/clients", "/api/tunnels", "/api/sse", "/api/websocket"},
+			"query_token_endpoints": []string{"/api/sse", "/api/websocket"},
+			"query_token_rules":     "Use rstream.token only for browser watch transports that cannot attach Authorization headers. The token must be a short-lived auth or app token with watch-only/list resources, not a personal token and not create/connect permissions.",
+			"query_token_not_for":   []string{"/api/clients", "/api/tunnels"},
+		},
+		"self_hosted_ce": "Self-hosted rstream Engine CE is a direct-engine runtime, not a Hosted project. It uses rstream/rstream-engine-ce, engine.host and *.t.<engine.host> DNS, static TLS certificates, locally signed JWT agent authentication, direct engine contexts or RSTREAM_ENGINE plus RSTREAM_AUTHENTICATION_TOKEN, Prometheus metrics, bytestream tunnels, published HTTP/TLS over the TCP/TLS listener, and private bytestream tunnels. Do not use Hosted workspaces, projects, billing, plan gates, rstream Auth, WebTTY, HTTP tunnel token auth, challenge mode, managed resource policies, Geo/IP or trusted-IP policies, managed logs, managed TURN, automatic certificates, QUIC, DTLS, or datagram tunnels as CE features. For CLI-created rstream forward tunnels, cleanup means stopping the owning process, and MCP-created resources use their returned MCP cleanup tool.",
+	}
 }
 
 func mcpSelectedContextName(cfg config.Config) string {
@@ -163,7 +200,18 @@ func mcpProjectList(ctx context.Context, args map[string]json.RawMessage) (map[s
 	if err != nil {
 		return nil, mapControlPlaneError(err)
 	}
-	return mcpJSONResult(projects, false)
+	payload := map[string]any{
+		"projects":   projects.Projects,
+		"page":       projects.Page,
+		"pageSize":   projects.PageSize,
+		"total":      projects.Total,
+		"totalPages": projects.TotalPages,
+	}
+	if len(projects.Projects) > 1 {
+		payload["selection_required"] = true
+		payload["agent_guidance"] = "Multiple tunnel projects are available. If the user did not already name a project, do not choose or recommend one from project names, plans, regions, or Dev/Test/Prod conventions. Ask the user to select by project name, endpoint, or ID."
+	}
+	return mcpJSONResult(payload, false)
 }
 
 func mcpProjectCreationOptions(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
@@ -207,6 +255,21 @@ func mcpProjectCreate(ctx context.Context, args map[string]json.RawMessage) (map
 		return nil, mapControlPlaneError(err)
 	}
 	return mcpJSONResult(map[string]any{"action": "created", "project": project}, false)
+}
+
+func mcpProjectDelete(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
+	client, _, err := mcpControlPlaneClient()
+	if err != nil {
+		return nil, err
+	}
+	projectID, err := mcpRequiredStringArg(args, "project_id")
+	if err != nil {
+		return nil, err
+	}
+	if err := client.DeleteProject(ctx, projectID); err != nil {
+		return nil, mapControlPlaneError(err)
+	}
+	return mcpJSONResult(map[string]any{"action": "deleted", "project_id": projectID}, false)
 }
 
 func mcpProjectLogs(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
@@ -475,7 +538,54 @@ func mcpTokenCreate(ctx context.Context, args map[string]json.RawMessage) (map[s
 	if err != nil {
 		return mcpJSONResult(mcpTokenCreateErrorPayload(mapControlPlaneError(err).Error()), true)
 	}
-	return mcpJSONResult(response, false)
+	return mcpJSONResult(mcpTokenCreateResultPayload(response), false)
+}
+
+func mcpTokenCreateResultPayload(response controlplane.CreateTokenResponse) map[string]any {
+	payload := map[string]any{"token": response.Token}
+	claims := mcpJWTClaims(response.Token)
+	if tokenType, ok := claims["type"].(string); ok {
+		payload["token_type"] = tokenType
+	}
+	if permissions, ok := claims["permissions"]; ok {
+		payload["permissions"] = permissions
+	}
+	if resources, ok := claims["resources"]; ok {
+		payload["resources"] = resources
+	}
+	exp, hasExp := mcpNumericJWTClaim(claims, "exp")
+	iat, hasIAT := mcpNumericJWTClaim(claims, "iat")
+	if hasExp {
+		payload["expires_at"] = time.Unix(exp, 0).UTC().Format(time.RFC3339)
+	}
+	if hasExp && hasIAT && exp >= iat {
+		payload["ttl_seconds"] = exp - iat
+	}
+	return payload
+}
+
+func mcpJWTClaims(token string) map[string]any {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return nil
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(decoded, &claims); err != nil {
+		return nil
+	}
+	return claims
+}
+
+func mcpNumericJWTClaim(claims map[string]any, name string) (int64, bool) {
+	value, ok := claims[name].(float64)
+	if !ok {
+		return 0, false
+	}
+	return int64(value), true
 }
 
 func mcpTokenCreateErrorPayload(message string) map[string]any {

@@ -112,7 +112,7 @@ func TestRemoteMCPEndpointPayload(t *testing.T) {
 }
 
 func TestResolveRemoteMCPHTTPEndpointAppendsPath(t *testing.T) {
-	endpoint, err := resolveRemoteMCPEndpoint("https://robot.example.com", map[string]json.RawMessage{"path": json.RawMessage(`"/mcp"`)})
+	endpoint, err := resolveRemoteMCPEndpoint(t.Context(), "https://robot.example.com", map[string]json.RawMessage{"path": json.RawMessage(`"/mcp"`)})
 	if err != nil {
 		t.Fatalf("resolveRemoteMCPEndpoint returned error: %v", err)
 	}

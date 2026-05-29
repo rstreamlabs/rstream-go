@@ -128,7 +128,7 @@ This uses OAuth 2.0 Device Authorization Grant by default. The legacy rstream lo
 
 If this is a new rstream account, the browser step opened by `rstream login` is also where the user signs up or signs in and approves CLI access.
 
-Codex can start the same flow through local MCP after `rstream codex setup`: `rstream_auth_start` returns the approval URL, and `rstream_auth_poll` stores the approved token locally without returning it to the prompt. The default MCP login scope is limited; when the user explicitly asks Codex to create projects or change project settings, `rstream_auth_start` can request a broader `permissions` array and the hosted approval page shows that elevated grant.
+Codex can start the same flow through local MCP after `rstream codex setup`: `rstream_auth_start` returns the approval URL, and `rstream_auth_poll` stores the approved token locally without returning it to the prompt. The approval code is only returned separately when the provider cannot embed it in the URL. The default MCP login scope is limited; when the user explicitly asks Codex to create projects or change project settings, `rstream_auth_start` can request a broader `permissions` array and the hosted approval page shows that elevated grant.
 
 For advanced authentication modes (token-based login, remote device flows, and project-scoped contexts), see [docs/CLI_WORKFLOW.md](docs/CLI_WORKFLOW.md).
 
@@ -228,9 +228,9 @@ rstream codex setup
 # rstream_remote_expose webtty_url=rstrm://shell port=8765 mcp_path=/mcp labels=role=robot
 # rstream_remote_mcp_discover
 
-# Expose a local dev server through an MCP-managed preview tunnel
-# Available to Codex through rstream_preview_expose
-rstream forward 3000 --name codex-preview --label role=codex
+# Expose a local dev server through an MCP-managed local tunnel
+# Available to Codex through rstream_local_tunnel_expose
+rstream forward 3000 --name codex-local-tunnel --label role=codex
 
 # Publish the local rstream MCP server over an HTTP tunnel
 rstream mcp publish --name codex-rstream-mcp --label role=codex
@@ -241,7 +241,11 @@ rstream ui
 
 Published WebTTY tunnels can be reached either through their forwarding `wss://` address or through the native `rstrm://<tunnel-id-or-name>` form. Private WebTTY tunnels are reachable only through the native `rstrm://` form. WebTTY servers advertise capabilities and endpoint paths through labels: command execution uses `exec_path`, currently `/` by default, and the optional filesystem sidecar uses `fs_path`, currently `/fs` when `--fs-root` is set. Filesystem paths are relative to that configured root: if the server starts with `--fs-root "$HOME/project"`, read `compose.yaml` as `/compose.yaml`, not `/home/user/project/compose.yaml`. The sidecar rejects symlinks that resolve outside the configured root, but it is not a sandbox and still uses the WebTTY server process permissions.
 
-`rstream codex setup` preserves an explicit `RSTREAM_CONFIG` in the generated MCP server entry when one is set. `rstream mcp serve` exposes local rstream tools over MCP stdio for Codex and other local agent runtimes. The tool surface includes OAuth login start/poll tools, local context/status inspection, workspace and tunnel project discovery, project creation options, explicit project creation or checkout start, project plan inspection, project logs, usage, TURN usage, short-lived TURN credential minting, stable domain inspection and management, project settings, short-lived auth token minting, persistent preview tunnels that can be listed and stopped across Codex sessions, WebTTY inventory, WebTTY command execution, WebDAV filesystem sidecar access, remote service exposure through WebTTY, and remote MCP surface discovery and invocation. `rstream mcp publish` serves the same local tools over Streamable HTTP at `/mcp` and publishes them through a token-protected HTTP tunnel.
+`rstream codex setup` preserves an explicit `RSTREAM_CONFIG` in the generated MCP server entry when one is set. `rstream mcp serve` exposes local rstream tools over MCP stdio for Codex and other local agent runtimes. The tool surface includes OAuth login start/poll tools, runtime preparation for a selected project, local context/status inspection, workspace and tunnel project discovery, project creation options, explicit project creation or checkout start, project plan inspection, project logs, usage, TURN usage, short-lived TURN credential minting, stable domain inspection and management, project settings, short-lived delegated auth token minting, managed local tunnels that can be listed and stopped across Codex sessions, WebTTY inventory, WebTTY command execution, WebDAV filesystem sidecar access, remote service exposure through WebTTY, and remote MCP surface discovery and invocation. `rstream mcp publish` serves the same local tools over Streamable HTTP at `/mcp` and publishes them through a token-protected HTTP tunnel.
+
+Use rstream CLI 1.18.1 or later for the full Codex MCP workflow, including runtime preparation, WebTTY filesystem tools, remote exposure, and longer MCP tool timeouts for user-approved login.
+
+On a Codex workstation, `rstream_runtime_prepare` is the setup tool for managed local tunnels, WebTTY, remote exposure, and remote MCP. It uses the long-lived rstream login credential stored in the CLI config, creates or repairs the selected project context, and does not mint a short-lived delegated token. If several tunnel projects are available and the user has not named one, the agent should list the choices and ask instead of inferring from naming conventions alone or adding a preferred example. `rstream_token_create` is reserved for immediate handoff flows such as protected URLs, browser-constrained clients, or remote runtime startup commands.
 
 The remote exposure tools intentionally run `rstream forward` on the WebTTY host. That makes network access complete for agent workflows: Codex can execute commands, read or write the advertised filesystem root, and expose a remote-local HTTP, TCP, UDP, TLS, DTLS, or QUIC service through the same rstream project. The persistent remote runner currently expects a POSIX shell on the WebTTY host. When `mcp_path` is set, the created tunnel is labeled as an MCP surface so agents can discover it with `rstream_remote_mcp_discover` and call it through `rstream_remote_mcp_tools` and `rstream_remote_mcp_call`.
 

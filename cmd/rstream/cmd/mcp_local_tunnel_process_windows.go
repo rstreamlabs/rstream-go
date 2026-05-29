@@ -9,13 +9,13 @@ import (
 	"os/exec"
 )
 
-func configureMCPPreviewProcess(cmd *exec.Cmd) {}
+func configureMCPLocalTunnelProcess(cmd *exec.Cmd) {}
 
-func mcpPreviewProcessRunning(pid int) bool {
+func mcpLocalTunnelProcessRunning(pid int) bool {
 	return pid > 0
 }
 
-func terminateMCPPreviewProcess(pid int) error {
+func terminateMCPLocalTunnelProcess(pid int) error {
 	process, err := os.FindProcess(pid)
 	if err != nil {
 		return err
