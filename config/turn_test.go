@@ -56,8 +56,8 @@ func TestCreateTURNCredentialsFromEnvUsesPATDerivation(t *testing.T) {
 		Contexts: []Context{{
 			Name:            "prod",
 			APIURL:          "https://rstream.io",
-			ProjectEndpoint: "bbc44f81",
-			Engine:          "bbc44f81.aws-eu-west-3-1.c.rstream.io:443",
+			ProjectEndpoint: "abc12345",
+			Engine:          "abc12345.aws-eu-west-3-1.c.rstream.io:443",
 			TURNDomain:      "aws-eu-west-3-1.c.rstream.io",
 			TURNPort:        3478,
 			TURNSPort:       5349,
@@ -69,7 +69,7 @@ func TestCreateTURNCredentialsFromEnvUsesPATDerivation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	if !strings.Contains(res.Username, ":pat:bbc44f81:b95faf7f") {
+	if !strings.Contains(res.Username, ":pat:abc12345:b95faf7f") {
 		t.Fatalf("unexpected username: %s", res.Username)
 	}
 	if len(res.URLs) != 4 || res.URLs[0] != "turn:aws-eu-west-3-1.c.rstream.io:3478?transport=udp" {
@@ -80,7 +80,7 @@ func TestCreateTURNCredentialsFromEnvUsesPATDerivation(t *testing.T) {
 func TestCreateTURNCredentialsFromEnvFallsBackToAPIWithoutTURNContext(t *testing.T) {
 	clearRstreamEnv(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.EscapedPath(); got != "/api/projects/tunnels/resolve/bbc44f81/turn-server/credentials" {
+		if got := r.URL.EscapedPath(); got != "/api/projects/tunnels/resolve/abc12345/turn-server/credentials" {
 			t.Fatalf("unexpected path: %s", got)
 		}
 		if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer ") {
@@ -121,8 +121,8 @@ func TestCreateTURNCredentialsFromEnvFallsBackToAPIWithoutTURNContext(t *testing
 		Contexts: []Context{{
 			Name:            "prod",
 			APIURL:          server.URL,
-			ProjectEndpoint: "bbc44f81",
-			Engine:          "bbc44f81.aws-eu-west-3-1.c.rstream.io:443",
+			ProjectEndpoint: "abc12345",
+			Engine:          "abc12345.aws-eu-west-3-1.c.rstream.io:443",
 		}},
 	})
 	res, err := CreateTURNCredentialsFromEnv(context.Background(), TURNCredentialsEnvOptions{

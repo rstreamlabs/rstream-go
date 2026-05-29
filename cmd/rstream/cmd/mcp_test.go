@@ -5,14 +5,22 @@ package cmd
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/controlplane"
 	"github.com/spf13/cobra"
 )
 
@@ -53,6 +61,24 @@ func TestMCPReadLineDelimitedJSON(t *testing.T) {
 	}
 }
 
+func TestServeMCPReturnsWhenContextCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	inputReader, inputWriter := io.Pipe()
+	defer inputReader.Close()
+	defer inputWriter.Close()
+	done := make(chan error, 1)
+	go func() { done <- serveMCP(ctx, inputReader, &bytes.Buffer{}) }()
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serveMCP returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("serveMCP did not return after context cancellation")
+	}
+}
+
 func TestMCPReadRejectsInvalidContentLength(t *testing.T) {
 	oversized := fmt.Sprintf("Content-Length: %d\r\n\r\n{}", mcpMaxMessageBytes+1)
 	if _, err := readMCPMessage(bufio.NewReader(strings.NewReader(oversized))); err == nil || !strings.Contains(err.Error(), "exceeds") {
@@ -73,10 +99,38 @@ func TestMCPToolsListContainsAgentNativeTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal returned error: %v", err)
 	}
-	for _, want := range []string{"rstream_auth_poll", "rstream_auth_start", "rstream_context_list", "rstream_context_get", "rstream_project_creation_options", "rstream_project_create", "rstream_project_list", "rstream_project_logs", "rstream_project_usage", "rstream_project_plan_get", "rstream_project_turn_usage", "rstream_project_turn_credentials_create", "rstream_project_domains_list", "rstream_project_domain_create", "rstream_project_domain_get", "rstream_project_domain_delete", "rstream_project_domain_verify", "rstream_project_domain_connect", "rstream_project_settings_get", "rstream_project_settings_patch", "rstream_project_settings_reset", "rstream_preview_expose", "rstream_preview_list", "rstream_preview_stop", "rstream_remote_expose", "rstream_remote_expose_stop", "rstream_remote_mcp_discover", "rstream_remote_mcp_tools", "rstream_remote_mcp_call", "rstream_runtime_status", "rstream_token_create", "rstream_workspace_list", "rstream_workspace_members_list", "rstream_webtty_list", "rstream_webtty_exec", "rstream_webtty_fs_list", "rstream_webtty_fs_read", "rstream_webtty_fs_write", "rstream_webtty_fs_mkdir", "rstream_webtty_fs_delete"} {
+	for _, want := range []string{"rstream_auth_poll", "rstream_auth_start", "rstream_context_list", "rstream_context_get", "rstream_project_creation_options", "rstream_project_create", "rstream_project_delete", "rstream_project_list", "rstream_project_logs", "rstream_project_usage", "rstream_project_plan_get", "rstream_project_turn_usage", "rstream_project_turn_credentials_create", "rstream_project_domains_list", "rstream_project_domain_create", "rstream_project_domain_get", "rstream_project_domain_delete", "rstream_project_domain_verify", "rstream_project_domain_connect", "rstream_project_settings_get", "rstream_project_settings_patch", "rstream_project_settings_reset", "rstream_local_tunnel_expose", "rstream_local_tunnel_list", "rstream_local_tunnel_stop", "rstream_remote_expose", "rstream_remote_expose_stop", "rstream_remote_mcp_discover", "rstream_remote_mcp_tools", "rstream_remote_mcp_call", "rstream_runtime_prepare", "rstream_runtime_status", "rstream_token_create", "rstream_workspace_list", "rstream_workspace_members_list", "rstream_webtty_list", "rstream_webtty_exec", "rstream_webtty_fs_list", "rstream_webtty_fs_read", "rstream_webtty_fs_download", "rstream_webtty_fs_write", "rstream_webtty_fs_mkdir", "rstream_webtty_fs_delete"} {
 		if !strings.Contains(string(payload), want) {
 			t.Fatalf("tools/list missing %q: %s", want, string(payload))
 		}
+	}
+	if !strings.Contains(string(payload), `"title":"Prepare rstream runtime"`) || !strings.Contains(string(payload), `"annotations"`) || !strings.Contains(string(payload), `"readOnlyHint"`) {
+		t.Fatalf("tools/list does not expose MCP title and annotations: %s", string(payload))
+	}
+	var listed struct {
+		Tools []struct {
+			Annotations map[string]any `json:"annotations"`
+			Name        string         `json:"name"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(payload, &listed); err != nil {
+		t.Fatalf("tools/list JSON is invalid: %v", err)
+	}
+	toolsByName := map[string]map[string]any{}
+	for _, tool := range listed.Tools {
+		toolsByName[tool.Name] = tool.Annotations
+	}
+	for _, check := range []struct {
+		Key  string
+		Name string
+		Want bool
+	}{{"destructiveHint", "rstream_webtty_exec", true}, {"destructiveHint", "rstream_webtty_fs_write", true}, {"destructiveHint", "rstream_remote_mcp_call", true}, {"openWorldHint", "rstream_project_list", true}, {"readOnlyHint", "rstream_project_creation_options", true}, {"readOnlyHint", "rstream_project_domain_connect", true}} {
+		if got := toolsByName[check.Name][check.Key]; got != check.Want {
+			t.Fatalf("%s %s = %#v, want %v", check.Name, check.Key, got, check.Want)
+		}
+	}
+	if !strings.Contains(string(payload), `"outputSchema"`) || !strings.Contains(string(payload), `"login_url"`) || !strings.Contains(string(payload), `"suggested_next_tool"`) {
+		t.Fatalf("tools/list does not expose key output schemas: %s", string(payload))
 	}
 	if !strings.Contains(string(payload), "read-only project token") || !strings.Contains(string(payload), "tunnels.resources.read-only requires list") {
 		t.Fatalf("tools/list does not document token resource examples: %s", string(payload))
@@ -84,6 +138,23 @@ func TestMCPToolsListContainsAgentNativeTools(t *testing.T) {
 	for _, want := range []string{"\"exec_path\"", "\"fs_path\""} {
 		if !strings.Contains(string(payload), want) {
 			t.Fatalf("tools/list missing WebTTY path argument %q: %s", want, string(payload))
+		}
+	}
+}
+
+func TestMCPAgentGuidanceIncludesEngineAuthBoundaries(t *testing.T) {
+	guidance := mcpAgentGuidance()
+	engineAuth, ok := guidance["engine_api_auth"].(map[string]any)
+	if !ok {
+		t.Fatalf("engine_api_auth guidance missing: %#v", guidance)
+	}
+	payload, err := json.Marshal(engineAuth)
+	if err != nil {
+		t.Fatalf("Marshal returned error: %v", err)
+	}
+	for _, want := range []string{"/api/clients", "/api/tunnels", "/api/sse", "/api/websocket", "rstream.token", "short-lived auth or app token", "watch-only/list resources"} {
+		if !strings.Contains(string(payload), want) {
+			t.Fatalf("engine auth guidance missing %q: %s", want, string(payload))
 		}
 	}
 }
@@ -122,6 +193,30 @@ contexts:
 	}
 	if listText := mcpResultText(t, listResult); !strings.Contains(listText, `"selected": "tests"`) {
 		t.Fatalf("context list did not expose selected context: %s", listText)
+	}
+}
+
+func TestMCPContextGetWithoutDefaultSuggestsRuntimePrepare(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte(`version: 1
+environments:
+  - apiUrl: https://rstream.io
+    auth:
+      token:
+        storage:
+          kind: inline
+          value: login-token
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	t.Setenv("RSTREAM_CONFIG", configPath)
+	contextResult, err := mcpContextGet(map[string]json.RawMessage{})
+	if err != nil {
+		t.Fatalf("mcpContextGet returned error: %v", err)
+	}
+	contextText := mcpResultText(t, contextResult)
+	if !strings.Contains(contextText, `"needs_context": true`) || !strings.Contains(contextText, `"suggested_next_tool": "rstream_runtime_prepare"`) {
+		t.Fatalf("unexpected no-context result: %s", contextText)
 	}
 }
 
@@ -172,6 +267,157 @@ func TestMCPTokenCreateErrorPayloadIncludesResourceHelp(t *testing.T) {
 	}
 }
 
+func TestMCPTokenCreateResultPayloadIncludesMetadata(t *testing.T) {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	claims := base64.RawURLEncoding.EncodeToString([]byte(`{"type":"auth","iat":10,"exp":130,"permissions":["tunnels.resources.read-only"],"resources":{"tunnels":{"projects":["project-1"]}}}`))
+	payload := mcpTokenCreateResultPayload(controlplane.CreateTokenResponse{Token: header + "." + claims + "."})
+	if payload["token_type"] != "auth" || payload["ttl_seconds"] != int64(120) || payload["expires_at"] != "1970-01-01T00:02:10Z" {
+		t.Fatalf("unexpected token metadata: %#v", payload)
+	}
+	if payload["permissions"] == nil || payload["resources"] == nil {
+		t.Fatalf("token metadata should include permissions and resources: %#v", payload)
+	}
+}
+
+func TestMCPProjectListIgnoresExpiredDefaultContextWhenLoginTokenExists(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/projects/tunnels" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer login-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{{ID: "p1", Name: "Prod", Endpoint: "abc12345", Domain: "cluster.example.com", EnginePort: 443, Status: "active", Plan: "pro"}}})
+	}))
+	defer server.Close()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte(fmt.Sprintf(`version: 1
+defaults:
+  context:
+    name: Prod
+environments:
+  - apiUrl: %s
+    auth:
+      token:
+        storage:
+          kind: inline
+          value: login-token
+contexts:
+  - name: Prod
+    apiUrl: %s
+    projectEndpoint: abc12345
+    engine: abc12345.cluster.example.com:443
+    auth:
+      token:
+        storage:
+          kind: inline
+          value: %s
+`, server.URL, server.URL, mcpTestUnsignedJWT(`{"exp":100}`))), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	t.Setenv("RSTREAM_CONFIG", configPath)
+	result, err := mcpProjectList(t.Context(), map[string]json.RawMessage{})
+	if err != nil {
+		t.Fatalf("mcpProjectList returned error: %v", err)
+	}
+	if text := mcpResultText(t, result); !strings.Contains(text, `"name": "Prod"`) {
+		t.Fatalf("unexpected project list: %s", text)
+	}
+}
+
+func TestMCPRuntimePrepareUsesLoginTokenInsteadOfShortContextToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/projects/tunnels" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer login-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{{ID: "p1", WorkspaceID: "w1", Name: "Prod", Endpoint: "abc12345", Domain: "cluster.example.com", EnginePort: 443, Status: "active", Plan: "pro", Region: "eu-west-3", TurnPort: 3478, TurnsPort: 5349}}})
+	}))
+	defer server.Close()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte(fmt.Sprintf(`version: 1
+defaults:
+  context:
+    name: Prod
+environments:
+  - apiUrl: %s
+    auth:
+      token:
+        storage:
+          kind: inline
+          value: login-token
+contexts:
+  - name: Prod
+    apiUrl: %s
+    projectEndpoint: old
+    engine: old.cluster.example.com:443
+    auth:
+      token:
+        storage:
+          kind: inline
+          value: %s
+`, server.URL, server.URL, mcpTestUnsignedJWT(`{"exp":100}`))), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	t.Setenv("RSTREAM_CONFIG", configPath)
+	result, err := mcpRuntimePrepare(t.Context(), map[string]json.RawMessage{"project": json.RawMessage(`"Prod"`)})
+	if err != nil {
+		t.Fatalf("mcpRuntimePrepare returned error: %v", err)
+	}
+	text := mcpResultText(t, result)
+	if !strings.Contains(text, "no short-lived delegated token was minted") || !strings.Contains(text, `"engine": "abc12345.cluster.example.com:443"`) {
+		t.Fatalf("unexpected runtime prepare payload: %s", text)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	contextValue, _, err := cfg.FindContextByName("Prod")
+	if err != nil || contextValue == nil {
+		t.Fatalf("FindContextByName returned %#v, %v", contextValue, err)
+	}
+	if contextValue.Auth != nil || contextValue.Engine != "abc12345.cluster.example.com:443" || contextValue.ProjectEndpoint != "abc12345" {
+		t.Fatalf("unexpected prepared context: %#v", contextValue)
+	}
+	resolved, err := config.Resolve(config.ResolveInput{Config: cfg, EnvAPIURL: server.URL, RequireEngine: true, RequireToken: true, ResolveToken: true})
+	if err != nil {
+		t.Fatalf("Resolve returned error: %v", err)
+	}
+	if resolved.Token != "login-token" || resolved.Engine != "abc12345.cluster.example.com:443" {
+		t.Fatalf("unexpected resolved runtime: %#v", resolved)
+	}
+}
+
+func TestMCPRuntimeStatusSuggestsPrepareWhenLoginTokenHasNoContext(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte(`version: 1
+environments:
+  - apiUrl: https://rstream.example.test
+    auth:
+      token:
+        storage:
+          kind: inline
+          value: login-token
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	t.Setenv("RSTREAM_CONFIG", configPath)
+	result, err := mcpRuntimeStatus()
+	if err != nil {
+		t.Fatalf("mcpRuntimeStatus returned error: %v", err)
+	}
+	text := mcpResultText(t, result)
+	if !strings.Contains(text, `"ready": false`) || !strings.Contains(text, `"needs_context": true`) || !strings.Contains(text, `"suggested_next_tool": "rstream_runtime_prepare"`) {
+		t.Fatalf("unexpected runtime status: %s", text)
+	}
+}
+
+func mcpTestUnsignedJWT(payload string) string {
+	return "header." + base64.RawURLEncoding.EncodeToString([]byte(payload)) + ".signature"
+}
+
 func TestMCPPersonalWorkspaceMembersPayloadIsStructured(t *testing.T) {
 	payload := mcpPersonalWorkspaceMembersPayload("workspace-1")
 	members, ok := payload["members"].([]any)
@@ -191,6 +437,9 @@ func TestMCPInitializeProtocolVersion(t *testing.T) {
 	}
 	if !strings.Contains(string(payload), `"protocolVersion":"2025-06-18"`) {
 		t.Fatalf("initialize returned unexpected protocol version: %s", string(payload))
+	}
+	if !strings.Contains(string(payload), `"title":"rstream"`) || !strings.Contains(string(payload), "rstream_runtime_prepare") || !strings.Contains(string(payload), "call rstream_auth_poll with wait=true") || !strings.Contains(string(payload), "do not infer or recommend") {
+		t.Fatalf("initialize missing display title or instructions: %s", string(payload))
 	}
 }
 
@@ -228,6 +477,65 @@ func TestMCPArgumentHelpers(t *testing.T) {
 	}
 }
 
+func TestMCPWebTTYFilterArgs(t *testing.T) {
+	for _, tc := range []struct {
+		Args       map[string]json.RawMessage
+		WantFilter string
+		WantName   string
+	}{
+		{Args: map[string]json.RawMessage{"filter": json.RawMessage(`"shell"`)}, WantName: "shell"},
+		{Args: map[string]json.RawMessage{"filter": json.RawMessage(`"labels.site=lab"`)}, WantFilter: "labels.site=lab"},
+		{Args: map[string]json.RawMessage{"name": json.RawMessage(`"shell"`)}, WantName: "shell"},
+		{Args: map[string]json.RawMessage{"filter": json.RawMessage(`"labels.site=lab"`), "name": json.RawMessage(`"shell"`)}, WantFilter: "labels.site=lab", WantName: "shell"},
+	} {
+		gotFilter, gotName, err := mcpWebTTYFilterArgs(tc.Args)
+		if err != nil {
+			t.Fatalf("mcpWebTTYFilterArgs returned error: %v", err)
+		}
+		if gotFilter != tc.WantFilter || gotName != tc.WantName {
+			t.Fatalf("mcpWebTTYFilterArgs(%#v) = %q, %q; want %q, %q", tc.Args, gotFilter, gotName, tc.WantFilter, tc.WantName)
+		}
+	}
+}
+
+func TestMCPJSONResourceLinkResultIncludesStructuredContentAndLink(t *testing.T) {
+	result, err := mcpJSONResourceLinkResult(map[string]any{"url": "https://local-tunnel.example.com"}, false, "https://local-tunnel.example.com", "local tunnel", "Public local tunnel", "text/html")
+	if err != nil {
+		t.Fatalf("mcpJSONResourceLinkResult returned error: %v", err)
+	}
+	content, ok := result["content"].([]map[string]any)
+	if !ok || len(content) != 2 {
+		t.Fatalf("unexpected content: %#v", result["content"])
+	}
+	if content[1]["type"] != "resource_link" || content[1]["uri"] != "https://local-tunnel.example.com" {
+		t.Fatalf("unexpected resource link: %#v", content[1])
+	}
+	if structured, ok := result["structuredContent"].(map[string]any); !ok || structured["url"] != "https://local-tunnel.example.com" {
+		t.Fatalf("unexpected structured content: %#v", result["structuredContent"])
+	}
+}
+
+func TestMCPJSONResultUsesStructuredObjectForStructs(t *testing.T) {
+	type response struct {
+		Ready bool   `json:"ready"`
+		Name  string `json:"name"`
+	}
+	result, err := mcpJSONResult(response{Ready: true, Name: "prod"}, false)
+	if err != nil {
+		t.Fatalf("mcpJSONResult returned error: %v", err)
+	}
+	structured, ok := result["structuredContent"].(map[string]any)
+	if !ok {
+		t.Fatalf("structured content is not an object: %#v", result["structuredContent"])
+	}
+	if structured["result"] != nil {
+		t.Fatalf("structured content should not wrap object results: %#v", structured)
+	}
+	if structured["ready"] != true || structured["name"] != "prod" {
+		t.Fatalf("unexpected structured content: %#v", structured)
+	}
+}
+
 func TestMCPContentReaderSupportsTextAndBase64(t *testing.T) {
 	reader, err := mcpContentReader(map[string]json.RawMessage{}, "hello")
 	if err != nil {
@@ -257,12 +565,12 @@ func TestMCPContentReaderSupportsTextAndBase64(t *testing.T) {
 }
 
 func TestMCPCreateProjectArgsRequiresExplicitBillingInputs(t *testing.T) {
-	args := map[string]json.RawMessage{"workspace_id": json.RawMessage(`"ws1"`), "name": json.RawMessage(`"Codex Preview"`), "provider": json.RawMessage(`"aws"`), "region": json.RawMessage(`"eu-west-3"`), "plan": json.RawMessage(`"basic"`), "creation_fingerprint": json.RawMessage(`"fingerprint"`)}
+	args := map[string]json.RawMessage{"workspace_id": json.RawMessage(`"ws1"`), "name": json.RawMessage(`"Codex Demo"`), "provider": json.RawMessage(`"aws"`), "region": json.RawMessage(`"eu-west-3"`), "plan": json.RawMessage(`"basic"`), "creation_fingerprint": json.RawMessage(`"fingerprint"`)}
 	workspaceID, request, err := mcpCreateProjectArgs(args)
 	if err != nil {
 		t.Fatalf("mcpCreateProjectArgs returned error: %v", err)
 	}
-	if workspaceID != "ws1" || request.Name != "Codex Preview" || request.Provider != "aws" || request.Region != "eu-west-3" || request.Plan != "basic" || request.CreationFingerprint != "fingerprint" {
+	if workspaceID != "ws1" || request.Name != "Codex Demo" || request.Provider != "aws" || request.Region != "eu-west-3" || request.Plan != "basic" || request.CreationFingerprint != "fingerprint" {
 		t.Fatalf("unexpected request: workspace=%q request=%#v", workspaceID, request)
 	}
 	if !strings.HasPrefix(request.IdempotencyKey, "mcp:") {

@@ -84,6 +84,10 @@ func TestMapControlPlaneError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "not authenticated") {
 		t.Fatalf("unauthorized error not mapped: %v", err)
 	}
+	err = mapControlPlaneError(controlplane.ErrForbidden)
+	if err == nil || !strings.Contains(err.Error(), "not authorized") {
+		t.Fatalf("forbidden error not mapped: %v", err)
+	}
 	other := errors.New("boom")
 	if got := mapControlPlaneError(other); got != other {
 		t.Fatalf("non-Control plane API error should be returned as-is")

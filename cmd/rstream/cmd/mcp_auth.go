@@ -37,12 +37,33 @@ type mcpAuthRegistryFile struct {
 	Sessions []mcpAuthSession `json:"sessions"`
 }
 
+var rstreamMCPLoginPermissions = []string{
+	"account.plan.read-only",
+	"account.projects.read-write",
+	"account.tokens.create",
+	"account.workspaces.read-only",
+	"network.streams.read-only",
+	"tunnels.resources.read-only",
+	"tunnels.streams.create-delete",
+	"tunnels.tunnels.create-delete",
+	"turn.credentials.create",
+	"turn.relay.allocate",
+}
+
 func mcpAuthStart(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
+	payload, err := mcpCreateAuthSession(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	return mcpJSONResult(payload, false)
+}
+
+func mcpCreateAuthSession(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
 	configPath, cfg, err := mcpLoadConfig()
 	if err != nil {
 		return nil, err
 	}
-	apiURL, err := mcpAuthAPIURL(args)
+	apiURL, err := mcpAuthAPIURL(args, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +93,7 @@ func mcpAuthStart(ctx context.Context, args map[string]json.RawMessage) (map[str
 	if err := mcpAuthAddSession(mcpAuthRegistryPath(configPath), session); err != nil {
 		return nil, err
 	}
-	return mcpJSONResult(mcpAuthSessionResponse(session, cfg), false)
+	return mcpAuthSessionResponse(session, cfg), nil
 }
 
 func mcpAuthPoll(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
@@ -203,7 +224,7 @@ func mcpAuthPollResult(ctx context.Context, session mcpAuthSession, err error) (
 	}
 }
 
-func mcpAuthAPIURL(args map[string]json.RawMessage) (string, error) {
+func mcpAuthAPIURL(args map[string]json.RawMessage, cfg config.Config) (string, error) {
 	apiURL, err := mcpOptionalStringArg(args, "api_url", "")
 	if err != nil {
 		return "", err
@@ -214,6 +235,18 @@ func mcpAuthAPIURL(args map[string]json.RawMessage) (string, error) {
 	if envURL := config.ReadEnv().APIURL; envURL != "" {
 		return envURL, nil
 	}
+	if contextName := mcpSelectedContextName(cfg); contextName != "" {
+		contextValue, _, err := cfg.FindContextByName(contextName)
+		if err != nil {
+			return "", err
+		}
+		if contextValue != nil && strings.TrimSpace(contextValue.APIURL) != "" {
+			return config.NormalizeAPIURL(contextValue.APIURL), nil
+		}
+	}
+	if len(cfg.Environments) == 1 && strings.TrimSpace(cfg.Environments[0].APIURL) != "" {
+		return config.NormalizeAPIURL(cfg.Environments[0].APIURL), nil
+	}
 	return config.DefaultAPIURL(), nil
 }
 
@@ -223,9 +256,40 @@ func mcpAuthPermissions(args map[string]json.RawMessage) ([]string, error) {
 		return nil, err
 	}
 	if len(permissions) == 0 {
-		return append([]string(nil), rstreamLoginPermissions...), nil
+		return append([]string(nil), rstreamMCPLoginPermissions...), nil
 	}
-	return permissions, nil
+	return mcpUnionPermissions(rstreamMCPLoginPermissions, permissions), nil
+}
+
+func mcpUnionPermissions(base []string, extra []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(base)+len(extra))
+	for _, permission := range append(append([]string(nil), base...), extra...) {
+		permission = strings.TrimSpace(permission)
+		if permission == "" || seen[permission] {
+			continue
+		}
+		if permission == "account.projects.read-only" && seen["account.projects.read-write"] {
+			continue
+		}
+		if permission == "account.projects.read-write" && seen["account.projects.read-only"] {
+			out = removeString(out, "account.projects.read-only")
+			delete(seen, "account.projects.read-only")
+		}
+		seen[permission] = true
+		out = append(out, permission)
+	}
+	return out
+}
+
+func removeString(values []string, remove string) []string {
+	out := values[:0]
+	for _, value := range values {
+		if value != remove {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func mcpAuthSessionResponse(session mcpAuthSession, cfg config.Config) map[string]any {
@@ -239,9 +303,13 @@ func mcpAuthSessionResponse(session mcpAuthSession, cfg config.Config) map[strin
 	}
 	scopes := session.Scopes
 	if len(scopes) == 0 {
-		scopes = rstreamLoginPermissions
+		scopes = rstreamMCPLoginPermissions
 	}
-	return map[string]any{"id": session.ID, "api_url": session.APIURL, "config_path": session.ConfigPath, "default_context": defaultContext, "verification_uri": session.VerificationURI, "verification_uri_complete": session.VerificationURIComplete, "login_url": loginURL, "user_code": session.UserCode, "expires_at": session.ExpiresAt, "interval_seconds": session.IntervalSeconds, "scopes": scopes}
+	response := map[string]any{"id": session.ID, "api_url": session.APIURL, "config_path": session.ConfigPath, "default_context": defaultContext, "verification_uri": session.VerificationURI, "verification_uri_complete": session.VerificationURIComplete, "login_url": loginURL, "expires_at": session.ExpiresAt, "interval_seconds": session.IntervalSeconds, "scopes": scopes}
+	if session.VerificationURIComplete == "" {
+		response["user_code"] = session.UserCode
+	}
+	return response
 }
 
 func mcpAuthReadSessionFromCurrentConfig(id string) (mcpAuthSession, error) {
