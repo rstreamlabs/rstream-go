@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -51,12 +52,18 @@ type mcpEnvelope struct {
 	Framing mcpFraming
 }
 
+type mcpReadResult struct {
+	Envelope mcpEnvelope
+	Err      error
+}
+
 type mcpFraming string
 
 const mcpProtocolVersion = "2025-06-18"
 const mcpFramingContentLength mcpFraming = "content-length"
 const mcpFramingLineDelimited mcpFraming = "line-delimited"
 const mcpMaxMessageBytes = 8 * 1024 * 1024
+const mcpInstructions = "Write the product name as rstream. When local runtime state is unknown, call rstream_runtime_status first. Treat the returned agent_guidance as authoritative for application SDK selection and self-hosted CE boundaries. If login is missing during a setup or prepare flow, call rstream_auth_start, show the login_url without restating a user code unless the tool returned a separate user_code field, then call rstream_auth_poll with wait=true and a bounded timeout; only ask the user to report approval after the wait times out. If the user only asks to start login and return an approval URL, stop after rstream_auth_start. If a login token exists but no usable hosted project context exists, or the requested hosted project differs from the selected context, call rstream_runtime_prepare with the project name, endpoint, or ID. If the user is using a self-hosted rstream Engine Community Edition deployment, do not use hosted project, workspace, billing, plan, rstream Auth, managed credential, managed policy, hosted logs, managed TURN, or Control plane tools as if they existed; CE agents use a direct engine host, a locally signed JWT, static TLS certificates, and an engine-only context or RSTREAM_ENGINE/RSTREAM_AUTHENTICATION_TOKEN. The public CE runtime scope is the TCP/TLS engine listener, optional HTTP redirect listener, static TLS certificate provider, JWT agent authentication, Prometheus metrics, bytestream tunnels, published HTTP/TLS tunnels over the TCP/TLS listener, and private bytestream tunnels. Do not describe QUIC, DTLS, datagram tunnels, WebTTY, browser rstream Auth, HTTP tunnel token auth, challenge mode, zero-trust hosted edge policy, managed resource policies, hosted project settings, hosted credential records, automatic certificates, Geo/IP policies, trusted IP policies, or managed logs as CE features. Tunnel cleanup must follow the resource owner: unmanaged rstream forward processes are cleaned up by stopping the owning process, while MCP-created resources use their returned cleanup fields and matching MCP stop tools. If no tunnel project is available during a hosted setup or prepare flow, report that a project is needed; do not create a project unless the user explicitly asks to create one. If a tool reports missing authorization for a user-approved MCP action, start a new rstream login with the additional required permission; explicit permissions are added to the MCP workstation bundle instead of replacing it. If several projects are available and the user did not explicitly name one, do not infer or recommend a project from naming conventions alone; list the choices and ask the user to choose by name, endpoint, or ID without adding a preferred example. For Codex workstation local tunnels, WebTTY, remote exposure, and remote MCP on hosted projects, do not call rstream_token_create; it is only for immediate browser, URL, query-token, published MCP, or runtime handoff flows. Enabling token_auth on a tunnel only configures edge access control; do not mint a token unless the user asks to hand one to a client or to verify authenticated access. For remote MCP surfaces that Codex calls itself, keep the remote exposure private unless the user asks for a public URL or browser access. Scoped credentials for remote devices are not the same thing as short-lived delegated handoff tokens. For application-owned tunnel lifecycle, prefer SDKs over MCP or shell workflows and name the concrete SDK in the answer: Node.js tunnel runtimes use @rstreamlabs/runtime with Client, createTunnel, serve, dial/private dialing, AbortSignal-based cancellation, and tunnel close/cleanup; Node.js hosted/Engine API clients use @rstreamlabs/tunnels for inventory, watch, token, and TURN workflows; Go services use github.com/rstreamlabs/rstream-go with Connect, CreateTunnel, Dial, context cancellation, and Close; native C++ services use the rstream C++ SDK from github.com/rstreamlabs/rstream-cpp with io_rstrm::client, async_create_tunnel, async_accept, io_rstrm::socket, and io_rstrm::endpoint. The rstream CLI is an operator and sidecar surface, not the preferred primary API inside application code when an SDK covers the runtime. In SDK answers, describe MCP as setup, diagnostics, managed local tunnels, and remote operations. Do not shell out to package registries to discover these SDK names during normal MCP workflows. For Engine inventory endpoints /api/clients and /api/tunnels, use Authorization: Bearer tokens. For Engine watch endpoints /api/sse and /api/websocket, Authorization: Bearer is accepted and the rstream.token query parameter is also accepted for browser transports that cannot attach headers; that query-token form is only for those watch endpoints and must use a short-lived auth or app token with watch-only/list resources, not broad create/connect resources or a long-lived personal token. CE Engine HTTP APIs use the CE JWT authentication backend and do not enforce hosted resources.tunnels boundaries. Use rstream_local_tunnel_expose, rstream_local_tunnel_list, and rstream_local_tunnel_stop for MCP-managed local tunnel workflows. When a local tunnel or remote exposure is created by MCP, use the returned structured cleanup fields and the matching MCP stop tool for cleanup; do not invent shell commands for MCP-managed resources. Do not shell out to the rstream CLI for information already exposed by this MCP server, and do not use a local shell for presentation-only transformations of MCP results; use the MCP context, runtime, project, local tunnel, WebTTY, and remote tools instead."
 
 var mcpCmd = &cobra.Command{
 	GroupID:      "utils",
@@ -125,20 +132,38 @@ func mcpStringFlag(cmd *cobra.Command, name string) string {
 
 func serveMCP(ctx context.Context, input io.Reader, output io.Writer) error {
 	reader := bufio.NewReader(input)
+	results := make(chan mcpReadResult, 1)
+	go func() {
+		for {
+			envelope, err := readMCPEnvelope(reader)
+			results <- mcpReadResult{Envelope: envelope, Err: err}
+			if err != nil {
+				close(results)
+				return
+			}
+		}
+	}()
 	for {
-		envelope, err := readMCPEnvelope(reader)
-		if errors.Is(err, io.EOF) {
+		select {
+		case <-ctx.Done():
 			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if envelope.Message.ID == nil {
-			continue
-		}
-		response := handleMCPMessage(ctx, envelope.Message)
-		if err := writeMCPResponseWithFraming(output, response, envelope.Framing); err != nil {
-			return err
+		case result, ok := <-results:
+			if !ok {
+				return nil
+			}
+			if errors.Is(result.Err, io.EOF) {
+				return nil
+			}
+			if result.Err != nil {
+				return result.Err
+			}
+			if result.Envelope.Message.ID == nil {
+				continue
+			}
+			response := handleMCPMessage(ctx, result.Envelope.Message)
+			if err := writeMCPResponseWithFraming(output, response, result.Envelope.Framing); err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -270,20 +295,32 @@ func handleMCPMessage(ctx context.Context, message mcpMessage) mcpResponse {
 func mcpInitializeResult() map[string]any {
 	return map[string]any{
 		"protocolVersion": mcpProtocolVersion,
-		"capabilities":    map[string]any{"tools": map[string]any{}},
-		"serverInfo":      map[string]any{"name": "rstream", "version": rstream.Version},
+		"capabilities":    map[string]any{"tools": map[string]any{"listChanged": false}},
+		"serverInfo":      map[string]any{"name": "rstream", "title": "rstream", "version": rstream.Version},
+		"instructions":    mcpInstructions,
 	}
+}
+
+type mcpToolDefinition struct {
+	Name         string
+	Title        string
+	Description  string
+	Properties   map[string]any
+	Required     []string
+	Annotations  map[string]any
+	OutputSchema map[string]any
 }
 
 func mcpTools() []map[string]any {
 	return []map[string]any{
-		mcpTool("rstream_auth_start", "Start the local rstream OAuth device login flow and return a user approval URL without exposing tokens. The default permissions are intentionally limited; pass permissions only when the user explicitly asks for broader actions such as project creation or settings changes.", map[string]any{"api_url": mcpStringSchema("Optional rstream API URL. Defaults to RSTREAM_API_URL or the public rstream API."), "permissions": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional permissions to request instead of the default limited CLI scope."}}, []string{}),
-		mcpTool("rstream_auth_poll", "Poll a local rstream OAuth device login session and store the approved token in the CLI config without returning it.", map[string]any{"id": mcpStringSchema("Auth session ID returned by rstream_auth_start."), "wait": map[string]any{"type": "boolean", "description": "Wait for approval instead of polling once."}, "timeout_seconds": map[string]any{"type": "number", "description": "Optional wait timeout in seconds when wait is true."}}, []string{"id"}),
+		mcpTool("rstream_auth_start", "Start the local rstream OAuth device login flow and return a user approval URL without exposing tokens. Show login_url to the user; do not extract or repeat a code from the URL. A separate user_code field is returned only when the provider cannot embed it in the URL. The default permissions cover the CLI MCP workstation surface; explicit permissions are added to that bundle instead of replacing it.", map[string]any{"api_url": mcpStringSchema("Optional rstream API URL. Defaults to RSTREAM_API_URL or the public rstream API."), "permissions": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional additional permissions to union with the MCP workstation permission bundle."}}, []string{}),
+		mcpTool("rstream_auth_poll", "Poll a local rstream OAuth device login session and store the approved token in the CLI config without returning it. After rstream_auth_start in setup or prepare flows, call this with wait=true and a bounded timeout so the user does not need to type a confirmation message.", map[string]any{"id": mcpStringSchema("Auth session ID returned by rstream_auth_start."), "wait": map[string]any{"type": "boolean", "description": "Wait for browser approval instead of polling once."}, "timeout_seconds": map[string]any{"type": "number", "description": "Optional wait timeout in seconds when wait is true."}}, []string{"id"}),
 		mcpTool("rstream_context_list", "List local rstream CLI contexts available to this MCP server.", map[string]any{}, []string{}),
 		mcpTool("rstream_context_get", "Get one local rstream CLI context, or the default context when name is omitted.", map[string]any{"name": mcpStringSchema("Optional local rstream context name.")}, []string{}),
 		mcpTool("rstream_project_creation_options", "Return project creation options and billing actions for a workspace.", map[string]any{"workspace_id": mcpStringSchema("Workspace ID.")}, []string{"workspace_id"}),
 		mcpTool("rstream_project_create", "Create a tunnel project, or start Stripe checkout only when start_checkout is true.", map[string]any{"workspace_id": mcpStringSchema("Workspace ID."), "name": mcpStringSchema("Project name."), "provider": mcpStringSchema("Project provider from creation options."), "region": mcpStringSchema("Project region from creation options."), "plan": mcpStringSchema("Project plan from creation options."), "creation_fingerprint": mcpStringSchema("Creation fingerprint from project creation options."), "idempotency_key": mcpStringSchema("Optional idempotency key. A safe key is generated when omitted."), "start_checkout": map[string]any{"type": "boolean", "description": "Start Stripe checkout instead of direct creation. Set only after explicit user approval."}}, []string{"workspace_id", "name", "provider", "region", "plan", "creation_fingerprint"}),
-		mcpTool("rstream_project_list", "List tunnel projects available through the local rstream Control plane context.", map[string]any{"workspace_id": mcpStringSchema("Optional workspace ID. When omitted, lists across accessible workspaces."), "q": mcpStringSchema("Optional project search query."), "page": map[string]any{"type": "number", "description": "Optional result page."}, "page_size": map[string]any{"type": "number", "description": "Optional page size."}, "sort": mcpStringSchema("Optional sort key."), "order": mcpStringSchema("Optional sort direction.")}, []string{}),
+		mcpTool("rstream_project_delete", "Delete a tunnel project after explicit user approval. Use this only for the exact project the user asked to remove.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID to delete.")}, []string{"project_id"}),
+		mcpTool("rstream_project_list", "List tunnel projects available through the local rstream Control plane context. If multiple projects are returned and the user did not name one, list the choices and ask for a project name, endpoint, or ID; do not recommend a default from project names such as Dev, Test, or Prod.", map[string]any{"workspace_id": mcpStringSchema("Optional workspace ID. When omitted, lists across accessible workspaces."), "q": mcpStringSchema("Optional project search query."), "page": map[string]any{"type": "number", "description": "Optional result page."}, "page_size": map[string]any{"type": "number", "description": "Optional page size."}, "sort": mcpStringSchema("Optional sort key."), "order": mcpStringSchema("Optional sort direction.")}, []string{}),
 		mcpTool("rstream_project_logs", "List tunnel request and connection logs for a tunnel project.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID."), "timeline": mcpStringSchema("Optional timeline: 30m, 1h, 12h, 24h, 3d, 1w, or 30d."), "start": mcpStringSchema("Optional start date."), "end": mcpStringSchema("Optional end date."), "event_type": mcpStringSchema("Optional event type filter."), "after_event_id": mcpStringSchema("Optional event ID cursor."), "page": map[string]any{"type": "number", "description": "Optional result page."}, "page_size": map[string]any{"type": "number", "description": "Optional page size."}, "order": mcpStringSchema("Optional sort direction.")}, []string{"project_id"}),
 		mcpTool("rstream_project_usage", "Return current-period tunnel and TURN bandwidth usage for a tunnel project.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID.")}, []string{"project_id"}),
 		mcpTool("rstream_project_plan_get", "Return a tunnel project's current plan, feature list, and quota metadata before using plan-gated features.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID.")}, []string{"project_id"}),
@@ -298,30 +335,124 @@ func mcpTools() []map[string]any {
 		mcpTool("rstream_project_settings_get", "Return access and transport settings for a tunnel project.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID.")}, []string{"project_id"}),
 		mcpTool("rstream_project_settings_patch", "Patch access and transport settings for a tunnel project after explicit user approval.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID."), "settings": map[string]any{"type": "object", "description": "Partial project settings object."}, "settings_json": mcpStringSchema("Partial project settings JSON object.")}, []string{"project_id"}),
 		mcpTool("rstream_project_settings_reset", "Reset access and transport settings for a tunnel project after explicit user approval.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID.")}, []string{"project_id"}),
-		mcpTool("rstream_preview_expose", "Expose a local HTTP service through a persistent rstream preview process.", map[string]any{"port": mcpStringSchema("Local port to expose, such as 3000."), "host": mcpStringSchema("Optional local host, defaults to localhost."), "name": mcpStringSchema("Optional tunnel name."), "stable_domain": mcpStringSchema("Optional stable published host."), "token_auth": map[string]any{"type": "boolean", "description": "Require rstream token authentication at the edge."}}, []string{"port"}),
-		mcpTool("rstream_preview_list", "List preview tunnels started through the local rstream MCP preview registry.", map[string]any{}, []string{}),
-		mcpTool("rstream_preview_stop", "Stop a preview tunnel from the local rstream MCP preview registry.", map[string]any{"id": mcpStringSchema("Preview ID or tunnel ID returned by rstream_preview_expose.")}, []string{"id"}),
-		mcpTool("rstream_remote_expose", "Start rstream forward on a POSIX WebTTY remote host to expose a remote-local network service or MCP surface.", map[string]any{"webtty_url": mcpStringSchema("WebTTY URL, for example rstrm://robot-shell."), "exec_path": mcpStringSchema("Advertised exec_path from rstream_webtty_list. Defaults to /."), "port": mcpStringSchema("Remote-local port to expose from the WebTTY host."), "host": mcpStringSchema("Optional remote-local host, defaults to 127.0.0.1."), "id": mcpStringSchema("Optional remote expose ID used for later stop."), "name": mcpStringSchema("Optional rstream tunnel name."), "protocol": mcpStringSchema("Optional protocol: http, h2c, h3, tls, tcp, udp, dtls, or quic."), "publish": map[string]any{"type": "boolean", "description": "Publish the exposed resource. Defaults to true."}, "stable_domain": mcpStringSchema("Optional stable published host."), "token_auth": map[string]any{"type": "boolean", "description": "Require rstream token authentication at the edge."}, "rstream_auth": map[string]any{"type": "boolean", "description": "Require rstream account authentication at the edge."}, "mcp_path": mcpStringSchema("Optional remote MCP HTTP path, usually /mcp; adds MCP discovery labels."), "labels": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Additional rstream labels as key=value entries."}, "env": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Environment variables passed to the WebTTY command as KEY=value entries."}, "workdir": mcpStringSchema("Optional remote working directory."), "user": mcpStringSchema("Optional remote username or UID."), "timeout_seconds": map[string]any{"type": "number", "description": "Seconds to wait for the remote tunnel to report online."}, "rstream_command": mcpStringSchema("Optional rstream executable path on the remote host.")}, []string{"webtty_url", "port"}),
-		mcpTool("rstream_remote_expose_stop", "Stop a remote expose process previously started through rstream_remote_expose.", map[string]any{"webtty_url": mcpStringSchema("WebTTY URL used to reach the remote host."), "exec_path": mcpStringSchema("Advertised exec_path from rstream_webtty_list. Defaults to /."), "id": mcpStringSchema("Remote expose ID returned by rstream_remote_expose."), "env": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Environment variables passed to the WebTTY command as KEY=value entries."}, "workdir": mcpStringSchema("Optional remote working directory."), "user": mcpStringSchema("Optional remote username or UID.")}, []string{"webtty_url", "id"}),
-		mcpTool("rstream_remote_mcp_discover", "Discover online MCP surfaces exposed through rstream labels.", map[string]any{"filter": mcpStringSchema("Optional additional rstream tunnel filter.")}, []string{}),
-		mcpTool("rstream_remote_mcp_tools", "List tools from a remote MCP server reached through rstream or a published URL.", map[string]any{"url": mcpStringSchema("Remote MCP URL, such as rstrm://robot-mcp or https://robot.example.com/mcp."), "path": mcpStringSchema("Optional MCP path when url does not include one."), "token": mcpStringSchema("Optional bearer token for token-auth protected published MCP surfaces.")}, []string{"url"}),
-		mcpTool("rstream_remote_mcp_call", "Call a tool on a remote MCP server reached through rstream or a published URL.", map[string]any{"url": mcpStringSchema("Remote MCP URL, such as rstrm://robot-mcp or https://robot.example.com/mcp."), "tool": mcpStringSchema("Remote MCP tool name."), "path": mcpStringSchema("Optional MCP path when url does not include one."), "token": mcpStringSchema("Optional bearer token for token-auth protected published MCP surfaces."), "arguments": map[string]any{"type": "object", "description": "Remote MCP tool arguments."}, "arguments_json": mcpStringSchema("Remote MCP tool arguments as a JSON object string.")}, []string{"url", "tool"}),
-		mcpTool("rstream_runtime_status", "Return local rstream CLI runtime status without exposing secrets.", map[string]any{}, []string{}),
-		mcpTool("rstream_token_create", "Mint a short-lived rstream auth token from the local Control plane context. The response contains a bearer token; do not log or paste it unless the user explicitly needs the token value. When scoping Engine access, pass the full token resource object under resources_json. Example for a read-only project token: {\"tunnels\":{\"projects\":[\"PROJECT_ID\"],\"scopes\":{\"tunnels\":{\"list\":true}}}}. Scope actions must match permissions: tunnels.resources.read-only requires list, tunnels.tunnels.create-delete requires create, and tunnels.streams.create-delete requires connect.", map[string]any{"permissions": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Permissions to include in the minted token."}, "resources_json": mcpStringSchema("Optional full resource boundary JSON object, for example {\"tunnels\":{\"projects\":[\"PROJECT_ID\"],\"scopes\":{\"tunnels\":{\"list\":true}}}} for tunnels.resources.read-only.")}, []string{"permissions"}),
+		mcpTool("rstream_local_tunnel_expose", mcpLocalTunnelExposeToolDescription(), mcpProjectSelectorProperties(mcpLocalTunnelExposeToolProperties()), []string{"port"}),
+		mcpTool("rstream_local_tunnel_list", "List local tunnels started through the local rstream MCP tunnel registry.", map[string]any{}, []string{}),
+		mcpTool("rstream_local_tunnel_stop", "Stop a local tunnel from the local rstream MCP tunnel registry.", map[string]any{"id": mcpStringSchema("Local tunnel ID or tunnel ID returned by rstream_local_tunnel_expose.")}, []string{"id"}),
+		mcpTool("rstream_remote_expose", "Start rstream forward on a POSIX WebTTY remote host to expose a remote-local network service or MCP surface. For a remote MCP surface that Codex will call itself, set publish=false unless the user asked for a public URL or browser access.", mcpProjectSelectorProperties(map[string]any{"webtty_url": mcpStringSchema("WebTTY URL, for example rstrm://robot-shell."), "exec_path": mcpStringSchema("Advertised exec_path from rstream_webtty_list. Defaults to /."), "port": mcpStringSchema("Remote-local port to expose from the WebTTY host."), "host": mcpStringSchema("Optional remote-local host, defaults to 127.0.0.1."), "id": mcpStringSchema("Optional remote expose ID used for later stop."), "name": mcpStringSchema("Optional rstream tunnel name."), "protocol": mcpStringSchema("Optional protocol: http, h2c, h3, tls, tcp, udp, dtls, or quic."), "publish": map[string]any{"type": "boolean", "description": "Publish the exposed resource. Defaults to true. For Codex-only remote MCP calls, pass false."}, "stable_domain": mcpStringSchema("Optional stable published host."), "token_auth": map[string]any{"type": "boolean", "description": "Require rstream token authentication at the edge."}, "rstream_auth": map[string]any{"type": "boolean", "description": "Require rstream account authentication at the edge."}, "mcp_path": mcpStringSchema("Optional remote MCP HTTP path, usually /mcp; adds MCP discovery labels."), "labels": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Additional rstream labels as key=value entries."}, "env": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Environment variables passed to the WebTTY command as KEY=value entries."}, "workdir": mcpStringSchema("Optional remote working directory."), "user": mcpStringSchema("Optional remote username or UID."), "timeout_seconds": map[string]any{"type": "number", "description": "Seconds to wait for the remote tunnel to report online."}, "rstream_command": mcpStringSchema("Optional rstream executable path on the remote host.")}), []string{"webtty_url", "port"}),
+		mcpTool("rstream_remote_expose_stop", "Stop a remote expose process previously started through rstream_remote_expose.", mcpProjectSelectorProperties(map[string]any{"webtty_url": mcpStringSchema("WebTTY URL used to reach the remote host."), "exec_path": mcpStringSchema("Advertised exec_path from rstream_webtty_list. Defaults to /."), "id": mcpStringSchema("Remote expose ID returned by rstream_remote_expose."), "env": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Environment variables passed to the WebTTY command as KEY=value entries."}, "workdir": mcpStringSchema("Optional remote working directory."), "user": mcpStringSchema("Optional remote username or UID.")}), []string{"webtty_url", "id"}),
+		mcpTool("rstream_remote_mcp_discover", "Discover online MCP surfaces exposed through rstream labels.", mcpProjectSelectorProperties(map[string]any{"filter": mcpStringSchema("Optional additional rstream tunnel filter.")}), []string{}),
+		mcpTool("rstream_remote_mcp_tools", "List tools from a remote MCP server reached through rstream or a published URL.", mcpProjectSelectorProperties(map[string]any{"url": mcpStringSchema("Remote MCP URL, such as rstrm://robot-mcp or https://robot.example.com/mcp."), "path": mcpStringSchema("Optional MCP path when url does not include one."), "token": mcpStringSchema("Optional bearer token for token-auth protected published MCP surfaces.")}), []string{"url"}),
+		mcpTool("rstream_remote_mcp_call", "Call a tool on a remote MCP server reached through rstream or a published URL.", mcpProjectSelectorProperties(map[string]any{"url": mcpStringSchema("Remote MCP URL, such as rstrm://robot-mcp or https://robot.example.com/mcp."), "tool": mcpStringSchema("Remote MCP tool name."), "path": mcpStringSchema("Optional MCP path when url does not include one."), "token": mcpStringSchema("Optional bearer token for token-auth protected published MCP surfaces."), "arguments": map[string]any{"type": "object", "description": "Remote MCP tool arguments."}, "arguments_json": mcpStringSchema("Remote MCP tool arguments as a JSON object string.")}), []string{"url", "tool"}),
+		mcpTool("rstream_runtime_prepare", "Prepare the local rstream runtime for a project on a Codex workstation. This uses the long-lived rstream login credential stored in the CLI config and never mints a short-lived delegated token. Use this before local tunnels, WebTTY, remote exposure, or remote MCP when the selected project or context is missing, stale, or ambiguous. If multiple projects are available and the user did not explicitly name a project, do not guess or recommend one from naming conventions alone; ask the user to choose a project name, endpoint, or ID without adding a preferred example.", mcpProjectSelectorProperties(map[string]any{"context_name": mcpStringSchema("Optional local context name to create or update. Defaults to the selected project name."), "set_default": map[string]any{"type": "boolean", "description": "Set the prepared context as default. Defaults to true."}}), []string{}),
+		mcpTool("rstream_runtime_status", "Return local rstream CLI runtime status without exposing secrets. The response includes agent_guidance with authoritative SDK choices, Engine API auth surfaces including /api/sse and /api/websocket query-token rules, and the self-hosted Engine CE feature boundary.", map[string]any{}, []string{}),
+		mcpTool("rstream_token_create", "Mint a short-lived delegated rstream auth token for immediate browser, URL, or runtime handoff. Do not use this to configure a Codex workstation, create a rstream context, connect local tunnels or WebTTY, or install long-lived remote devices; use rstream_runtime_prepare for workstation flows and long-lived scoped credentials for remote devices. The response contains a bearer token; summarize its purpose, scope, and lifetime, but do not print the raw token unless the user explicitly asks to see or copy the token value. When scoping Engine access, pass the full token resource object under resources_json. Example for a read-only project token: {\"tunnels\":{\"projects\":[\"PROJECT_ID\"],\"scopes\":{\"tunnels\":{\"list\":true}}}}. Scope actions must match permissions: tunnels.resources.read-only requires list, tunnels.tunnels.create-delete requires create, and tunnels.streams.create-delete requires connect.", map[string]any{"permissions": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Permissions to include in the minted token."}, "resources_json": mcpStringSchema("Optional full resource boundary JSON object, for example {\"tunnels\":{\"projects\":[\"PROJECT_ID\"],\"scopes\":{\"tunnels\":{\"list\":true}}}} for tunnels.resources.read-only.")}, []string{"permissions"}),
 		mcpTool("rstream_workspace_list", "List workspaces available through the local rstream Control plane context.", map[string]any{}, []string{}),
 		mcpTool("rstream_workspace_members_list", "List users and invited users with access to a workspace and their roles.", map[string]any{"workspace_id": mcpStringSchema("Workspace ID."), "q": mcpStringSchema("Optional member search query."), "page": map[string]any{"type": "number", "description": "Optional result page."}, "page_size": map[string]any{"type": "number", "description": "Optional page size."}, "sort": mcpStringSchema("Optional sort key."), "order": mcpStringSchema("Optional sort direction.")}, []string{"workspace_id"}),
-		mcpTool("rstream_webtty_list", "List online WebTTY servers exposed through rstream.", map[string]any{"filter": mcpStringSchema("Optional rstream tunnel filter, such as labels.rstream.webtty.label.role=codex.")}, []string{}),
-		mcpTool("rstream_webtty_exec", "Execute a non-interactive command through a WebTTY server.", map[string]any{"url": mcpStringSchema("WebTTY URL, for example rstrm://shell."), "exec_path": mcpStringSchema("Advertised exec_path from rstream_webtty_list. Defaults to /."), "command": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "minItems": 1}, "workdir": mcpStringSchema("Optional working directory."), "env": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "user": mcpStringSchema("Optional username or UID.")}, []string{"url", "command"}),
-		mcpTool("rstream_webtty_fs_list", "List a directory exposed by a WebTTY filesystem sidecar. Paths are relative to the server --fs-root; use / for that root, not the host filesystem root.", map[string]any{"url": mcpStringSchema("WebTTY URL, for example rstrm://shell."), "fs_path": mcpStringSchema("Advertised fs_path from rstream_webtty_list. Defaults to /fs."), "path": mcpStringSchema("Path inside the advertised filesystem root, for example / or /compose.yaml's parent directory.")}, []string{"url"}),
-		mcpTool("rstream_webtty_fs_read", "Read a file exposed by a WebTTY filesystem sidecar. Paths are relative to the server --fs-root; use /compose.yaml when --fs-root is the directory containing compose.yaml.", map[string]any{"url": mcpStringSchema("WebTTY URL, for example rstrm://shell."), "fs_path": mcpStringSchema("Advertised fs_path from rstream_webtty_list. Defaults to /fs."), "path": mcpStringSchema("File path inside the advertised filesystem root, for example /README.md."), "encoding": mcpStringSchema("Optional output encoding: text or base64.")}, []string{"url", "path"}),
-		mcpTool("rstream_webtty_fs_write", "Write a file through a WebTTY filesystem sidecar. Paths are relative to the server --fs-root; do not pass absolute host paths unless --fs-root is the host root.", map[string]any{"url": mcpStringSchema("WebTTY URL, for example rstrm://shell."), "fs_path": mcpStringSchema("Advertised fs_path from rstream_webtty_list. Defaults to /fs."), "path": mcpStringSchema("File path inside the advertised filesystem root, for example /compose.yaml."), "content": mcpStringSchema("File content to write."), "encoding": mcpStringSchema("Optional input encoding: text or base64.")}, []string{"url", "path", "content"}),
-		mcpTool("rstream_webtty_fs_mkdir", "Create a directory through a WebTTY filesystem sidecar. Paths are relative to the server --fs-root.", map[string]any{"url": mcpStringSchema("WebTTY URL, for example rstrm://shell."), "fs_path": mcpStringSchema("Advertised fs_path from rstream_webtty_list. Defaults to /fs."), "path": mcpStringSchema("Directory path inside the advertised filesystem root.")}, []string{"url", "path"}),
-		mcpTool("rstream_webtty_fs_delete", "Delete a file or directory through a WebTTY filesystem sidecar. Paths are relative to the server --fs-root.", map[string]any{"url": mcpStringSchema("WebTTY URL, for example rstrm://shell."), "fs_path": mcpStringSchema("Advertised fs_path from rstream_webtty_list. Defaults to /fs."), "path": mcpStringSchema("File or directory path inside the advertised filesystem root.")}, []string{"url", "path"}),
+		mcpTool("rstream_webtty_list", "List online WebTTY servers exposed through rstream. Use this before remote command execution, filesystem access, remote exposure, or remote MCP setup; each result advertises exec_path, fs_path, filesystem mode, and capabilities when available.", mcpProjectSelectorProperties(map[string]any{"filter": mcpStringSchema("Optional rstream tunnel filter, such as name=shell or labels.rstream.webtty.label.role=codex. A bare value is treated as a tunnel name."), "name": mcpStringSchema("Optional WebTTY tunnel name to search for.")}), []string{}),
+		mcpTool("rstream_webtty_exec", "Execute a non-interactive command through a WebTTY server.", mcpProjectSelectorProperties(map[string]any{"url": mcpStringSchema("WebTTY URL, for example rstrm://shell."), "exec_path": mcpStringSchema("Advertised exec_path from rstream_webtty_list. Defaults to /."), "command": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "minItems": 1}, "workdir": mcpStringSchema("Optional working directory."), "env": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "user": mcpStringSchema("Optional username or UID.")}), []string{"url", "command"}),
+		mcpTool("rstream_webtty_fs_download", "Download a file from a WebTTY filesystem sidecar to a local Codex-accessible path. Prefer this MCP tool over shelling out to rstream webtty fs download. Remote paths are relative to the server --fs-root.", mcpProjectSelectorProperties(map[string]any{"url": mcpStringSchema("WebTTY URL, for example rstrm://shell."), "fs_path": mcpStringSchema("Advertised fs_path from rstream_webtty_list. Defaults to /fs."), "path": mcpStringSchema("File path inside the advertised filesystem root, for example /logs/latest.tar.gz."), "local_path": mcpStringSchema("Local destination path on the Codex workstation."), "overwrite": map[string]any{"type": "boolean", "description": "Overwrite local_path if it already exists. Defaults to false."}}), []string{"url", "path", "local_path"}),
+		mcpTool("rstream_webtty_fs_list", "List a directory exposed by a WebTTY filesystem sidecar. Paths are relative to the server --fs-root; use / for that root, not the host filesystem root.", mcpProjectSelectorProperties(map[string]any{"url": mcpStringSchema("WebTTY URL, for example rstrm://shell."), "fs_path": mcpStringSchema("Advertised fs_path from rstream_webtty_list. Defaults to /fs."), "path": mcpStringSchema("Path inside the advertised filesystem root, for example / or /compose.yaml's parent directory.")}), []string{"url"}),
+		mcpTool("rstream_webtty_fs_read", "Read a text or small binary file exposed by a WebTTY filesystem sidecar. For local file artifacts such as archives, prefer rstream_webtty_fs_download. Paths are relative to the server --fs-root.", mcpProjectSelectorProperties(map[string]any{"url": mcpStringSchema("WebTTY URL, for example rstrm://shell."), "fs_path": mcpStringSchema("Advertised fs_path from rstream_webtty_list. Defaults to /fs."), "path": mcpStringSchema("File path inside the advertised filesystem root, for example /README.md."), "encoding": mcpStringSchema("Optional output encoding: text or base64.")}), []string{"url", "path"}),
+		mcpTool("rstream_webtty_fs_write", "Write a file through a WebTTY filesystem sidecar. Paths are relative to the server --fs-root; do not pass absolute host paths unless --fs-root is the host root.", mcpProjectSelectorProperties(map[string]any{"url": mcpStringSchema("WebTTY URL, for example rstrm://shell."), "fs_path": mcpStringSchema("Advertised fs_path from rstream_webtty_list. Defaults to /fs."), "path": mcpStringSchema("File path inside the advertised filesystem root, for example /compose.yaml."), "content": mcpStringSchema("File content to write."), "encoding": mcpStringSchema("Optional input encoding: text or base64.")}), []string{"url", "path", "content"}),
+		mcpTool("rstream_webtty_fs_mkdir", "Create a directory through a WebTTY filesystem sidecar. Paths are relative to the server --fs-root.", mcpProjectSelectorProperties(map[string]any{"url": mcpStringSchema("WebTTY URL, for example rstrm://shell."), "fs_path": mcpStringSchema("Advertised fs_path from rstream_webtty_list. Defaults to /fs."), "path": mcpStringSchema("Directory path inside the advertised filesystem root.")}), []string{"url", "path"}),
+		mcpTool("rstream_webtty_fs_delete", "Delete a file or directory through a WebTTY filesystem sidecar. Paths are relative to the server --fs-root.", mcpProjectSelectorProperties(map[string]any{"url": mcpStringSchema("WebTTY URL, for example rstrm://shell."), "fs_path": mcpStringSchema("Advertised fs_path from rstream_webtty_list. Defaults to /fs."), "path": mcpStringSchema("File or directory path inside the advertised filesystem root.")}), []string{"url", "path"}),
 	}
 }
 
 func mcpTool(name string, description string, properties map[string]any, required []string) map[string]any {
-	return map[string]any{"name": name, "description": description, "inputSchema": map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false}}
+	return mcpToolFromDefinition(mcpToolDefinition{Name: name, Title: mcpToolTitle(name), Description: description, Properties: properties, Required: required, Annotations: mcpToolAnnotations(name), OutputSchema: mcpToolOutputSchema(name)})
+}
+
+func mcpToolFromDefinition(def mcpToolDefinition) map[string]any {
+	tool := map[string]any{"name": def.Name, "title": def.Title, "description": def.Description, "inputSchema": map[string]any{"type": "object", "properties": def.Properties, "required": def.Required, "additionalProperties": false}}
+	if len(def.Annotations) > 0 {
+		tool["annotations"] = def.Annotations
+	}
+	if len(def.OutputSchema) > 0 {
+		tool["outputSchema"] = def.OutputSchema
+	}
+	return tool
+}
+
+func mcpToolTitle(name string) string {
+	titles := map[string]string{
+		"rstream_auth_poll":                       "Finish rstream login",
+		"rstream_auth_start":                      "Start rstream login",
+		"rstream_context_get":                     "Inspect rstream context",
+		"rstream_context_list":                    "List rstream contexts",
+		"rstream_local_tunnel_expose":             "Expose local tunnel",
+		"rstream_local_tunnel_list":               "List local tunnels",
+		"rstream_local_tunnel_stop":               "Stop local tunnel",
+		"rstream_project_create":                  "Create tunnel project",
+		"rstream_project_creation_options":        "Inspect project creation options",
+		"rstream_project_delete":                  "Delete tunnel project",
+		"rstream_project_domain_connect":          "Create Domain Connect link",
+		"rstream_project_domain_create":           "Add project domain",
+		"rstream_project_domain_delete":           "Delete project domain",
+		"rstream_project_domain_get":              "Inspect project domain",
+		"rstream_project_domain_verify":           "Verify project domain",
+		"rstream_project_domains_list":            "List project domains",
+		"rstream_project_list":                    "List tunnel projects",
+		"rstream_project_logs":                    "Read project logs",
+		"rstream_project_plan_get":                "Inspect project plan",
+		"rstream_project_settings_get":            "Inspect project settings",
+		"rstream_project_settings_patch":          "Update project settings",
+		"rstream_project_settings_reset":          "Reset project settings",
+		"rstream_project_turn_credentials_create": "Create TURN credentials",
+		"rstream_project_turn_usage":              "Read TURN usage",
+		"rstream_project_usage":                   "Read project usage",
+		"rstream_remote_expose":                   "Expose remote service",
+		"rstream_remote_expose_stop":              "Stop remote exposure",
+		"rstream_remote_mcp_call":                 "Call remote MCP tool",
+		"rstream_remote_mcp_discover":             "Discover remote MCP servers",
+		"rstream_remote_mcp_tools":                "List remote MCP tools",
+		"rstream_runtime_prepare":                 "Prepare rstream runtime",
+		"rstream_runtime_status":                  "Check rstream status",
+		"rstream_token_create":                    "Create short-lived token",
+		"rstream_webtty_exec":                     "Run remote command",
+		"rstream_webtty_fs_delete":                "Delete remote file",
+		"rstream_webtty_fs_download":              "Download remote file",
+		"rstream_webtty_fs_list":                  "List remote files",
+		"rstream_webtty_fs_mkdir":                 "Create remote directory",
+		"rstream_webtty_fs_read":                  "Read remote file",
+		"rstream_webtty_fs_write":                 "Write remote file",
+		"rstream_webtty_list":                     "List WebTTY servers",
+		"rstream_workspace_list":                  "List workspaces",
+		"rstream_workspace_members_list":          "List workspace members",
+	}
+	if title, ok := titles[name]; ok {
+		return title
+	}
+	return name
+}
+
+func mcpToolAnnotations(name string) map[string]any {
+	readOnly := strings.Contains(name, "_list") || strings.Contains(name, "_get") || strings.Contains(name, "_logs") || strings.Contains(name, "_usage") || strings.Contains(name, "_status") || strings.Contains(name, "_discover") || strings.Contains(name, "_tools") || strings.Contains(name, "_read") || strings.Contains(name, "_creation_options") || strings.Contains(name, "_domain_connect") || name == "rstream_openapi"
+	destructive := strings.Contains(name, "_delete") || strings.Contains(name, "_reset") || strings.HasSuffix(name, "_stop") || strings.Contains(name, "_settings_patch") || name == "rstream_webtty_exec" || name == "rstream_webtty_fs_write" || name == "rstream_remote_mcp_call"
+	idempotent := readOnly || strings.HasSuffix(name, "_stop") || name == "rstream_runtime_prepare"
+	openWorld := strings.Contains(name, "auth") || strings.Contains(name, "project") || strings.Contains(name, "workspace") || strings.Contains(name, "token") || strings.Contains(name, "local_tunnel") || strings.Contains(name, "remote") || strings.Contains(name, "webtty") || strings.Contains(name, "turn") || name == "rstream_runtime_prepare"
+	return map[string]any{"title": mcpToolTitle(name), "readOnlyHint": readOnly, "destructiveHint": destructive, "idempotentHint": idempotent, "openWorldHint": openWorld}
+}
+
+func mcpToolOutputSchema(name string) map[string]any {
+	switch name {
+	case "rstream_auth_start":
+		return map[string]any{"type": "object", "properties": map[string]any{"id": mcpStringSchema("Local auth session ID."), "login_url": mcpStringSchema("User approval URL."), "expires_at": mcpStringSchema("Login request expiry time."), "scopes": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, "required": []string{"id", "login_url"}, "additionalProperties": true}
+	case "rstream_project_create":
+		return map[string]any{"type": "object", "properties": map[string]any{"action": mcpStringSchema("Project creation action."), "project": map[string]any{"type": "object"}, "checkout": map[string]any{"type": "object"}}, "required": []string{"action"}, "additionalProperties": true}
+	case "rstream_project_delete":
+		return map[string]any{"type": "object", "properties": map[string]any{"action": mcpStringSchema("Project deletion action."), "project_id": mcpStringSchema("Deleted project ID.")}, "required": []string{"action", "project_id"}, "additionalProperties": true}
+	case "rstream_runtime_prepare":
+		return map[string]any{"type": "object", "properties": map[string]any{"ready": map[string]any{"type": "boolean"}, "needs_login": map[string]any{"type": "boolean"}, "changed": map[string]any{"type": "boolean"}, "project": map[string]any{"type": "object"}, "context": map[string]any{"type": "object"}, "login": map[string]any{"type": "object"}}, "required": []string{"ready"}, "additionalProperties": true}
+	case "rstream_runtime_status":
+		return map[string]any{"type": "object", "properties": map[string]any{"ready": map[string]any{"type": "boolean"}, "needs_login": map[string]any{"type": "boolean"}, "needs_context": map[string]any{"type": "boolean"}, "suggested_next_tool": mcpStringSchema("Recommended next MCP tool."), "selected_context": mcpStringSchema("Selected local context."), "engine": mcpStringSchema("Resolved engine endpoint."), "agent_guidance": map[string]any{"type": "object", "description": "Non-secret product guidance for SDK selection and self-hosted CE boundaries."}}, "required": []string{"ready"}, "additionalProperties": true}
+	case "rstream_local_tunnel_expose":
+		return map[string]any{"type": "object", "properties": map[string]any{"id": mcpStringSchema("Local tunnel ID."), "url": mcpStringSchema("Published URL or private rstrm target."), "pid": map[string]any{"type": "number"}, "protocol": mcpStringSchema("Resolved tunnel protocol."), "publish": map[string]any{"type": "boolean"}, "token_auth": map[string]any{"type": "boolean"}, "rstream_auth": map[string]any{"type": "boolean"}, "challenge_mode": map[string]any{"type": "boolean"}, "cleanup_tool": mcpStringSchema("MCP tool to call for cleanup."), "cleanup_id": mcpStringSchema("Local tunnel ID to pass to cleanup_tool.")}, "required": []string{"id", "url", "cleanup_tool", "cleanup_id"}, "additionalProperties": true}
+	case "rstream_token_create":
+		return map[string]any{"type": "object", "properties": map[string]any{"token": mcpStringSchema("Bearer token value."), "token_type": mcpStringSchema("Token type claim."), "expires_at": mcpStringSchema("UTC token expiration time derived from the JWT exp claim."), "ttl_seconds": map[string]any{"type": "number"}, "permissions": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "resources": map[string]any{"type": "object"}}, "required": []string{"token"}, "additionalProperties": true}
+	default:
+		return nil
+	}
 }
 
 func mcpStringSchema(description string) map[string]any {
@@ -346,6 +477,8 @@ func handleMCPToolCall(ctx context.Context, params json.RawMessage) (map[string]
 		return mcpProjectCreationOptions(ctx, call.Arguments)
 	case "rstream_project_create":
 		return mcpProjectCreate(ctx, call.Arguments)
+	case "rstream_project_delete":
+		return mcpProjectDelete(ctx, call.Arguments)
 	case "rstream_project_list":
 		return mcpProjectList(ctx, call.Arguments)
 	case "rstream_project_logs":
@@ -376,12 +509,12 @@ func handleMCPToolCall(ctx context.Context, params json.RawMessage) (map[string]
 		return mcpProjectSettingsPatch(ctx, call.Arguments)
 	case "rstream_project_settings_reset":
 		return mcpProjectSettingsReset(ctx, call.Arguments)
-	case "rstream_preview_expose":
-		return mcpPreviewExpose(ctx, call.Arguments)
-	case "rstream_preview_list":
-		return mcpPreviewList()
-	case "rstream_preview_stop":
-		return mcpPreviewStop(call.Arguments)
+	case "rstream_local_tunnel_expose":
+		return mcpLocalTunnelExpose(ctx, call.Arguments)
+	case "rstream_local_tunnel_list":
+		return mcpLocalTunnelList()
+	case "rstream_local_tunnel_stop":
+		return mcpLocalTunnelStop(call.Arguments)
 	case "rstream_remote_expose":
 		return mcpRemoteExpose(ctx, call.Arguments)
 	case "rstream_remote_expose_stop":
@@ -392,6 +525,8 @@ func handleMCPToolCall(ctx context.Context, params json.RawMessage) (map[string]
 		return mcpRemoteMCPTools(ctx, call.Arguments)
 	case "rstream_remote_mcp_call":
 		return mcpRemoteMCPCall(ctx, call.Arguments)
+	case "rstream_runtime_prepare":
+		return mcpRuntimePrepare(ctx, call.Arguments)
 	case "rstream_runtime_status":
 		return mcpRuntimeStatus()
 	case "rstream_token_create":
@@ -408,6 +543,8 @@ func handleMCPToolCall(ctx context.Context, params json.RawMessage) (map[string]
 		return mcpWebTTYFSList(ctx, call.Arguments)
 	case "rstream_webtty_fs_read":
 		return mcpWebTTYFSRead(ctx, call.Arguments)
+	case "rstream_webtty_fs_download":
+		return mcpWebTTYFSDownload(ctx, call.Arguments)
 	case "rstream_webtty_fs_write":
 		return mcpWebTTYFSWrite(ctx, call.Arguments)
 	case "rstream_webtty_fs_mkdir":
@@ -420,7 +557,7 @@ func handleMCPToolCall(ctx context.Context, params json.RawMessage) (map[string]
 }
 
 func mcpWebTTYList(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	runtime, err := resolveMCPRuntime(true, true)
+	runtime, err := resolveMCPRuntimeForArgs(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +565,7 @@ func mcpWebTTYList(ctx context.Context, args map[string]json.RawMessage) (map[st
 	if err != nil {
 		return nil, err
 	}
-	filter, err := mcpOptionalStringArg(args, "filter", "")
+	filter, nameFilter, err := mcpWebTTYFilterArgs(args)
 	if err != nil {
 		return nil, err
 	}
@@ -436,7 +573,70 @@ func mcpWebTTYList(ctx context.Context, args map[string]json.RawMessage) (map[st
 	if err != nil {
 		return nil, err
 	}
+	servers = filterMCPWebTTYServers(servers, nameFilter)
 	return mcpJSONResult(servers, false)
+}
+
+func mcpWebTTYFilterArgs(args map[string]json.RawMessage) (string, string, error) {
+	name, err := mcpOptionalStringArg(args, "name", "")
+	if err != nil {
+		return "", "", err
+	}
+	filter, err := mcpOptionalStringArg(args, "filter", "")
+	if err != nil {
+		return "", "", err
+	}
+	if strings.TrimSpace(filter) != "" && !strings.Contains(filter, "=") {
+		name = combineMCPFilters(name, filter)
+		filter = ""
+	}
+	return filter, name, nil
+}
+
+func combineMCPFilters(left string, right string) string {
+	if strings.TrimSpace(left) == "" {
+		return right
+	}
+	if strings.TrimSpace(right) == "" {
+		return left
+	}
+	return left + "," + right
+}
+
+func filterMCPWebTTYServers(servers []webtty.ServerInfo, nameFilter string) []webtty.ServerInfo {
+	if strings.TrimSpace(nameFilter) == "" {
+		return servers
+	}
+	names := strings.Split(nameFilter, ",")
+	filtered := []webtty.ServerInfo{}
+	for _, server := range servers {
+		if mcpWebTTYServerMatchesName(server, names) {
+			filtered = append(filtered, server)
+		}
+	}
+	return filtered
+}
+
+func mcpWebTTYServerMatchesName(server webtty.ServerInfo, names []string) bool {
+	fields := []string{server.Target, server.RstreamURL}
+	if server.TunnelName != nil {
+		fields = append(fields, *server.TunnelName)
+	}
+	if server.Hostname != nil {
+		fields = append(fields, *server.Hostname)
+	}
+	for _, name := range names {
+		needle := strings.ToLower(strings.TrimSpace(name))
+		if needle == "" {
+			continue
+		}
+		for _, field := range fields {
+			if strings.Contains(strings.ToLower(field), needle) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func mcpWebTTYExec(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
@@ -470,7 +670,7 @@ func mcpWebTTYExec(ctx context.Context, args map[string]json.RawMessage) (map[st
 	}
 	cfg := &webtty.ClientConfig{URL: urlValue, Interactive: false, AllocateTTY: false, SendHeartbeat: true, EnvVars: envVars, Workdir: workdir, Username: username, CmdArgs: command}
 	if webttyClientUsesRstream(urlValue) {
-		runtime, err := resolveMCPRuntime(true, true)
+		runtime, err := resolveMCPRuntimeForArgs(ctx, args)
 		if err != nil {
 			return nil, err
 		}
@@ -488,7 +688,7 @@ func mcpWebTTYExec(ctx context.Context, args map[string]json.RawMessage) (map[st
 }
 
 func mcpWebTTYFSList(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, err := newWebTTYFSMCPClient(args)
+	client, err := newWebTTYFSMCPClient(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -504,7 +704,7 @@ func mcpWebTTYFSList(ctx context.Context, args map[string]json.RawMessage) (map[
 }
 
 func mcpWebTTYFSRead(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, err := newWebTTYFSMCPClient(args)
+	client, err := newWebTTYFSMCPClient(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -530,8 +730,43 @@ func mcpWebTTYFSRead(ctx context.Context, args map[string]json.RawMessage) (map[
 	}
 }
 
+func mcpWebTTYFSDownload(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
+	client, err := newWebTTYFSMCPClient(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	remotePath, err := mcpRequiredStringArg(args, "path")
+	if err != nil {
+		return nil, err
+	}
+	localPath, err := mcpRequiredStringArg(args, "local_path")
+	if err != nil {
+		return nil, err
+	}
+	overwrite, err := mcpOptionalBoolArg(args, "overwrite", false)
+	if err != nil {
+		return nil, err
+	}
+	if err := prepareMCPDownloadPath(localPath, overwrite); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(localPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	if err := client.read(ctx, remotePath, file); err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	return mcpJSONResult(map[string]any{"ok": true, "path": localPath, "bytes": info.Size()}, false)
+}
+
 func mcpWebTTYFSWrite(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, err := newWebTTYFSMCPClient(args)
+	client, err := newWebTTYFSMCPClient(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -554,7 +789,7 @@ func mcpWebTTYFSWrite(ctx context.Context, args map[string]json.RawMessage) (map
 }
 
 func mcpWebTTYFSMkdir(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, err := newWebTTYFSMCPClient(args)
+	client, err := newWebTTYFSMCPClient(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -569,7 +804,7 @@ func mcpWebTTYFSMkdir(ctx context.Context, args map[string]json.RawMessage) (map
 }
 
 func mcpWebTTYFSDelete(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, err := newWebTTYFSMCPClient(args)
+	client, err := newWebTTYFSMCPClient(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -581,6 +816,24 @@ func mcpWebTTYFSDelete(ctx context.Context, args map[string]json.RawMessage) (ma
 		return nil, err
 	}
 	return mcpJSONResult(map[string]bool{"ok": true}, false)
+}
+
+func prepareMCPDownloadPath(localPath string, overwrite bool) error {
+	if strings.TrimSpace(localPath) == "" {
+		return fmt.Errorf("argument %q must not be empty", "local_path")
+	}
+	if !overwrite {
+		if _, err := os.Stat(localPath); err == nil {
+			return fmt.Errorf("local_path %q already exists; pass overwrite=true to replace it", localPath)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	parent := filepath.Dir(localPath)
+	if parent == "." || parent == "" {
+		return nil
+	}
+	return os.MkdirAll(parent, 0o700)
 }
 
 func mcpContentReader(args map[string]json.RawMessage, content string) (io.Reader, error) {
@@ -602,7 +855,7 @@ func mcpContentReader(args map[string]json.RawMessage, content string) (io.Reade
 	}
 }
 
-func newWebTTYFSMCPClient(args map[string]json.RawMessage) (*webTTYFSClient, error) {
+func newWebTTYFSMCPClient(ctx context.Context, args map[string]json.RawMessage) (*webTTYFSClient, error) {
 	rawURL, err := mcpRequiredStringArg(args, "url")
 	if err != nil {
 		return nil, err
@@ -617,7 +870,7 @@ func newWebTTYFSMCPClient(args map[string]json.RawMessage) (*webTTYFSClient, err
 	}
 	httpClient := http.DefaultClient
 	if target != "" {
-		runtime, err := resolveMCPRuntime(true, true)
+		runtime, err := resolveMCPRuntimeForArgs(ctx, args)
 		if err != nil {
 			return nil, err
 		}
@@ -718,6 +971,18 @@ func mcpOptionalBoolArg(args map[string]json.RawMessage, name string, fallback b
 	return value, nil
 }
 
+func mcpOptionalBoolPtrArg(args map[string]json.RawMessage, name string) (*bool, error) {
+	raw, ok := args[name]
+	if !ok {
+		return nil, nil
+	}
+	var value bool
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return nil, fmt.Errorf("argument %q must be a boolean", name)
+	}
+	return &value, nil
+}
+
 func mcpOptionalIntArg(args map[string]json.RawMessage, name string) (*int, error) {
 	raw, ok := args[name]
 	if !ok {
@@ -765,9 +1030,54 @@ func mcpJSONResult(value any, isError bool) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return mcpToolTextResult(string(payload), isError), nil
+	result := mcpToolTextResult(string(payload), isError)
+	result["structuredContent"] = mcpStructuredContent(value)
+	return result, nil
+}
+
+func mcpJSONResourceLinkResult(value any, isError bool, uri string, name string, description string, mimeType string) (map[string]any, error) {
+	result, err := mcpJSONResult(value, isError)
+	if err != nil {
+		return nil, err
+	}
+	if !isError && strings.TrimSpace(uri) != "" {
+		result["content"] = append(result["content"].([]map[string]any), map[string]any{"type": "resource_link", "uri": uri, "name": name, "description": description, "mimeType": mimeType})
+	}
+	return result, nil
 }
 
 func mcpToolTextResult(text string, isError bool) map[string]any {
-	return map[string]any{"content": []map[string]string{{"type": "text", "text": text}}, "isError": isError}
+	return map[string]any{"content": []map[string]any{{"type": "text", "text": text}}, "isError": isError}
+}
+
+func mcpStructuredContent(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed
+	case map[string]string:
+		out := make(map[string]any, len(typed))
+		for key, val := range typed {
+			out[key] = val
+		}
+		return out
+	case map[string]bool:
+		out := make(map[string]any, len(typed))
+		for key, val := range typed {
+			out[key] = val
+		}
+		return out
+	default:
+		payload, err := json.Marshal(value)
+		if err != nil {
+			return map[string]any{"result": value}
+		}
+		var decoded any
+		if err := json.Unmarshal(payload, &decoded); err != nil {
+			return map[string]any{"result": value}
+		}
+		if _, ok := decoded.(map[string]any); ok {
+			return decoded
+		}
+		return map[string]any{"result": decoded}
+	}
 }

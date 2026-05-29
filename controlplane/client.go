@@ -17,7 +17,10 @@ import (
 	"time"
 )
 
-var ErrUnauthorized = errors.New("not authenticated")
+var (
+	ErrForbidden    = errors.New("not authorized")
+	ErrUnauthorized = errors.New("not authenticated")
+)
 
 type apiErrorResponse struct {
 	Error string `json:"error"`
@@ -163,6 +166,12 @@ func (c *Client) CreateProjectCheckout(ctx context.Context, workspaceID string, 
 	path := "/api/workspaces/" + url.PathEscape(workspaceID) + "/projects/tunnels/payment-checkout"
 	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
 	return out, err
+}
+
+func (c *Client) DeleteProject(ctx context.Context, projectID string) error {
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID)
+	_, err := c.doJSON(ctx, http.MethodDelete, path, nil, nil)
+	return err
 }
 
 func (c *Client) CreateProjectTURNCredentials(ctx context.Context, projectID string) (TURNCredentials, error) {
@@ -404,8 +413,11 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		responseBody, _ := io.ReadAll(resp.Body)
 		message := controlPlaneErrorMessage(resp.Status, responseBody)
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		if resp.StatusCode == http.StatusUnauthorized {
 			return resp.StatusCode, fmt.Errorf("%w: %s", ErrUnauthorized, message)
+		}
+		if resp.StatusCode == http.StatusForbidden {
+			return resp.StatusCode, fmt.Errorf("%w: %s", ErrForbidden, message)
 		}
 		c.logger.Debug("control-plane response", "status", resp.StatusCode, "statusText", resp.Status)
 		return resp.StatusCode, errors.New(message)

@@ -12,18 +12,18 @@ import (
 	"time"
 )
 
-func configureMCPPreviewProcess(cmd *exec.Cmd) {
+func configureMCPLocalTunnelProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 }
 
-func mcpPreviewProcessRunning(pid int) bool {
+func mcpLocalTunnelProcessRunning(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
 	return syscall.Kill(pid, 0) == nil
 }
 
-func terminateMCPPreviewProcess(pid int) error {
+func terminateMCPLocalTunnelProcess(pid int) error {
 	process, err := os.FindProcess(pid)
 	if err != nil {
 		return err
@@ -33,7 +33,7 @@ func terminateMCPPreviewProcess(pid int) error {
 		return err
 	}
 	for i := 0; i < 25; i++ {
-		if !mcpPreviewProcessRunning(pid) {
+		if !mcpLocalTunnelProcessRunning(pid) {
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)

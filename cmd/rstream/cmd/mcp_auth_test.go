@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -28,11 +29,12 @@ func TestMCPAuthStartAndPollStoresTokenWithoutReturningIt(t *testing.T) {
 			}
 			scope := r.Form.Get("scope")
 			hasPlanRead := strings.Contains(scope, "account.plan.read-only")
-			hasProjectRead := strings.Contains(scope, "account.projects.read-only")
+			hasProjectWrite := strings.Contains(scope, "account.projects.read-write")
 			hasTokenCreate := strings.Contains(scope, "account.tokens.create")
 			hasWorkspaceRead := strings.Contains(scope, "account.workspaces.read-only")
 			hasStreamRead := strings.Contains(scope, "network.streams.read-only")
-			if r.Form.Get("client_id") != rstreamOAuthClientID || !hasPlanRead || !hasProjectRead || !hasTokenCreate || !hasWorkspaceRead || !hasStreamRead {
+			hasTunnelCreate := strings.Contains(scope, "tunnels.tunnels.create-delete")
+			if r.Form.Get("client_id") != rstreamOAuthClientID || !hasPlanRead || !hasProjectWrite || !hasTokenCreate || !hasWorkspaceRead || !hasStreamRead || !hasTunnelCreate {
 				t.Fatalf("unexpected device authorization form: %s", r.Form.Encode())
 			}
 			_ = json.NewEncoder(w).Encode(controlplane.OAuthDeviceAuthorizationResponse{DeviceCode: "device-code", UserCode: "USER-CODE", VerificationURI: serverURL(r, "/activate"), VerificationURIComplete: serverURL(r, "/activate?user_code=USER-CODE"), ExpiresIn: 60, Interval: 1})
@@ -57,7 +59,7 @@ func TestMCPAuthStartAndPollStoresTokenWithoutReturningIt(t *testing.T) {
 		t.Fatalf("mcpAuthStart returned error: %v", err)
 	}
 	startText := mcpResultText(t, start)
-	if strings.Contains(startText, "device-code") || strings.Contains(startText, "approved-token") || !strings.Contains(startText, "USER-CODE") {
+	if strings.Contains(startText, "device-code") || strings.Contains(startText, "approved-token") || strings.Contains(startText, `"user_code"`) || !strings.Contains(startText, "user_code=USER-CODE") {
 		t.Fatalf("unexpected start response: %s", startText)
 	}
 	var startPayload struct {
@@ -108,7 +110,7 @@ func TestMCPRuntimeStatusRequiresTokenToBeReady(t *testing.T) {
 		t.Fatalf("mcpRuntimeStatus returned error: %v", err)
 	}
 	statusText := mcpResultText(t, status)
-	if !strings.Contains(statusText, `"ready": false`) || !strings.Contains(statusText, `"needs_login": true`) || !strings.Contains(statusText, `"has_token": false`) {
+	if !strings.Contains(statusText, `"ready": false`) || !strings.Contains(statusText, `"needs_login": true`) || !strings.Contains(statusText, `"has_token": false`) || !strings.Contains(statusText, `"suggested_next_tool": "rstream_auth_start"`) {
 		t.Fatalf("unexpected clean runtime status: %s", statusText)
 	}
 }
@@ -122,7 +124,8 @@ func TestMCPAuthStartCanRequestExplicitPermissions(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(controlplane.OAuthAuthorizationServerMetadata{DeviceAuthorizationEndpoint: "/oauth/device_authorization", TokenEndpoint: "/oauth/token"})
 		case "/oauth/device_authorization":
 			form := readOAuthTestForm(t, r)
-			if form.Get("scope") != "account.projects.read-write account.plan.read-only" {
+			scope := form.Get("scope")
+			if !strings.Contains(scope, "account.projects.read-write") || !strings.Contains(scope, "account.plan.read-only") || !strings.Contains(scope, "tunnels.tunnels.create-delete") || strings.Contains(scope, "account.projects.read-only") {
 				t.Fatalf("unexpected explicit scope: %q", form.Get("scope"))
 			}
 			_ = json.NewEncoder(w).Encode(controlplane.OAuthDeviceAuthorizationResponse{DeviceCode: "device-code", UserCode: "USER-CODE", VerificationURI: serverURL(r, "/activate"), ExpiresIn: 60, Interval: 1})
@@ -136,8 +139,43 @@ func TestMCPAuthStartCanRequestExplicitPermissions(t *testing.T) {
 		t.Fatalf("mcpAuthStart returned error: %v", err)
 	}
 	text := mcpResultText(t, start)
-	if !strings.Contains(text, "account.projects.read-write") || !strings.Contains(text, "account.plan.read-only") {
+	if !strings.Contains(text, "account.projects.read-write") || !strings.Contains(text, "account.plan.read-only") || !strings.Contains(text, "tunnels.tunnels.create-delete") {
 		t.Fatalf("start response did not include explicit scopes: %s", text)
+	}
+}
+
+func TestMCPAuthStartUsesSingleConfiguredEnvironmentAPIURL(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	requestedDeviceAuthorization := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/oauth-authorization-server":
+			_ = json.NewEncoder(w).Encode(controlplane.OAuthAuthorizationServerMetadata{DeviceAuthorizationEndpoint: "/oauth/device_authorization", TokenEndpoint: "/oauth/token"})
+		case "/oauth/device_authorization":
+			requestedDeviceAuthorization = true
+			_ = json.NewEncoder(w).Encode(controlplane.OAuthDeviceAuthorizationResponse{DeviceCode: "device-code", UserCode: "USER-CODE", VerificationURI: serverURL(r, "/activate"), VerificationURIComplete: serverURL(r, "/activate?user_code=USER-CODE"), ExpiresIn: 60, Interval: 1})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	if err := os.WriteFile(configPath, []byte(`version: 1
+environments:
+  - apiUrl: `+server.URL+`
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	t.Setenv("RSTREAM_CONFIG", configPath)
+	start, err := mcpAuthStart(t.Context(), map[string]json.RawMessage{})
+	if err != nil {
+		t.Fatalf("mcpAuthStart returned error: %v", err)
+	}
+	if !requestedDeviceAuthorization {
+		t.Fatalf("mcpAuthStart did not use the configured environment API URL")
+	}
+	text := mcpResultText(t, start)
+	if !strings.Contains(text, `"api_url": "`+server.URL+`"`) || !strings.Contains(text, server.URL+`/activate?user_code=USER-CODE`) {
+		t.Fatalf("unexpected auth start response: %s", text)
 	}
 }
 
@@ -207,11 +245,15 @@ func readOAuthTestForm(t *testing.T, r *http.Request) url.Values {
 
 func mcpResultText(t *testing.T, result map[string]any) string {
 	t.Helper()
-	content, ok := result["content"].([]map[string]string)
-	if !ok || len(content) != 1 {
+	content, ok := result["content"].([]map[string]any)
+	if !ok || len(content) == 0 {
 		t.Fatalf("unexpected MCP result content: %#v", result["content"])
 	}
-	return content[0]["text"]
+	text, ok := content[0]["text"].(string)
+	if !ok {
+		t.Fatalf("unexpected MCP text content: %#v", content[0])
+	}
+	return text
 }
 
 func serverURL(r *http.Request, path string) string {

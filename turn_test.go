@@ -23,13 +23,13 @@ func TestCreateTURNCredentialsAutoUsesPATDerivation(t *testing.T) {
 	token := turnTestToken(t, map[string]string{"type": "pat", "token_endpoint": "b95faf7f"})
 	res, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{
 		Token:           token,
-		ProjectEndpoint: "bbc44f81",
+		ProjectEndpoint: "abc12345",
 		ClusterDomain:   "aws-eu-west-3-1.c.rstream.io",
 	})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
 	}
-	if !strings.HasPrefix(res.Username, "v1:") || !strings.Contains(res.Username, ":pat:bbc44f81:b95faf7f") {
+	if !strings.HasPrefix(res.Username, "v1:") || !strings.Contains(res.Username, ":pat:abc12345:b95faf7f") {
 		t.Fatalf("unexpected username: %s", res.Username)
 	}
 	if len(res.URLs) != 4 || res.TTL != int(defaultTURNCredentialTTL.Seconds()) {
@@ -41,7 +41,7 @@ func TestCreateTURNCredentialsExplicitPATRejectsAppToken(t *testing.T) {
 	token := turnTestToken(t, map[string]string{"type": "app", "clientId": "abc"})
 	_, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{
 		Token:           token,
-		ProjectEndpoint: "bbc44f81",
+		ProjectEndpoint: "abc12345",
 		ClusterDomain:   "aws-eu-west-3-1.c.rstream.io",
 		Mode:            modePtr(TURNCredentialModePAT),
 	})
@@ -53,7 +53,7 @@ func TestCreateTURNCredentialsExplicitPATRejectsAppToken(t *testing.T) {
 func TestCreateTURNCredentialsFallsBackToAPIForLegacyPAT(t *testing.T) {
 	token := turnTestToken(t, map[string]string{"type": "pat"})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.EscapedPath(); got != "/api/projects/tunnels/resolve/bbc44f81/turn-server/credentials" {
+		if got := r.URL.EscapedPath(); got != "/api/projects/tunnels/resolve/abc12345/turn-server/credentials" {
 			t.Fatalf("unexpected path: %s", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -63,7 +63,7 @@ func TestCreateTURNCredentialsFallsBackToAPIForLegacyPAT(t *testing.T) {
 	res, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{
 		APIURL:          server.URL,
 		Token:           token,
-		ProjectEndpoint: "bbc44f81",
+		ProjectEndpoint: "abc12345",
 	})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)
@@ -85,7 +85,7 @@ func TestCreateTURNCredentialsExplicitAPIAcceptsOpaqueToken(t *testing.T) {
 	res, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{
 		APIURL:          server.URL,
 		Token:           "opaque-token",
-		ProjectEndpoint: "bbc44f81",
+		ProjectEndpoint: "abc12345",
 		Mode:            modePtr(TURNCredentialModeAPI),
 	})
 	if err != nil {
@@ -112,7 +112,7 @@ func TestCreateTURNCredentialsAPIModeForwardsExplicitTTL(t *testing.T) {
 	res, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{
 		APIURL:          server.URL,
 		Token:           "opaque-token",
-		ProjectEndpoint: "bbc44f81",
+		ProjectEndpoint: "abc12345",
 		TTL:             2 * time.Minute,
 		Mode:            modePtr(TURNCredentialModeAPI),
 	})
@@ -167,7 +167,7 @@ func TestCreateTURNCredentialsPATRejectsExpiredToken(t *testing.T) {
 	})
 	_, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{
 		Token:           token,
-		ProjectEndpoint: "bbc44f81",
+		ProjectEndpoint: "abc12345",
 		ClusterDomain:   "aws-eu-west-3-1.c.rstream.io",
 		Mode:            modePtr(TURNCredentialModePAT),
 	})
