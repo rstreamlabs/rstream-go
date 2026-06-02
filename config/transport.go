@@ -16,6 +16,7 @@ type TransportConfig struct {
 	IPFamily string       `yaml:"ipFamily,omitempty"`
 	DNS      *DNSConfig   `yaml:"dns,omitempty"`
 	MPTCP    *bool        `yaml:"mptcp,omitempty"`
+	TLS      *TLSConfig   `yaml:"tls,omitempty"`
 	Proxy    *ProxyConfig `yaml:"proxy,omitempty"`
 	UseQUIC  *bool        `yaml:"useQuic,omitempty"`
 }
@@ -43,6 +44,12 @@ type ProxyConfig struct {
 	TLS             *ProxyTLSConfig   `yaml:"tls,omitempty"`
 }
 
+type TLSConfig struct {
+	CAFile             string `yaml:"caFile,omitempty"`
+	ServerName         string `yaml:"serverName,omitempty"`
+	InsecureSkipVerify *bool  `yaml:"insecureSkipVerify,omitempty"`
+}
+
 type ProxyTLSConfig struct {
 	CAFile             string `yaml:"caFile,omitempty"`
 	ServerName         string `yaml:"serverName,omitempty"`
@@ -63,6 +70,10 @@ func MergeTransport(base, override *TransportConfig) *TransportConfig {
 		if base.DNS != nil {
 			dnsCopy := *base.DNS
 			out.DNS = &dnsCopy
+		}
+		if base.TLS != nil {
+			tlsCopy := *base.TLS
+			out.TLS = &tlsCopy
 		}
 		if base.Proxy != nil {
 			proxyCopy := *base.Proxy
@@ -119,6 +130,20 @@ func MergeTransport(base, override *TransportConfig) *TransportConfig {
 	}
 	if override.MPTCP != nil {
 		out.MPTCP = override.MPTCP
+	}
+	if override.TLS != nil {
+		if out.TLS == nil {
+			out.TLS = &TLSConfig{}
+		}
+		if override.TLS.CAFile != "" {
+			out.TLS.CAFile = override.TLS.CAFile
+		}
+		if override.TLS.ServerName != "" {
+			out.TLS.ServerName = override.TLS.ServerName
+		}
+		if override.TLS.InsecureSkipVerify != nil {
+			out.TLS.InsecureSkipVerify = override.TLS.InsecureSkipVerify
+		}
 	}
 	if override.UseQUIC != nil {
 		out.UseQUIC = override.UseQUIC
@@ -364,6 +389,13 @@ func validateProxyTLSConfig(proxy *ProxyConfig) error {
 	return nil
 }
 
+func EngineTLSConfig(cfg *TransportConfig) (*tls.Config, error) {
+	if cfg == nil || cfg.TLS == nil {
+		return nil, nil
+	}
+	return tlsConfigFromSettings(cfg.TLS.CAFile, cfg.TLS.ServerName, cfg.TLS.InsecureSkipVerify, "engine")
+}
+
 func boolPtrValue(value *bool) bool {
 	return value != nil && *value
 }
@@ -372,12 +404,16 @@ func proxyTLSConfig(cfg *ProxyTLSConfig) (*tls.Config, error) {
 	if cfg == nil {
 		return nil, nil
 	}
+	return tlsConfigFromSettings(cfg.CAFile, cfg.ServerName, cfg.InsecureSkipVerify, "proxy")
+}
+
+func tlsConfigFromSettings(caFile string, serverName string, insecureSkipVerify *bool, label string) (*tls.Config, error) {
 	out := &tls.Config{}
 	set := false
-	if cfg.CAFile != "" {
-		certs, err := os.ReadFile(cfg.CAFile)
+	if caFile != "" {
+		certs, err := os.ReadFile(caFile)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read proxy CA file %q: %w", cfg.CAFile, err)
+			return nil, fmt.Errorf("failed to read %s CA file %q: %w", label, caFile, err)
 		}
 		pool, err := x509.SystemCertPool()
 		if err != nil {
@@ -387,17 +423,17 @@ func proxyTLSConfig(cfg *ProxyTLSConfig) (*tls.Config, error) {
 			pool = x509.NewCertPool()
 		}
 		if !pool.AppendCertsFromPEM(certs) {
-			return nil, fmt.Errorf("proxy CA file %q does not contain a valid PEM certificate", cfg.CAFile)
+			return nil, fmt.Errorf("%s CA file %q does not contain a valid PEM certificate", label, caFile)
 		}
 		out.RootCAs = pool
 		set = true
 	}
-	if cfg.ServerName != "" {
-		out.ServerName = cfg.ServerName
+	if serverName != "" {
+		out.ServerName = serverName
 		set = true
 	}
-	if cfg.InsecureSkipVerify != nil {
-		out.InsecureSkipVerify = *cfg.InsecureSkipVerify
+	if insecureSkipVerify != nil {
+		out.InsecureSkipVerify = *insecureSkipVerify
 		set = true
 	}
 	if !set {

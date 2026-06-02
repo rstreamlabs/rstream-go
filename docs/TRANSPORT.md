@@ -78,7 +78,29 @@ transport:
 
 Only one proxy type may be configured at a time. Configurations that set both `proxy.http` and `proxy.socks5` are rejected before the engine session is established.
 
-HTTPS and MASQUE proxy verification uses the system trust store by default. Private proxy PKI can be configured with a dedicated CA bundle, and the setting applies only to the proxy hop; the rstream edge TLS verification remains independent.
+Engine TLS verification uses the system trust store by default. Self-hosted engines with a private CA can attach that CA to the selected context:
+
+```yaml
+transport:
+  tls:
+    caFile: "/etc/rstream/engine-ca.pem"
+    serverName: "engine.internal.example"
+```
+
+The engine TLS block follows the usual TLS client shape: `caFile` adds a PEM trust bundle for the Engine certificate, `serverName` overrides the SNI and verification name, and `insecureSkipVerify` disables Engine certificate verification. `insecureSkipVerify` is intended for short diagnostics only; production agents should use `caFile` or the system trust store.
+
+The same settings are available when creating or updating a context:
+
+```bash
+rstream context create local \
+  --engine engine.internal.example:443 \
+  --token-file /etc/rstream/token \
+  --engine-tls-ca-file /etc/rstream/engine-ca.pem \
+  --default \
+  --no-api-url
+```
+
+HTTPS and MASQUE proxy verification uses the system trust store by default. Private proxy PKI can be configured with a dedicated CA bundle, and the setting applies only to the proxy hop; Engine TLS verification remains independent.
 
 ```yaml
 transport:

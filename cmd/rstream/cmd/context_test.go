@@ -24,6 +24,8 @@ func TestTransportFromFlags(t *testing.T) {
 	mustSetFlag(t, command, "ip-family", "ipv6")
 	mustSetFlag(t, command, "dns-override", "1.1.1.1:853")
 	mustSetFlag(t, command, "mptcp", "true")
+	mustSetFlag(t, command, "engine-tls-ca-file", "/tmp/engine-ca.pem")
+	mustSetFlag(t, command, "engine-tls-server-name", "engine.local")
 	mustSetFlag(t, command, "proxy-http", "http://proxy.local:3128")
 	mustSetFlag(t, command, "proxy-username", "user")
 	mustSetFlag(t, command, "proxy-password", "pass")
@@ -43,6 +45,9 @@ func TestTransportFromFlags(t *testing.T) {
 	}
 	if cfg.MPTCP == nil || !*cfg.MPTCP {
 		t.Fatalf("mptcp flag not parsed")
+	}
+	if cfg.TLS == nil || cfg.TLS.CAFile != "/tmp/engine-ca.pem" || cfg.TLS.ServerName != "engine.local" {
+		t.Fatalf("engine TLS flags not parsed: %#v", cfg.TLS)
 	}
 	if cfg.Proxy == nil || cfg.Proxy.HTTP != "http://proxy.local:3128" || cfg.Proxy.Username != "user" || cfg.Proxy.Password != "pass" {
 		t.Fatalf("proxy flags not parsed: %#v", cfg.Proxy)

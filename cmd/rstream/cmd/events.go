@@ -3,8 +3,11 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,15 +23,38 @@ import (
 )
 
 var (
-	eventsFilter             []string
-	eventsTransport          string // sse | websocket
-	eventsClientFilter       string
-	eventsTunnelFilter       string
-	eventsForwardTo          string
-	eventsForwardInsecureTLS bool
+	eventsFilter                []string
+	eventsTransport             string // sse | websocket
+	eventsClientFilter          string
+	eventsTunnelFilter          string
+	eventsForwardTo             string
+	eventsForwardInsecureTLS    bool
+	eventsWebhookMode           bool
+	eventsWebhookSecret         string
+	eventsWebhookID             string
+	eventsIncludeWebhookHeaders bool
 )
 
 const maxEventsForwardErrorBody = 4096
+
+type eventsForwarder func(ctx context.Context, body []byte, headers http.Header) error
+
+type eventsHandlerOptions struct {
+	TypeFilter     map[string]struct{}
+	WebhookMode    bool
+	WebhookSecret  string
+	WebhookID      string
+	IncludeHeaders bool
+	Forward        eventsForwarder
+	Stdout         io.Writer
+	Now            func() time.Time
+	NewID          func(prefix string) (string, error)
+}
+
+type eventsWebhookOutput struct {
+	Headers map[string]string    `json:"headers"`
+	Body    rstream.WebhookEvent `json:"body"`
+}
 
 var eventsCmd = &cobra.Command{
 	GroupID:      "common",
@@ -75,53 +101,50 @@ var eventsCmd = &cobra.Command{
 				watchParams.Tunnels = tunnelParams.Filters
 			}
 		}
-		var forward func(ctx context.Context, body []byte) error
-		if strings.TrimSpace(eventsForwardTo) != "" {
-			dst, err := url.Parse(eventsForwardTo)
-			if err != nil {
-				return fmt.Errorf("invalid --forward-to: %w", err)
-			}
-			cl := &http.Client{
-				Timeout:       10 * time.Second,
-				CheckRedirect: sameHostRedirectPolicy,
-			}
-			if dst.Scheme == "https" && eventsForwardInsecureTLS {
-				cl.Transport = &http.Transport{
-					TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		if eventsWebhookMode {
+			for eventType := range typeFilter {
+				if !rstream.IsWebhookDeliverableEventType(eventType) {
+					return fmt.Errorf("%q is not deliverable as a webhook event", eventType)
 				}
-			}
-			forward = func(ctx context.Context, body []byte) error {
-				req, err := http.NewRequestWithContext(ctx, http.MethodPost, dst.String(), strings.NewReader(string(body)))
-				if err != nil {
-					return err
-				}
-				req.Header.Set("Content-Type", "application/json")
-				resp, err := cl.Do(req)
-				if err != nil {
-					return err
-				}
-				defer resp.Body.Close()
-				if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-					b, _ := io.ReadAll(io.LimitReader(resp.Body, maxEventsForwardErrorBody))
-					return fmt.Errorf("forward failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(b)))
-				}
-				return nil
 			}
 		}
-		handler := func(event rstream.Event) error {
-			if len(typeFilter) > 0 {
-				if _, ok := typeFilter[event.Type]; !ok {
-					return nil
-				}
+		webhookSecret := strings.TrimSpace(eventsWebhookSecret)
+		if eventsWebhookMode && webhookSecret == "" {
+			webhookSecret, err = rstream.GenerateWebhookSigningSecret()
+			if err != nil {
+				return fmt.Errorf("generate webhook signing secret: %w", err)
 			}
-			b, err := json.Marshal(event)
+			fmt.Fprintf(cmd.ErrOrStderr(), "Webhook signing secret: %s\n", webhookSecret)
+		}
+		webhookID := strings.TrimSpace(eventsWebhookID)
+		if eventsWebhookMode && webhookID == "" {
+			webhookID, err = newEventsCLIID("cli_we")
+			if err != nil {
+				return fmt.Errorf("generate webhook id: %w", err)
+			}
+		}
+		var forward eventsForwarder
+		if strings.TrimSpace(eventsForwardTo) != "" {
+			forward, err = newEventsForwarder(eventsForwardTo, eventsForwardInsecureTLS)
 			if err != nil {
 				return err
 			}
-			if forward != nil {
-				return forward(ctx, b)
+			if !eventsWebhookMode {
+				fmt.Fprintln(cmd.ErrOrStderr(), "Warning: --forward-to sends raw watch events. Use --webhook to test webhook-compatible payloads and signatures.")
 			}
-			_, err = os.Stdout.Write(append(b, '\n'))
+		}
+		handler, err := newEventsHandler(ctx, eventsHandlerOptions{
+			TypeFilter:     typeFilter,
+			WebhookMode:    eventsWebhookMode,
+			WebhookSecret:  webhookSecret,
+			WebhookID:      webhookID,
+			IncludeHeaders: eventsIncludeWebhookHeaders,
+			Forward:        forward,
+			Stdout:         os.Stdout,
+			Now:            time.Now,
+			NewID:          newEventsCLIID,
+		})
+		if err != nil {
 			return err
 		}
 		err = client.Watch(ctx, strings.ToLower(strings.TrimSpace(eventsTransport)), watchParams, handler)
@@ -139,10 +162,164 @@ func init() {
 	eventsCmd.Flags().StringVar(&eventsTransport, "transport", "websocket", "Transport to use (sse, websocket)")
 	eventsCmd.Flags().StringVar(&eventsClientFilter, "client-filter", "", "Server-side client filters, e.g. \"status=online,agent=rstream\"")
 	eventsCmd.Flags().StringVar(&eventsTunnelFilter, "tunnel-filter", "", "Server-side tunnel filters, e.g. \"name=ssh-prod-01,labels.env=prod\"")
-	eventsCmd.Flags().StringVar(&eventsForwardTo, "forward-to", "", "URL to forward the webhook events to")
+	eventsCmd.Flags().StringVar(&eventsForwardTo, "forward-to", "", "URL to forward events to")
 	eventsCmd.Flags().BoolVar(&eventsForwardInsecureTLS, "forward-insecure-tls", false, "Skip TLS verification when forwarding events")
+	eventsCmd.Flags().BoolVar(&eventsWebhookMode, "webhook", false, "Emit and forward webhook-compatible payloads with signed headers")
+	eventsCmd.Flags().StringVar(&eventsWebhookSecret, "webhook-secret", "", "Webhook signing secret to use in --webhook mode")
+	eventsCmd.Flags().StringVar(&eventsWebhookID, "webhook-id", "", "Webhook ID to use in --webhook mode headers")
+	eventsCmd.Flags().BoolVar(&eventsIncludeWebhookHeaders, "include-webhook-headers", false, "Include webhook headers in stdout when using --webhook without --forward-to")
 	eventsCmd.Flags().StringP("output", "o", "json", "output mode (json, ndjson)")
 	rootCmd.AddCommand(eventsCmd)
+}
+
+func newEventsHandler(ctx context.Context, opts eventsHandlerOptions) (func(rstream.Event) error, error) {
+	if opts.Stdout == nil {
+		opts.Stdout = os.Stdout
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
+	if opts.NewID == nil {
+		opts.NewID = newEventsCLIID
+	}
+	if opts.WebhookMode {
+		if strings.TrimSpace(opts.WebhookSecret) == "" {
+			return nil, errors.New("webhook signing secret is required")
+		}
+		if strings.TrimSpace(opts.WebhookID) == "" {
+			return nil, errors.New("webhook id is required")
+		}
+	}
+	return func(event rstream.Event) error {
+		if len(opts.TypeFilter) > 0 {
+			if _, ok := opts.TypeFilter[event.Type]; !ok {
+				return nil
+			}
+		}
+		if opts.WebhookMode {
+			return handleWebhookModeEvent(ctx, opts, event)
+		}
+		body, err := json.Marshal(event)
+		if err != nil {
+			return err
+		}
+		if opts.Forward != nil {
+			return opts.Forward(ctx, body, nil)
+		}
+		_, err = opts.Stdout.Write(append(body, '\n'))
+		return err
+	}, nil
+}
+
+func handleWebhookModeEvent(ctx context.Context, opts eventsHandlerOptions, event rstream.Event) error {
+	if !rstream.IsWebhookDeliverableEventType(event.Type) {
+		return nil
+	}
+	fallbackID := ""
+	if strings.TrimSpace(event.ID) == "" {
+		var err error
+		fallbackID, err = opts.NewID("evt_cli")
+		if err != nil {
+			return err
+		}
+	}
+	webhookEvent, err := rstream.EventToWebhookEvent(event, fallbackID, opts.Now())
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(webhookEvent)
+	if err != nil {
+		return err
+	}
+	deliveryID, err := opts.NewID("cli_del")
+	if err != nil {
+		return err
+	}
+	headerValues, err := rstream.BuildWebhookHeaderValues(body, webhookEvent, opts.WebhookSecret, rstream.WebhookHeaderOptions{
+		WebhookID:  opts.WebhookID,
+		DeliveryID: deliveryID,
+		Timestamp:  opts.Now(),
+	})
+	if err != nil {
+		return err
+	}
+	if opts.Forward != nil {
+		return opts.Forward(ctx, body, eventsHTTPHeaders(headerValues))
+	}
+	if opts.IncludeHeaders {
+		body, err = json.Marshal(eventsWebhookOutput{Headers: eventsHeaderMap(headerValues), Body: webhookEvent})
+		if err != nil {
+			return err
+		}
+	}
+	_, err = opts.Stdout.Write(append(body, '\n'))
+	return err
+}
+
+func newEventsForwarder(rawURL string, insecureTLS bool) (eventsForwarder, error) {
+	dst, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --forward-to: %w", err)
+	}
+	if dst.Scheme != "http" && dst.Scheme != "https" {
+		return nil, fmt.Errorf("invalid --forward-to: expected http or https URL, got %q", dst.Scheme)
+	}
+	cl := &http.Client{
+		Timeout:       10 * time.Second,
+		CheckRedirect: sameHostRedirectPolicy,
+	}
+	if dst.Scheme == "https" && insecureTLS {
+		cl.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+	}
+	return func(ctx context.Context, body []byte, headers http.Header) error {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, dst.String(), bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		for key, values := range headers {
+			req.Header.Del(key)
+			for _, value := range values {
+				req.Header.Add(key, value)
+			}
+		}
+		resp, err := cl.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			b, _ := io.ReadAll(io.LimitReader(resp.Body, maxEventsForwardErrorBody))
+			return fmt.Errorf("forward failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		}
+		return nil
+	}, nil
+}
+
+func eventsHTTPHeaders(values rstream.WebhookHeaderValues) http.Header {
+	headers := http.Header{}
+	values.ApplyTo(headers)
+	return headers
+}
+
+func eventsHeaderMap(values rstream.WebhookHeaderValues) map[string]string {
+	return map[string]string{
+		rstream.WebhookSignatureHeader:  values.Signature,
+		rstream.WebhookEventIDHeader:    values.EventID,
+		rstream.WebhookEventTypeHeader:  values.EventType,
+		rstream.WebhookIDHeader:         values.WebhookID,
+		rstream.WebhookDeliveryIDHeader: values.DeliveryID,
+	}
+}
+
+func newEventsCLIID(prefix string) (string, error) {
+	buf := make([]byte, 12)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return strings.TrimRight(prefix, "_") + "_" + hex.EncodeToString(buf), nil
 }
 
 func sameHostRedirectPolicy(req *http.Request, via []*http.Request) error {
