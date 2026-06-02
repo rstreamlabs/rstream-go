@@ -52,6 +52,13 @@ jobs:
       - name: Print Go version
         shell: bash
         run: go version
+      - name: Install protobuf compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v protoc >/dev/null 2>&1; then
+            brew install protobuf
+          fi
       - name: Build macOS binaries with native credential backends
         shell: bash
         run: |
