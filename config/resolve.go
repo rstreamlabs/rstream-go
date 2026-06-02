@@ -157,17 +157,21 @@ func Resolve(input ResolveInput) (Resolved, error) {
 		return Resolved{}, errors.New("authentication is required but not configured (run rstream login, set RSTREAM_AUTHENTICATION_TOKEN, or set RSTREAM_MTLS_CERT_FILE and RSTREAM_MTLS_KEY_FILE)")
 	}
 	var transport rstream.Dialer
+	var transportConfig *TransportConfig
 	if ctx != nil {
-		var merged *TransportConfig
 		if env != nil && NormalizeAPIURL(ctx.APIURL) != "" && NormalizeAPIURL(ctx.APIURL) == NormalizeAPIURL(env.APIURL) {
-			merged = MergeTransport(envTransport(env), ctxTransport(ctx))
+			transportConfig = MergeTransport(envTransport(env), ctxTransport(ctx))
 		} else {
-			merged = MergeTransport(nil, ctxTransport(ctx))
+			transportConfig = MergeTransport(nil, ctxTransport(ctx))
 		}
-		transport, err = FlattenTransportWithError(merged)
+		transport, err = FlattenTransportWithError(transportConfig)
 		if err != nil {
 			return Resolved{}, err
 		}
+	}
+	tlsClientConfig, err := mergeTLSClientConfig(mtlsConfig, transportConfig)
+	if err != nil {
+		return Resolved{}, err
 	}
 	return Resolved{
 		APIURL:          apiURL,
@@ -177,8 +181,30 @@ func Resolve(input ResolveInput) (Resolved, error) {
 		Engine:          engine,
 		Token:           token,
 		Transport:       transport,
-		TLSClientConfig: mtlsConfig,
+		TLSClientConfig: tlsClientConfig,
 	}, nil
+}
+
+func mergeTLSClientConfig(mtlsConfig *tls.Config, transportConfig *TransportConfig) (*tls.Config, error) {
+	engineTLSConfig, err := EngineTLSConfig(transportConfig)
+	if err != nil {
+		return nil, err
+	}
+	if mtlsConfig == nil {
+		return engineTLSConfig, nil
+	}
+	if engineTLSConfig == nil {
+		return mtlsConfig, nil
+	}
+	out := mtlsConfig.Clone()
+	if engineTLSConfig.RootCAs != nil {
+		out.RootCAs = engineTLSConfig.RootCAs
+	}
+	if engineTLSConfig.ServerName != "" {
+		out.ServerName = engineTLSConfig.ServerName
+	}
+	out.InsecureSkipVerify = engineTLSConfig.InsecureSkipVerify
+	return out, nil
 }
 
 func engineOverrideUsesStoredToken(engineOverride string, ctx *Context) bool {

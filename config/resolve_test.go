@@ -135,6 +135,45 @@ func TestResolveLinkedContextInheritsEnvToken(t *testing.T) {
 	}
 }
 
+func TestResolveContextEngineTLSConfig(t *testing.T) {
+	certFile, _ := writeTestClientCertificate(t)
+	cfg := Config{
+		Defaults: Defaults{
+			Context: &DefaultContext{
+				Name: "local",
+			},
+		},
+		Contexts: []Context{
+			{
+				Name:   "local",
+				Engine: "engine.local:8443",
+				Auth:   &Auth{Token: &Token{Storage: &TokenStorage{Kind: TokenStorageInline, Value: "token"}}},
+				Transport: &TransportConfig{
+					TLS: &TLSConfig{
+						CAFile:     certFile,
+						ServerName: "engine.local",
+					},
+				},
+			},
+		},
+	}
+	resolved, err := Resolve(ResolveInput{
+		Config:        cfg,
+		RequireEngine: true,
+		RequireToken:  true,
+		ResolveToken:  true,
+	})
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if resolved.TLSClientConfig == nil || resolved.TLSClientConfig.RootCAs == nil {
+		t.Fatalf("expected engine CA roots, got %#v", resolved.TLSClientConfig)
+	}
+	if resolved.TLSClientConfig.ServerName != "engine.local" {
+		t.Fatalf("engine TLS server name = %q", resolved.TLSClientConfig.ServerName)
+	}
+}
+
 func TestResolveRejectsStoredTokenWithEngineOverride(t *testing.T) {
 	cfg := Config{
 		Defaults: Defaults{Context: &DefaultContext{Name: "prod"}},
