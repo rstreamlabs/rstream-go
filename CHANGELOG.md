@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.0](https://github.com/rstreamlabs/rstream-go/compare/v1.19.0...v1.20.0) (2026-06-02)
+
+
+### Features
+
+* add project webhook control plane APIs ([10649b5](https://github.com/rstreamlabs/rstream-go/commit/10649b544614a733ec7c5751cb0dad0feeb721e0))
+
 ## [1.19.0](https://github.com/rstreamlabs/rstream-go/compare/v1.18.0...v1.19.0) (2026-05-29)
 
 
