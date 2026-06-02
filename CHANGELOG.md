@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.21.0](https://github.com/rstreamlabs/rstream-go/compare/v1.20.1...v1.21.0) (2026-06-02)
+
+
+### Features
+
+* add webhook-compatible event forwarding ([17f9ed5](https://github.com/rstreamlabs/rstream-go/commit/17f9ed5730a87b67ab1dd666461ca7cf92aef2a6))
+
 ## [1.20.1](https://github.com/rstreamlabs/rstream-go/compare/v1.20.0...v1.20.1) (2026-06-02)
 
 
