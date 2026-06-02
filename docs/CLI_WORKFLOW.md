@@ -158,6 +158,17 @@ rstream context create <name> --engine <host:port> --token-file /path/to/token -
 
 For mTLS agent authentication, store certificate paths in the selected config context or set `RSTREAM_MTLS_CERT_FILE` and `RSTREAM_MTLS_KEY_FILE`.
 
+For self-hosted engines using a private CA, attach the CA to the context so CLI and SDK calls verify Engine TLS without relying on a workstation trust-store change:
+
+```bash
+rstream context create <name> \
+  --engine <host:port> \
+  --token-file /path/to/token \
+  --engine-tls-ca-file /path/to/engine-ca.pem \
+  --default \
+  --no-api-url
+```
+
 ### 2) Forward a local port
 
 ```bash
@@ -234,6 +245,21 @@ rstream events -o json
 ```
 
 Commands that wait for browser approval keep progress messages on stderr when `-o json` is selected, so stdout remains machine-readable.
+
+For local webhook receiver tests, use the webhook-compatible event mode:
+
+```bash
+rstream events \
+  --webhook \
+  --events tunnel.created,tunnel.deleted \
+  --forward-to http://localhost:3000/api/rstream/webhook
+```
+
+The command prints a generated `whsec_...` signing secret to stderr when
+`--webhook-secret` is not provided. The receiving backend should use that same
+secret to verify `rstream-signature`. `--forward-to` can target `http://`
+receivers for local development and `https://` receivers when testing a deployed
+backend.
 
 ## Codex and local MCP
 

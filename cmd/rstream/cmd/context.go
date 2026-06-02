@@ -406,6 +406,9 @@ func addContextTransportFlags(cmd *cobra.Command) {
 	cmd.Flags().String("ip-family", "", "force IP family (ipv4, ipv6)")
 	cmd.Flags().String("dns-override", "", "override DNS server (e.g. 8.8.8.8:53)")
 	cmd.Flags().Bool("mptcp", false, "enable MPTCP support")
+	cmd.Flags().String("engine-tls-ca-file", "", "PEM CA bundle used to verify Engine TLS")
+	cmd.Flags().String("engine-tls-server-name", "", "TLS server name used when verifying Engine TLS")
+	cmd.Flags().Bool("engine-tls-insecure-skip-verify", false, "skip Engine TLS verification")
 	cmd.Flags().String("proxy-http", "", "HTTP proxy (http[s]://host[:port]) for CONNECT")
 	cmd.Flags().String("proxy-socks5", "", "SOCKS5 proxy (socks5://host[:port])")
 	cmd.Flags().String("proxy-username", "", "proxy username")
@@ -449,6 +452,21 @@ func transportFromFlags(cmd *cobra.Command) (*config.TransportConfig, error) {
 	if cmd.Flags().Changed("mptcp") {
 		val, _ := cmd.Flags().GetBool("mptcp")
 		cfg.MPTCP = &val
+		set = true
+	}
+	engineTLSCAFile, _ := cmd.Flags().GetString("engine-tls-ca-file")
+	engineTLSServerName, _ := cmd.Flags().GetString("engine-tls-server-name")
+	engineTLSInsecureChanged := cmd.Flags().Changed("engine-tls-insecure-skip-verify")
+	engineTLSInsecure, _ := cmd.Flags().GetBool("engine-tls-insecure-skip-verify")
+	engineTLSSet := engineTLSCAFile != "" || engineTLSServerName != "" || engineTLSInsecureChanged
+	if engineTLSSet {
+		cfg.TLS = &config.TLSConfig{
+			CAFile:     engineTLSCAFile,
+			ServerName: engineTLSServerName,
+		}
+		if engineTLSInsecureChanged {
+			cfg.TLS.InsecureSkipVerify = rstream.BoolPtr(engineTLSInsecure)
+		}
 		set = true
 	}
 	proxyHTTP, _ := cmd.Flags().GetString("proxy-http")

@@ -12,6 +12,7 @@ func TestMergeTransportSafeOverride(t *testing.T) {
 	base := &TransportConfig{
 		IPFamily: "ipv6",
 		DNS:      &DNSConfig{Override: "1.1.1.1:53", TLS: rstream.BoolPtr(true), ServerName: "dns.example.com", DNSSEC: rstream.BoolPtr(true)},
+		TLS:      &TLSConfig{CAFile: "/base/engine-ca.pem", ServerName: "base.engine.local"},
 		Proxy: &ProxyConfig{
 			HTTP:            "http://proxy.local:3128",
 			SOCKS5:          "socks5://socks.local:1080",
@@ -22,6 +23,7 @@ func TestMergeTransportSafeOverride(t *testing.T) {
 	}
 	override := &TransportConfig{
 		DNS: &DNSConfig{Override: ""},
+		TLS: &TLSConfig{ServerName: "override.engine.local"},
 		Proxy: &ProxyConfig{
 			Headers:         map[string]string{"X-Env": "ci"},
 			FromEnvironment: rstream.BoolPtr(true),
@@ -37,6 +39,9 @@ func TestMergeTransportSafeOverride(t *testing.T) {
 	}
 	if merged.DNS.TLS == nil || !*merged.DNS.TLS || merged.DNS.ServerName != "dns.example.com" || merged.DNS.DNSSEC == nil || !*merged.DNS.DNSSEC {
 		t.Fatalf("expected DNS advanced settings preserved, got %+v", merged.DNS)
+	}
+	if merged.TLS == nil || merged.TLS.CAFile != "/base/engine-ca.pem" || merged.TLS.ServerName != "override.engine.local" {
+		t.Fatalf("expected engine TLS settings merged, got %+v", merged.TLS)
 	}
 	if merged.Proxy == nil || merged.Proxy.HTTP != "http://proxy.local:3128" {
 		t.Fatalf("expected proxy HTTP preserved, got %+v", merged.Proxy)
@@ -59,6 +64,7 @@ func TestMergeTransportDeepCopiesNestedValues(t *testing.T) {
 	base := &TransportConfig{
 		Bind: &BindConfig{Mode: "address", Address: "127.0.0.1"},
 		DNS:  &DNSConfig{Override: "1.1.1.1:53"},
+		TLS:  &TLSConfig{ServerName: "engine.local"},
 		Proxy: &ProxyConfig{
 			HTTP:    "http://proxy.local:3128",
 			Headers: map[string]string{"X-Trace": "source"},
@@ -68,10 +74,30 @@ func TestMergeTransportDeepCopiesNestedValues(t *testing.T) {
 	merged := MergeTransport(base, nil)
 	base.Bind.Address = "10.0.0.1"
 	base.DNS.Override = "8.8.8.8:53"
+	base.TLS.ServerName = "mutated.engine.local"
 	base.Proxy.Headers["X-Trace"] = "mutated"
 	base.Proxy.TLS.ServerName = "mutated.proxy.local"
-	if merged.Bind.Address != "127.0.0.1" || merged.DNS.Override != "1.1.1.1:53" || merged.Proxy.Headers["X-Trace"] != "source" || merged.Proxy.TLS.ServerName != "source.proxy.local" {
+	if merged.Bind.Address != "127.0.0.1" || merged.DNS.Override != "1.1.1.1:53" || merged.TLS.ServerName != "engine.local" || merged.Proxy.Headers["X-Trace"] != "source" || merged.Proxy.TLS.ServerName != "source.proxy.local" {
 		t.Fatalf("merged transport should be independent from base: %#v", merged)
+	}
+}
+
+func TestEngineTLSConfig(t *testing.T) {
+	certFile, _ := writeTestClientCertificate(t)
+	tlsConfig, err := EngineTLSConfig(&TransportConfig{
+		TLS: &TLSConfig{CAFile: certFile, ServerName: "engine.local"},
+	})
+	if err != nil {
+		t.Fatalf("EngineTLSConfig() error = %v", err)
+	}
+	if tlsConfig == nil || tlsConfig.RootCAs == nil || tlsConfig.ServerName != "engine.local" {
+		t.Fatalf("engine TLS config not built: %#v", tlsConfig)
+	}
+	_, err = EngineTLSConfig(&TransportConfig{
+		TLS: &TLSConfig{CAFile: "/does/not/exist.pem"},
+	})
+	if err == nil {
+		t.Fatalf("expected invalid engine CA file error")
 	}
 }
 
