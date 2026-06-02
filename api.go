@@ -21,8 +21,14 @@ import (
 )
 
 type Event struct {
-	Type   string          `json:"type"`
-	Object json.RawMessage `json:"object"`
+	ID          string          `json:"id,omitempty"`
+	Type        string          `json:"type"`
+	CreatedAt   string          `json:"created_at,omitempty"`
+	UserID      string          `json:"user_id,omitempty"`
+	WorkspaceID string          `json:"workspace_id,omitempty"`
+	ProjectID   string          `json:"project_id,omitempty"`
+	ClusterID   string          `json:"cluster_id,omitempty"`
+	Object      json.RawMessage `json:"object"`
 }
 
 func cloneProxyHTTPHeaders(headers map[string]string) map[string]string {
