@@ -322,6 +322,10 @@ func mcpTools() []map[string]any {
 		mcpTool("rstream_project_delete", "Delete a tunnel project after explicit user approval. Use this only for the exact project the user asked to remove.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID to delete.")}, []string{"project_id"}),
 		mcpTool("rstream_project_list", "List tunnel projects available through the local rstream Control plane context. If multiple projects are returned and the user did not name one, list the choices and ask for a project name, endpoint, or ID; do not recommend a default from project names such as Dev, Test, or Prod.", map[string]any{"workspace_id": mcpStringSchema("Optional workspace ID. When omitted, lists across accessible workspaces."), "q": mcpStringSchema("Optional project search query."), "page": map[string]any{"type": "number", "description": "Optional result page."}, "page_size": map[string]any{"type": "number", "description": "Optional page size."}, "sort": mcpStringSchema("Optional sort key."), "order": mcpStringSchema("Optional sort direction.")}, []string{}),
 		mcpTool("rstream_project_logs", "List tunnel request and connection logs for a tunnel project.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID."), "timeline": mcpStringSchema("Optional timeline: 30m, 1h, 12h, 24h, 3d, 1w, or 30d."), "start": mcpStringSchema("Optional start date."), "end": mcpStringSchema("Optional end date."), "event_type": mcpStringSchema("Optional event type filter."), "after_event_id": mcpStringSchema("Optional event ID cursor."), "page": map[string]any{"type": "number", "description": "Optional result page."}, "page_size": map[string]any{"type": "number", "description": "Optional page size."}, "order": mcpStringSchema("Optional sort direction.")}, []string{"project_id"}),
+		mcpTool("rstream_project_events_list", "List canonical lifecycle events for a tunnel project. This is separate from request and connection logs.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID."), "timeline": mcpStringSchema("Optional timeline: 30m, 1h, 12h, 24h, 3d, 1w, or 30d."), "start": mcpStringSchema("Optional start date."), "end": mcpStringSchema("Optional end date."), "event_type": mcpStringSchema("Optional event type filter."), "after_event_id": mcpStringSchema("Optional event ID cursor."), "page": map[string]any{"type": "number", "description": "Optional result page."}, "page_size": map[string]any{"type": "number", "description": "Optional page size."}, "order": mcpStringSchema("Optional sort direction.")}, []string{"project_id"}),
+		mcpTool("rstream_project_webhooks_list", "List webhook destinations configured on a tunnel project.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID."), "q": mcpStringSchema("Optional webhook search query."), "status": mcpStringSchema("Optional status filter."), "destination_type": mcpStringSchema("Optional destination type filter."), "page": map[string]any{"type": "number", "description": "Optional result page."}, "page_size": map[string]any{"type": "number", "description": "Optional page size."}, "sort": mcpStringSchema("Optional sort key."), "order": mcpStringSchema("Optional sort direction.")}, []string{"project_id"}),
+		mcpTool("rstream_project_webhook_deliveries_list", "List delivery records for a webhook destination, including status and delivery metadata.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID."), "webhook_id": mcpStringSchema("Webhook ID."), "status": mcpStringSchema("Optional status filter."), "event_type": mcpStringSchema("Optional event type filter."), "start": mcpStringSchema("Optional start date."), "end": mcpStringSchema("Optional end date."), "page": map[string]any{"type": "number", "description": "Optional result page."}, "page_size": map[string]any{"type": "number", "description": "Optional page size."}, "order": mcpStringSchema("Optional sort direction.")}, []string{"project_id", "webhook_id"}),
+		mcpTool("rstream_project_webhook_delivery_get", "Get one webhook delivery with attempts, request body, response metadata, and errors.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID."), "webhook_id": mcpStringSchema("Webhook ID."), "delivery_id": mcpStringSchema("Delivery ID.")}, []string{"project_id", "webhook_id", "delivery_id"}),
 		mcpTool("rstream_project_usage", "Return current-period tunnel and TURN bandwidth usage for a tunnel project.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID.")}, []string{"project_id"}),
 		mcpTool("rstream_project_plan_get", "Return a tunnel project's current plan, feature list, and quota metadata before using plan-gated features.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID.")}, []string{"project_id"}),
 		mcpTool("rstream_project_turn_usage", "Return TURN relay usage breakdowns for the last 30 days.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID.")}, []string{"project_id"}),
@@ -394,6 +398,7 @@ func mcpToolTitle(name string) string {
 		"rstream_project_domains_list":            "List project domains",
 		"rstream_project_list":                    "List tunnel projects",
 		"rstream_project_logs":                    "Read project logs",
+		"rstream_project_events_list":             "Read project events",
 		"rstream_project_plan_get":                "Inspect project plan",
 		"rstream_project_settings_get":            "Inspect project settings",
 		"rstream_project_settings_patch":          "Update project settings",
@@ -401,6 +406,9 @@ func mcpToolTitle(name string) string {
 		"rstream_project_turn_credentials_create": "Create TURN credentials",
 		"rstream_project_turn_usage":              "Read TURN usage",
 		"rstream_project_usage":                   "Read project usage",
+		"rstream_project_webhook_deliveries_list": "List webhook deliveries",
+		"rstream_project_webhook_delivery_get":    "Inspect webhook delivery",
+		"rstream_project_webhooks_list":           "List project webhooks",
 		"rstream_remote_expose":                   "Expose remote service",
 		"rstream_remote_expose_stop":              "Stop remote exposure",
 		"rstream_remote_mcp_call":                 "Call remote MCP tool",
@@ -428,7 +436,7 @@ func mcpToolTitle(name string) string {
 
 func mcpToolAnnotations(name string) map[string]any {
 	readOnly := strings.Contains(name, "_list") || strings.Contains(name, "_get") || strings.Contains(name, "_logs") || strings.Contains(name, "_usage") || strings.Contains(name, "_status") || strings.Contains(name, "_discover") || strings.Contains(name, "_tools") || strings.Contains(name, "_read") || strings.Contains(name, "_creation_options") || strings.Contains(name, "_domain_connect") || name == "rstream_openapi"
-	destructive := strings.Contains(name, "_delete") || strings.Contains(name, "_reset") || strings.HasSuffix(name, "_stop") || strings.Contains(name, "_settings_patch") || name == "rstream_webtty_exec" || name == "rstream_webtty_fs_write" || name == "rstream_remote_mcp_call"
+	destructive := strings.Contains(name, "_delete") || strings.Contains(name, "_reset") || strings.Contains(name, "_retry") || strings.HasSuffix(name, "_stop") || strings.Contains(name, "_settings_patch") || name == "rstream_webtty_exec" || name == "rstream_webtty_fs_write" || name == "rstream_remote_mcp_call"
 	idempotent := readOnly || strings.HasSuffix(name, "_stop") || name == "rstream_runtime_prepare"
 	openWorld := strings.Contains(name, "auth") || strings.Contains(name, "project") || strings.Contains(name, "workspace") || strings.Contains(name, "token") || strings.Contains(name, "local_tunnel") || strings.Contains(name, "remote") || strings.Contains(name, "webtty") || strings.Contains(name, "turn") || name == "rstream_runtime_prepare"
 	return map[string]any{"title": mcpToolTitle(name), "readOnlyHint": readOnly, "destructiveHint": destructive, "idempotentHint": idempotent, "openWorldHint": openWorld}
@@ -483,6 +491,14 @@ func handleMCPToolCall(ctx context.Context, params json.RawMessage) (map[string]
 		return mcpProjectList(ctx, call.Arguments)
 	case "rstream_project_logs":
 		return mcpProjectLogs(ctx, call.Arguments)
+	case "rstream_project_events_list":
+		return mcpProjectEventsList(ctx, call.Arguments)
+	case "rstream_project_webhooks_list":
+		return mcpProjectWebhooksList(ctx, call.Arguments)
+	case "rstream_project_webhook_deliveries_list":
+		return mcpProjectWebhookDeliveriesList(ctx, call.Arguments)
+	case "rstream_project_webhook_delivery_get":
+		return mcpProjectWebhookDeliveryGet(ctx, call.Arguments)
 	case "rstream_project_usage":
 		return mcpProjectUsage(ctx, call.Arguments)
 	case "rstream_project_plan_get":

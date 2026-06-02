@@ -33,8 +33,11 @@ func TestMCPAuthStartAndPollStoresTokenWithoutReturningIt(t *testing.T) {
 			hasTokenCreate := strings.Contains(scope, "account.tokens.create")
 			hasWorkspaceRead := strings.Contains(scope, "account.workspaces.read-only")
 			hasStreamRead := strings.Contains(scope, "network.streams.read-only")
+			hasEventRead := strings.Contains(scope, "network.events.read-only")
+			hasWebhookRead := strings.Contains(scope, "network.webhooks.read-only")
+			hasWebhookWrite := strings.Contains(scope, "network.webhooks.read-write")
 			hasTunnelCreate := strings.Contains(scope, "tunnels.tunnels.create-delete")
-			if r.Form.Get("client_id") != rstreamOAuthClientID || !hasPlanRead || !hasProjectWrite || !hasTokenCreate || !hasWorkspaceRead || !hasStreamRead || !hasTunnelCreate {
+			if r.Form.Get("client_id") != rstreamOAuthClientID || !hasPlanRead || !hasProjectWrite || !hasTokenCreate || !hasWorkspaceRead || !hasStreamRead || !hasEventRead || !hasWebhookRead || hasWebhookWrite || !hasTunnelCreate {
 				t.Fatalf("unexpected device authorization form: %s", r.Form.Encode())
 			}
 			_ = json.NewEncoder(w).Encode(controlplane.OAuthDeviceAuthorizationResponse{DeviceCode: "device-code", UserCode: "USER-CODE", VerificationURI: serverURL(r, "/activate"), VerificationURIComplete: serverURL(r, "/activate?user_code=USER-CODE"), ExpiresIn: 60, Interval: 1})
