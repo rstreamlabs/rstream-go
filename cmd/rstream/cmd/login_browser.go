@@ -22,6 +22,7 @@ var rstreamLoginPermissions = []string{
 	"account.tokens.create",
 	"account.workspaces.read-only",
 	"network.streams.read-only",
+	"network.events.read-only",
 	"tunnels.resources.read-only",
 	"tunnels.streams.create-delete",
 	"tunnels.tunnels.create-delete",

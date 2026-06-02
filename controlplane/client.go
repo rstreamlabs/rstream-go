@@ -306,6 +306,205 @@ func (c *Client) ListProjectLogs(ctx context.Context, projectID string, params P
 	return out, err
 }
 
+func (c *Client) ListProjectEvents(ctx context.Context, projectID string, params ProjectEventsParams) (ProjectEventsResponse, error) {
+	var out ProjectEventsResponse
+	query := projectEventsQuery(params)
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/events"
+	_, err := c.doJSON(ctx, http.MethodGet, path, query, &out)
+	return out, err
+}
+
+func projectEventsQuery(params ProjectEventsParams) url.Values {
+	query := url.Values{}
+	if params.Timeline != "" {
+		query.Set("timeline", params.Timeline)
+	}
+	if params.Start != "" {
+		query.Set("start", params.Start)
+	}
+	if params.End != "" {
+		query.Set("end", params.End)
+	}
+	if params.EventType != "" {
+		query.Set("eventType", params.EventType)
+	}
+	if params.AfterEventID != "" {
+		query.Set("afterEventId", params.AfterEventID)
+	}
+	if params.Page != nil {
+		query.Set("page", strconv.Itoa(*params.Page))
+	}
+	if params.PageSize != nil {
+		query.Set("pageSize", strconv.Itoa(*params.PageSize))
+	}
+	if params.Order != "" {
+		query.Set("order", params.Order)
+	}
+	return query
+}
+
+func projectLogsQuery(params ProjectLogsParams) url.Values {
+	query := url.Values{}
+	if params.Timeline != "" {
+		query.Set("timeline", params.Timeline)
+	}
+	if params.Start != "" {
+		query.Set("start", params.Start)
+	}
+	if params.End != "" {
+		query.Set("end", params.End)
+	}
+	if params.EventType != "" {
+		query.Set("eventType", params.EventType)
+	}
+	if params.AfterEventID != "" {
+		query.Set("afterEventId", params.AfterEventID)
+	}
+	if params.Page != nil {
+		query.Set("page", strconv.Itoa(*params.Page))
+	}
+	if params.PageSize != nil {
+		query.Set("pageSize", strconv.Itoa(*params.PageSize))
+	}
+	if params.Order != "" {
+		query.Set("order", params.Order)
+	}
+	return query
+}
+
+func (c *Client) ListProjectWebhooks(ctx context.Context, projectID string, params ProjectWebhooksParams) (ProjectWebhooksResponse, error) {
+	var out ProjectWebhooksResponse
+	query := url.Values{}
+	if params.Query != "" {
+		query.Set("q", params.Query)
+	}
+	if params.Status != "" {
+		query.Set("status", string(params.Status))
+	}
+	if params.DestinationType != "" {
+		query.Set("destinationType", string(params.DestinationType))
+	}
+	if params.Page != nil {
+		query.Set("page", strconv.Itoa(*params.Page))
+	}
+	if params.PageSize != nil {
+		query.Set("pageSize", strconv.Itoa(*params.PageSize))
+	}
+	if params.Sort != "" {
+		query.Set("sort", params.Sort)
+	}
+	if params.Order != "" {
+		query.Set("order", params.Order)
+	}
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webhooks"
+	_, err := c.doJSON(ctx, http.MethodGet, path, query, &out)
+	return out, err
+}
+
+func (c *Client) CreateProjectWebhook(ctx context.Context, projectID string, request CreateProjectWebhookRequest) (ProjectWebhook, error) {
+	var out ProjectWebhook
+	if request.DestinationType == "" {
+		request.DestinationType = ProjectWebhookDestinationEndpoint
+	}
+	if err := validateProjectWebhookDestination(request.DestinationType); err != nil {
+		return out, err
+	}
+	if err := validateProjectWebhookEndpointConfig(request.Config); err != nil {
+		return out, err
+	}
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webhooks"
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
+	return out, err
+}
+
+func (c *Client) GetProjectWebhook(ctx context.Context, projectID string, webhookID string) (ProjectWebhook, error) {
+	var out ProjectWebhook
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webhooks/" + url.PathEscape(webhookID)
+	_, err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) UpdateProjectWebhook(ctx context.Context, projectID string, webhookID string, request UpdateProjectWebhookRequest) (ProjectWebhook, error) {
+	var out ProjectWebhook
+	if request.Config != nil {
+		if err := validateProjectWebhookEndpointConfig(*request.Config); err != nil {
+			return out, err
+		}
+	}
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webhooks/" + url.PathEscape(webhookID)
+	_, err := c.doJSONBody(ctx, http.MethodPatch, path, nil, request, &out)
+	return out, err
+}
+
+func validateProjectWebhookDestination(destinationType ProjectWebhookDestinationType) error {
+	if destinationType != ProjectWebhookDestinationEndpoint {
+		return fmt.Errorf("project webhook destination %q is not available", destinationType)
+	}
+	return nil
+}
+
+func validateProjectWebhookEndpointConfig(config ProjectWebhookEndpointConfig) error {
+	rawURL := strings.TrimSpace(config.URL)
+	if rawURL == "" {
+		return errors.New("project webhook endpoint URL is required")
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+		return errors.New("project webhook endpoint URL must use HTTPS and must not include credentials")
+	}
+	return nil
+}
+
+func (c *Client) DeleteProjectWebhook(ctx context.Context, projectID string, webhookID string) (ProjectWebhook, error) {
+	var out ProjectWebhook
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webhooks/" + url.PathEscape(webhookID)
+	_, err := c.doJSON(ctx, http.MethodDelete, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) RotateProjectWebhookSecret(ctx context.Context, projectID string, webhookID string) (ProjectWebhook, error) {
+	var out ProjectWebhook
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webhooks/" + url.PathEscape(webhookID) + "/secret/rotate"
+	_, err := c.doJSON(ctx, http.MethodPost, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) ListProjectWebhookDeliveries(ctx context.Context, projectID string, webhookID string, params ProjectWebhookDeliveriesParams) (ProjectWebhookDeliveriesResponse, error) {
+	var out ProjectWebhookDeliveriesResponse
+	query := url.Values{}
+	if params.Status != "" {
+		query.Set("status", string(params.Status))
+	}
+	if params.EventType != "" {
+		query.Set("eventType", params.EventType)
+	}
+	if params.Start != "" {
+		query.Set("start", params.Start)
+	}
+	if params.End != "" {
+		query.Set("end", params.End)
+	}
+	if params.Page != nil {
+		query.Set("page", strconv.Itoa(*params.Page))
+	}
+	if params.PageSize != nil {
+		query.Set("pageSize", strconv.Itoa(*params.PageSize))
+	}
+	if params.Order != "" {
+		query.Set("order", params.Order)
+	}
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webhooks/" + url.PathEscape(webhookID) + "/deliveries"
+	_, err := c.doJSON(ctx, http.MethodGet, path, query, &out)
+	return out, err
+}
+
+func (c *Client) GetProjectWebhookDelivery(ctx context.Context, projectID string, webhookID string, deliveryID string) (ProjectWebhookDelivery, error) {
+	var out ProjectWebhookDelivery
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webhooks/" + url.PathEscape(webhookID) + "/deliveries/" + url.PathEscape(deliveryID)
+	_, err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
 func (c *Client) GetProjectSettings(ctx context.Context, projectID string) (ProjectSettings, error) {
 	var out ProjectSettings
 	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/settings"

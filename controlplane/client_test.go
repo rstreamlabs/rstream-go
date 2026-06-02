@@ -417,6 +417,197 @@ func TestProjectOperationsAndWorkspaceMembersEndpoints(t *testing.T) {
 	}
 }
 
+func TestProjectEventsAndWebhookEndpoints(t *testing.T) {
+	projectID := "workspace/project id"
+	webhookID := "webhook/with space"
+	deliveryID := "delivery/with space"
+	projectPrefix := "/api/projects/tunnels/" + url.PathEscape(projectID)
+	webhookPath := projectPrefix + "/webhooks/" + url.PathEscape(webhookID)
+	deliveryPath := webhookPath + "/deliveries/" + url.PathEscape(deliveryID)
+	seen := map[string]bool{}
+	description := "Lifecycle sink"
+	createdBy := "user-1"
+	rotatedAt := "2026-06-02T12:00:00.000Z"
+	httpStatus := 200
+	responseTime := 42
+	responseHeaders := ProjectWebhookResponseHeaders{"content-type": []string{"application/json"}}
+	responseBody := `{"accepted":true}`
+	completedAt := rotatedAt
+	webhook := ProjectWebhook{ID: webhookID, WorkspaceID: "workspace-id", ProjectID: projectID, Name: "Lifecycle sink", Description: &description, DestinationType: ProjectWebhookDestinationEndpoint, Status: ProjectWebhookEndpointEnabled, Events: []string{"tunnel.created", "tunnel.deleted"}, Config: json.RawMessage(`{"url":"https://example.com/rstream/webhook"}`), SecretLastRotatedAt: &rotatedAt, CreatedByUserID: &createdBy, CreatedAt: rotatedAt, UpdatedAt: rotatedAt}
+	delivery := ProjectWebhookDelivery{ID: deliveryID, WorkspaceID: "workspace-id", ProjectID: projectID, WebhookEndpointID: webhookID, EventID: "evt-1", EventType: "tunnel.created", Status: ProjectWebhookDeliverySucceeded, AttemptCount: 1, LastAttemptAt: &rotatedAt, SucceededAt: &rotatedAt, LastHTTPStatus: &httpStatus, LastResponseTimeMs: &responseTime, RequestBody: json.RawMessage(`{"id":"evt-1","type":"tunnel.created"}`), CreatedAt: rotatedAt, UpdatedAt: rotatedAt, Attempts: []ProjectWebhookDeliveryAttempt{{ID: "attempt-1", DeliveryID: deliveryID, AttemptNumber: 1, Status: ProjectWebhookDeliveryAttemptSucceeded, HTTPStatus: &httpStatus, ResponseTimeMs: &responseTime, ResponseHeaders: &responseHeaders, ResponseBody: &responseBody, StartedAt: rotatedAt, CompletedAt: &completedAt, CreatedAt: rotatedAt}}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer token" {
+			http.Error(w, "missing authorization", http.StatusBadRequest)
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == projectPrefix+"/events":
+			seen["events"] = true
+			if r.URL.Query().Get("timeline") != "24h" || r.URL.Query().Get("eventType") != "tunnel.created" || r.URL.Query().Get("afterEventId") != "evt-0" || r.URL.Query().Get("page") != "2" || r.URL.Query().Get("pageSize") != "10" || r.URL.Query().Get("order") != "desc" {
+				http.Error(w, "unexpected events query", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProjectEventsResponse{Events: []ProjectEvent{{ID: "row-1", EventID: "evt-1", EventType: "tunnel.created", EventCategory: "lifecycle", CreatedAt: rotatedAt, UpdatedAt: rotatedAt, ProjectID: projectID, WorkspaceID: "workspace-id", ClusterID: "cluster-id", Payload: json.RawMessage(`{"id":"evt-1","type":"tunnel.created"}`)}}, Page: 2, PageSize: 10, Total: 1, TotalPages: 1})
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == projectPrefix+"/webhooks":
+			seen["webhooks_list"] = true
+			if r.URL.Query().Get("q") != "lifecycle" || r.URL.Query().Get("status") != string(ProjectWebhookEndpointEnabled) || r.URL.Query().Get("destinationType") != string(ProjectWebhookDestinationEndpoint) || r.URL.Query().Get("pageSize") != "10" {
+				http.Error(w, "unexpected webhooks query", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProjectWebhooksResponse{Webhooks: []ProjectWebhook{webhook}, Page: 1, PageSize: 10, Total: 1, TotalPages: 1})
+		case r.Method == http.MethodPost && r.URL.EscapedPath() == projectPrefix+"/webhooks":
+			seen["webhook_create"] = true
+			var payload CreateProjectWebhookRequest
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Name != "Lifecycle sink" || payload.Config.URL != "https://example.com/rstream/webhook" || payload.DestinationType != ProjectWebhookDestinationEndpoint {
+				http.Error(w, "unexpected webhook create", http.StatusBadRequest)
+				return
+			}
+			out := webhook
+			out.SigningSecret = "whsec_clear"
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == webhookPath:
+			seen["webhook_get"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(webhook)
+		case r.Method == http.MethodPatch && r.URL.EscapedPath() == webhookPath:
+			seen["webhook_update"] = true
+			var payload UpdateProjectWebhookRequest
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Config == nil || payload.Config.URL != "https://example.com/rstream/updated" {
+				http.Error(w, "unexpected webhook update", http.StatusBadRequest)
+				return
+			}
+			out := webhook
+			configPayload, err := json.Marshal(payload.Config)
+			if err != nil {
+				http.Error(w, "failed to encode config", http.StatusInternalServerError)
+				return
+			}
+			out.Config = configPayload
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodPost && r.URL.EscapedPath() == webhookPath+"/secret/rotate":
+			seen["webhook_rotate"] = true
+			out := webhook
+			out.SigningSecret = "whsec_rotated"
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(out)
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == webhookPath+"/deliveries":
+			seen["deliveries_list"] = true
+			if r.URL.Query().Get("status") != string(ProjectWebhookDeliverySucceeded) || r.URL.Query().Get("eventType") != "tunnel.created" || r.URL.Query().Get("pageSize") != "10" {
+				http.Error(w, "unexpected deliveries query", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProjectWebhookDeliveriesResponse{Deliveries: []ProjectWebhookDelivery{delivery}, Page: 1, PageSize: 10, Total: 1, TotalPages: 1})
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == deliveryPath:
+			seen["delivery_get"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(delivery)
+		case r.Method == http.MethodDelete && r.URL.EscapedPath() == webhookPath:
+			seen["webhook_delete"] = true
+			out := webhook
+			out.Status = ProjectWebhookEndpointDisabled
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(out)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	page := 2
+	pageSize := 10
+	client := NewClient(server.URL, "token")
+	events, err := client.ListProjectEvents(context.Background(), projectID, ProjectEventsParams{Timeline: "24h", EventType: "tunnel.created", AfterEventID: "evt-0", Page: &page, PageSize: &pageSize, Order: "desc"})
+	if err != nil || len(events.Events) != 1 || events.Events[0].EventType != "tunnel.created" || string(events.Events[0].Payload) == "" {
+		t.Fatalf("ListProjectEvents returned %+v, %v", events, err)
+	}
+	webhooks, err := client.ListProjectWebhooks(context.Background(), projectID, ProjectWebhooksParams{Query: "lifecycle", Status: ProjectWebhookEndpointEnabled, DestinationType: ProjectWebhookDestinationEndpoint, PageSize: &pageSize})
+	if err != nil || len(webhooks.Webhooks) != 1 {
+		t.Fatalf("ListProjectWebhooks returned %+v, %v", webhooks, err)
+	}
+	config, err := webhooks.Webhooks[0].DecodeEndpointConfig()
+	if err != nil || config.URL != "https://example.com/rstream/webhook" {
+		t.Fatalf("DecodeEndpointConfig returned %+v, %v", config, err)
+	}
+	created, err := client.CreateProjectWebhook(context.Background(), projectID, CreateProjectWebhookRequest{Name: "Lifecycle sink", DestinationType: ProjectWebhookDestinationEndpoint, Events: []string{"tunnel.created"}, Config: ProjectWebhookEndpointConfig{URL: "https://example.com/rstream/webhook"}})
+	if err != nil || created.SigningSecret != "whsec_clear" {
+		t.Fatalf("CreateProjectWebhook returned %+v, %v", created, err)
+	}
+	if _, err := client.GetProjectWebhook(context.Background(), projectID, webhookID); err != nil {
+		t.Fatalf("GetProjectWebhook returned error: %v", err)
+	}
+	updateConfig := ProjectWebhookEndpointConfig{URL: "https://example.com/rstream/updated"}
+	updated, err := client.UpdateProjectWebhook(context.Background(), projectID, webhookID, UpdateProjectWebhookRequest{Config: &updateConfig})
+	updatedConfig, decodeErr := updated.DecodeEndpointConfig()
+	if err != nil || decodeErr != nil || updatedConfig.URL != updateConfig.URL {
+		t.Fatalf("UpdateProjectWebhook returned %+v, %v", updated, err)
+	}
+	rotated, err := client.RotateProjectWebhookSecret(context.Background(), projectID, webhookID)
+	if err != nil || rotated.SigningSecret != "whsec_rotated" {
+		t.Fatalf("RotateProjectWebhookSecret returned %+v, %v", rotated, err)
+	}
+	deliveries, err := client.ListProjectWebhookDeliveries(context.Background(), projectID, webhookID, ProjectWebhookDeliveriesParams{Status: ProjectWebhookDeliverySucceeded, EventType: "tunnel.created", PageSize: &pageSize})
+	if err != nil || len(deliveries.Deliveries) != 1 || deliveries.Deliveries[0].Attempts[0].HTTPStatus == nil || *deliveries.Deliveries[0].Attempts[0].HTTPStatus != 200 {
+		t.Fatalf("ListProjectWebhookDeliveries returned %+v, %v", deliveries, err)
+	}
+	gotDelivery, err := client.GetProjectWebhookDelivery(context.Background(), projectID, webhookID, deliveryID)
+	if err != nil || string(gotDelivery.RequestBody) == "" {
+		t.Fatalf("GetProjectWebhookDelivery returned %+v, %v", gotDelivery, err)
+	}
+	deleted, err := client.DeleteProjectWebhook(context.Background(), projectID, webhookID)
+	if err != nil || deleted.Status != ProjectWebhookEndpointDisabled {
+		t.Fatalf("DeleteProjectWebhook returned %+v, %v", deleted, err)
+	}
+	for _, key := range []string{"events", "webhooks_list", "webhook_create", "webhook_get", "webhook_update", "webhook_rotate", "deliveries_list", "delivery_get", "webhook_delete"} {
+		if !seen[key] {
+			t.Fatalf("endpoint %q was not called", key)
+		}
+	}
+}
+
+func TestProjectWebhookRequestsValidateDestinationBeforeIO(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "token")
+	_, err := client.CreateProjectWebhook(context.Background(), "project-id", CreateProjectWebhookRequest{
+		DestinationType: ProjectWebhookDestinationAmazonEventBridge,
+		Events:          []string{"tunnel.created"},
+		Config:          ProjectWebhookEndpointConfig{URL: "https://example.com/rstream/webhook"},
+		Name:            "Lifecycle sink",
+	})
+	if err == nil {
+		t.Fatal("expected unsupported destination error")
+	}
+	_, err = client.CreateProjectWebhook(context.Background(), "project-id", CreateProjectWebhookRequest{
+		Events: []string{"tunnel.created"},
+		Config: ProjectWebhookEndpointConfig{URL: "http://example.com/rstream/webhook"},
+		Name:   "Lifecycle sink",
+	})
+	if err == nil {
+		t.Fatal("expected insecure endpoint error")
+	}
+	config := ProjectWebhookEndpointConfig{URL: "https://token@example.com/rstream/webhook"}
+	_, err = client.UpdateProjectWebhook(context.Background(), "project-id", "webhook-id", UpdateProjectWebhookRequest{Config: &config})
+	if err == nil {
+		t.Fatal("expected endpoint credentials error")
+	}
+}
+
+func TestProjectWebhookDecodeEndpointConfigRejectsOtherDestinations(t *testing.T) {
+	webhook := ProjectWebhook{
+		DestinationType: ProjectWebhookDestinationAmazonEventBridge,
+		Config:          json.RawMessage(`{"eventBusArn":"arn:aws:events:eu-west-3:123:event-bus/default"}`),
+	}
+	if _, err := webhook.DecodeEndpointConfig(); err == nil {
+		t.Fatal("expected destination mismatch error")
+	}
+}
+
 func TestListProjectsQueryParamsAndParsing(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()

@@ -2,7 +2,10 @@
 
 package controlplane
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 type Whoami struct {
 	ID          string   `json:"id"`
@@ -168,6 +171,218 @@ type ProjectLogsResponse struct {
 	PageSize   int               `json:"pageSize"`
 	Total      int               `json:"total"`
 	TotalPages int               `json:"totalPages"`
+}
+
+type ProjectEventsParams struct {
+	Timeline     string
+	Start        string
+	End          string
+	EventType    string
+	AfterEventID string
+	Page         *int
+	PageSize     *int
+	Order        string
+}
+
+type ProjectEvent struct {
+	ID            string               `json:"id,omitempty"`
+	EventID       string               `json:"eventId"`
+	EventType     string               `json:"eventType"`
+	EventCategory ProjectEventCategory `json:"eventCategory"`
+	ProjectID     string               `json:"projectId"`
+	WorkspaceID   string               `json:"workspaceId"`
+	ClusterID     string               `json:"clusterId"`
+	UserID        *string              `json:"userId,omitempty"`
+	Payload       json.RawMessage      `json:"payload,omitempty"`
+	CreatedAt     string               `json:"createdAt"`
+	UpdatedAt     string               `json:"updatedAt"`
+	ExpiresAt     *string              `json:"expiresAt,omitempty"`
+}
+
+type ProjectEventsResponse struct {
+	Events     []ProjectEvent `json:"events"`
+	Page       int            `json:"page"`
+	PageSize   int            `json:"pageSize"`
+	Total      int            `json:"total"`
+	TotalPages int            `json:"totalPages"`
+}
+
+type ProjectEventCategory string
+
+const (
+	ProjectEventCategoryLifecycle ProjectEventCategory = "lifecycle"
+	ProjectEventCategoryStreamLog ProjectEventCategory = "stream_log"
+)
+
+type ProjectWebhookDestinationType string
+
+const (
+	ProjectWebhookDestinationEndpoint          ProjectWebhookDestinationType = "webhook_endpoint"
+	ProjectWebhookDestinationAmazonEventBridge ProjectWebhookDestinationType = "amazon_eventbridge"
+	ProjectWebhookDestinationAzureEventGrid    ProjectWebhookDestinationType = "azure_event_grid"
+)
+
+type ProjectWebhookEndpointStatus string
+
+const (
+	ProjectWebhookEndpointEnabled  ProjectWebhookEndpointStatus = "enabled"
+	ProjectWebhookEndpointDisabled ProjectWebhookEndpointStatus = "disabled"
+)
+
+type ProjectWebhookDeliveryStatus string
+
+const (
+	ProjectWebhookDeliveryPending    ProjectWebhookDeliveryStatus = "pending"
+	ProjectWebhookDeliveryDelivering ProjectWebhookDeliveryStatus = "delivering"
+	ProjectWebhookDeliveryRetrying   ProjectWebhookDeliveryStatus = "retrying"
+	ProjectWebhookDeliverySucceeded  ProjectWebhookDeliveryStatus = "succeeded"
+	ProjectWebhookDeliveryFailed     ProjectWebhookDeliveryStatus = "failed"
+	ProjectWebhookDeliveryCanceled   ProjectWebhookDeliveryStatus = "canceled"
+)
+
+type ProjectWebhookDeliveryAttemptStatus string
+
+const (
+	ProjectWebhookDeliveryAttemptSucceeded    ProjectWebhookDeliveryAttemptStatus = "succeeded"
+	ProjectWebhookDeliveryAttemptFailed       ProjectWebhookDeliveryAttemptStatus = "failed"
+	ProjectWebhookDeliveryAttemptTimeout      ProjectWebhookDeliveryAttemptStatus = "timeout"
+	ProjectWebhookDeliveryAttemptNetworkError ProjectWebhookDeliveryAttemptStatus = "network_error"
+)
+
+type ProjectWebhookEndpointConfig struct {
+	URL string `json:"url"`
+}
+
+type ProjectWebhookAmazonEventBridgeConfig struct {
+	EventBusArn string `json:"eventBusArn,omitempty"`
+	Region      string `json:"region,omitempty"`
+}
+
+type ProjectWebhookAzureEventGridConfig struct {
+	TopicEndpoint string `json:"topicEndpoint,omitempty"`
+}
+
+type ProjectWebhook struct {
+	ID                      string                        `json:"id"`
+	WorkspaceID             string                        `json:"workspaceId"`
+	ProjectID               string                        `json:"projectId"`
+	Name                    string                        `json:"name"`
+	Description             *string                       `json:"description"`
+	DestinationType         ProjectWebhookDestinationType `json:"destinationType"`
+	Status                  ProjectWebhookEndpointStatus  `json:"status"`
+	Events                  []string                      `json:"events"`
+	Config                  json.RawMessage               `json:"config"`
+	SigningSecret           string                        `json:"signingSecret,omitempty"`
+	SecretLastRotatedAt     *string                       `json:"secretLastRotatedAt"`
+	PreviousSecretExpiresAt *string                       `json:"previousSecretExpiresAt"`
+	CreatedByUserID         *string                       `json:"createdByUserId"`
+	CreatedAt               string                        `json:"createdAt"`
+	UpdatedAt               string                        `json:"updatedAt"`
+	DeletedAt               *string                       `json:"deletedAt"`
+}
+
+func (w ProjectWebhook) DecodeEndpointConfig() (ProjectWebhookEndpointConfig, error) {
+	var config ProjectWebhookEndpointConfig
+	if w.DestinationType != ProjectWebhookDestinationEndpoint {
+		return config, fmt.Errorf("project webhook destination %q is not an HTTP endpoint", w.DestinationType)
+	}
+	if err := json.Unmarshal(w.Config, &config); err != nil {
+		return config, err
+	}
+	return config, nil
+}
+
+type ProjectWebhookResponseHeaders map[string][]string
+
+type ProjectWebhookDeliveryAttempt struct {
+	ID              string                              `json:"id"`
+	DeliveryID      string                              `json:"deliveryId"`
+	AttemptNumber   int                                 `json:"attemptNumber"`
+	Status          ProjectWebhookDeliveryAttemptStatus `json:"status"`
+	HTTPStatus      *int                                `json:"httpStatus"`
+	ResponseTimeMs  *int                                `json:"responseTimeMs"`
+	ResponseHeaders *ProjectWebhookResponseHeaders      `json:"responseHeaders"`
+	ResponseBody    *string                             `json:"responseBody"`
+	ErrorCode       *string                             `json:"errorCode"`
+	ErrorMessage    *string                             `json:"errorMessage"`
+	StartedAt       string                              `json:"startedAt"`
+	CompletedAt     *string                             `json:"completedAt"`
+	CreatedAt       string                              `json:"createdAt"`
+}
+
+type ProjectWebhookDelivery struct {
+	ID                 string                          `json:"id"`
+	WorkspaceID        string                          `json:"workspaceId"`
+	ProjectID          string                          `json:"projectId"`
+	WebhookEndpointID  string                          `json:"webhookEndpointId"`
+	EventID            string                          `json:"eventId"`
+	EventType          string                          `json:"eventType"`
+	Status             ProjectWebhookDeliveryStatus    `json:"status"`
+	AttemptCount       int                             `json:"attemptCount"`
+	NextAttemptAt      *string                         `json:"nextAttemptAt"`
+	LastAttemptAt      *string                         `json:"lastAttemptAt"`
+	SucceededAt        *string                         `json:"succeededAt"`
+	FailedAt           *string                         `json:"failedAt"`
+	LastHTTPStatus     *int                            `json:"lastHttpStatus"`
+	LastResponseTimeMs *int                            `json:"lastResponseTimeMs"`
+	LastError          *string                         `json:"lastError"`
+	RequestBody        json.RawMessage                 `json:"requestBody"`
+	CreatedAt          string                          `json:"createdAt"`
+	UpdatedAt          string                          `json:"updatedAt"`
+	Attempts           []ProjectWebhookDeliveryAttempt `json:"attempts,omitempty"`
+}
+
+type CreateProjectWebhookRequest struct {
+	Name            string                        `json:"name"`
+	Description     *string                       `json:"description,omitempty"`
+	DestinationType ProjectWebhookDestinationType `json:"destinationType,omitempty"`
+	Status          ProjectWebhookEndpointStatus  `json:"status,omitempty"`
+	Events          []string                      `json:"events"`
+	Config          ProjectWebhookEndpointConfig  `json:"config"`
+}
+
+type UpdateProjectWebhookRequest struct {
+	Name        *string                       `json:"name,omitempty"`
+	Description *string                       `json:"description,omitempty"`
+	Status      ProjectWebhookEndpointStatus  `json:"status,omitempty"`
+	Events      []string                      `json:"events,omitempty"`
+	Config      *ProjectWebhookEndpointConfig `json:"config,omitempty"`
+}
+
+type ProjectWebhooksParams struct {
+	Query           string
+	Status          ProjectWebhookEndpointStatus
+	DestinationType ProjectWebhookDestinationType
+	Page            *int
+	PageSize        *int
+	Sort            string
+	Order           string
+}
+
+type ProjectWebhooksResponse struct {
+	Webhooks   []ProjectWebhook `json:"webhooks"`
+	Page       int              `json:"page"`
+	PageSize   int              `json:"pageSize"`
+	Total      int              `json:"total"`
+	TotalPages int              `json:"totalPages"`
+}
+
+type ProjectWebhookDeliveriesParams struct {
+	Status    ProjectWebhookDeliveryStatus
+	EventType string
+	Start     string
+	End       string
+	Page      *int
+	PageSize  *int
+	Order     string
+}
+
+type ProjectWebhookDeliveriesResponse struct {
+	Deliveries []ProjectWebhookDelivery `json:"deliveries"`
+	Page       int                      `json:"page"`
+	PageSize   int                      `json:"pageSize"`
+	Total      int                      `json:"total"`
+	TotalPages int                      `json:"totalPages"`
 }
 
 type ProjectSettings map[string]any

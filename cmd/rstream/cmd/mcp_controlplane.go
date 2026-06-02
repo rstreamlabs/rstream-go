@@ -292,6 +292,94 @@ func mcpProjectLogs(ctx context.Context, args map[string]json.RawMessage) (map[s
 	return mcpJSONResult(logs, false)
 }
 
+func mcpProjectEventsList(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
+	client, _, err := mcpControlPlaneClient()
+	if err != nil {
+		return nil, err
+	}
+	projectID, err := mcpRequiredStringArg(args, "project_id")
+	if err != nil {
+		return nil, err
+	}
+	params, err := mcpProjectEventsParams(args)
+	if err != nil {
+		return nil, err
+	}
+	events, err := client.ListProjectEvents(ctx, projectID, params)
+	if err != nil {
+		return nil, mapControlPlaneError(err)
+	}
+	return mcpJSONResult(events, false)
+}
+
+func mcpProjectWebhooksList(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
+	client, _, err := mcpControlPlaneClient()
+	if err != nil {
+		return nil, err
+	}
+	projectID, err := mcpRequiredStringArg(args, "project_id")
+	if err != nil {
+		return nil, err
+	}
+	params, err := mcpProjectWebhooksParams(args)
+	if err != nil {
+		return nil, err
+	}
+	webhooks, err := client.ListProjectWebhooks(ctx, projectID, params)
+	if err != nil {
+		return nil, mapControlPlaneError(err)
+	}
+	return mcpJSONResult(webhooks, false)
+}
+
+func mcpProjectWebhookDeliveriesList(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
+	client, _, err := mcpControlPlaneClient()
+	if err != nil {
+		return nil, err
+	}
+	projectID, err := mcpRequiredStringArg(args, "project_id")
+	if err != nil {
+		return nil, err
+	}
+	webhookID, err := mcpRequiredStringArg(args, "webhook_id")
+	if err != nil {
+		return nil, err
+	}
+	params, err := mcpProjectWebhookDeliveriesParams(args)
+	if err != nil {
+		return nil, err
+	}
+	deliveries, err := client.ListProjectWebhookDeliveries(ctx, projectID, webhookID, params)
+	if err != nil {
+		return nil, mapControlPlaneError(err)
+	}
+	return mcpJSONResult(deliveries, false)
+}
+
+func mcpProjectWebhookDeliveryGet(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
+	client, _, err := mcpControlPlaneClient()
+	if err != nil {
+		return nil, err
+	}
+	projectID, err := mcpRequiredStringArg(args, "project_id")
+	if err != nil {
+		return nil, err
+	}
+	webhookID, err := mcpRequiredStringArg(args, "webhook_id")
+	if err != nil {
+		return nil, err
+	}
+	deliveryID, err := mcpRequiredStringArg(args, "delivery_id")
+	if err != nil {
+		return nil, err
+	}
+	delivery, err := client.GetProjectWebhookDelivery(ctx, projectID, webhookID, deliveryID)
+	if err != nil {
+		return nil, mapControlPlaneError(err)
+	}
+	return mcpJSONResult(delivery, false)
+}
+
 func mcpProjectUsage(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
 	client, _, err := mcpControlPlaneClient()
 	if err != nil {
@@ -718,6 +806,96 @@ func mcpProjectLogsParams(args map[string]json.RawMessage) (controlplane.Project
 	if params.Order, err = mcpOptionalStringArg(args, "order", ""); err != nil {
 		return params, err
 	}
+	return params, nil
+}
+
+func mcpProjectEventsParams(args map[string]json.RawMessage) (controlplane.ProjectEventsParams, error) {
+	var params controlplane.ProjectEventsParams
+	var err error
+	if params.Timeline, err = mcpOptionalStringArg(args, "timeline", ""); err != nil {
+		return params, err
+	}
+	if params.Start, err = mcpOptionalStringArg(args, "start", ""); err != nil {
+		return params, err
+	}
+	if params.End, err = mcpOptionalStringArg(args, "end", ""); err != nil {
+		return params, err
+	}
+	if params.EventType, err = mcpOptionalStringArg(args, "event_type", ""); err != nil {
+		return params, err
+	}
+	if params.AfterEventID, err = mcpOptionalStringArg(args, "after_event_id", ""); err != nil {
+		return params, err
+	}
+	if params.Page, err = mcpOptionalIntArg(args, "page"); err != nil {
+		return params, err
+	}
+	if params.PageSize, err = mcpOptionalIntArg(args, "page_size"); err != nil {
+		return params, err
+	}
+	if params.Order, err = mcpOptionalStringArg(args, "order", ""); err != nil {
+		return params, err
+	}
+	return params, nil
+}
+
+func mcpProjectWebhooksParams(args map[string]json.RawMessage) (controlplane.ProjectWebhooksParams, error) {
+	var params controlplane.ProjectWebhooksParams
+	var err error
+	var status string
+	var destinationType string
+	if params.Query, err = mcpOptionalStringArg(args, "q", ""); err != nil {
+		return params, err
+	}
+	if status, err = mcpOptionalStringArg(args, "status", ""); err != nil {
+		return params, err
+	}
+	if destinationType, err = mcpOptionalStringArg(args, "destination_type", ""); err != nil {
+		return params, err
+	}
+	if params.Page, err = mcpOptionalIntArg(args, "page"); err != nil {
+		return params, err
+	}
+	if params.PageSize, err = mcpOptionalIntArg(args, "page_size"); err != nil {
+		return params, err
+	}
+	if params.Sort, err = mcpOptionalStringArg(args, "sort", ""); err != nil {
+		return params, err
+	}
+	if params.Order, err = mcpOptionalStringArg(args, "order", ""); err != nil {
+		return params, err
+	}
+	params.Status = controlplane.ProjectWebhookEndpointStatus(status)
+	params.DestinationType = controlplane.ProjectWebhookDestinationType(destinationType)
+	return params, nil
+}
+
+func mcpProjectWebhookDeliveriesParams(args map[string]json.RawMessage) (controlplane.ProjectWebhookDeliveriesParams, error) {
+	var params controlplane.ProjectWebhookDeliveriesParams
+	var err error
+	var status string
+	if status, err = mcpOptionalStringArg(args, "status", ""); err != nil {
+		return params, err
+	}
+	if params.EventType, err = mcpOptionalStringArg(args, "event_type", ""); err != nil {
+		return params, err
+	}
+	if params.Start, err = mcpOptionalStringArg(args, "start", ""); err != nil {
+		return params, err
+	}
+	if params.End, err = mcpOptionalStringArg(args, "end", ""); err != nil {
+		return params, err
+	}
+	if params.Page, err = mcpOptionalIntArg(args, "page"); err != nil {
+		return params, err
+	}
+	if params.PageSize, err = mcpOptionalIntArg(args, "page_size"); err != nil {
+		return params, err
+	}
+	if params.Order, err = mcpOptionalStringArg(args, "order", ""); err != nil {
+		return params, err
+	}
+	params.Status = controlplane.ProjectWebhookDeliveryStatus(status)
 	return params, nil
 }
 
