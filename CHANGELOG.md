@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.20.1](https://github.com/rstreamlabs/rstream-go/compare/v1.20.0...v1.20.1) (2026-06-02)
+
+
+### Bug Fixes
+
+* install protoc for macos release builds ([57a60f1](https://github.com/rstreamlabs/rstream-go/commit/57a60f19ba12c5b6d3e0d4ff0fce127193afb653))
+
 ## [1.20.0](https://github.com/rstreamlabs/rstream-go/compare/v1.19.0...v1.20.0) (2026-06-02)
 
 
