@@ -5,6 +5,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -29,7 +30,7 @@ var projectListCmd = &cobra.Command{
 	SilenceUsage: true,
 	Args:         cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		runtime, err := resolveControlPlane(cmd, false)
+		runtime, err := resolveRuntime(cmd, false, true)
 		if err != nil {
 			return err
 		}
@@ -41,7 +42,16 @@ var projectListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		resp, err := client.ListProjects(cmd.Context(), params)
+		workspaceID, err := projectListWorkspaceFromFlags(cmd)
+		if err != nil {
+			return err
+		}
+		var resp controlplane.ListProjectsResponse
+		if workspaceID == "" {
+			resp, err = client.ListProjects(cmd.Context(), params)
+		} else {
+			resp, err = client.ListWorkspaceProjects(cmd.Context(), workspaceID, params)
+		}
 		if err != nil {
 			return mapControlPlaneError(err)
 		}
@@ -57,27 +67,7 @@ var projectListCmd = &cobra.Command{
 					return projects[i].Name < projects[j].Name
 				})
 			}
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			_, _ = fmt.Fprintln(w, "NAME\tENDPOINT\tSTATUS\tPLAN\tDEPLOYMENT\tPROVIDER\tREGION\tID")
-			for _, project := range projects {
-				region := project.Region
-				if region == "" {
-					region = "-"
-				}
-				_, _ = fmt.Fprintf(
-					w,
-					"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-					terminalSafeDefault(project.Name),
-					terminalSafeDefault(project.Endpoint),
-					terminalSafeDefault(project.Status),
-					terminalSafeDefault(project.Plan),
-					terminalSafeDefault(project.Deployment),
-					terminalSafeDefault(project.Provider),
-					terminalSafeDefault(region),
-					terminalSafeDefault(project.ID),
-				)
-			}
-			return w.Flush()
+			return writeProjectsTable(cmd.OutOrStdout(), projects)
 		case "json", "yaml":
 			return writeStructuredOutput(output, resp)
 		default:
@@ -92,7 +82,7 @@ var projectUseCmd = &cobra.Command{
 	SilenceUsage: true,
 	Args:         cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		runtime, err := resolveControlPlane(cmd, false)
+		runtime, err := resolveRuntime(cmd, false, true)
 		if err != nil {
 			return err
 		}
@@ -111,7 +101,6 @@ var projectUseCmd = &cobra.Command{
 		cfg := runtime.Config
 		cfg.EnsureEnvironment(apiURL)
 		nameFlag, _ := cmd.Flags().GetString("name")
-		setDefault, _ := cmd.Flags().GetBool("default")
 		var ctx *config.Context
 		if nameFlag != "" {
 			existing, _, err := cfg.FindContextByName(nameFlag)
@@ -152,9 +141,7 @@ var projectUseCmd = &cobra.Command{
 		ctx.TURNDomain = project.Domain
 		ctx.TURNPort = project.TurnPort
 		ctx.TURNSPort = project.TurnsPort
-		if setDefault {
-			cfg.Defaults.Context = &config.DefaultContext{Name: ctx.Name}
-		}
+		cfg.Defaults.Context = &config.DefaultContext{Name: ctx.Name}
 		if err := config.WriteAtomic(runtime.ConfigPath, cfg); err != nil {
 			return err
 		}
@@ -162,7 +149,7 @@ var projectUseCmd = &cobra.Command{
 		return writeOptionalStructuredOutput(output, map[string]any{
 			"project": project,
 			"context": redactContext(*ctx),
-			"default": setDefault,
+			"default": true,
 		})
 	},
 }
@@ -173,6 +160,7 @@ func init() {
 	projectCmd.AddCommand(projectListCmd)
 	projectCmd.AddCommand(projectUseCmd)
 	projectListCmd.Flags().SortFlags = false
+	projectListCmd.Flags().String("workspace", "", "workspace ID")
 	projectListCmd.Flags().String("q", "", "search query")
 	projectListCmd.Flags().Int("page", 0, "page number (>= 1)")
 	projectListCmd.Flags().Int("page-size", 0, "page size (1-100)")
@@ -181,9 +169,33 @@ func init() {
 	projectListCmd.Flags().StringP("output", "o", "table", "output mode (table, json, yaml)")
 	projectUseCmd.Flags().SortFlags = false
 	projectUseCmd.Flags().String("name", "", "context name (defaults to a derived name)")
-	projectUseCmd.Flags().Bool("default", false, "set context as default")
 	projectUseCmd.Flags().StringP("output", "o", "none", "output mode (none, json, yaml)")
 	rootCmd.AddCommand(projectCmd)
+}
+
+func writeProjectsTable(out io.Writer, projects []controlplane.Project) error {
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "NAME\tENDPOINT\tSTATUS\tPLAN\tDEPLOYMENT\tPROVIDER\tREGION\tWORKSPACE ID\tID")
+	for _, project := range projects {
+		region := project.Region
+		if region == "" {
+			region = "-"
+		}
+		_, _ = fmt.Fprintf(
+			w,
+			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			terminalSafeDefault(project.Name),
+			terminalSafeDefault(project.Endpoint),
+			terminalSafeDefault(project.Status),
+			terminalSafeDefault(project.Plan),
+			terminalSafeDefault(project.Deployment),
+			terminalSafeDefault(project.Provider),
+			terminalSafeDefault(region),
+			terminalSafeDefault(project.WorkspaceID),
+			terminalSafeDefault(project.ID),
+		)
+	}
+	return w.Flush()
 }
 
 func listProjectsParamsFromFlags(cmd *cobra.Command) (controlplane.ListProjectsParams, bool, error) {
@@ -221,6 +233,18 @@ func listProjectsParamsFromFlags(cmd *cobra.Command) (controlplane.ListProjectsP
 		params.Order = value
 	}
 	return params, sortRequested, nil
+}
+
+func projectListWorkspaceFromFlags(cmd *cobra.Command) (string, error) {
+	if !cmd.Flags().Changed("workspace") {
+		return "", nil
+	}
+	workspaceID, _ := cmd.Flags().GetString("workspace")
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" {
+		return "", errors.New("--workspace must not be empty")
+	}
+	return workspaceID, nil
 }
 
 func isAllowed(value string, allowed ...string) bool {

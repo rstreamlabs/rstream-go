@@ -4,39 +4,56 @@ package webtty
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go/http3"
+	"github.com/quic-go/webtransport-go"
 
 	rstream "github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
 )
 
 type SessionConfig struct {
-	URL               string
-	DialContext       func(context.Context, string, string) (net.Conn, error)
-	Interactive       bool
-	AllocateTTY       bool
-	SendHeartbeat     bool
-	EnvVars           []string
-	Workdir           *string
-	Username          *string
-	CmdArgs           []string
-	AuthToken         *string
-	MaxMessageSize    *int64
-	ReadBufferSize    *int
-	WriteBufferSize   *int
-	OpenDeadline      *time.Duration
-	CloseDeadline     *time.Duration
-	HeartbeatInterval *time.Duration
-	Logger            *slog.Logger
+	URL                    string
+	Transport              WebTTYTransport
+	DialContext            func(context.Context, string, string) (net.Conn, error)
+	DialTLSContext         func(context.Context, string, string) (net.Conn, error)
+	DialPacketContext      func(context.Context, string) (net.PacketConn, net.Addr, error)
+	Interactive            bool
+	AllocateTTY            bool
+	SendHeartbeat          bool
+	Attach                 *AttachConfig
+	PayloadCrypto          *PayloadCrypto
+	EndpointIdentity       *WebTTYEndpointIdentity
+	ExpectedServerIdentity *WebTTYEndpointIdentityPublic
+	ClientCredential       []byte
+	ClientPrincipalID      string
+	ClientDeviceID         string
+	ClientBrowserID        string
+	EnvVars                []string
+	Workdir                *string
+	Username               *string
+	CmdArgs                []string
+	AuthToken              *string
+	TLSConfig              *tls.Config
+	MaxMessageSize         *int64
+	ReadBufferSize         *int
+	WriteBufferSize        *int
+	OpenDeadline           *time.Duration
+	CloseDeadline          *time.Duration
+	HeartbeatInterval      *time.Duration
+	Logger                 *slog.Logger
 }
 
 type ClientSessionStream string
@@ -73,23 +90,35 @@ func (cfg *ClientConfig) sessionConfig() *SessionConfig {
 		return nil
 	}
 	return &SessionConfig{
-		URL:               cfg.URL,
-		DialContext:       cfg.DialContext,
-		Interactive:       cfg.Interactive,
-		AllocateTTY:       cfg.AllocateTTY,
-		SendHeartbeat:     cfg.SendHeartbeat,
-		EnvVars:           append([]string(nil), cfg.EnvVars...),
-		Workdir:           cfg.Workdir,
-		Username:          cfg.Username,
-		CmdArgs:           append([]string(nil), cfg.CmdArgs...),
-		AuthToken:         cfg.AuthToken,
-		MaxMessageSize:    cfg.MaxMessageSize,
-		ReadBufferSize:    cfg.ReadBufferSize,
-		WriteBufferSize:   cfg.WriteBufferSize,
-		OpenDeadline:      cfg.OpenDeadline,
-		CloseDeadline:     cfg.CloseDeadline,
-		HeartbeatInterval: cfg.HeartbeatInterval,
-		Logger:            cfg.Logger,
+		URL:                    cfg.URL,
+		Transport:              cfg.Transport,
+		DialContext:            cfg.DialContext,
+		DialTLSContext:         cfg.DialTLSContext,
+		DialPacketContext:      cfg.DialPacketContext,
+		Interactive:            cfg.Interactive,
+		AllocateTTY:            cfg.AllocateTTY,
+		SendHeartbeat:          cfg.SendHeartbeat,
+		Attach:                 cloneAttachConfig(cfg.Attach),
+		PayloadCrypto:          cfg.PayloadCrypto,
+		EndpointIdentity:       cfg.EndpointIdentity,
+		ExpectedServerIdentity: cfg.ExpectedServerIdentity,
+		ClientCredential:       append([]byte(nil), cfg.ClientCredential...),
+		ClientPrincipalID:      cfg.ClientPrincipalID,
+		ClientDeviceID:         cfg.ClientDeviceID,
+		ClientBrowserID:        cfg.ClientBrowserID,
+		EnvVars:                append([]string(nil), cfg.EnvVars...),
+		Workdir:                cfg.Workdir,
+		Username:               cfg.Username,
+		CmdArgs:                append([]string(nil), cfg.CmdArgs...),
+		AuthToken:              cfg.AuthToken,
+		TLSConfig:              cloneTLSConfig(cfg.TLSConfig),
+		MaxMessageSize:         cfg.MaxMessageSize,
+		ReadBufferSize:         cfg.ReadBufferSize,
+		WriteBufferSize:        cfg.WriteBufferSize,
+		OpenDeadline:           cfg.OpenDeadline,
+		CloseDeadline:          cfg.CloseDeadline,
+		HeartbeatInterval:      cfg.HeartbeatInterval,
+		Logger:                 cfg.Logger,
 	}
 }
 
@@ -98,29 +127,49 @@ func (cfg *SessionConfig) clientConfig() *ClientConfig {
 		return nil
 	}
 	return &ClientConfig{
-		URL:               cfg.URL,
-		DialContext:       cfg.DialContext,
-		Interactive:       cfg.Interactive,
-		AllocateTTY:       cfg.AllocateTTY,
-		SendHeartbeat:     cfg.SendHeartbeat,
-		EnvVars:           append([]string(nil), cfg.EnvVars...),
-		Workdir:           cfg.Workdir,
-		Username:          cfg.Username,
-		CmdArgs:           append([]string(nil), cfg.CmdArgs...),
-		AuthToken:         cfg.AuthToken,
-		MaxMessageSize:    cfg.MaxMessageSize,
-		ReadBufferSize:    cfg.ReadBufferSize,
-		WriteBufferSize:   cfg.WriteBufferSize,
-		OpenDeadline:      cfg.OpenDeadline,
-		CloseDeadline:     cfg.CloseDeadline,
-		HeartbeatInterval: cfg.HeartbeatInterval,
-		Logger:            cfg.Logger,
+		URL:                    cfg.URL,
+		Transport:              cfg.Transport,
+		DialContext:            cfg.DialContext,
+		DialTLSContext:         cfg.DialTLSContext,
+		DialPacketContext:      cfg.DialPacketContext,
+		Interactive:            cfg.Interactive,
+		AllocateTTY:            cfg.AllocateTTY,
+		SendHeartbeat:          cfg.SendHeartbeat,
+		Attach:                 cloneAttachConfig(cfg.Attach),
+		PayloadCrypto:          cfg.PayloadCrypto,
+		EndpointIdentity:       cfg.EndpointIdentity,
+		ExpectedServerIdentity: cfg.ExpectedServerIdentity,
+		ClientCredential:       append([]byte(nil), cfg.ClientCredential...),
+		ClientPrincipalID:      cfg.ClientPrincipalID,
+		ClientDeviceID:         cfg.ClientDeviceID,
+		ClientBrowserID:        cfg.ClientBrowserID,
+		EnvVars:                append([]string(nil), cfg.EnvVars...),
+		Workdir:                cfg.Workdir,
+		Username:               cfg.Username,
+		CmdArgs:                append([]string(nil), cfg.CmdArgs...),
+		AuthToken:              cfg.AuthToken,
+		TLSConfig:              cloneTLSConfig(cfg.TLSConfig),
+		MaxMessageSize:         cfg.MaxMessageSize,
+		ReadBufferSize:         cfg.ReadBufferSize,
+		WriteBufferSize:        cfg.WriteBufferSize,
+		OpenDeadline:           cfg.OpenDeadline,
+		CloseDeadline:          cfg.CloseDeadline,
+		HeartbeatInterval:      cfg.HeartbeatInterval,
+		Logger:                 cfg.Logger,
 	}
 }
 
 func resolveSessionConfig(cfg *SessionConfig) (*SessionConfig, error) {
 	if cfg == nil {
 		cfg = &SessionConfig{}
+	}
+	if cfg.PayloadCrypto != nil && cfg.PayloadCrypto.SessionKeyGrant != nil && cfg.Attach == nil {
+		if cfg.ExpectedServerIdentity == nil {
+			return nil, fmt.Errorf("WebTTY E2E requires a known server endpoint identity")
+		}
+		if cfg.EndpointIdentity == nil {
+			return nil, fmt.Errorf("WebTTY E2E requires a client endpoint identity")
+		}
 	}
 	if cfg.URL == "" {
 		cfg.URL = "ws://127.0.0.1:8080"
@@ -160,33 +209,13 @@ func OpenClientSession(ctx context.Context, cfg *SessionConfig) (*ClientSession,
 	if err != nil {
 		return nil, err
 	}
-	endpoint, err := resolveWebTTYEndpoint(resolved.URL)
+	endpoint, err := resolveWebTTYEndpointWithTransport(resolved.URL, resolved.Transport)
 	if err != nil {
 		return nil, err
 	}
-	dialer := &websocket.Dialer{
-		ReadBufferSize:    *resolved.ReadBufferSize,
-		WriteBufferSize:   *resolved.WriteBufferSize,
-		HandshakeTimeout:  10 * time.Second,
-		EnableCompression: false,
-		Proxy:             http.ProxyFromEnvironment,
-	}
-	if endpoint.RequiresCustomDial {
-		if resolved.DialContext == nil {
-			return nil, fmt.Errorf("websocket url scheme %q requires a custom dialer", "rstrm")
-		}
-		dialer.NetDialContext = resolved.DialContext
-	}
-	header := http.Header{}
-	if resolved.AuthToken != nil && strings.TrimSpace(*resolved.AuthToken) != "" {
-		header.Set("Authorization", "Bearer "+strings.TrimSpace(*resolved.AuthToken))
-	}
-	conn, resp, err := dialer.DialContext(ctx, endpoint.URL, header)
+	conn, err := dialWebTTYMessageConn(ctx, resolved, endpoint)
 	if err != nil {
-		if resp != nil {
-			return nil, fmt.Errorf("websocket dial failed with status %d", resp.StatusCode)
-		}
-		return nil, fmt.Errorf("websocket dial failed: %w", err)
+		return nil, err
 	}
 	runtimeCfg := resolved.clientConfig()
 	if *resolved.MaxMessageSize > 0 {
@@ -198,25 +227,58 @@ func OpenClientSession(ctx context.Context, cfg *SessionConfig) (*ClientSession,
 		logger:   runtimeCfg.Logger.With("component", "webtty.client"),
 		logProto: stringsEqualFoldTrimmed(rstream.Channel, "dev"),
 	}
-	openMessage, err := runtime.buildOpenMessage()
-	if err != nil {
-		runtime.closeConn()
-		return nil, err
+	if endpoint.Transport == WebTTYTransportWebTransport && runtime.cfg.ExpectedServerIdentity != nil {
+		if err := runtime.writeMessage(&pb.Message{Payload: &pb.Message_ClientHello{ClientHello: &pb.ClientHello{ProtocolVersion: pb.ProtocolVersion_PROTOCOL_VERSION_WEBTTY_1}}}); err != nil {
+			runtime.closeConn()
+			return nil, fmt.Errorf("failed to send WebTTY client hello: %w", err)
+		}
 	}
 	doneRead := make(chan struct{})
 	readEvents := make(chan clientEvent, 1)
 	go runtime.readLoop(doneRead, readEvents)
-	if err := runtime.writeMessage(openMessage); err != nil {
+	var serverHello *pb.ServerHello
+	if runtime.cfg.ExpectedServerIdentity != nil {
+		event, err := waitForClientEvent(ctx, runtime.cfg.OpenDeadline, readEvents)
+		if err != nil {
+			close(doneRead)
+			runtime.closeConn()
+			return nil, err
+		}
+		msg := event.msg
+		if protocolError := msg.GetProtocolError(); protocolError != nil {
+			close(doneRead)
+			runtime.closeConn()
+			return nil, webTTYProtocolError(protocolError)
+		}
+		if msg == nil || msg.GetServerHello() == nil {
+			close(doneRead)
+			runtime.closeConn()
+			return nil, fmt.Errorf("%w: expected WebTTY server hello", errClientUnexpected)
+		}
+		serverHello = msg.GetServerHello()
+		if err := runtime.verifyServerHello(serverHello, endpoint.Transport); err != nil {
+			close(doneRead)
+			runtime.closeConn()
+			return nil, err
+		}
+	}
+	handshakeMessage, err := runtime.buildHandshakeMessage(endpoint.Transport, serverHello)
+	if err != nil {
 		close(doneRead)
 		runtime.closeConn()
-		return nil, fmt.Errorf("failed to send open message: %w", err)
+		return nil, err
+	}
+	if err := runtime.writeMessage(handshakeMessage); err != nil {
+		close(doneRead)
+		runtime.closeConn()
+		return nil, fmt.Errorf("failed to send WebTTY handshake message: %w", err)
 	}
 	if err := runtime.waitForOpen(ctx, readEvents); err != nil {
 		close(doneRead)
 		runtime.closeConn()
 		return nil, err
 	}
-	loopCtx, loopCancel := context.WithCancel(context.Background())
+	loopCtx, loopCancel := context.WithCancel(ctx)
 	session := &ClientSession{
 		runtime:    runtime,
 		loopCancel: loopCancel,
@@ -228,12 +290,188 @@ func OpenClientSession(ctx context.Context, cfg *SessionConfig) (*ClientSession,
 	if resolved.SendHeartbeat {
 		go runtime.heartbeatLoop(loopCtx, loopErrCh)
 	}
-	go session.run(readEvents, loopErrCh)
+	go session.run(loopCtx, readEvents, loopErrCh)
 	go func() {
 		<-ctx.Done()
 		_ = session.CloseWithError(ctx.Err())
 	}()
 	return session, nil
+}
+
+func dialWebTTYMessageConn(ctx context.Context, cfg *SessionConfig, endpoint *clientEndpoint) (messageConn, error) {
+	if endpoint.Transport == WebTTYTransportPlain {
+		return dialPlainWebTTYMessageConn(ctx, cfg, endpoint)
+	}
+	if endpoint.Transport == WebTTYTransportWebTransport {
+		return dialWebTransportWebTTYMessageConn(ctx, cfg, endpoint)
+	}
+	dialer := &websocket.Dialer{
+		ReadBufferSize:    *cfg.ReadBufferSize,
+		WriteBufferSize:   *cfg.WriteBufferSize,
+		HandshakeTimeout:  10 * time.Second,
+		EnableCompression: false,
+		Proxy:             http.ProxyFromEnvironment,
+		TLSClientConfig:   cloneTLSConfig(cfg.TLSConfig),
+	}
+	if endpoint.RequiresCustomDial {
+		if cfg.DialContext == nil {
+			return nil, fmt.Errorf("websocket url scheme %q requires a custom dialer", "rstrm")
+		}
+		dialer.NetDialContext = cfg.DialContext
+	}
+	if cfg.DialTLSContext != nil {
+		dialer.NetDialTLSContext = cfg.DialTLSContext
+	}
+	header := http.Header{}
+	if cfg.AuthToken != nil && strings.TrimSpace(*cfg.AuthToken) != "" {
+		header.Set("Authorization", "Bearer "+strings.TrimSpace(*cfg.AuthToken))
+	}
+	conn, resp, err := dialer.DialContext(ctx, endpoint.URL, header)
+	if err != nil {
+		if resp != nil {
+			return nil, fmt.Errorf("websocket dial failed with status %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("websocket dial failed: %w", err)
+	}
+	return conn, nil
+}
+
+func dialPlainWebTTYMessageConn(ctx context.Context, cfg *SessionConfig, endpoint *clientEndpoint) (messageConn, error) {
+	if cfg.AuthToken != nil && strings.TrimSpace(*cfg.AuthToken) != "" {
+		return nil, fmt.Errorf("plain WebTTY transport does not support HTTP bearer tokens")
+	}
+	dialContext := cfg.DialContext
+	if endpoint.RequiresCustomDial {
+		if dialContext == nil {
+			return nil, fmt.Errorf("plain rstrm WebTTY transport requires a custom dialer")
+		}
+	} else if dialContext == nil {
+		dialer := &net.Dialer{}
+		dialContext = dialer.DialContext
+	}
+	conn, err := dialContext(ctx, "tcp", endpoint.Address)
+	if err != nil {
+		return nil, fmt.Errorf("plain WebTTY dial failed: %w", err)
+	}
+	if endpoint.TLS {
+		tlsConfig := cloneTLSConfigWithWebTTYDefaults(cfg.TLSConfig)
+		if strings.TrimSpace(tlsConfig.ServerName) == "" {
+			tlsConfig.ServerName = endpointTLSServerName(endpoint.Address)
+		}
+		tlsConn := tls.Client(conn, tlsConfig)
+		if err := tlsConn.HandshakeContext(ctx); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("plain WebTTY TLS handshake failed: %w", err)
+		}
+		conn = tlsConn
+	}
+	return newPlainMessageConn(conn), nil
+}
+
+func dialWebTransportWebTTYMessageConn(ctx context.Context, cfg *SessionConfig, endpoint *clientEndpoint) (messageConn, error) {
+	tlsConfig := cloneTLSConfigWithWebTTYDefaults(cfg.TLSConfig)
+	tlsConfig.NextProtos = ensureTLSNextProto(tlsConfig.NextProtos, http3.NextProtoH3)
+	if strings.TrimSpace(tlsConfig.ServerName) == "" {
+		tlsConfig.ServerName = webTransportTLSServerName(endpoint.URL)
+	}
+	header := http.Header{}
+	if cfg.AuthToken != nil && strings.TrimSpace(*cfg.AuthToken) != "" {
+		header.Set("Authorization", "Bearer "+strings.TrimSpace(*cfg.AuthToken))
+	}
+	dialer := &webtransport.Dialer{
+		TLSClientConfig: tlsConfig,
+		QUICConfig: &quic.Config{
+			EnableDatagrams:                  true,
+			EnableStreamResetPartialDelivery: true,
+		},
+	}
+	if endpoint.RequiresCustomDial {
+		if cfg.DialPacketContext == nil {
+			return nil, fmt.Errorf("WebTransport rstrm WebTTY transport requires a custom packet dialer")
+		}
+		dialer.DialAddr = func(ctx context.Context, addr string, tlsCfg *tls.Config, quicCfg *quic.Config) (*quic.Conn, error) {
+			pc, remoteAddr, err := cfg.DialPacketContext(ctx, addr)
+			if err != nil {
+				return nil, err
+			}
+			qconn, err := quic.DialEarly(ctx, pc, remoteAddr, tlsCfg, quicCfg)
+			if err != nil {
+				_ = pc.Close()
+				return nil, err
+			}
+			go func() {
+				<-qconn.Context().Done()
+				_ = pc.Close()
+			}()
+			return qconn, nil
+		}
+	}
+	resp, session, err := dialer.Dial(ctx, endpoint.URL, header)
+	if err != nil {
+		if resp != nil {
+			return nil, fmt.Errorf("WebTransport dial failed with status %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("WebTransport dial failed: %w", err)
+	}
+	stream, err := session.OpenStreamSync(ctx)
+	if err != nil {
+		_ = session.CloseWithError(0, "stream open failed")
+		return nil, fmt.Errorf("WebTransport stream open failed: %w", err)
+	}
+	return newWebTransportMessageConn(session, stream), nil
+}
+
+func endpointTLSServerName(address string) string {
+	host, _, err := net.SplitHostPort(address)
+	if err == nil {
+		return host
+	}
+	return address
+}
+
+func webTransportTLSServerName(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || strings.TrimSpace(u.Hostname()) == "" {
+		return ""
+	}
+	return u.Hostname()
+}
+
+func cloneTLSConfig(cfg *tls.Config) *tls.Config {
+	if cfg == nil {
+		return nil
+	}
+	return cfg.Clone()
+}
+
+func cloneAttachConfig(cfg *AttachConfig) *AttachConfig {
+	if cfg == nil {
+		return nil
+	}
+	cloned := *cfg
+	cloned.AttachGrant = cloneBytes(cfg.AttachGrant)
+	cloned.Capabilities = append([]AttachCapability(nil), cfg.Capabilities...)
+	return &cloned
+}
+
+func cloneTLSConfigWithWebTTYDefaults(cfg *tls.Config) *tls.Config {
+	tlsConfig := cloneTLSConfig(cfg)
+	if tlsConfig == nil {
+		return &tls.Config{MinVersion: tls.VersionTLS13}
+	}
+	if tlsConfig.MinVersion == 0 || tlsConfig.MinVersion < tls.VersionTLS13 {
+		tlsConfig.MinVersion = tls.VersionTLS13
+	}
+	return tlsConfig
+}
+
+func ensureTLSNextProto(values []string, proto string) []string {
+	for _, value := range values {
+		if value == proto {
+			return values
+		}
+	}
+	return append(append([]string(nil), values...), proto)
 }
 
 func (s *ClientSession) Events() <-chan ClientSessionEvent { return s.events }
@@ -247,14 +485,18 @@ func (s *ClientSession) Wait() (int, error) {
 }
 
 func (s *ClientSession) SendInput(data []byte) error {
+	return s.SendInputContext(context.Background(), data)
+}
+
+func (s *ClientSession) SendInputContext(ctx context.Context, data []byte) error {
 	if len(data) == 0 {
 		return nil
 	}
-	return s.runtime.writeMessage(&pb.Message{
-		Payload: &pb.Message_Data{
-			Data: &pb.Data{Type: pb.Data_TYPE_STDIN, Payload: &pb.Data_Data{Data: append([]byte(nil), data...)}},
-		},
-	})
+	msg, err := s.runtime.stdinDataMessage(ctx, data)
+	if err != nil {
+		return err
+	}
+	return s.runtime.writeMessage(msg)
 }
 
 func (s *ClientSession) SendText(text string) error {
@@ -297,7 +539,7 @@ func (s *ClientSession) CloseWithError(err error) error {
 	return nil
 }
 
-func (s *ClientSession) run(readEvents <-chan clientEvent, loopErrCh <-chan error) {
+func (s *ClientSession) run(ctx context.Context, readEvents <-chan clientEvent, loopErrCh <-chan error) {
 	for {
 		select {
 		case event := <-readEvents:
@@ -311,7 +553,7 @@ func (s *ClientSession) run(readEvents <-chan clientEvent, loopErrCh <-chan erro
 			}
 			switch payload := event.msg.Payload.(type) {
 			case *pb.Message_Data:
-				sessionEvent, ok, err := decodeClientSessionEvent(payload.Data)
+				sessionEvent, ok, err := s.runtime.decodeClientSessionEvent(ctx, payload.Data)
 				if err != nil {
 					s.finalize(-1, err)
 					return
@@ -335,6 +577,9 @@ func (s *ClientSession) run(readEvents <-chan clientEvent, loopErrCh <-chan erro
 				} else {
 					s.finalize(-1, errClientServer)
 				}
+				return
+			case *pb.Message_ProtocolError:
+				s.finalize(-1, webTTYProtocolError(payload.ProtocolError))
 				return
 			default:
 				s.finalize(-1, fmt.Errorf("%w: %T", errClientUnexpected, payload))
@@ -379,26 +624,7 @@ func (s *ClientSession) finalize(exitCode int, err error) {
 }
 
 func decodeClientSessionEvent(data *pb.Data) (ClientSessionEvent, bool, error) {
-	if data == nil {
-		return ClientSessionEvent{}, false, fmt.Errorf("received empty data message")
-	}
-	var stream ClientSessionStream
-	switch data.Type {
-	case pb.Data_TYPE_STDOUT:
-		stream = ClientSessionStdout
-	case pb.Data_TYPE_STDERR:
-		stream = ClientSessionStderr
-	default:
-		return ClientSessionEvent{}, false, fmt.Errorf("unexpected data stream type: %v", data.Type)
-	}
-	switch payload := data.Payload.(type) {
-	case *pb.Data_Data:
-		return ClientSessionEvent{Stream: stream, Data: append([]byte(nil), payload.Data...)}, true, nil
-	case *pb.Data_Eos:
-		return ClientSessionEvent{}, false, nil
-	default:
-		return ClientSessionEvent{}, false, fmt.Errorf("unexpected data payload type: %T", payload)
-	}
+	return (&clientRuntime{cfg: &ClientConfig{}}).decodeClientSessionEvent(context.Background(), data)
 }
 
 func stringsEqualFoldTrimmed(value, target string) bool {

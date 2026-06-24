@@ -25,8 +25,8 @@ var (
 
 var webttyListCmd = &cobra.Command{
 	Use:          "list",
-	Aliases:      []string{"ls"},
 	Short:        "List available WebTTY servers",
+	GroupID:      "webtty-connect",
 	SilenceUsage: true,
 	Args:         cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -71,14 +71,12 @@ func init() {
 
 func listWebTTYServers(ctx context.Context, client *rstream.Client, filter string) ([]webtty.ServerInfo, error) {
 	status := "online"
-	applicationProtocol := webtty.WebTTYApplicationProtocol
 	params, err := buildTunnelListParams(filter)
 	if err != nil {
 		return nil, err
 	}
 	params = ensureWebTTYListParams(params)
 	params.Filters.Status = &status
-	params.Filters.Labels[webtty.WebTTYApplicationProtocolKey] = &applicationProtocol
 	list, err := client.ListTunnels(ctx, params)
 	if err != nil {
 		return nil, err

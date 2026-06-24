@@ -13,12 +13,22 @@ import (
 type ServerInfo struct {
 	Status            string            `json:"status"`
 	TunnelID          string            `json:"tunnel_id"`
+	TunnelProtocol    string            `json:"tunnel_protocol,omitempty"`
+	Managed           bool              `json:"managed"`
 	TunnelName        *string           `json:"tunnel_name,omitempty"`
 	Target            string            `json:"target"`
 	RstreamURL        string            `json:"rstream_url"`
 	Publish           bool              `json:"publish"`
 	Host              *string           `json:"host,omitempty"`
 	TokenAuth         bool              `json:"token_auth"`
+	ServerID          *string           `json:"server_id,omitempty"`
+	ServerName        *string           `json:"server_name,omitempty"`
+	WorkspaceID       *string           `json:"workspace_id,omitempty"`
+	ProjectID         *string           `json:"project_id,omitempty"`
+	HostKeyID         *string           `json:"host_key_id,omitempty"`
+	E2E               *string           `json:"e2e,omitempty"`
+	ClientProof       *string           `json:"client_proof,omitempty"`
+	EncryptionPolicy  *string           `json:"encryption_policy,omitempty"`
 	Capabilities      []string          `json:"capabilities,omitempty"`
 	ExecPath          *string           `json:"exec_path,omitempty"`
 	FSPath            *string           `json:"fs_path,omitempty"`
@@ -48,7 +58,8 @@ func ParseServers(tunnels []rstream.TunnelInventory) []ServerInfo {
 
 func parseServer(tunnel rstream.TunnelInventory) (ServerInfo, bool) {
 	labels := tunnel.Labels
-	if labels[webTTYApplicationProtocolKey] != WebTTYApplicationProtocol {
+	managedProtocol := tunnel.Protocol != nil && *tunnel.Protocol == rstream.ProtocolWebTTY
+	if !managedProtocol && labels[webTTYApplicationProtocolKey] != WebTTYApplicationProtocol {
 		return ServerInfo{}, false
 	}
 	id := trimStringPtr(tunnel.ID)
@@ -56,11 +67,15 @@ func parseServer(tunnel rstream.TunnelInventory) (ServerInfo, bool) {
 		return ServerInfo{}, false
 	}
 	if tunnel.Publish != nil && *tunnel.Publish {
-		if tunnel.Protocol != nil && *tunnel.Protocol != rstream.ProtocolHTTP {
+		if tunnel.Protocol != nil && *tunnel.Protocol != rstream.ProtocolHTTP && !managedProtocol {
 			return ServerInfo{}, false
 		}
 	}
 	name := trimStringPtr(tunnel.Name)
+	serverID := strings.TrimSpace(labels[webTTYServerIDLabel])
+	serverName := strings.TrimSpace(labels[webTTYServerNameLabel])
+	target := firstNonEmpty(serverName, name, id)
+	rstreamTarget := firstNonEmpty(serverID, name, id)
 	host := trimStringPtr(tunnel.Hostname)
 	if host != "" && tunnel.Port != nil && *tunnel.Port != 443 {
 		host = net.JoinHostPort(host, strconv.FormatUint(uint64(*tunnel.Port), 10))
@@ -71,12 +86,22 @@ func parseServer(tunnel rstream.TunnelInventory) (ServerInfo, bool) {
 	info := ServerInfo{
 		Status:            strings.TrimSpace(tunnel.Status),
 		TunnelID:          id,
+		TunnelProtocol:    tunnelProtocolString(tunnel.Protocol),
+		Managed:           managedProtocol,
 		TunnelName:        cloneStringPtr(name),
-		Target:            id,
-		RstreamURL:        "rstrm://" + id,
+		Target:            target,
+		RstreamURL:        "rstrm://" + rstreamTarget,
 		Publish:           tunnel.Publish != nil && *tunnel.Publish,
 		Host:              cloneStringPtr(host),
 		TokenAuth:         tunnel.TokenAuth != nil && *tunnel.TokenAuth,
+		ServerID:          cloneStringPtr(serverID),
+		ServerName:        cloneStringPtr(serverName),
+		WorkspaceID:       cloneStringPtr(tunnel.WorkspaceID),
+		ProjectID:         cloneStringPtr(tunnel.ProjectID),
+		HostKeyID:         cloneStringPtr(labels[webTTYHostKeyIDLabel]),
+		E2E:               cloneStringPtr(labels[webTTYE2ELabel]),
+		ClientProof:       cloneStringPtr(labels[webTTYClientProofLabel]),
+		EncryptionPolicy:  cloneStringPtr(labels[webTTYEncryptionPolicyLabel]),
 		Capabilities:      parseWebTTYCapabilities(labels[webTTYCapabilitiesLabel]),
 		OSFamily:          cloneStringPtr(labels[webTTYOSFamilyLabel]),
 		Arch:              cloneStringPtr(labels[webTTYArchLabel]),
@@ -152,6 +177,13 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func tunnelProtocolString(value *rstream.Protocol) string {
+	if value == nil {
+		return ""
+	}
+	return string(*value)
 }
 
 func trimStringPtr(value *string) string {

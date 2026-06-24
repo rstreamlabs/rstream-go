@@ -357,6 +357,10 @@ func TestRunApplyParsers(t *testing.T) {
 	if err != nil || protocol != rstream.ProtocolQUIC {
 		t.Fatalf("parseProtocol got %q err=%v", protocol, err)
 	}
+	protocol, err = parseProtocol(" WebTTY ")
+	if err != nil || protocol != rstream.ProtocolWebTTY {
+		t.Fatalf("parseProtocol got %q err=%v", protocol, err)
+	}
 	tunnelType, err := parseTunnelType(" datagram ")
 	if err != nil || tunnelType != rstream.TunnelTypeDatagram {
 		t.Fatalf("parseTunnelType got %q err=%v", tunnelType, err)

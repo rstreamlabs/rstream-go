@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"testing"
 
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
@@ -32,12 +33,17 @@ func TestResolveExecutablePrefersWorkdirCandidate(t *testing.T) {
 
 func TestResolveExecutableUsesPathLookup(t *testing.T) {
 	dir := t.TempDir()
-	exe := filepath.Join(dir, "frompath")
+	exeName := "frompath"
+	exeFile := exeName
+	if runtime.GOOS == "windows" {
+		exeFile += ".bat"
+	}
+	exe := filepath.Join(dir, exeFile)
 	if err := os.WriteFile(exe, []byte("echo hello\n"), 0o755); err != nil {
 		t.Fatalf("WriteFile returned error: %v", err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	got, err := resolveExecutable("frompath", "")
+	got, err := resolveExecutable(exeName, "")
 	if err != nil {
 		t.Fatalf("resolveExecutable returned error: %v", err)
 	}
@@ -91,5 +97,22 @@ func TestDefaultLabelsIncludesStableRuntimeIdentity(t *testing.T) {
 		if value == "" {
 			t.Fatalf("label %q has an empty value", key)
 		}
+	}
+}
+
+func TestWebTTYMessageTypeIncludesAttach(t *testing.T) {
+	msg := &pb.Message{Payload: &pb.Message_Attach{Attach: &pb.Attach{
+		SessionId:     "session-1",
+		ParticipantId: "participant-1",
+		AttachGrant:   []byte("grant"),
+		RequestedRole: pb.AttachRole_ATTACH_ROLE_SPECTATOR,
+		Transport:     pb.AttachTransport_ATTACH_TRANSPORT_WEBSOCKET,
+		Capabilities: []pb.AttachCapability{
+			pb.AttachCapability_ATTACH_CAPABILITY_READ_STREAM,
+			pb.AttachCapability_ATTACH_CAPABILITY_REQUEST_CONTROL,
+		},
+	}}}
+	if got := webTTYMessageType(msg); got != "attach" {
+		t.Fatalf("webTTYMessageType() = %q, want attach", got)
 	}
 }

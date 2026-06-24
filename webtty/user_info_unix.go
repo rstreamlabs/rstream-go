@@ -11,11 +11,12 @@ import (
 )
 
 type UserInfo struct {
-	Name  string
-	Shell string
-	Home  string
-	UID   uint32
-	GID   uint32
+	Name   string
+	Shell  string
+	Home   string
+	UID    uint32
+	GID    uint32
+	Groups []uint32
 }
 
 func GetUserInfo(u *UsernameVariant) (*UserInfo, error) {
@@ -27,16 +28,21 @@ func GetUserInfo(u *UsernameVariant) (*UserInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	groups, err := lookupNumericGroupIDs(usr)
+	if err != nil {
+		return nil, err
+	}
 	shell, err := DefaultShell(usr)
 	if err != nil {
 		return nil, fmt.Errorf("determine shell: %w", err)
 	}
 	return &UserInfo{
-		Name:  usr.Username,
-		Home:  usr.HomeDir,
-		UID:   uid,
-		GID:   gid,
-		Shell: shell,
+		Name:   usr.Username,
+		Home:   usr.HomeDir,
+		UID:    uid,
+		GID:    gid,
+		Groups: groups,
+		Shell:  shell,
 	}, nil
 }
 
@@ -68,4 +74,26 @@ func lookupNumericUserIDs(usr *user.User) (uint32, uint32, error) {
 		return 0, 0, fmt.Errorf("invalid gid %q: %w", usr.Gid, err)
 	}
 	return uint32(uid64), uint32(gid64), nil
+}
+
+func lookupNumericGroupIDs(usr *user.User) ([]uint32, error) {
+	groupIDs, err := usr.GroupIds()
+	if err != nil {
+		return nil, fmt.Errorf("user group lookup: %w", err)
+	}
+	out := make([]uint32, 0, len(groupIDs))
+	seen := map[uint32]struct{}{}
+	for _, raw := range groupIDs {
+		gid64, err := strconv.ParseUint(raw, 10, 32)
+		if err != nil {
+			return nil, fmt.Errorf("invalid group id %q: %w", raw, err)
+		}
+		gid := uint32(gid64)
+		if _, ok := seen[gid]; ok {
+			continue
+		}
+		seen[gid] = struct{}{}
+		out = append(out, gid)
+	}
+	return out, nil
 }

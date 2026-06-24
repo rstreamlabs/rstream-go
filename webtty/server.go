@@ -16,6 +16,9 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/quic-go/webtransport-go"
+
+	"github.com/rstreamlabs/rstream-go/webtty/pb"
 )
 
 const (
@@ -28,18 +31,42 @@ const (
 )
 
 type ServerConfig struct {
-	MaxMessageSize       *int64
-	ReadBufferSize       *int
-	WriteBufferSize      *int
-	EnvVars              *map[string]string
-	SessionOpenDeadline  *time.Duration
-	SessionCloseDeadline *time.Duration
-	HeartbeatInterval    *time.Duration
-	AuthToken            *string
-	AllowUnauthenticated *bool
-	AllowedOrigins       []string
-	Logger               *slog.Logger
+	MaxMessageSize              *int64
+	ReadBufferSize              *int
+	WriteBufferSize             *int
+	EnvVars                     *map[string]string
+	SessionOpenDeadline         *time.Duration
+	SessionCloseDeadline        *time.Duration
+	HeartbeatInterval           *time.Duration
+	AuthToken                   *string
+	AllowUnauthenticated        *bool
+	AllowedOrigins              []string
+	PayloadCrypto               *PayloadCrypto
+	PayloadCryptoResolver       PayloadCryptoResolver
+	RequireSessionKeyGrant      *bool
+	EndpointIdentity            *WebTTYEndpointIdentity
+	RequireClientProof          *bool
+	AuthorizedClientSigningKeys map[string][]byte
+	AuthorizedClientSigningKey  AuthorizedClientSigningKeyResolver
+	ClientProofVerifier         ClientProofVerifier
+	WorkspaceID                 string
+	ProjectID                   string
+	ServerID                    string
+	ExecutionMode               *ExecutionMode
+	DefaultUsername             *string
+	AllowClientUser             *bool
+	Logger                      *slog.Logger
 }
+
+type AuthorizedClientSigningKeyResolver func(ctx context.Context, signingKeyID []byte) ([]byte, error)
+
+type ClientProofVerification struct {
+	Proof      *pb.ClientProof
+	Credential []byte
+	Transcript ClientProofTranscript
+}
+
+type ClientProofVerifier func(ctx context.Context, verification ClientProofVerification) ([]byte, error)
 
 type Handler struct {
 	cfg        *ServerConfig
@@ -102,10 +129,24 @@ func resolveServerConfig(cfg *ServerConfig) *ServerConfig {
 		value := defaultHeartbeatInterval
 		cfg.HeartbeatInterval = &value
 	}
+	if cfg.ExecutionMode == nil {
+		value := WebTTYExecutionModeSpawn
+		cfg.ExecutionMode = &value
+	}
+	if cfg.AuthorizedClientSigningKeys == nil {
+		cfg.AuthorizedClientSigningKeys = map[string][]byte{}
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
 	return cfg
+}
+
+func (h *Handler) Config() *ServerConfig {
+	if h == nil {
+		return nil
+	}
+	return h.cfg
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +165,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	sessionID := h.sessionIDs.Generate()
 	h.logger.Debug("websocket connection accepted", "session_id", sessionID)
-	s := newSession(conn, h.cfg, h.logger.With("session_id", sessionID))
+	s := newSession(conn, h.cfg, h.logger.With("session_id", sessionID, "transport", string(WebTTYTransportWebSocket)), sessionID, WebTTYTransportWebSocket)
 	if !h.registerSession(s) {
 		h.logger.Info("rejecting websocket connection during shutdown", "session_id", sessionID)
 		s.close()
@@ -134,6 +175,49 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer h.unregisterSession(s)
 		s.run()
 	}()
+}
+
+func (h *Handler) ServeConn(conn net.Conn) {
+	if h.draining.Load() {
+		_ = conn.Close()
+		return
+	}
+	sessionID := h.sessionIDs.Generate()
+	h.logger.Debug("plain connection accepted", "session_id", sessionID)
+	s := newSession(newPlainMessageConn(conn), h.cfg, h.logger.With("session_id", sessionID, "transport", string(WebTTYTransportPlain)), sessionID, WebTTYTransportPlain)
+	if !h.registerSession(s) {
+		h.logger.Info("rejecting plain connection during shutdown", "session_id", sessionID)
+		s.close()
+		return
+	}
+	defer h.unregisterSession(s)
+	s.run()
+}
+
+func (h *Handler) ServeWebTransportSession(ctx context.Context, wtSession *webtransport.Session) {
+	if h.draining.Load() {
+		_ = wtSession.CloseWithError(0, "server is draining")
+		return
+	}
+	if ctx == nil {
+		ctx = wtSession.Context()
+	}
+	stream, err := wtSession.AcceptStream(ctx)
+	if err != nil {
+		h.logger.Warn("failed to accept webtransport stream", "error", err)
+		_ = wtSession.CloseWithError(0, "stream accept failed")
+		return
+	}
+	sessionID := h.sessionIDs.Generate()
+	h.logger.Debug("webtransport session accepted", "session_id", sessionID)
+	s := newSession(newWebTransportMessageConn(wtSession, stream), h.cfg, h.logger.With("session_id", sessionID, "transport", string(WebTTYTransportWebTransport)), sessionID, WebTTYTransportWebTransport)
+	if !h.registerSession(s) {
+		h.logger.Info("rejecting webtransport session during shutdown", "session_id", sessionID)
+		s.close()
+		return
+	}
+	defer h.unregisterSession(s)
+	s.run()
 }
 
 func (h *Handler) registerSession(s *session) bool {

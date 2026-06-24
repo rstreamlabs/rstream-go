@@ -52,6 +52,11 @@ func TestFormatForwardingAddrVariants(t *testing.T) {
 			want:  "https://app.example.com:8443",
 		},
 		{
+			name:  "published managed webtty",
+			props: TunnelProperties{Hostname: StringPtr("terminal.example.com"), Protocol: ProtocolPtr(ProtocolWebTTY)},
+			want:  "https://terminal.example.com (webtty)",
+		},
+		{
 			name:  "legacy host wins without formatting",
 			props: TunnelProperties{Host: StringPtr("legacy.example.com"), Protocol: ProtocolPtr(ProtocolQUIC)},
 			want:  "legacy.example.com (quic)",
@@ -106,6 +111,7 @@ func TestFormatForwardedHostPortVariants(t *testing.T) {
 		{name: "tls terminated reports tcp", host: "127.0.0.1", port: "9000", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolTLS), TLSMode: TLSModePtr(TLSModeTerminated)}, want: "127.0.0.1:9000 (tcp)"},
 		{name: "dtls without upstream tls reports udp", host: "127.0.0.1", port: "9000", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolDTLS), UpstreamTLS: BoolPtr(false)}, want: "127.0.0.1:9000 (udp)"},
 		{name: "quic marker", host: "127.0.0.1", port: "4433", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolQUIC)}, want: "127.0.0.1:4433 (quic)"},
+		{name: "webtty marker", host: "127.0.0.1", port: "7681", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolWebTTY)}, want: "127.0.0.1:7681 (webtty)"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

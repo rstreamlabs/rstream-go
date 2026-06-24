@@ -153,7 +153,67 @@ export RSTREAM_RUNTIME_PRO_PROJECT_ENDPOINT='<pro-project-endpoint>'
 bash test/e2e/runtime-mtls-permissions.sh
 ```
 
+Run the WebTTY CLI workflow suite:
+
+```sh
+bash test/e2e/webtty-cli-workflows.sh
+```
+
+This suite validates local WebTTY identities, trust-store files, registered
+server config parsing, workspace-managed device config, public help output,
+runtime E2E inference, and WebDAV sidecar rejection when E2E is active.
+
+Run the WebTTY runtime matrix:
+
+```sh
+bash test/e2e/webtty-runtime-matrix.sh
+```
+
+The matrix starts live WebTTY servers and clients and covers direct Go
+transports, JavaScript browser WebTransport, C++ client/server interop when the
+C++ binaries are available, explicit-key E2E, connection setup, command
+execution, and expected failure paths. It resolves companion repositories from
+sibling checkouts named `rstream-js` and `rstream-cpp`; override with
+`RSTREAM_JS_REPO` or `RSTREAM_CPP_REPO` when testing a different checkout.
+
 The runtime scripts resolve the CLI in this order: `RSTREAM_BIN`, a built repository binary under `out/cmd/rstream`, then `rstream` from `PATH`. Set `RSTREAM_BIN` when you need to test a specific binary.
+
+Run the Windows WebTTY runtime suite from a Windows host or VM:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File test\e2e\webtty-windows-runtime.ps1 `
+  -Rstream C:\path\to\rstream.exe
+```
+
+From another machine, cross-compile the CLI first, copy both the binary and the
+script to the Windows host, then run the same command there:
+
+```sh
+GOOS=windows GOARCH=arm64 go build -o /tmp/rstream.exe ./cmd/rstream
+scp /tmp/rstream.exe test/e2e/webtty-windows-runtime.ps1 winhost:C:/Temp/rstream-webtty/
+ssh winhost 'powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\rstream-webtty\webtty-windows-runtime.ps1 -Rstream C:\Temp\rstream-webtty\rstream.exe'
+```
+
+Use `GOARCH=amd64` for an x64 Windows VM. The Windows runtime suite covers
+WebSocket, plain transport, plain-over-TLS, WebTransport, current-user login
+mode, explicit-key E2E, unauthorized client rejection, and duplicate-error-log
+prevention. The script generates its local test certificate with Go, so it does
+not require OpenSSL on the Windows host.
+
+Pass C++ WebTTY binaries when validating Go/C++ interop on Windows:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File C:\Temp\rstream-webtty\webtty-windows-runtime.ps1 `
+  -Rstream C:\Temp\rstream-webtty\rstream.exe `
+  -CppServer C:\Temp\rstream-webtty\rstream-webtty-server.exe `
+  -CppClient C:\Temp\rstream-webtty\rstream-webtty-client.exe
+```
+
+With those binaries, the Windows suite also covers Go client to C++ server,
+C++ client to C++ server, C++ client to Go server, E2E authorized and
+unauthorized C++ paths, and known-server client identity resolution.
 
 For the standard local stack, keep the public inputs explicit:
 

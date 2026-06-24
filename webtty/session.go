@@ -24,9 +24,13 @@ import (
 )
 
 type session struct {
-	conn            *websocket.Conn
+	conn            messageConn
 	cfg             *ServerConfig
 	logger          *slog.Logger
+	sessionID       string
+	transport       WebTTYTransport
+	ctx             context.Context
+	cancel          context.CancelFunc
 	logProto        bool
 	mu              sync.Mutex
 	closed          bool
@@ -44,23 +48,42 @@ type session struct {
 	opened          bool
 	disconnecting   bool
 	closeErr        error
+	payloadCrypto   *PayloadCrypto
+	serverNonce     []byte
+	acceptedAt      time.Time
+	authenticatedAt time.Time
+	acceptedLogged  bool
+	clientPrincipal string
+	clientDeviceID  string
+	clientBrowserID string
+	clientKeyID     string
+	serverKeyID     string
 }
+
+const managedAttachUnsupportedMessage = "managed WebTTY attach is handled by the rstream engine; direct WebTTY servers accept only new Open sessions"
 
 var errSessionOperationTimeout = errors.New("operation timeout")
 
-func newSession(conn *websocket.Conn, cfg *ServerConfig, logger *slog.Logger) *session {
+func newSession(conn messageConn, cfg *ServerConfig, logger *slog.Logger, sessionID string, transport WebTTYTransport) *session {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	if cfg.MaxMessageSize != nil && *cfg.MaxMessageSize > 0 {
 		conn.SetReadLimit(*cfg.MaxMessageSize)
 	}
+	sessionCtx, cancel := context.WithCancel(context.Background())
 	s := &session{
-		conn:     conn,
-		cfg:      cfg,
-		logger:   logger,
-		logProto: strings.EqualFold(strings.TrimSpace(rstream.Channel), "dev"),
-		doneCh:   make(chan struct{}),
+		conn:          conn,
+		cfg:           cfg,
+		logger:        logger,
+		sessionID:     sessionID,
+		transport:     transport,
+		ctx:           sessionCtx,
+		cancel:        cancel,
+		logProto:      strings.EqualFold(strings.TrimSpace(rstream.Channel), "dev"),
+		doneCh:        make(chan struct{}),
+		payloadCrypto: cfg.PayloadCrypto,
+		acceptedAt:    time.Now(),
 	}
 	if cfg.HeartbeatInterval != nil && *cfg.HeartbeatInterval > 0 {
 		s.heartbeatTicker = time.NewTicker(*cfg.HeartbeatInterval)
@@ -83,8 +106,34 @@ func newSession(conn *websocket.Conn, cfg *ServerConfig, logger *slog.Logger) *s
 }
 
 func (s *session) run() {
-	go s.readLoop()
+	if err := s.validateE2EConfig(); err != nil {
+		s.error(err)
+		return
+	}
+	initial, err := s.readWebTransportInitialMessageIfNeeded()
+	if err != nil {
+		s.error(err)
+		return
+	}
+	if err := s.sendServerHelloIfConfigured(); err != nil {
+		s.error(err)
+		return
+	}
+	go s.readLoop(initial)
 	<-s.doneCh
+}
+
+func (s *session) validateE2EConfig() error {
+	if s.cfg == nil || s.cfg.PayloadCryptoResolver == nil {
+		return nil
+	}
+	if s.cfg.EndpointIdentity == nil {
+		return fmt.Errorf("WebTTY E2E server requires an endpoint identity")
+	}
+	if s.cfg.RequireClientProof == nil || !*s.cfg.RequireClientProof {
+		return fmt.Errorf("WebTTY E2E server requires client proof")
+	}
+	return nil
 }
 
 func (s *session) done() <-chan struct{} {
@@ -132,7 +181,19 @@ func (s *session) shutdown(ctx context.Context) {
 	}
 }
 
-func (s *session) readLoop() {
+func (s *session) readLoop(initial *pb.Message) {
+	if initial != nil {
+		s.mu.Lock()
+		err := s.handleMessage(initial)
+		if err != nil {
+			s.error(err)
+		}
+		closed := s.closed
+		s.mu.Unlock()
+		if err != nil || closed {
+			return
+		}
+	}
 	for {
 		mt, data, err := s.conn.ReadMessage()
 		s.mu.Lock()
@@ -142,6 +203,28 @@ func (s *session) readLoop() {
 			return
 		}
 	}
+}
+
+func (s *session) readWebTransportInitialMessageIfNeeded() (*pb.Message, error) {
+	if s.transport != WebTTYTransportWebTransport || s.cfg == nil || s.cfg.EndpointIdentity == nil {
+		return nil, nil
+	}
+	mt, data, err := s.conn.ReadMessage()
+	if err != nil {
+		return nil, err
+	}
+	if mt != websocket.BinaryMessage {
+		return nil, fmt.Errorf("unexpected message type: %d", mt)
+	}
+	var msg pb.Message
+	if err := proto.Unmarshal(data, &msg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal protobuf: %w", err)
+	}
+	s.logProtoMessage("received", &msg)
+	if _, ok := msg.Payload.(*pb.Message_ClientHello); ok {
+		return nil, nil
+	}
+	return &msg, nil
 }
 
 func (s *session) heartbeatLoop() {
@@ -211,7 +294,7 @@ func (s *session) onIncomingMessage(messageType int, p []byte, err error) bool {
 	if s.closed {
 		return false
 	}
-	if err != nil && (errors.Is(err, io.EOF) || websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway)) {
+	if err != nil && (isExpectedWebTTYPeerCloseError(err) || s.disconnecting || s.shutdownReq) {
 		s.close()
 		return false
 	}
@@ -243,6 +326,21 @@ func (s *session) doSendHeartbeat() bool {
 		s.error(err)
 	}
 	return err == nil
+}
+
+func isExpectedWebTTYPeerCloseError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) {
+		return true
+	}
+	return websocket.IsCloseError(
+		err,
+		websocket.CloseNormalClosure,
+		websocket.CloseGoingAway,
+		websocket.CloseAbnormalClosure,
+	)
 }
 
 func (s *session) onReadStream(t pb.Data_Type, p []byte, err error) bool {
@@ -301,6 +399,10 @@ func (s *session) handleMessage(m *pb.Message) error {
 	switch payload := m.Payload.(type) {
 	case *pb.Message_Open:
 		return s.handleOpen(payload.Open)
+	case *pb.Message_Attach:
+		err := errors.New(managedAttachUnsupportedMessage)
+		_ = s.sendError(err)
+		return err
 	case *pb.Message_Data:
 		return s.handleData(payload.Data)
 	case *pb.Message_Error:
@@ -309,6 +411,8 @@ func (s *session) handleMessage(m *pb.Message) error {
 		}
 		return fmt.Errorf("client error (%s)", payload.Error.Msg)
 	case *pb.Message_Heartbeat:
+		return nil
+	case *pb.Message_ClientHello:
 		return nil
 	case *pb.Message_Parameter:
 		if payload.Parameter == nil {
@@ -340,6 +444,21 @@ func (s *session) waitPipedProcessLoop(cmd *exec.Cmd, stdout, stderr io.Reader) 
 	s.waitProcessLoop(cmd)
 }
 
+func usernameVariantFromProto(username *pb.Username) *UsernameVariant {
+	if username == nil {
+		return nil
+	}
+	switch p := username.Payload.(type) {
+	case *pb.Username_Name:
+		return &UsernameVariant{Name: &p.Name}
+	case *pb.Username_Id:
+		id := p.Id
+		return &UsernameVariant{UID: &id}
+	default:
+		return nil
+	}
+}
+
 func (s *session) handleOpen(openCfg *pb.Open) error {
 	if s.closed {
 		return errors.New("session is closed")
@@ -351,20 +470,30 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 		if openCfg == nil || openCfg.Config == nil {
 			return fmt.Errorf("missing open config")
 		}
-		var uv *UsernameVariant
-		if pu := openCfg.Config.Username; pu != nil {
-			switch p := pu.Payload.(type) {
-			case *pb.Username_Name:
-				uv = &UsernameVariant{Name: &p.Name}
-			case *pb.Username_Id:
-				id := p.Id
-				uv = &UsernameVariant{UID: &id}
-			}
+		if err := s.verifyClientProof(s.ctx, openCfg); err != nil {
+			return err
 		}
-		ui, err := GetUserInfo(uv)
+		s.logSessionAccepted()
+		uv := usernameVariantFromProto(openCfg.Config.Username)
+		identity, err := resolveExecutionIdentity(s.cfg, uv)
 		if err != nil {
-			return fmt.Errorf("failed to get user info: %w", err)
+			return err
 		}
+		requireSessionKeyGrant := s.cfg.RequireSessionKeyGrant != nil && *s.cfg.RequireSessionKeyGrant
+		if openCfg.SessionKeyGrant == nil && requireSessionKeyGrant {
+			return fmt.Errorf("E2E session key grant is required")
+		}
+		if openCfg.SessionKeyGrant != nil && s.cfg.PayloadCryptoResolver == nil {
+			return fmt.Errorf("E2E session key grant was provided but no resolver is configured")
+		}
+		if openCfg.SessionKeyGrant != nil && s.cfg.PayloadCryptoResolver != nil {
+			payloadCrypto, err := s.cfg.PayloadCryptoResolver(s.ctx, sessionKeyGrantFromProto(openCfg.SessionKeyGrant))
+			if err != nil {
+				return fmt.Errorf("failed to resolve session key grant: %w", err)
+			}
+			s.payloadCrypto = payloadCrypto
+		}
+		ui := identity.userInfo
 		workdir := ui.Home
 		if wd := openCfg.Config.Workdir; wd != nil && wd.Value != "" {
 			workdir = wd.Value
@@ -378,7 +507,14 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 		if openCfg.Config.Options.GetAllocateTty() {
 			backend = "tty"
 		}
-		s.logger.Debug("starting child process", "backend", backend, "exe", exe, "args", args, "workdir", workdir)
+		s.logger.Info(
+			"starting child process",
+			"backend", backend,
+			"exe", exe,
+			"args_count", len(args),
+			"workdir", workdir,
+			"execution_mode", executionModeLogValue(s.cfg),
+		)
 		exePath, err := resolveExecutable(exe, workdir)
 		if err != nil {
 			return err
@@ -404,7 +540,7 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 			AddEnvironmentVariable(&env, key, value, false)
 		}
 		cmd.Env = env
-		if uv != nil {
+		if identity.credentialRequired {
 			if err := SetupCredential(cmd, ui); err != nil {
 				return fmt.Errorf("failed to switch user: %w", err)
 			}
@@ -455,8 +591,12 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 	}
 	err := setup()
 	if err != nil {
-		_ = s.sendError(err)
-		return err
+		s.logSessionRejected(err)
+		if sendErr := s.sendError(err); sendErr != nil {
+			return sendErr
+		}
+		s.startCloseHandshake()
+		return nil
 	}
 	s.opened = true
 	if s.openTimer != nil {
@@ -489,16 +629,30 @@ func (s *session) handleData(d *pb.Data) error {
 			return s.stdinPipe.Close()
 		}
 	case *pb.Data_Data:
-		if s.ptyFile != nil {
-			_, err := s.ptyFile.Write(payload.Data)
-			return err
+		return s.writeStdinPayload(payload.Data)
+	case *pb.Data_EncryptedData:
+		if s.payloadCrypto == nil || s.payloadCrypto.DecryptStdin == nil {
+			return fmt.Errorf("encrypted WebTTY stdin payload requires a decrypt hook")
 		}
-		if s.stdinPipe != nil {
-			_, err := s.stdinPipe.Write(payload.Data)
-			return err
+		decrypted, err := s.payloadCrypto.DecryptStdin(s.ctx, encryptedPayloadFromProto(payload.EncryptedData))
+		if err != nil {
+			return fmt.Errorf("failed to decrypt stdin payload: %w", err)
 		}
+		return s.writeStdinPayload(decrypted)
 	default:
 		return fmt.Errorf("unexpected data payload type: %T", payload)
+	}
+	return errors.New("no PTY and no stdin pipe")
+}
+
+func (s *session) writeStdinPayload(payload []byte) error {
+	if s.ptyFile != nil {
+		_, err := s.ptyFile.Write(payload)
+		return err
+	}
+	if s.stdinPipe != nil {
+		_, err := s.stdinPipe.Write(payload)
+		return err
 	}
 	return errors.New("no PTY and no stdin pipe")
 }
@@ -540,7 +694,7 @@ func (s *session) error(err error) {
 	if s.closeErr == nil {
 		s.closeErr = err
 	}
-	s.logger.Warn("session error", "error", err)
+	s.logger.Warn("session error", "reason_code", webTTYSessionErrorReasonCode(err), "error", err)
 	s.close()
 }
 
@@ -549,6 +703,7 @@ func (s *session) close() {
 		return
 	}
 	s.closed = true
+	s.cancel()
 	if s.openTimer != nil {
 		s.openTimer.Stop()
 	}
@@ -576,7 +731,19 @@ func (s *session) close() {
 	default:
 		close(s.doneCh)
 	}
-	s.logger.Info("session closed", "error", s.closeErr)
+	attrs := s.sessionAuditAttrs()
+	attrs = append(attrs,
+		"duration_ms", time.Since(s.acceptedAt).Milliseconds(),
+		"opened", s.opened,
+		"authenticated", !s.authenticatedAt.IsZero(),
+		"child_done", s.childDone,
+		"exit_code", s.childExitCode,
+	)
+	attrs = appendSessionPolicyAttrs(attrs, s.cfg)
+	if s.closeErr != nil {
+		attrs = append(attrs, "reason_code", webTTYSessionErrorReasonCode(s.closeErr), "error", s.closeErr)
+	}
+	s.logger.Info("session closed", attrs...)
 }
 
 func (s *session) onOpenTimeout() {
@@ -639,8 +806,34 @@ func (s *session) sendAck() error {
 }
 
 func (s *session) sendError(err error) error {
+	if protocolError, ok := webTTYProtocolErrorForError(err); ok {
+		msg := &pb.Message{Payload: &pb.Message_ProtocolError{ProtocolError: protocolError}}
+		return s.writeMessage(msg)
+	}
 	msg := &pb.Message{Payload: &pb.Message_Error{Error: &pb.Error{Msg: err.Error()}}}
 	return s.writeMessage(msg)
+}
+
+func webTTYProtocolErrorForError(err error) (*pb.ProtocolError, bool) {
+	switch {
+	case errors.Is(err, errWebTTYClientProofRequired):
+		return &pb.ProtocolError{
+			Code: pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_CLIENT_PROOF_REQUIRED,
+			Msg:  err.Error(),
+		}, true
+	case errors.Is(err, errWebTTYClientProofInvalid):
+		return &pb.ProtocolError{
+			Code: pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_CLIENT_PROOF_INVALID,
+			Msg:  err.Error(),
+		}, true
+	case errors.Is(err, errWebTTYClientProofUnauthorized):
+		return &pb.ProtocolError{
+			Code: pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_CLIENT_UNAUTHORIZED,
+			Msg:  err.Error(),
+		}, true
+	default:
+		return nil, false
+	}
 }
 
 func (s *session) sendHeartbeat() error {
@@ -649,8 +842,31 @@ func (s *session) sendHeartbeat() error {
 }
 
 func (s *session) sendData(t pb.Data_Type, chunk []byte) error {
-	msg := &pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{Type: t, Payload: &pb.Data_Data{Data: chunk}}}}
+	msg, err := s.dataMessage(s.ctx, t, chunk)
+	if err != nil {
+		return err
+	}
 	return s.writeMessage(msg)
+}
+
+func (s *session) dataMessage(ctx context.Context, t pb.Data_Type, chunk []byte) (*pb.Message, error) {
+	var encrypt PayloadEncryptFunc
+	if s.payloadCrypto != nil {
+		switch t {
+		case pb.Data_TYPE_STDOUT:
+			encrypt = s.payloadCrypto.EncryptStdout
+		case pb.Data_TYPE_STDERR:
+			encrypt = s.payloadCrypto.EncryptStderr
+		}
+	}
+	if encrypt == nil {
+		return &pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{Type: t, Payload: &pb.Data_Data{Data: cloneBytes(chunk)}}}}, nil
+	}
+	encrypted, err := encrypt(ctx, cloneBytes(chunk))
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt %s payload: %w", t.String(), err)
+	}
+	return &pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{Type: t, Payload: &pb.Data_EncryptedData{EncryptedData: encryptedPayloadToProto(encrypted)}}}}, nil
 }
 
 func (s *session) sendEOS(t pb.Data_Type) error {

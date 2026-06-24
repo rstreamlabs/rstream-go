@@ -130,7 +130,7 @@ rstream project list
 Select a project endpoint and set it as default:
 
 ```bash
-rstream project use <project-endpoint> --default
+rstream project use <project-endpoint>
 ```
 
 ### 3) Forward a local port
@@ -183,13 +183,13 @@ Fast path: select another project endpoint and set it as default.
 
 ```bash
 rstream project list
-rstream project use <project-endpoint> --default
+rstream project use <project-endpoint>
 ```
 
 If a specific context name is preferred:
 
 ```bash
-rstream project use <project-endpoint> --name <context-name> --default
+rstream project use <project-endpoint> --name <context-name>
 ```
 
 ### Project-scoped setups (remote devices)
@@ -234,7 +234,7 @@ Use JSON output for agent and CI workflows:
 ```bash
 rstream login -o json
 rstream project list -o json
-rstream project use <project-endpoint> --default -o json
+rstream project use <project-endpoint> -o json
 rstream context list -o json
 rstream context get <name> -o json
 rstream context create <name> --engine <host:port> --token-file /path/to/token --default -o json
@@ -288,6 +288,14 @@ For published exposures, the protocol is an edge-facing tunnel protocol. For pri
 For non-MCP published remote services, set `token_auth=true` or `rstream_auth=true` in the MCP call when the endpoint must not be open to the internet. Remote MCP exposures default to token authentication when `mcp_path` is set.
 
 The remote host must have a usable `rstream` binary and context, or the MCP call must pass the required environment with the `env` argument. The persistent remote runner currently expects a POSIX shell on the WebTTY host. The remote expose process is tracked under `$HOME/.rstream/remote-exposes` on the remote host and can be stopped with `rstream_remote_expose_stop`.
+
+When `webtty_url` is a direct authenticated-E2E URL, pass `known_server=<name>`
+to `rstream_remote_expose` and `rstream_remote_expose_stop`. The local MCP
+server then uses the same known-server store as `rstream webtty exec`: it
+verifies the pinned server endpoint identity and loads the associated client
+identity without adding a Control plane lookup. For `rstrm://...` targets, MCP
+uses live WebTTY inventory first and only reaches the Control plane when
+workspace-managed trust requires it.
 
 For local MCP servers running on devices or robots, pass `mcp_path=/mcp` to `rstream_remote_expose`. The created tunnel is labeled with `application-protocol=rstream.mcp`, `rstream.mcp.transport=streamable-http`, and `rstream.mcp.path=<path>`. Codex can then discover the surface with `rstream_remote_mcp_discover`, list its tools with `rstream_remote_mcp_tools`, and call a tool with `rstream_remote_mcp_call`.
 
