@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.0](https://github.com/rstreamlabs/rstream-go/compare/v1.21.0...v1.22.0) (2026-06-24)
+
+
+### Features
+
+* add managed WebTTY workflows ([#39](https://github.com/rstreamlabs/rstream-go/issues/39)) ([d93b97a](https://github.com/rstreamlabs/rstream-go/commit/d93b97a49e512fc1b1b2e1252535bd19ab6bf378))
+
 ## [1.21.0](https://github.com/rstreamlabs/rstream-go/compare/v1.20.1...v1.21.0) (2026-06-02)
 
 
