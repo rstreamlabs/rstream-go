@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.22.1](https://github.com/rstreamlabs/rstream-go/compare/v1.22.0...v1.22.1) (2026-06-24)
+
+
+### Bug Fixes
+
+* support WebTTY E2E cross builds on 32-bit targets ([#41](https://github.com/rstreamlabs/rstream-go/issues/41)) ([55be778](https://github.com/rstreamlabs/rstream-go/commit/55be77843d19e8714a4a0c588c6ffaf4a9a77b0a))
+
 ## [1.22.0](https://github.com/rstreamlabs/rstream-go/compare/v1.21.0...v1.22.0) (2026-06-24)
 
 
