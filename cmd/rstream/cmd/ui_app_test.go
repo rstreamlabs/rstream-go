@@ -3,7 +3,15 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +20,8 @@ import (
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/controlplane"
 	"github.com/rstreamlabs/rstream-go/webtty"
 )
 
@@ -152,6 +162,108 @@ func TestUICaptureInputHelpVisibleClosesOnF1(t *testing.T) {
 	}
 }
 
+func TestUIShowWebTTYIdentityPickerOwnsKeyboardInput(t *testing.T) {
+	t.Parallel()
+	app := &uiApp{
+		app:        tview.NewApplication(),
+		pages:      tview.NewPages(),
+		table:      tview.NewTable(),
+		activePage: uiPageInventory,
+		state:      uiState{View: uiViewWebTTY},
+	}
+	app.showWebTTYIdentityPicker(
+		webtty.ServerInfo{Target: "prod-shell"},
+		&uiWebTTYIdentitySelection{
+			knownServerName: "prod-shell",
+			identities: []map[string]any{{
+				"name":           "review-client",
+				"signing_key_id": "signing-key",
+			}},
+		},
+	)
+	if app.activePage != uiPageIdentityPicker {
+		t.Fatalf("active page = %q, want identity picker", app.activePage)
+	}
+	if got := app.captureInput(tcell.NewEventKey(tcell.KeyRune, 'q', tcell.ModNone)); got != nil {
+		t.Fatalf("captureInput(q) = %v, want nil", got)
+	}
+	if app.activePage != uiPageInventory {
+		t.Fatalf("active page after cancel = %q, want inventory", app.activePage)
+	}
+}
+
+func TestUIShowWebTTYIdentityPickerEnterActivatesSelection(t *testing.T) {
+	t.Parallel()
+	app := &uiApp{
+		app:        tview.NewApplication(),
+		pages:      tview.NewPages(),
+		table:      tview.NewTable(),
+		activePage: uiPageInventory,
+		state:      uiState{View: uiViewWebTTY},
+	}
+	app.showWebTTYIdentityPicker(
+		webtty.ServerInfo{Target: "prod-shell"},
+		&uiWebTTYIdentitySelection{knownServerName: "prod-shell"},
+	)
+	focus, ok := app.app.GetFocus().(*tview.List)
+	if !ok {
+		t.Fatalf("focused primitive = %T, want *tview.List", app.app.GetFocus())
+	}
+	handler := focus.InputHandler()
+	if handler == nil {
+		t.Fatalf("identity picker list has no input handler")
+	}
+	handler(tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), func(p tview.Primitive) {
+		app.app.SetFocus(p)
+	})
+	if app.activePage != uiPageInventory {
+		t.Fatalf("active page after enter = %q, want inventory", app.activePage)
+	}
+	if !strings.Contains(app.state.Message, "Create an identity first") {
+		t.Fatalf("message after enter = %q, want create-identity guidance", app.state.Message)
+	}
+}
+
+func TestUIShowWebTTYIdentityPickerEnterUsesSelectedIdentity(t *testing.T) {
+	t.Parallel()
+	app := &uiApp{
+		ctx:        t.Context(),
+		app:        tview.NewApplication(),
+		pages:      tview.NewPages(),
+		table:      tview.NewTable(),
+		activePage: uiPageInventory,
+		state:      uiState{View: uiViewWebTTY},
+	}
+	app.pages.AddPage(uiPageInventory, tview.NewBox(), true, true)
+	app.showWebTTYIdentityPicker(
+		webtty.ServerInfo{Target: "prod-shell"},
+		&uiWebTTYIdentitySelection{
+			knownServerName: "prod-shell",
+			identities: []map[string]any{{
+				"name":           "review-client",
+				"signing_key_id": "signing-key",
+			}},
+		},
+	)
+	focus, ok := app.app.GetFocus().(*tview.List)
+	if !ok {
+		t.Fatalf("focused primitive = %T, want *tview.List", app.app.GetFocus())
+	}
+	handler := focus.InputHandler()
+	if handler == nil {
+		t.Fatalf("identity picker list has no input handler")
+	}
+	handler(tcell.NewEventKey(tcell.KeyEnter, 0, tcell.ModNone), func(p tview.Primitive) {
+		app.app.SetFocus(p)
+	})
+	if app.activePage != uiPageInventory {
+		t.Fatalf("active page after enter = %q, want inventory", app.activePage)
+	}
+	if !strings.Contains(app.state.Message, "prod-shell is not online") {
+		t.Fatalf("message after selecting identity = %q, want offline server handling", app.state.Message)
+	}
+}
+
 func TestUIInventoryActionsTextUsesStableDetailLabel(t *testing.T) {
 	t.Parallel()
 	app := &uiApp{state: uiState{View: uiViewWebTTY, Detail: uiDetailModeSummary}}
@@ -194,7 +306,6 @@ func TestFormatRawObjectDoesNotPrefixJSON(t *testing.T) {
 		t.Fatalf("formatRawObject() = %q, want JSON object", got)
 	}
 }
-
 func TestUIAppDetailFormattersCoverSummaryAndJSONModes(t *testing.T) {
 	t.Parallel()
 	app := &uiApp{state: uiState{Detail: uiDetailModeSummary}}
@@ -218,7 +329,6 @@ func TestUIAppDetailFormattersCoverSummaryAndJSONModes(t *testing.T) {
 		t.Fatalf("formatClientDetail(json) = %q", got)
 	}
 }
-
 func TestUIAppPureDisplayHelpers(t *testing.T) {
 	t.Parallel()
 	if got := defaultUIView(uiSnapshot{WebTTY: []webtty.ServerInfo{{Target: "shell"}}}); got != uiViewWebTTY {
@@ -260,7 +370,6 @@ func TestUIAppPureDisplayHelpers(t *testing.T) {
 		t.Fatalf("contextCanceled returned unexpected values")
 	}
 }
-
 func TestUIAppTableHelpersAndSessionChrome(t *testing.T) {
 	t.Parallel()
 	table := tview.NewTable()
@@ -282,7 +391,557 @@ func TestUIAppTableHelpersAndSessionChrome(t *testing.T) {
 		t.Fatalf("unicodeLower did not lower-case rune")
 	}
 }
-
+func TestUIWebTTYSessionConfigKeepsPlainRegisteredServerUnencrypted(t *testing.T) {
+	workspaceID := "workspace-plain"
+	projectID := "project-plain"
+	serverID := "server-plain"
+	projectEndpoint := "plain-endpoint"
+	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "control plane should not be called for plain registered runtime", http.StatusBadRequest)
+	}))
+	defer controlServer.Close()
+	app := &uiApp{
+		runtime: &resolvedRuntime{Resolved: config.Resolved{
+			APIURL: controlServer.URL,
+			Token:  "token",
+			Context: &config.Context{
+				ProjectEndpoint: projectEndpoint,
+			},
+		}},
+	}
+	plan, selection, err := app.webTTYSessionConfig(t.Context(), webtty.ServerInfo{
+		Target:           "plain-shell",
+		RstreamURL:       "rstrm://plain-shell",
+		ServerID:         &serverID,
+		WorkspaceID:      &workspaceID,
+		ProjectID:        &projectID,
+		EncryptionPolicy: rstream.StringPtr(webTTYServerEncryptionPolicyDisabled),
+	}, slog.Default(), "", false)
+	if err != nil {
+		t.Fatalf("webTTYSessionConfig() error = %v", err)
+	}
+	if selection != nil {
+		t.Fatalf("plain server requested identity selection: %#v", selection)
+	}
+	cfg := plan.config
+	if cfg.PayloadCrypto != nil || cfg.EndpointIdentity != nil || cfg.ExpectedServerIdentity != nil {
+		t.Fatalf("plain registered server configured E2E unexpectedly: %#v", cfg)
+	}
+}
+func TestUIWebTTYSessionConfigResolvesWorkspaceManagedE2E(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	workspaceID := "workspace-1"
+	projectID := "project-1"
+	serverID := "server-1"
+	projectEndpoint := "proj-endpoint"
+	material, err := generateWorkspaceDeviceMaterial(workspaceID, workspaceDeviceKindCLI, "Local CLI")
+	if err != nil {
+		t.Fatalf("generateWorkspaceDeviceMaterial() error = %v", err)
+	}
+	device := material.file
+	device.DeviceKeyID = "device-1"
+	device.Status = workspaceDeviceStatusActive
+	device.CreatedAt = time.Now().UTC().Truncate(time.Second)
+	device.UpdatedAt = device.CreatedAt
+	keysetPrivate, _, keysetBundle, envelope := testWorkspaceKeyEnvelopeForDevice(t, device, "keyset-1")
+	device.DeviceEnvelope = &envelope
+	writeTestWorkspaceDeviceWithWebTTYIdentity(t, device, material.webttyIdentity)
+	serverIdentity, err := webtty.GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity() error = %v", err)
+	}
+	serverEndpointIdentity := webtty.KnownServerEndpointIdentityString(serverIdentity.Public())
+	serverPublicKey := webtty.EncodeE2EKeyMaterial(serverIdentity.Encryption.PublicKey)
+	var seen controlplane.ResolveWebTTYServerClientRequest
+	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.EscapedPath() == "/api/projects/tunnels/project-1/webtty/servers/server-1/client-resolution":
+			if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
+				http.Error(w, "invalid json", http.StatusBadRequest)
+				return
+			}
+			if len(seen.DeviceProofs) != 1 || seen.DeviceProofs[0].DeviceFingerprint != device.Fingerprint {
+				http.Error(w, "missing device proof", http.StatusBadRequest)
+				return
+			}
+			signingKey := parseWorkspaceDevicePublicKey(t, device.PublicSigningKey)
+			payload := workspaceDeviceLookupPayload(workspaceID, device.Fingerprint, seen.DeviceProofs[0].Challenge, seen.DeviceProofs[0].SignedAt)
+			if !verifyWorkspaceDeviceSignature(t, signingKey, payload, seen.DeviceProofs[0].Signature) {
+				http.Error(w, "invalid device proof", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(controlplane.ResolveWebTTYServerClientResponse{
+				ServerID:               serverID,
+				WorkspaceID:            workspaceID,
+				ProjectID:              projectID,
+				EncryptionPolicy:       "workspace_managed",
+				E2ERequired:            true,
+				ServerPublicKey:        &serverPublicKey,
+				ServerEndpointIdentity: &serverEndpointIdentity,
+				ServerKeyAlgorithm:     rstream.StringPtr("x25519-hkdf-sha256-aes-256-gcm"),
+				CurrentDevice:          testWebTTYCurrentDeviceResolution(t, device, keysetPrivate, keysetBundle),
+			})
+		default:
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+		}
+	}))
+	defer controlServer.Close()
+	app := &uiApp{
+		runtime: &resolvedRuntime{Resolved: config.Resolved{
+			APIURL: controlServer.URL,
+			Token:  "token",
+			Context: &config.Context{
+				ProjectEndpoint: projectEndpoint,
+			},
+		}},
+	}
+	plan, selection, err := app.webTTYSessionConfig(t.Context(), webtty.ServerInfo{
+		Target:           "prod-shell",
+		RstreamURL:       "rstrm://prod-shell",
+		ServerID:         &serverID,
+		WorkspaceID:      &workspaceID,
+		ProjectID:        &projectID,
+		E2E:              rstream.StringPtr(webtty.WebTTYE2ERequired),
+		ClientProof:      rstream.StringPtr(webtty.WebTTYClientProofRequired),
+		EncryptionPolicy: rstream.StringPtr(webTTYServerEncryptionPolicyWorkspaceManaged),
+	}, slog.Default(), "", false)
+	if err != nil {
+		t.Fatalf("webTTYSessionConfig() error = %v", err)
+	}
+	if selection != nil {
+		t.Fatalf("workspace-managed server requested identity selection: %#v", selection)
+	}
+	cfg := plan.config
+	if cfg.PayloadCrypto == nil || cfg.PayloadCrypto.SessionKeyGrant == nil || len(cfg.PayloadCrypto.SessionKeyGrant.KeyEnvelopes) != 2 {
+		t.Fatalf("expected E2E payload crypto for workspace-managed UI session, got %#v", cfg.PayloadCrypto)
+	}
+	if len(cfg.PayloadCrypto.SessionKeyGrant.KeyContext) == 0 {
+		t.Fatalf("expected typed workspace-managed key context")
+	}
+	if cfg.ExpectedServerIdentity == nil || cfg.EndpointIdentity == nil {
+		t.Fatalf("expected authenticated server and workspace device endpoint identities")
+	}
+	if len(cfg.ClientCredential) == 0 {
+		t.Fatalf("expected workspace-managed client credential")
+	}
+}
+func TestUIWebTTYSessionConfigUsesKnownServerClientIdentity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	clientIdentity, err := writeTestWebTTYEndpointIdentity(t, "review-client")
+	if err != nil {
+		t.Fatalf("writeTestWebTTYEndpointIdentity() error = %v", err)
+	}
+	serverIdentity, err := webtty.GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity() error = %v", err)
+	}
+	knownServersPath, err := webtty.DefaultKnownServerKeysPath()
+	if err != nil {
+		t.Fatalf("DefaultKnownServerKeysPath() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(knownServersPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	serverPublic := serverIdentity.Public()
+	knownServers := webtty.KnownServerKeysFile{
+		Version:     webtty.E2EIdentityFileVersion,
+		CryptoSuite: webtty.E2EKeyFileCryptoSuite,
+		KnownServers: []webtty.KnownServerKeyEntry{{
+			Name:             "prod-shell",
+			KeyID:            webtty.EncodeE2EKeyMaterial(serverPublic.EncryptionKeyID),
+			PublicKey:        webtty.EncodeE2EKeyMaterial(serverPublic.EncryptionPublicKey),
+			SigningKeyID:     webtty.EncodeE2EKeyMaterial(serverPublic.SigningKeyID),
+			SigningPublicKey: webtty.EncodeE2EKeyMaterial(serverPublic.SigningPublicKey),
+			ClientIdentity:   "review-client",
+		}},
+	}
+	data, err := json.Marshal(knownServers)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(knownServersPath, data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "control plane should not be called for explicit-key runtime", http.StatusBadRequest)
+	}))
+	defer controlServer.Close()
+	projectEndpoint := "project-endpoint"
+	app := &uiApp{
+		runtime: &resolvedRuntime{Resolved: config.Resolved{
+			APIURL: controlServer.URL,
+			Token:  "token",
+			Context: &config.Context{
+				ProjectEndpoint: projectEndpoint,
+			},
+		}},
+	}
+	serverID := "server-1"
+	plan, selection, err := app.webTTYSessionConfig(t.Context(), webtty.ServerInfo{
+		Target:           "prod-shell",
+		RstreamURL:       "rstrm://prod-shell",
+		ServerID:         &serverID,
+		HostKeyID:        rstream.StringPtr(webtty.EncodeE2EKeyMaterial(serverPublic.EncryptionKeyID)),
+		E2E:              rstream.StringPtr(webtty.WebTTYE2ERequired),
+		ClientProof:      rstream.StringPtr(webtty.WebTTYClientProofRequired),
+		EncryptionPolicy: rstream.StringPtr(webTTYServerEncryptionPolicyExplicitKey),
+	}, slog.Default(), "", false)
+	if err != nil {
+		t.Fatalf("webTTYSessionConfig() error = %v", err)
+	}
+	if selection != nil {
+		t.Fatalf("known server with client identity requested identity selection: %#v", selection)
+	}
+	cfg := plan.config
+	if cfg.PayloadCrypto == nil || cfg.ExpectedServerIdentity == nil || cfg.EndpointIdentity == nil {
+		t.Fatalf("expected E2E UI session config, got %#v", cfg)
+	}
+	if !bytes.Equal(cfg.ExpectedServerIdentity.SigningKeyID, serverIdentity.Signing.KeyID) {
+		t.Fatalf("expected server signing identity from known server entry")
+	}
+	if !bytes.Equal(cfg.EndpointIdentity.Signing.KeyID, clientIdentity.Signing.KeyID) {
+		t.Fatalf("expected associated client identity")
+	}
+}
+func TestUIWebTTYSessionConfigRequestsIdentitySelectionWhenKnownServerHasNoClientIdentity(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if _, err := writeTestWebTTYEndpointIdentity(t, "review-client"); err != nil {
+		t.Fatalf("writeTestWebTTYEndpointIdentity() error = %v", err)
+	}
+	serverIdentity, err := webtty.GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity() error = %v", err)
+	}
+	knownServersPath, err := webtty.DefaultKnownServerKeysPath()
+	if err != nil {
+		t.Fatalf("DefaultKnownServerKeysPath() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(knownServersPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	serverPublic := serverIdentity.Public()
+	knownServers := webtty.KnownServerKeysFile{
+		Version:     webtty.E2EIdentityFileVersion,
+		CryptoSuite: webtty.E2EKeyFileCryptoSuite,
+		KnownServers: []webtty.KnownServerKeyEntry{{
+			Name:             "prod-shell",
+			KeyID:            webtty.EncodeE2EKeyMaterial(serverPublic.EncryptionKeyID),
+			PublicKey:        webtty.EncodeE2EKeyMaterial(serverPublic.EncryptionPublicKey),
+			SigningKeyID:     webtty.EncodeE2EKeyMaterial(serverPublic.SigningKeyID),
+			SigningPublicKey: webtty.EncodeE2EKeyMaterial(serverPublic.SigningPublicKey),
+		}},
+	}
+	data, err := json.Marshal(knownServers)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(knownServersPath, data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	app := &uiApp{}
+	serverID := "server-1"
+	plan, selection, err := app.webTTYSessionConfig(t.Context(), webtty.ServerInfo{
+		Target:           "prod-shell",
+		RstreamURL:       "rstrm://prod-shell",
+		ServerID:         &serverID,
+		HostKeyID:        rstream.StringPtr(webtty.EncodeE2EKeyMaterial(serverPublic.EncryptionKeyID)),
+		E2E:              rstream.StringPtr(webtty.WebTTYE2ERequired),
+		ClientProof:      rstream.StringPtr(webtty.WebTTYClientProofRequired),
+		EncryptionPolicy: rstream.StringPtr(webTTYServerEncryptionPolicyExplicitKey),
+	}, slog.Default(), "", false)
+	if err != nil {
+		t.Fatalf("webTTYSessionConfig() error = %v", err)
+	}
+	if plan != nil {
+		t.Fatalf("expected identity selection, got plan %#v", plan)
+	}
+	if selection == nil {
+		t.Fatalf("expected identity selection")
+	}
+	if selection.knownServerName != "prod-shell" {
+		t.Fatalf("known server name = %q, want prod-shell", selection.knownServerName)
+	}
+	if len(selection.identities) != 1 || selection.identities[0]["name"] != "review-client" {
+		t.Fatalf("unexpected identity choices: %#v", selection.identities)
+	}
+}
+func TestUIWebTTYSessionConfigRequiresKnownServerForLightweightExplicitKey(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	serverIdentity, err := webtty.GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity() error = %v", err)
+	}
+	app := &uiApp{}
+	plan, selection, err := app.webTTYSessionConfig(t.Context(), webtty.ServerInfo{
+		Target:           "prod-shell",
+		RstreamURL:       "rstrm://prod-shell",
+		HostKeyID:        rstream.StringPtr(webtty.EncodeE2EKeyMaterial(serverIdentity.Encryption.KeyID)),
+		E2E:              rstream.StringPtr(webtty.WebTTYE2ERequired),
+		ClientProof:      rstream.StringPtr(webtty.WebTTYClientProofRequired),
+		EncryptionPolicy: rstream.StringPtr(webTTYServerEncryptionPolicyExplicitKey),
+	}, slog.Default(), "", false)
+	if err == nil || !strings.Contains(err.Error(), "known-server add prod-shell") {
+		t.Fatalf("webTTYSessionConfig() error = %v, want known-server add guidance", err)
+	}
+	if plan != nil || selection != nil {
+		t.Fatalf("expected no plan or selection, got plan=%#v selection=%#v", plan, selection)
+	}
+}
+func TestUIWebTTYSessionConfigSelectedIdentityCanBeRememberedAfterAck(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	clientIdentity, err := writeTestWebTTYEndpointIdentity(t, "review-client")
+	if err != nil {
+		t.Fatalf("writeTestWebTTYEndpointIdentity() error = %v", err)
+	}
+	serverIdentity, err := webtty.GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity() error = %v", err)
+	}
+	knownServersPath, err := webtty.DefaultKnownServerKeysPath()
+	if err != nil {
+		t.Fatalf("DefaultKnownServerKeysPath() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(knownServersPath), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	serverPublic := serverIdentity.Public()
+	knownServers := webtty.KnownServerKeysFile{
+		Version:     webtty.E2EIdentityFileVersion,
+		CryptoSuite: webtty.E2EKeyFileCryptoSuite,
+		KnownServers: []webtty.KnownServerKeyEntry{{
+			Name:             "prod-shell",
+			KeyID:            webtty.EncodeE2EKeyMaterial(serverPublic.EncryptionKeyID),
+			PublicKey:        webtty.EncodeE2EKeyMaterial(serverPublic.EncryptionPublicKey),
+			SigningKeyID:     webtty.EncodeE2EKeyMaterial(serverPublic.SigningKeyID),
+			SigningPublicKey: webtty.EncodeE2EKeyMaterial(serverPublic.SigningPublicKey),
+		}},
+	}
+	data, err := json.Marshal(knownServers)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(knownServersPath, data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	app := &uiApp{}
+	serverID := "server-1"
+	plan, selection, err := app.webTTYSessionConfig(t.Context(), webtty.ServerInfo{
+		Target:           "prod-shell",
+		RstreamURL:       "rstrm://prod-shell",
+		ServerID:         &serverID,
+		HostKeyID:        rstream.StringPtr(webtty.EncodeE2EKeyMaterial(serverPublic.EncryptionKeyID)),
+		E2E:              rstream.StringPtr(webtty.WebTTYE2ERequired),
+		ClientProof:      rstream.StringPtr(webtty.WebTTYClientProofRequired),
+		EncryptionPolicy: rstream.StringPtr(webTTYServerEncryptionPolicyExplicitKey),
+	}, slog.Default(), "review-client", true)
+	if err != nil {
+		t.Fatalf("webTTYSessionConfig() error = %v", err)
+	}
+	if selection != nil {
+		t.Fatalf("selected identity should not request picker: %#v", selection)
+	}
+	if plan == nil || plan.config == nil {
+		t.Fatalf("expected session plan")
+	}
+	if plan.rememberServerName != "prod-shell" || plan.rememberIdentity != "review-client" {
+		t.Fatalf("remember plan = %#v", plan)
+	}
+	if !bytes.Equal(plan.config.EndpointIdentity.Signing.KeyID, clientIdentity.Signing.KeyID) {
+		t.Fatalf("expected selected client identity")
+	}
+	before, err := webtty.ReadKnownServerKeysFile(knownServersPath)
+	if err != nil {
+		t.Fatalf("ReadKnownServerKeysFile() error = %v", err)
+	}
+	if before.KnownServers[0].ClientIdentity != "" {
+		t.Fatalf("client identity was persisted before ACK")
+	}
+	if err := rememberWebTTYKnownServerClientIdentity(plan.rememberServerName, plan.rememberIdentity); err != nil {
+		t.Fatalf("rememberWebTTYKnownServerClientIdentity() error = %v", err)
+	}
+	after, err := webtty.ReadKnownServerKeysFile(knownServersPath)
+	if err != nil {
+		t.Fatalf("ReadKnownServerKeysFile() after error = %v", err)
+	}
+	if after.KnownServers[0].ClientIdentity != "review-client" {
+		t.Fatalf("client identity after remember = %q", after.KnownServers[0].ClientIdentity)
+	}
+}
+func TestUIWebTTYSessionOpensWorkspaceManagedE2ERuntime(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("interactive PTY allocation is not supported on Windows")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	workspaceID := "workspace-runtime"
+	projectID := "project-runtime"
+	serverID := "server-runtime"
+	projectEndpoint := "project-runtime-endpoint"
+	material, err := generateWorkspaceDeviceMaterial(workspaceID, workspaceDeviceKindCLI, "Local CLI")
+	if err != nil {
+		t.Fatalf("generateWorkspaceDeviceMaterial() error = %v", err)
+	}
+	device := material.file
+	device.DeviceKeyID = "device-runtime"
+	device.Status = workspaceDeviceStatusActive
+	device.CreatedAt = time.Now().UTC().Truncate(time.Second)
+	device.UpdatedAt = device.CreatedAt
+	keysetPrivate, _, keysetBundle, envelope := testWorkspaceKeyEnvelopeForDevice(t, device, "keyset-1")
+	device.DeviceEnvelope = &envelope
+	writeTestWorkspaceDeviceWithWebTTYIdentity(t, device, material.webttyIdentity)
+	serverIdentity, err := webtty.GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity() error = %v", err)
+	}
+	serverEndpointIdentity := webtty.KnownServerEndpointIdentityString(serverIdentity.Public())
+	enrollment := &webTTYServerEnrollmentFile{
+		Version:                         webTTYServerEnrollmentVersion,
+		ServerID:                        serverID,
+		WorkspaceID:                     workspaceID,
+		ProjectID:                       projectID,
+		ServerPublicKey:                 webtty.EncodeE2EKeyMaterial(serverIdentity.Encryption.PublicKey),
+		ServerSigningKeyID:              webtty.EncodeE2EKeyMaterial(serverIdentity.Signing.KeyID),
+		ServerSigningPublicKey:          webtty.EncodeE2EKeyMaterial(serverIdentity.Signing.PublicKey),
+		ServerFingerprint:               webTTYServerPublicKeyFingerprint(serverIdentity.Encryption.PublicKey),
+		ServerKeyAlgorithm:              webTTYServerKeyAlgorithmX25519,
+		WorkspaceTrustKeysetID:          "keyset-1",
+		WorkspaceTrustKeysetFingerprint: keysetBundle.Fingerprint,
+		WorkspaceTrustPublicSigningKey:  keysetBundle.PublicSigningKey,
+		EncryptionPolicy:                webTTYServerEncryptionPolicyWorkspaceManaged,
+		EnrollmentStatus:                webTTYServerEnrollmentStatusOK,
+	}
+	allowUnauthenticated := true
+	requireSessionKeyGrant := true
+	requireClientProof := true
+	heartbeat := time.Duration(0)
+	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{
+		AllowUnauthenticated:   &allowUnauthenticated,
+		HeartbeatInterval:      &heartbeat,
+		PayloadCryptoResolver:  webtty.NewE2EServerPayloadCryptoResolver(serverIdentity.Encryption),
+		RequireSessionKeyGrant: &requireSessionKeyGrant,
+		EndpointIdentity:       serverIdentity,
+		RequireClientProof:     &requireClientProof,
+		ClientProofVerifier:    webTTYWorkspaceClientProofVerifier(enrollment),
+		WorkspaceID:            workspaceID,
+		ProjectID:              projectID,
+		ServerID:               serverID,
+	})
+	terminalServer := httptest.NewServer(handler)
+	defer terminalServer.Close()
+	defer handler.Shutdown(t.Context())
+	serverPublicKey := webtty.EncodeE2EKeyMaterial(serverIdentity.Encryption.PublicKey)
+	var seen controlplane.ResolveWebTTYServerClientRequest
+	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.EscapedPath() == "/api/projects/tunnels/project-runtime/webtty/servers/server-runtime/client-resolution":
+			if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
+				http.Error(w, "invalid json", http.StatusBadRequest)
+				return
+			}
+			if len(seen.DeviceProofs) != 1 || seen.DeviceProofs[0].DeviceFingerprint != device.Fingerprint {
+				http.Error(w, "missing device proof", http.StatusBadRequest)
+				return
+			}
+			signingKey := parseWorkspaceDevicePublicKey(t, device.PublicSigningKey)
+			payload := workspaceDeviceLookupPayload(workspaceID, device.Fingerprint, seen.DeviceProofs[0].Challenge, seen.DeviceProofs[0].SignedAt)
+			if !verifyWorkspaceDeviceSignature(t, signingKey, payload, seen.DeviceProofs[0].Signature) {
+				http.Error(w, "invalid device proof", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(controlplane.ResolveWebTTYServerClientResponse{
+				ServerID:               serverID,
+				WorkspaceID:            workspaceID,
+				ProjectID:              projectID,
+				EncryptionPolicy:       "workspace_managed",
+				E2ERequired:            true,
+				ServerPublicKey:        &serverPublicKey,
+				ServerEndpointIdentity: &serverEndpointIdentity,
+				ServerKeyAlgorithm:     rstream.StringPtr("x25519-hkdf-sha256-aes-256-gcm"),
+				CurrentDevice:          testWebTTYCurrentDeviceResolution(t, device, keysetPrivate, keysetBundle),
+			})
+		default:
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+		}
+	}))
+	defer controlServer.Close()
+	app := &uiApp{
+		runtime: &resolvedRuntime{Resolved: config.Resolved{
+			APIURL: controlServer.URL,
+			Token:  "token",
+			Context: &config.Context{
+				ProjectEndpoint: projectEndpoint,
+			},
+		}},
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	plan, selection, err := app.webTTYSessionConfig(ctx, webtty.ServerInfo{
+		Target:           "prod-shell",
+		RstreamURL:       "ws" + strings.TrimPrefix(terminalServer.URL, "http"),
+		ServerID:         &serverID,
+		WorkspaceID:      &workspaceID,
+		ProjectID:        &projectID,
+		E2E:              rstream.StringPtr(webtty.WebTTYE2ERequired),
+		ClientProof:      rstream.StringPtr(webtty.WebTTYClientProofRequired),
+		EncryptionPolicy: rstream.StringPtr(webTTYServerEncryptionPolicyWorkspaceManaged),
+	}, slog.Default(), "", false)
+	if err != nil {
+		t.Fatalf("webTTYSessionConfig() error = %v", err)
+	}
+	if selection != nil {
+		t.Fatalf("workspace-managed runtime requested identity selection: %#v", selection)
+	}
+	cfg := plan.config
+	session, err := webtty.OpenClientSession(ctx, cfg)
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	if err := session.SendText("echo ui-e2e\nexit\n"); err != nil {
+		t.Fatalf("SendText() error = %v", err)
+	}
+	stdout, stderr, exitCode, err := collectUITestSessionOutput(session)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v, stderr=%q", exitCode, err, stderr)
+	}
+	if !strings.Contains(stdout, "ui-e2e") {
+		t.Fatalf("stdout=%q, want ui-e2e", stdout)
+	}
+	if cfg.PayloadCrypto == nil || cfg.PayloadCrypto.SessionKeyGrant == nil {
+		t.Fatalf("expected E2E payload crypto")
+	}
+}
+func collectUITestSessionOutput(session *webtty.ClientSession) (string, string, int, error) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for event := range session.Events() {
+			switch event.Stream {
+			case webtty.ClientSessionStdout:
+				stdout.Write(event.Data)
+			case webtty.ClientSessionStderr:
+				stderr.Write(event.Data)
+			}
+		}
+	}()
+	exitCode, err := session.Wait()
+	<-done
+	return stdout.String(), stderr.String(), exitCode, err
+}
 func newUITestSessionHandle() *uiSessionHandle {
 	return &uiSessionHandle{
 		showInfo: true,

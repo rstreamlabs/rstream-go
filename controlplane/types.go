@@ -35,17 +35,36 @@ type Project struct {
 }
 
 type Workspace struct {
-	ID                 string `json:"id"`
-	Type               string `json:"type"`
-	Name               string `json:"name"`
-	SubscriptionStatus string `json:"subscriptionStatus,omitempty"`
-	HasPaymentMethod   bool   `json:"hasPaymentMethod,omitempty"`
-	HasBasicTier       bool   `json:"hasBasicTier,omitempty"`
-	Membership         any    `json:"membership,omitempty"`
+	ID                 string                      `json:"id"`
+	Type               string                      `json:"type"`
+	Name               string                      `json:"name"`
+	SubscriptionStatus string                      `json:"subscriptionStatus,omitempty"`
+	HasPaymentMethod   bool                        `json:"hasPaymentMethod,omitempty"`
+	HasBasicTier       bool                        `json:"hasBasicTier,omitempty"`
+	Enterprise         *WorkspaceEnterpriseSummary `json:"enterprise,omitempty"`
+	Membership         *WorkspaceMembership        `json:"membership,omitempty"`
 }
 
 type ListWorkspacesResponse struct {
 	Workspaces []Workspace `json:"workspaces"`
+}
+
+type WorkspaceMembership struct {
+	Role      string `json:"role,omitempty"`
+	Status    string `json:"status,omitempty"`
+	InvitedAt string `json:"invitedAt,omitempty"`
+	JoinedAt  string `json:"joinedAt,omitempty"`
+}
+
+type WorkspaceEnterpriseSummary struct {
+	Status              string `json:"status,omitempty"`
+	ProjectCreationMode string `json:"projectCreationMode,omitempty"`
+	WorkspaceKeyMode    string `json:"workspaceKeyMode,omitempty"`
+}
+
+type ListWorkspacesParams struct {
+	Type             string
+	MembershipStatus string
 }
 
 type ProjectCreationBillingImpact struct {
@@ -150,6 +169,213 @@ type CreateTokenRequest struct {
 
 type CreateTokenResponse struct {
 	Token string `json:"token"`
+}
+
+type WebTTYServerCapabilities struct {
+	Transports     []string          `json:"transports,omitempty"`
+	ExecutionModes []string          `json:"execution_modes,omitempty"`
+	Encryption     []string          `json:"encryption,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
+}
+
+type WebTTYServer struct {
+	ID                            string                    `json:"id"`
+	WorkspaceID                   string                    `json:"workspaceId"`
+	ProjectID                     string                    `json:"projectId"`
+	Name                          string                    `json:"name"`
+	Description                   *string                   `json:"description,omitempty"`
+	Status                        string                    `json:"status"`
+	RecordingPolicy               string                    `json:"recordingPolicy"`
+	EncryptionPolicy              string                    `json:"encryptionPolicy"`
+	AccessPolicy                  string                    `json:"accessPolicy"`
+	Labels                        map[string]string         `json:"labels,omitempty"`
+	Capabilities                  *WebTTYServerCapabilities `json:"capabilities,omitempty"`
+	ServerPublicKey               *string                   `json:"serverPublicKey,omitempty"`
+	ServerSigningKeyID            *string                   `json:"serverSigningKeyId,omitempty"`
+	ServerSigningPublicKey        *string                   `json:"serverSigningPublicKey,omitempty"`
+	ServerFingerprint             *string                   `json:"serverFingerprint,omitempty"`
+	ServerKeyAlgorithm            *string                   `json:"serverKeyAlgorithm,omitempty"`
+	ServerKeyStatus               *string                   `json:"serverKeyStatus,omitempty"`
+	WorkspaceTrustKeysetID        *string                   `json:"workspaceTrustKeysetId,omitempty"`
+	WorkspaceTrustDeviceKeyID     *string                   `json:"workspaceTrustDeviceKeyId,omitempty"`
+	WorkspaceTrustPayloadHash     *string                   `json:"workspaceTrustPayloadHash,omitempty"`
+	WorkspaceTrustActorSignature  *string                   `json:"workspaceTrustActorSignature,omitempty"`
+	WorkspaceTrustKeysetSignature *string                   `json:"workspaceTrustKeysetSignature,omitempty"`
+	WorkspaceTrustSignedAt        *string                   `json:"workspaceTrustSignedAt,omitempty"`
+	EnrolledAt                    *string                   `json:"enrolledAt,omitempty"`
+	CreatedByUserID               *string                   `json:"createdByUserId,omitempty"`
+	CreatedAt                     string                    `json:"createdAt"`
+	UpdatedAt                     string                    `json:"updatedAt"`
+}
+
+type ListWebTTYServersParams struct {
+	Query    string
+	Status   string
+	Page     *int
+	PageSize *int
+}
+
+type ListWebTTYServersResponse struct {
+	Servers    []WebTTYServer `json:"servers"`
+	Page       int            `json:"page"`
+	PageSize   int            `json:"pageSize"`
+	Total      int            `json:"total"`
+	TotalPages int            `json:"totalPages"`
+}
+
+type CreateWebTTYServerRequest struct {
+	Name             string            `json:"name"`
+	Description      *string           `json:"description,omitempty"`
+	RecordingPolicy  string            `json:"recordingPolicy,omitempty"`
+	EncryptionPolicy string            `json:"encryptionPolicy,omitempty"`
+	AccessPolicy     string            `json:"accessPolicy,omitempty"`
+	Labels           map[string]string `json:"labels,omitempty"`
+}
+
+type UpdateWebTTYServerRequest struct {
+	Name            *string           `json:"name,omitempty"`
+	Description     *string           `json:"description,omitempty"`
+	Status          *string           `json:"status,omitempty"`
+	RecordingPolicy *string           `json:"recordingPolicy,omitempty"`
+	AccessPolicy    *string           `json:"accessPolicy,omitempty"`
+	Labels          map[string]string `json:"labels,omitempty"`
+}
+
+type CreateWebTTYServerResponse struct {
+	Server WebTTYServer `json:"server"`
+}
+
+type EnrollWebTTYServerRequest struct {
+	ServerPublicKey        string                    `json:"serverPublicKey"`
+	ServerSigningKeyID     string                    `json:"serverSigningKeyId"`
+	ServerSigningPublicKey string                    `json:"serverSigningPublicKey"`
+	ServerFingerprint      string                    `json:"serverFingerprint,omitempty"`
+	ServerKeyAlgorithm     string                    `json:"serverKeyAlgorithm"`
+	Capabilities           *WebTTYServerCapabilities `json:"capabilities,omitempty"`
+}
+
+type ApproveWebTTYServerWorkspaceTrustRequest struct {
+	ActorDeviceKeyID string `json:"actorDeviceKeyId"`
+	KeysetID         string `json:"keysetId"`
+	SignedAt         string `json:"signedAt"`
+	ActorSignature   string `json:"actorSignature"`
+	KeysetSignature  string `json:"keysetSignature"`
+}
+
+type ResolveWebTTYServerClientRequest struct {
+	DeviceProofs []WorkspaceDeviceAccessProof `json:"deviceProofs"`
+}
+
+type ResolveWebTTYServerClientResponse struct {
+	ServerID               string                         `json:"serverId"`
+	WorkspaceID            string                         `json:"workspaceId"`
+	ProjectID              string                         `json:"projectId"`
+	EncryptionPolicy       string                         `json:"encryptionPolicy"`
+	E2ERequired            bool                           `json:"e2eRequired"`
+	ServerPublicKey        *string                        `json:"serverPublicKey"`
+	ServerSigningKeyID     *string                        `json:"serverSigningKeyId"`
+	ServerSigningPublicKey *string                        `json:"serverSigningPublicKey"`
+	ServerEndpointIdentity *string                        `json:"serverEndpointIdentity"`
+	ServerFingerprint      *string                        `json:"serverFingerprint"`
+	ServerKeyAlgorithm     *string                        `json:"serverKeyAlgorithm"`
+	ServerKeyStatus        *string                        `json:"serverKeyStatus"`
+	CurrentDevice          *WebTTYCurrentDeviceResolution `json:"currentDevice,omitempty"`
+}
+
+type WebTTYCurrentDeviceResolution struct {
+	DeviceKeyID          string          `json:"deviceKeyId"`
+	Kind                 string          `json:"kind"`
+	PublicEncryptionKey  string          `json:"publicEncryptionKey"`
+	PublicSigningKey     string          `json:"publicSigningKey"`
+	Fingerprint          string          `json:"fingerprint"`
+	WebTTYPublicKey      string          `json:"webttyPublicKey"`
+	WebTTYKeyID          string          `json:"webttyKeyId"`
+	WebTTYKeyAlgorithm   string          `json:"webttyKeyAlgorithm"`
+	TrustKeysetID        string          `json:"trustKeysetId"`
+	TrustSource          string          `json:"trustSource"`
+	TrustPayload         json.RawMessage `json:"trustPayload"`
+	TrustPayloadHash     string          `json:"trustPayloadHash"`
+	TrustActorSignature  *string         `json:"trustActorSignature"`
+	TrustKeysetSignature string          `json:"trustKeysetSignature"`
+	TrustSignedAt        string          `json:"trustSignedAt"`
+}
+
+type CreateWorkspaceDeviceKeyRequest struct {
+	Kind                string `json:"kind"`
+	Label               string `json:"label,omitempty"`
+	BrowserID           string `json:"browserId,omitempty"`
+	PublicEncryptionKey string `json:"publicEncryptionKey"`
+	PublicSigningKey    string `json:"publicSigningKey"`
+	WebTTYPublicKey     string `json:"webttyPublicKey,omitempty"`
+	WebTTYKeyID         string `json:"webttyKeyId,omitempty"`
+	WebTTYKeyAlgorithm  string `json:"webttyKeyAlgorithm,omitempty"`
+	Fingerprint         string `json:"fingerprint"`
+	ProofSignature      string `json:"proofSignature"`
+}
+
+type CreateWorkspaceDeviceKeyResponse struct {
+	DeviceKeyID string `json:"deviceKeyId"`
+	Status      string `json:"status"`
+}
+
+type WorkspaceDeviceAccessProof struct {
+	DeviceFingerprint string `json:"deviceFingerprint"`
+	Challenge         string `json:"challenge"`
+	SignedAt          string `json:"signedAt"`
+	Signature         string `json:"signature"`
+}
+
+type LookupWorkspaceDeviceKeysRequest struct {
+	Proofs []WorkspaceDeviceAccessProof `json:"proofs"`
+}
+
+type WorkspaceDeviceKey struct {
+	ID                  string  `json:"id"`
+	Kind                string  `json:"kind"`
+	Status              string  `json:"status"`
+	Label               *string `json:"label,omitempty"`
+	BrowserID           *string `json:"browserId,omitempty"`
+	PublicEncryptionKey string  `json:"publicEncryptionKey"`
+	PublicSigningKey    *string `json:"publicSigningKey,omitempty"`
+	WebTTYPublicKey     *string `json:"webttyPublicKey,omitempty"`
+	WebTTYKeyID         *string `json:"webttyKeyId,omitempty"`
+	WebTTYKeyAlgorithm  *string `json:"webttyKeyAlgorithm,omitempty"`
+	Fingerprint         string  `json:"fingerprint"`
+	ApprovedAt          *string `json:"approvedAt,omitempty"`
+	RevokedAt           *string `json:"revokedAt,omitempty"`
+	LostAt              *string `json:"lostAt,omitempty"`
+	LastUsedAt          *string `json:"lastUsedAt,omitempty"`
+	CreatedAt           string  `json:"createdAt"`
+}
+
+type WorkspaceKeyEnvelopeCrypto struct {
+	Suite           string         `json:"suite"`
+	KeyID           string         `json:"keyId,omitempty"`
+	EncapsulatedKey string         `json:"encapsulatedKey,omitempty"`
+	Context         map[string]any `json:"context,omitempty"`
+}
+
+type WorkspaceKeyEnvelope struct {
+	ID            string                     `json:"id"`
+	KeysetID      string                     `json:"keysetId"`
+	RecipientKind string                     `json:"recipientKind"`
+	RecipientID   string                     `json:"recipientId"`
+	Ciphertext    string                     `json:"ciphertext"`
+	Crypto        WorkspaceKeyEnvelopeCrypto `json:"crypto"`
+	CreatedAt     string                     `json:"createdAt"`
+	RevokedAt     *string                    `json:"revokedAt,omitempty"`
+}
+
+type LookupWorkspaceDeviceKeysResponse struct {
+	Devices         []WorkspaceDeviceKey   `json:"devices"`
+	DeviceEnvelopes []WorkspaceKeyEnvelope `json:"deviceEnvelopes"`
+}
+
+type RevokeWorkspaceDeviceKeyRequest struct {
+	Reason           string `json:"reason,omitempty"`
+	MarkLost         bool   `json:"markLost,omitempty"`
+	ActorDeviceKeyID string `json:"actorDeviceKeyId,omitempty"`
+	Signature        string `json:"signature,omitempty"`
 }
 
 type ProjectLogsParams struct {

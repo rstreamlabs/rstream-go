@@ -103,6 +103,38 @@ func TestIsNilDialerHandlesTypedNil(t *testing.T) {
 	}
 }
 
+func TestDialEngineHTTP1RejectsMissingAddress(t *testing.T) {
+	client := &Client{}
+	if _, err := client.DialEngineHTTP1(context.Background(), " "); err == nil || !strings.Contains(err.Error(), "engine address") {
+		t.Fatalf("expected address error, got %v", err)
+	}
+}
+
+func TestDialEngineWithTransportUsesConfiguredALPN(t *testing.T) {
+	engine := "engine.example.com:443"
+	nextProtos := []string{"http/1.1"}
+	dialer := &recordingDialer{
+		dial: func(context.Context, string, *tls.Config) (net.Conn, error) {
+			return stubConn{}, nil
+		},
+	}
+	client := &Client{}
+	conn, err := client.dialEngineWithTransport(context.Background(), &engine, &nextProtos, dialer)
+	if err != nil {
+		t.Fatalf("dialEngineWithTransport() error = %v", err)
+	}
+	_ = conn.Close()
+	if len(dialer.calls) != 1 {
+		t.Fatalf("dial calls = %d, want 1", len(dialer.calls))
+	}
+	if got := dialer.calls[0].NextProtos; len(got) != 1 || got[0] != "http/1.1" {
+		t.Fatalf("NextProtos = %#v", got)
+	}
+	if dialer.calls[0].ServerName != "engine.example.com" {
+		t.Fatalf("ServerName = %q", dialer.calls[0].ServerName)
+	}
+}
+
 func TestControlChannelConnectCreateTunnelAndClose(t *testing.T) {
 	serverErr := make(chan error, 1)
 	dialer := pipeDialer{serve: func(conn net.Conn) {

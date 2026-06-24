@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +48,30 @@ func TestStoreTokenValidatesAndPersistsEnvironmentToken(t *testing.T) {
 	token, ok, err := config.TokenFromAuth(env.Auth)
 	if err != nil || !ok || token != apiToken {
 		t.Fatalf("stored token = %q ok=%v err=%v", token, ok, err)
+	}
+}
+
+func TestRstreamLoginPermissionsMatchCliWorkflows(t *testing.T) {
+	want := []string{
+		"account.plan.read-only",
+		"account.projects.read-only",
+		"account.tokens.create",
+		"account.workspaces.read-only",
+		"account.workspace-protection.read-write",
+		"network.streams.read-only",
+		"network.events.read-only",
+		"network.webhooks.read-only",
+		"network.webtty-servers.read-write",
+		"tunnels.resources.read-only",
+		"tunnels.streams.create-delete",
+		"tunnels.tunnels.create-delete",
+		"webtty.sessions.read-write",
+		"webtty.logs.read-only",
+		"turn.credentials.create",
+		"turn.relay.allocate",
+	}
+	if !slices.Equal(rstreamLoginPermissions, want) {
+		t.Fatalf("rstreamLoginPermissions = %#v", rstreamLoginPermissions)
 	}
 }
 

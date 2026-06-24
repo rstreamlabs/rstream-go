@@ -4,7 +4,7 @@ Tunnel properties define how a tunnel behaves end-to-end: whether it is publicly
 
 A practical way to think about configuration is:
 - Decide whether the tunnel is **published** or **private**
-- If it is published, select the **edge protocol** (`protocol`)
+- If it is published, select the **edge protocol** (`protocol`); if it is private, set `protocol` only when the engine should inspect the private stream
 - Select the **upstream mode** (HTTP upstream details, TLS termination vs passthrough, mTLS)
 - Add **access policy** where relevant
 
@@ -26,11 +26,37 @@ A private tunnel has no public entrypoint. It is reachable only via an rstream c
 
 ## Transport model: protocol and type
 
-`protocol` describes what the edge accepts for a **published** tunnel. It is one of `http`, `tls`, `dtls`, or `quic`. It has no meaning for private tunnels.
+`protocol` describes what the edge accepts for a **published** tunnel. It is one of `http`, `tls`, `dtls`, `quic`, or `webtty`.
+
+For **private** tunnels, `protocol` is optional. When omitted, the tunnel remains a raw private byte stream. When set, it selects private protocol dispatch: `http` lets the engine parse private HTTP and apply HTTP upstream options, `webtty` lets managed WebTTY decode the WebTTY envelope, and `tls` keeps the downstream private stream raw while allowing upstream TLS options. Private `dtls` and `quic` protocol dispatch are intentionally not supported at this stage.
 
 `type` describes transport semantics: `bytestream` (reliable, ordered; TCP-like) or `datagram` (message-oriented; UDP-like). You may set it explicitly, or omit it and let the server select a coherent default.
 
-The edge enforces compatibility between these fields. Conceptually: TLS is always a bytestream; DTLS and QUIC are always datagrams; HTTP is a bytestream for HTTP/1.1 and HTTP/2, and a datagram for HTTP/3. For private tunnels, `type` defaults to `bytestream`, but selecting `datagram` is valid when your private use case is UDP-like.
+The edge enforces compatibility between these fields. Conceptually: TLS is always a bytestream; DTLS and QUIC are always datagrams; HTTP is a bytestream for HTTP/1.1 and HTTP/2, and a datagram for HTTP/3. Managed WebTTY is a bytestream protocol where the engine decodes the WebTTY envelope when the deployment enables that capability. Product-managed WebTTY servers should reach this protocol through registered server enrollment; tunnel WebTTY servers remain HTTP/WebSocket tunnels with WebTTY labels. For raw private tunnels, `type` defaults to `bytestream`, but selecting `datagram` is valid when your private use case is UDP-like.
+
+### Managed WebTTY payload crypto
+
+Managed WebTTY can keep the protobuf session envelope visible to the engine while carrying stdin, stdout, and stderr bytes as encrypted payloads. The engine can still route sessions, record metadata, enforce policy, and track lifecycle events, but it does not need plaintext terminal bytes for payload-level end-to-end encryption.
+
+The public SDKs expose crypto metadata and hooks. The Go, JavaScript, and C++ WebTTY SDKs also provide E2E helpers for the nominal suite:
+
+- Payload encryption: AES-256-GCM with a fresh 96-bit nonce per WebTTY data message
+- Key envelopes: HPKE Base mode with DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, and AES-256-GCM
+
+For Go direct WebTTY transports, `tls://` plain transport and local WebTransport require TLS 1.3 minimum. This transport TLS is separate from payload E2E encryption: the engine can still decode the WebTTY envelope in managed mode while terminal payload bytes remain encrypted when E2E is enabled.
+
+The WebTTY protobuf contract currently names these suites:
+
+- Payload encryption: `aes-256-gcm`, `chacha20-poly1305`
+- Key envelopes: `hpke-x25519-hkdf-sha256-aes-256-gcm`, `hpke-x25519-hkdf-sha256-chacha20-poly1305`
+
+The Go, JavaScript, and C++ helpers currently implement only the AES-256-GCM
+payload suite and the HPKE/X25519/HKDF-SHA256/AES-256-GCM key-envelope suite.
+ChaCha20-Poly1305 suite identifiers are reserved by the protocol for forward
+compatibility and are rejected by the current helpers until implemented and
+tested.
+
+Payload keys must be random key material. Do not derive them from passwords or application strings.
 
 ## Forwarding hostname
 

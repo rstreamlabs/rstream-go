@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"bytes"
 	"errors"
 	"strings"
 	"testing"
@@ -57,6 +58,30 @@ func TestListProjectsParamsFromFlagsValidation(t *testing.T) {
 	}
 }
 
+func TestProjectListWorkspaceFromFlags(t *testing.T) {
+	command := projectListFlagsCommand()
+	workspaceID, err := projectListWorkspaceFromFlags(command)
+	if err != nil {
+		t.Fatalf("projectListWorkspaceFromFlags() error = %v", err)
+	}
+	if workspaceID != "" {
+		t.Fatalf("unexpected workspace ID without flag: %q", workspaceID)
+	}
+	mustSetFlag(t, command, "workspace", " workspace-1 ")
+	workspaceID, err = projectListWorkspaceFromFlags(command)
+	if err != nil {
+		t.Fatalf("projectListWorkspaceFromFlags() error = %v", err)
+	}
+	if workspaceID != "workspace-1" {
+		t.Fatalf("workspace ID not trimmed: %q", workspaceID)
+	}
+	command = projectListFlagsCommand()
+	mustSetFlag(t, command, "workspace", " ")
+	if _, err := projectListWorkspaceFromFlags(command); err == nil {
+		t.Fatalf("expected empty workspace validation error")
+	}
+}
+
 func TestProjectContextHelpers(t *testing.T) {
 	cfg := &config.Config{Contexts: []config.Context{
 		{Name: "my-project", APIURL: "https://api.example.com", ProjectEndpoint: "demo.rstream.io"},
@@ -79,6 +104,30 @@ func TestProjectContextHelpers(t *testing.T) {
 	}
 }
 
+func TestWriteProjectsTableIncludesWorkspaceID(t *testing.T) {
+	var out bytes.Buffer
+	err := writeProjectsTable(&out, []controlplane.Project{{
+		ID:          "project-1",
+		WorkspaceID: "workspace-1",
+		Name:        "Prod",
+		Endpoint:    "prod",
+		Status:      "active",
+		Plan:        "pro",
+		Deployment:  "cloud",
+		Provider:    "aws",
+		Region:      "eu-west-3",
+	}})
+	if err != nil {
+		t.Fatalf("writeProjectsTable() error = %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"WORKSPACE ID", "workspace-1", "project-1"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("project table missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestMapControlPlaneError(t *testing.T) {
 	err := mapControlPlaneError(controlplane.ErrUnauthorized)
 	if err == nil || !strings.Contains(err.Error(), "not authenticated") {
@@ -96,6 +145,7 @@ func TestMapControlPlaneError(t *testing.T) {
 
 func projectListFlagsCommand() *cobra.Command {
 	command := &cobra.Command{Use: "test"}
+	command.Flags().String("workspace", "", "")
 	command.Flags().String("q", "", "")
 	command.Flags().Int("page", 0, "")
 	command.Flags().Int("page-size", 0, "")

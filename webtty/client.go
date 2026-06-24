@@ -4,6 +4,7 @@ package webtty
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -24,42 +25,86 @@ import (
 )
 
 type ClientConfig struct {
-	URL               string
-	DialContext       func(context.Context, string, string) (net.Conn, error)
-	Interactive       bool
-	AllocateTTY       bool
-	SendHeartbeat     bool
-	EnvVars           []string
-	Workdir           *string
-	Username          *string
-	CmdArgs           []string
-	AuthToken         *string
-	MaxMessageSize    *int64
-	ReadBufferSize    *int
-	WriteBufferSize   *int
-	OpenDeadline      *time.Duration
-	CloseDeadline     *time.Duration
-	HeartbeatInterval *time.Duration
-	Stdin             io.Reader
-	Stdout            io.Writer
-	Stderr            io.Writer
-	Logger            *slog.Logger
+	URL                    string
+	Transport              WebTTYTransport
+	DialContext            func(context.Context, string, string) (net.Conn, error)
+	DialTLSContext         func(context.Context, string, string) (net.Conn, error)
+	DialPacketContext      func(context.Context, string) (net.PacketConn, net.Addr, error)
+	Interactive            bool
+	AllocateTTY            bool
+	SendHeartbeat          bool
+	Attach                 *AttachConfig
+	PayloadCrypto          *PayloadCrypto
+	EndpointIdentity       *WebTTYEndpointIdentity
+	ExpectedServerIdentity *WebTTYEndpointIdentityPublic
+	ClientCredential       []byte
+	ClientPrincipalID      string
+	ClientDeviceID         string
+	ClientBrowserID        string
+	TLSConfig              *tls.Config
+	EnvVars                []string
+	Workdir                *string
+	Username               *string
+	CmdArgs                []string
+	AuthToken              *string
+	MaxMessageSize         *int64
+	ReadBufferSize         *int
+	WriteBufferSize        *int
+	OpenDeadline           *time.Duration
+	CloseDeadline          *time.Duration
+	HeartbeatInterval      *time.Duration
+	Stdin                  io.Reader
+	Stdout                 io.Writer
+	Stderr                 io.Writer
+	Logger                 *slog.Logger
+}
+
+type AttachRole string
+
+const (
+	AttachRoleSpectator  AttachRole = "spectator"
+	AttachRoleController AttachRole = "controller"
+)
+
+type AttachCapability string
+
+const (
+	AttachCapabilityReadStream     AttachCapability = "read_stream"
+	AttachCapabilityRequestControl AttachCapability = "request_control"
+	AttachCapabilityReceiveControl AttachCapability = "receive_control"
+)
+
+type AttachConfig struct {
+	SessionID     string
+	WorkspaceID   string
+	ProjectID     string
+	ServerID      string
+	ParticipantID string
+	AttachGrant   []byte
+	RequestedRole AttachRole
+	Transport     WebTTYTransport
+	Capabilities  []AttachCapability
+	DeviceID      string
+	BrowserID     string
 }
 
 type clientRuntime struct {
-	conn        *websocket.Conn
+	conn        messageConn
 	cfg         *ClientConfig
 	logger      *slog.Logger
 	logProto    bool
 	writeMu     sync.Mutex
-	stdinFile   *os.File
 	stdinFD     int
+	hasStdinFD  bool
 	hasTerminal bool
 }
 
 type clientEndpoint struct {
 	URL                string
+	Address            string
 	RequiresCustomDial bool
+	TLS                bool
+	Transport          WebTTYTransport
 }
 
 type clientEvent struct {
@@ -85,16 +130,13 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	if file, ok := resolved.Stdin.(*os.File); ok {
-		_ = file
-	}
 	runtime := &clientRuntime{cfg: resolved}
-	if file, ok := resolved.Stdin.(*os.File); ok {
-		runtime.stdinFile = file
-		runtime.stdinFD = int(file.Fd())
+	if fd, ok := stdinFileDescriptor(resolved.Stdin); ok {
+		runtime.stdinFD = fd
+		runtime.hasStdinFD = true
 	}
 	if resolved.AllocateTTY {
-		if runtime.stdinFile == nil || !term.IsTerminal(runtime.stdinFD) {
+		if !runtime.hasStdinFD || !term.IsTerminal(runtime.stdinFD) {
 			return -1, fmt.Errorf("tty allocation requires stdin to be a terminal")
 		}
 		runtime.hasTerminal = true
@@ -113,7 +155,7 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 	defer session.Close()
 	runtime.logger = resolved.Logger.With("component", "webtty.client")
 	runtime.logger.Debug("webtty session acknowledged")
-	loopCtx, stopLoops := context.WithCancel(context.Background())
+	loopCtx, stopLoops := context.WithCancel(ctx)
 	defer stopLoops()
 	loopErrCh := make(chan error, 1)
 	if resolved.Interactive {
@@ -219,7 +261,7 @@ func (c *clientRuntime) stdinSessionLoop(ctx context.Context, session *ClientSes
 		}
 		n, err := c.cfg.Stdin.Read(buffer)
 		if n > 0 {
-			if werr := session.SendInput(buffer[:n]); werr != nil {
+			if werr := session.SendInputContext(ctx, buffer[:n]); werr != nil {
 				select {
 				case errCh <- fmt.Errorf("failed to send stdin payload: %w", werr):
 				default:
@@ -244,6 +286,18 @@ func (c *clientRuntime) stdinSessionLoop(ctx context.Context, session *ClientSes
 			return
 		}
 	}
+}
+
+type fileDescriptorReader interface {
+	Fd() uintptr
+}
+
+func stdinFileDescriptor(reader io.Reader) (int, bool) {
+	fdReader, ok := reader.(fileDescriptorReader)
+	if !ok || fdReader == nil {
+		return 0, false
+	}
+	return int(fdReader.Fd()), true
 }
 
 func (c *clientRuntime) resizeSessionLoop(ctx context.Context, session *ClientSession, errCh chan<- error) {
@@ -339,39 +393,131 @@ func resolveClientConfig(cfg *ClientConfig) (*ClientConfig, error) {
 }
 
 func resolveWebTTYEndpoint(raw string) (*clientEndpoint, error) {
+	return resolveWebTTYEndpointWithTransport(raw, "")
+}
+
+func resolveWebTTYEndpointWithTransport(raw string, transport WebTTYTransport) (*clientEndpoint, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return nil, fmt.Errorf("websocket url is required")
+		return nil, fmt.Errorf("WebTTY url is required")
 	}
 	if !strings.Contains(raw, "://") {
-		raw = "ws://" + raw
+		switch transport {
+		case WebTTYTransportPlain:
+			raw = "tcp://" + raw
+		case WebTTYTransportWebTransport:
+			raw = "https://" + raw
+		default:
+			raw = "ws://" + raw
+		}
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return nil, fmt.Errorf("invalid websocket url: %w", err)
+		return nil, fmt.Errorf("invalid WebTTY url: %w", err)
 	}
 	scheme := strings.ToLower(strings.TrimSpace(u.Scheme))
+	transport, err = resolveEndpointTransport(scheme, transport)
+	if err != nil {
+		return nil, err
+	}
+	if u.Host == "" {
+		return nil, fmt.Errorf("WebTTY host is required")
+	}
+	if transport == WebTTYTransportPlain {
+		return resolvePlainWebTTYEndpoint(u, scheme)
+	}
+	if transport == WebTTYTransportWebTransport {
+		return resolveWebTransportWebTTYEndpoint(u, scheme)
+	}
 	switch scheme {
 	case "ws", "wss":
-		if u.Host == "" {
-			return nil, fmt.Errorf("websocket host is required")
-		}
 		if u.Path == "" {
 			u.Path = "/"
 		}
-		return &clientEndpoint{URL: u.String()}, nil
+		return &clientEndpoint{URL: u.String(), Transport: WebTTYTransportWebSocket}, nil
 	case "rstrm":
-		if u.Host == "" {
-			return nil, fmt.Errorf("websocket host is required")
-		}
 		if u.Path == "" {
 			u.Path = "/"
 		}
 		u.Scheme = "ws"
-		return &clientEndpoint{URL: u.String(), RequiresCustomDial: true}, nil
+		return &clientEndpoint{URL: u.String(), RequiresCustomDial: true, Transport: WebTTYTransportWebSocket}, nil
 	default:
 		return nil, fmt.Errorf("invalid websocket scheme %q (expected ws, wss, or rstrm)", u.Scheme)
 	}
+}
+
+func resolveEndpointTransport(scheme string, configured WebTTYTransport) (WebTTYTransport, error) {
+	switch configured {
+	case "":
+		switch scheme {
+		case "tcp", "tls":
+			return WebTTYTransportPlain, nil
+		default:
+			return WebTTYTransportWebSocket, nil
+		}
+	case WebTTYTransportWebSocket, WebTTYTransportPlain, WebTTYTransportWebTransport:
+		return configured, nil
+	default:
+		return "", fmt.Errorf("invalid WebTTY transport %q", configured)
+	}
+}
+
+func resolveWebTransportWebTTYEndpoint(u *url.URL, scheme string) (*clientEndpoint, error) {
+	requiresCustomDial := false
+	switch scheme {
+	case "https":
+	case "wss":
+		u.Scheme = "https"
+	case "webtransport", "wt", "wts":
+		u.Scheme = "https"
+	case "rstrm":
+		u.Scheme = "https"
+		requiresCustomDial = true
+	default:
+		return nil, fmt.Errorf("invalid WebTransport WebTTY scheme %q (expected https, wss, webtransport, wt, wts, or rstrm)", u.Scheme)
+	}
+	if u.Path == "" {
+		u.Path = "/"
+	}
+	return &clientEndpoint{URL: u.String(), Address: u.Host, RequiresCustomDial: requiresCustomDial, Transport: WebTTYTransportWebTransport}, nil
+}
+
+func resolvePlainWebTTYEndpoint(u *url.URL, scheme string) (*clientEndpoint, error) {
+	switch scheme {
+	case "tcp", "tls", "rstrm":
+	default:
+		return nil, fmt.Errorf("invalid plain WebTTY scheme %q (expected tcp, tls, or rstrm)", u.Scheme)
+	}
+	address := u.Host
+	if scheme == "tcp" {
+		address = defaultPortAddress(address, "80")
+	}
+	if scheme == "tls" {
+		address = defaultPortAddress(address, "443")
+	}
+	return &clientEndpoint{
+		Address:            address,
+		RequiresCustomDial: scheme == "rstrm",
+		TLS:                scheme == "tls",
+		Transport:          WebTTYTransportPlain,
+		URL:                u.String(),
+	}, nil
+}
+
+func defaultPortAddress(address string, defaultPort string) string {
+	if _, _, err := net.SplitHostPort(address); err == nil {
+		return address
+	}
+	if strings.HasPrefix(address, "[") && strings.HasSuffix(address, "]") {
+		address = strings.TrimPrefix(strings.TrimSuffix(address, "]"), "[")
+	}
+	if strings.Count(address, ":") > 1 {
+		return net.JoinHostPort(address, defaultPort)
+	}
+	if strings.Contains(address, ":") {
+		return address
+	}
+	return net.JoinHostPort(address, defaultPort)
 }
 
 func normalizeWebTTYURL(raw string) (string, error) {
@@ -438,7 +584,14 @@ func parseClientUsername(raw *string) (*pb.Username, error) {
 	return &pb.Username{Payload: &pb.Username_Name{Name: value}}, nil
 }
 
-func (c *clientRuntime) buildOpenMessage() (*pb.Message, error) {
+func (c *clientRuntime) buildHandshakeMessage(transport WebTTYTransport, serverHello *pb.ServerHello) (*pb.Message, error) {
+	if c.cfg != nil && c.cfg.Attach != nil {
+		return c.buildAttachMessage(transport)
+	}
+	return c.buildOpenMessage(transport, serverHello)
+}
+
+func (c *clientRuntime) buildOpenMessage(transport WebTTYTransport, serverHello *pb.ServerHello) (*pb.Message, error) {
 	env, err := parseClientEnvVars(c.cfg.EnvVars)
 	if err != nil {
 		return nil, err
@@ -476,7 +629,112 @@ func (c *clientRuntime) buildOpenMessage() (*pb.Message, error) {
 	if username != nil {
 		config.Username = username
 	}
-	return &pb.Message{Payload: &pb.Message_Open{Open: &pb.Open{Config: config}}}, nil
+	sessionKeyGrant := payloadCryptoSessionKeyGrant(c.cfg.PayloadCrypto)
+	open := &pb.Open{
+		Config:          config,
+		Capabilities:    payloadCryptoCapabilities(c.cfg.PayloadCrypto),
+		SessionKeyGrant: sessionKeyGrant,
+	}
+	clientProof, err := c.clientProofForOpen(open, serverHello, transport)
+	if err != nil {
+		return nil, err
+	}
+	open.ClientProof = clientProof
+	return &pb.Message{Payload: &pb.Message_Open{Open: open}}, nil
+}
+
+func (c *clientRuntime) buildAttachMessage(transport WebTTYTransport) (*pb.Message, error) {
+	if c.cfg == nil || c.cfg.Attach == nil {
+		return nil, fmt.Errorf("WebTTY attach config is required")
+	}
+	cfg := c.cfg.Attach
+	sessionID := strings.TrimSpace(cfg.SessionID)
+	if sessionID == "" {
+		return nil, fmt.Errorf("WebTTY attach session ID is required")
+	}
+	participantID := strings.TrimSpace(cfg.ParticipantID)
+	if participantID == "" {
+		return nil, fmt.Errorf("WebTTY attach participant ID is required")
+	}
+	if len(cfg.AttachGrant) == 0 {
+		return nil, fmt.Errorf("WebTTY attach grant is required")
+	}
+	role, err := attachRoleToProto(cfg.RequestedRole)
+	if err != nil {
+		return nil, err
+	}
+	attachTransport := cfg.Transport
+	if attachTransport == "" {
+		attachTransport = transport
+	}
+	transportProto, err := attachTransportToProto(attachTransport)
+	if err != nil {
+		return nil, err
+	}
+	capabilities, err := attachCapabilitiesToProto(cfg.Capabilities)
+	if err != nil {
+		return nil, err
+	}
+	attach := &pb.Attach{
+		SessionId:     sessionID,
+		ParticipantId: participantID,
+		AttachGrant:   cloneBytes(cfg.AttachGrant),
+		RequestedRole: role,
+		Transport:     transportProto,
+		Capabilities:  capabilities,
+		DeviceId:      webTTYStringValue(cfg.DeviceID),
+		BrowserId:     webTTYStringValue(cfg.BrowserID),
+	}
+	clientProof, err := c.clientProofForAttach(attach, attachTransport)
+	if err != nil {
+		return nil, err
+	}
+	attach.ClientProof = clientProof
+	return &pb.Message{Payload: &pb.Message_Attach{Attach: attach}}, nil
+}
+
+func attachRoleToProto(role AttachRole) (pb.AttachRole, error) {
+	switch role {
+	case "", AttachRoleSpectator:
+		return pb.AttachRole_ATTACH_ROLE_SPECTATOR, nil
+	case AttachRoleController:
+		return pb.AttachRole_ATTACH_ROLE_CONTROLLER, nil
+	default:
+		return pb.AttachRole_ATTACH_ROLE_UNSPECIFIED, fmt.Errorf("invalid WebTTY attach role %q", role)
+	}
+}
+
+func attachTransportToProto(transport WebTTYTransport) (pb.AttachTransport, error) {
+	switch transport {
+	case WebTTYTransportPlain:
+		return pb.AttachTransport_ATTACH_TRANSPORT_PLAIN, nil
+	case "", WebTTYTransportWebSocket:
+		return pb.AttachTransport_ATTACH_TRANSPORT_WEBSOCKET, nil
+	case WebTTYTransportWebTransport:
+		return pb.AttachTransport_ATTACH_TRANSPORT_WEBTRANSPORT, nil
+	default:
+		return pb.AttachTransport_ATTACH_TRANSPORT_UNSPECIFIED, fmt.Errorf("invalid WebTTY attach transport %q", transport)
+	}
+}
+
+func attachCapabilitiesToProto(capabilities []AttachCapability) ([]pb.AttachCapability, error) {
+	if len(capabilities) == 0 {
+		return []pb.AttachCapability{pb.AttachCapability_ATTACH_CAPABILITY_READ_STREAM}, nil
+	}
+	out := make([]pb.AttachCapability, 0, len(capabilities))
+	for _, capability := range capabilities {
+		switch capability {
+		case AttachCapabilityReadStream:
+			out = append(out, pb.AttachCapability_ATTACH_CAPABILITY_READ_STREAM)
+		case AttachCapabilityRequestControl:
+			out = append(out, pb.AttachCapability_ATTACH_CAPABILITY_REQUEST_CONTROL)
+		case AttachCapabilityReceiveControl:
+			out = append(out, pb.AttachCapability_ATTACH_CAPABILITY_RECEIVE_CONTROL)
+		default:
+			return nil, fmt.Errorf("invalid WebTTY attach capability %q", capability)
+		}
+	}
+	return out, nil
 }
 
 func (c *clientRuntime) waitForOpen(ctx context.Context, eventCh <-chan clientEvent) error {
@@ -521,18 +779,22 @@ func (c *clientRuntime) handleOpenMessage(msg *pb.Message) error {
 			return fmt.Errorf("%w: %s", errClientServer, payload.Error.Msg)
 		}
 		return errClientServer
+	case *pb.Message_ServerHello:
+		return fmt.Errorf("WebTTY server requires authenticated E2E; configure a known server endpoint identity before opening the session")
+	case *pb.Message_ProtocolError:
+		return webTTYProtocolError(payload.ProtocolError)
 	default:
 		return fmt.Errorf("%w: %T", errClientUnexpected, payload)
 	}
 }
 
-func (c *clientRuntime) handleSessionMessage(msg *pb.Message) (int, bool, error) {
+func (c *clientRuntime) handleSessionMessage(ctx context.Context, msg *pb.Message) (int, bool, error) {
 	if msg == nil {
 		return -1, true, errClientProtocol
 	}
 	switch payload := msg.Payload.(type) {
 	case *pb.Message_Data:
-		if err := c.handleData(payload.Data); err != nil {
+		if err := c.handleData(ctx, payload.Data); err != nil {
 			return -1, true, err
 		}
 		return -1, false, nil
@@ -548,8 +810,49 @@ func (c *clientRuntime) handleSessionMessage(msg *pb.Message) (int, bool, error)
 			return -1, true, fmt.Errorf("%w: %s", errClientServer, payload.Error.Msg)
 		}
 		return -1, true, errClientServer
+	case *pb.Message_ProtocolError:
+		return -1, true, webTTYProtocolError(payload.ProtocolError)
 	default:
 		return -1, true, fmt.Errorf("%w: %T", errClientUnexpected, payload)
+	}
+}
+
+func webTTYProtocolError(protocolError *pb.ProtocolError) error {
+	msg := webTTYProtocolErrorMessage(protocolError)
+	if msg == "" {
+		return errClientServer
+	}
+	return fmt.Errorf("%w: %s", errClientServer, msg)
+}
+
+func webTTYProtocolErrorMessage(protocolError *pb.ProtocolError) string {
+	if protocolError == nil {
+		return ""
+	}
+	if msg := strings.TrimSpace(protocolError.Msg); msg != "" {
+		return msg
+	}
+	switch protocolError.Code {
+	case pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_UNKNOWN_SERVER:
+		return "known WebTTY server endpoint identity is required"
+	case pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_SERVER_KEY_CHANGED:
+		return "WebTTY server endpoint identity does not match the configured known server"
+	case pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_SERVER_PROOF_INVALID:
+		return "WebTTY server proof is invalid"
+	case pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_CLIENT_PROOF_REQUIRED:
+		return "WebTTY client proof is required"
+	case pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_CLIENT_PROOF_INVALID:
+		return "WebTTY client proof is invalid"
+	case pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_CLIENT_UNAUTHORIZED:
+		return "WebTTY client signing key is not authorized"
+	case pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_WORKSPACE_TRUST_REQUIRED:
+		return "workspace trust is required"
+	case pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_WORKSPACE_DEVICE_UNTRUSTED:
+		return "workspace device is not trusted"
+	case pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_REGISTERED_SERVER_MISMATCH:
+		return "registered WebTTY server identity does not match"
+	default:
+		return "WebTTY protocol error"
 	}
 }
 
@@ -594,30 +897,100 @@ func (c *clientRuntime) readLoop(done <-chan struct{}, eventCh chan<- clientEven
 	}
 }
 
-func (c *clientRuntime) handleData(data *pb.Data) error {
+func (c *clientRuntime) handleData(ctx context.Context, data *pb.Data) error {
 	if data == nil {
 		return fmt.Errorf("received empty data message")
 	}
 	var writer io.Writer
+	var decrypt PayloadDecryptFunc
 	switch data.Type {
 	case pb.Data_TYPE_STDOUT:
 		writer = c.cfg.Stdout
+		if c.cfg.PayloadCrypto != nil {
+			decrypt = c.cfg.PayloadCrypto.DecryptStdout
+		}
 	case pb.Data_TYPE_STDERR:
 		writer = c.cfg.Stderr
+		if c.cfg.PayloadCrypto != nil {
+			decrypt = c.cfg.PayloadCrypto.DecryptStderr
+		}
 	default:
 		return fmt.Errorf("unexpected data stream type: %v", data.Type)
 	}
-	switch payload := data.Payload.(type) {
-	case *pb.Data_Data:
-		if err := writeAll(writer, payload.Data); err != nil {
-			return fmt.Errorf("failed to write stream payload: %w", err)
-		}
-	case *pb.Data_Eos:
-		return nil
-	default:
-		return fmt.Errorf("unexpected data payload type: %T", payload)
+	payload, ok, err := c.decodeStreamPayload(ctx, data.Payload, decrypt, data.Type.String())
+	if err != nil || !ok {
+		return err
+	}
+	if err := writeAll(writer, payload); err != nil {
+		return fmt.Errorf("failed to write stream payload: %w", err)
 	}
 	return nil
+}
+
+func (c *clientRuntime) stdinDataMessage(ctx context.Context, data []byte) (*pb.Message, error) {
+	if c.cfg.PayloadCrypto == nil || c.cfg.PayloadCrypto.EncryptStdin == nil {
+		return &pb.Message{
+			Payload: &pb.Message_Data{
+				Data: &pb.Data{Type: pb.Data_TYPE_STDIN, Payload: &pb.Data_Data{Data: cloneBytes(data)}},
+			},
+		}, nil
+	}
+	encrypted, err := c.cfg.PayloadCrypto.EncryptStdin(ctx, cloneBytes(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to encrypt stdin payload: %w", err)
+	}
+	return &pb.Message{
+		Payload: &pb.Message_Data{
+			Data: &pb.Data{Type: pb.Data_TYPE_STDIN, Payload: &pb.Data_EncryptedData{EncryptedData: encryptedPayloadToProto(encrypted)}},
+		},
+	}, nil
+}
+
+func (c *clientRuntime) decodeClientSessionEvent(ctx context.Context, data *pb.Data) (ClientSessionEvent, bool, error) {
+	if data == nil {
+		return ClientSessionEvent{}, false, fmt.Errorf("received empty data message")
+	}
+	var stream ClientSessionStream
+	var decrypt PayloadDecryptFunc
+	switch data.Type {
+	case pb.Data_TYPE_STDOUT:
+		stream = ClientSessionStdout
+		if c.cfg.PayloadCrypto != nil {
+			decrypt = c.cfg.PayloadCrypto.DecryptStdout
+		}
+	case pb.Data_TYPE_STDERR:
+		stream = ClientSessionStderr
+		if c.cfg.PayloadCrypto != nil {
+			decrypt = c.cfg.PayloadCrypto.DecryptStderr
+		}
+	default:
+		return ClientSessionEvent{}, false, fmt.Errorf("unexpected data stream type: %v", data.Type)
+	}
+	payload, ok, err := c.decodeStreamPayload(ctx, data.Payload, decrypt, data.Type.String())
+	if err != nil || !ok {
+		return ClientSessionEvent{}, false, err
+	}
+	return ClientSessionEvent{Stream: stream, Data: payload}, true, nil
+}
+
+func (c *clientRuntime) decodeStreamPayload(ctx context.Context, dataPayload any, decrypt PayloadDecryptFunc, stream string) ([]byte, bool, error) {
+	switch payload := dataPayload.(type) {
+	case *pb.Data_Data:
+		return cloneBytes(payload.Data), true, nil
+	case *pb.Data_Eos:
+		return nil, false, nil
+	case *pb.Data_EncryptedData:
+		if decrypt == nil {
+			return nil, false, fmt.Errorf("encrypted WebTTY %s payload requires a decrypt hook", stream)
+		}
+		decrypted, err := decrypt(ctx, encryptedPayloadFromProto(payload.EncryptedData))
+		if err != nil {
+			return nil, false, fmt.Errorf("failed to decrypt WebTTY %s payload: %w", stream, err)
+		}
+		return cloneBytes(decrypted), true, nil
+	default:
+		return nil, false, fmt.Errorf("unexpected data payload type: %T", payload)
+	}
 }
 
 func (c *clientRuntime) heartbeatLoop(ctx context.Context, errCh chan<- error) {

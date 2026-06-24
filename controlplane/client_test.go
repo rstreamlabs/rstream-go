@@ -275,6 +275,302 @@ func TestCreateTokenPostsPermissionsAndResources(t *testing.T) {
 	}
 }
 
+func TestWebTTYServerManagementEndpoints(t *testing.T) {
+	projectID := "project/1"
+	serverID := "server/1"
+	publicKey := "pub"
+	fingerprint := "sha256:fingerprint"
+	keyAlgorithm := "webtty-x25519-hpke-v1"
+	serverPayload := WebTTYServer{
+		ID:                 serverID,
+		WorkspaceID:        "workspace-1",
+		ProjectID:          projectID,
+		Name:               "Shell",
+		Status:             "pending_enrollment",
+		RecordingPolicy:    "recorded",
+		EncryptionPolicy:   "explicit_key",
+		AccessPolicy:       "project_members",
+		ServerPublicKey:    &publicKey,
+		ServerFingerprint:  &fingerprint,
+		ServerKeyAlgorithm: &keyAlgorithm,
+		CreatedAt:          "2026-06-06T12:00:00.000Z",
+		UpdatedAt:          "2026-06-06T12:00:00.000Z",
+	}
+	responsePayload := CreateWebTTYServerResponse{
+		Server: serverPayload,
+	}
+	projectPrefix := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webtty/servers"
+	serverPath := projectPrefix + "/" + url.PathEscape(serverID)
+	seen := map[string]bool{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer token" {
+			http.Error(w, "missing bearer", http.StatusUnauthorized)
+			return
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == projectPrefix:
+			seen["list"] = true
+			if r.URL.Query().Get("q") != "shell" || r.URL.Query().Get("status") != "active" || r.URL.Query().Get("page") != "2" || r.URL.Query().Get("pageSize") != "10" {
+				http.Error(w, "unexpected list query", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ListWebTTYServersResponse{Servers: []WebTTYServer{serverPayload}, Page: 2, PageSize: 10, Total: 1, TotalPages: 1})
+		case r.Method == http.MethodPost && r.URL.EscapedPath() == projectPrefix:
+			seen["create"] = true
+			var payload CreateWebTTYServerRequest
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, "invalid json", http.StatusBadRequest)
+				return
+			}
+			if payload.Name != "Shell" || payload.RecordingPolicy != "recorded" || payload.EncryptionPolicy != "explicit_key" || payload.AccessPolicy != "project_members" || payload.Labels["role"] != "ops" {
+				http.Error(w, "unexpected create payload", http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(responsePayload)
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == serverPath:
+			seen["get"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(serverPayload)
+		case r.Method == http.MethodPatch && r.URL.EscapedPath() == serverPath:
+			seen["update"] = true
+			var payload UpdateWebTTYServerRequest
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				http.Error(w, "invalid json", http.StatusBadRequest)
+				return
+			}
+			if payload.Status == nil || *payload.Status != "suspended" || payload.AccessPolicy == nil || *payload.AccessPolicy != "restricted" {
+				http.Error(w, "unexpected update payload", http.StatusBadRequest)
+				return
+			}
+			updated := serverPayload
+			updated.Status = "suspended"
+			updated.AccessPolicy = "restricted"
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(updated)
+		case r.Method == http.MethodDelete && r.URL.EscapedPath() == serverPath:
+			seen["delete"] = true
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	page := 2
+	pageSize := 10
+	client := NewClient(server.URL, "token")
+	list, err := client.ListWebTTYServers(context.Background(), projectID, ListWebTTYServersParams{Query: "shell", Status: "active", Page: &page, PageSize: &pageSize})
+	if err != nil {
+		t.Fatalf("ListWebTTYServers() error = %v", err)
+	}
+	if len(list.Servers) != 1 || list.Servers[0].ID != serverID {
+		t.Fatalf("unexpected list response: %#v", list)
+	}
+	created, err := client.CreateWebTTYServer(context.Background(), projectID, CreateWebTTYServerRequest{
+		Name:             "Shell",
+		RecordingPolicy:  "recorded",
+		EncryptionPolicy: "explicit_key",
+		AccessPolicy:     "project_members",
+		Labels:           map[string]string{"role": "ops"},
+	})
+	if err != nil {
+		t.Fatalf("CreateWebTTYServer() error = %v", err)
+	}
+	if created.Server.ID != serverID {
+		t.Fatalf("unexpected create response: %#v", created)
+	}
+	got, err := client.GetWebTTYServer(context.Background(), projectID, serverID)
+	if err != nil {
+		t.Fatalf("GetWebTTYServer() error = %v", err)
+	}
+	if got.ID != serverID || got.ProjectID != projectID {
+		t.Fatalf("unexpected get response: %#v", got)
+	}
+	status := "suspended"
+	accessPolicy := "restricted"
+	updated, err := client.UpdateWebTTYServer(context.Background(), projectID, serverID, UpdateWebTTYServerRequest{Status: &status, AccessPolicy: &accessPolicy})
+	if err != nil {
+		t.Fatalf("UpdateWebTTYServer() error = %v", err)
+	}
+	if updated.Status != "suspended" || updated.AccessPolicy != "restricted" {
+		t.Fatalf("unexpected update response: %#v", updated)
+	}
+	if err := client.DeleteWebTTYServer(context.Background(), projectID, serverID); err != nil {
+		t.Fatalf("DeleteWebTTYServer() error = %v", err)
+	}
+	for _, key := range []string{"list", "create", "get", "update", "delete"} {
+		if !seen[key] {
+			t.Fatalf("endpoint %q was not called", key)
+		}
+	}
+}
+
+func TestEnrollWebTTYServer(t *testing.T) {
+	projectID := "project/1"
+	serverID := "server/1"
+	publicKey := "pub"
+	fingerprint := "sha256:fingerprint"
+	keyAlgorithm := "webtty-x25519-hpke-v1"
+	responsePayload := WebTTYServer{
+		ID:                 serverID,
+		WorkspaceID:        "workspace-1",
+		ProjectID:          projectID,
+		Name:               "Shell",
+		Status:             "active",
+		RecordingPolicy:    "recorded",
+		EncryptionPolicy:   "explicit_key",
+		AccessPolicy:       "project_members",
+		ServerPublicKey:    &publicKey,
+		ServerFingerprint:  &fingerprint,
+		ServerKeyAlgorithm: &keyAlgorithm,
+		CreatedAt:          "2026-06-06T12:00:00.000Z",
+		UpdatedAt:          "2026-06-06T12:00:00.000Z",
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.EscapedPath() != "/api/projects/tunnels/project%2F1/webtty/servers/server%2F1/enroll" {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer token" {
+			http.Error(w, "missing bearer", http.StatusUnauthorized)
+			return
+		}
+		var payload EnrollWebTTYServerRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		if payload.ServerPublicKey != publicKey || payload.ServerFingerprint != fingerprint || payload.ServerKeyAlgorithm != keyAlgorithm {
+			http.Error(w, "unexpected payload", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(responsePayload)
+	}))
+	defer server.Close()
+	response, err := NewClient(server.URL, "token").EnrollWebTTYServer(context.Background(), projectID, serverID, EnrollWebTTYServerRequest{
+		ServerPublicKey:    publicKey,
+		ServerFingerprint:  fingerprint,
+		ServerKeyAlgorithm: keyAlgorithm,
+	})
+	if err != nil {
+		t.Fatalf("EnrollWebTTYServer() error = %v", err)
+	}
+	if response.ID != serverID || response.ProjectID != projectID || response.EncryptionPolicy != "explicit_key" || response.ServerFingerprint == nil || *response.ServerFingerprint != fingerprint {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
+func TestApproveWebTTYServerWorkspaceTrust(t *testing.T) {
+	projectID := "project/1"
+	serverID := "server/1"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.EscapedPath() != "/api/projects/tunnels/project%2F1/webtty/servers/server%2F1/workspace-trust" {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer token" {
+			http.Error(w, "missing bearer", http.StatusUnauthorized)
+			return
+		}
+		var payload ApproveWebTTYServerWorkspaceTrustRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		if payload.ActorDeviceKeyID != "device-1" || payload.KeysetID != "keyset-1" || payload.ActorSignature == "" || payload.KeysetSignature == "" {
+			http.Error(w, "unexpected payload", http.StatusBadRequest)
+			return
+		}
+		status := "workspace_trusted"
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(WebTTYServer{
+			ID:               serverID,
+			WorkspaceID:      "workspace-1",
+			ProjectID:        projectID,
+			Name:             "Shell",
+			Status:           "active",
+			RecordingPolicy:  "recorded",
+			EncryptionPolicy: "workspace_managed",
+			AccessPolicy:     "project_members",
+			ServerKeyStatus:  &status,
+			CreatedAt:        "2026-06-06T12:00:00.000Z",
+			UpdatedAt:        "2026-06-06T12:00:00.000Z",
+		})
+	}))
+	defer server.Close()
+	response, err := NewClient(server.URL, "token").ApproveWebTTYServerWorkspaceTrust(context.Background(), projectID, serverID, ApproveWebTTYServerWorkspaceTrustRequest{
+		ActorDeviceKeyID: "device-1",
+		KeysetID:         "keyset-1",
+		SignedAt:         "2026-06-08T10:00:00.000Z",
+		ActorSignature:   "actor-signature",
+		KeysetSignature:  "keyset-signature",
+	})
+	if err != nil {
+		t.Fatalf("ApproveWebTTYServerWorkspaceTrust() error = %v", err)
+	}
+	if response.ID != serverID || response.ServerKeyStatus == nil || *response.ServerKeyStatus != "workspace_trusted" {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
+func TestResolveWebTTYServerClient(t *testing.T) {
+	projectID := "project/1"
+	serverID := "server/1"
+	publicKey := "public-key"
+	fingerprint := "sha256:fingerprint"
+	keyAlgorithm := "webtty-x25519-hpke-v1"
+	keyStatus := "workspace_trusted"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.EscapedPath() != "/api/projects/tunnels/project%2F1/webtty/servers/server%2F1/client-resolution" {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer token" {
+			http.Error(w, "missing bearer", http.StatusUnauthorized)
+			return
+		}
+		var payload ResolveWebTTYServerClientRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		if len(payload.DeviceProofs) != 1 || payload.DeviceProofs[0].DeviceFingerprint != "sha256:device" {
+			http.Error(w, "unexpected device proof", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(ResolveWebTTYServerClientResponse{
+			ServerID:           serverID,
+			WorkspaceID:        "workspace-1",
+			ProjectID:          projectID,
+			EncryptionPolicy:   "workspace_managed",
+			E2ERequired:        true,
+			ServerPublicKey:    &publicKey,
+			ServerFingerprint:  &fingerprint,
+			ServerKeyAlgorithm: &keyAlgorithm,
+			ServerKeyStatus:    &keyStatus,
+		})
+	}))
+	defer server.Close()
+	response, err := NewClient(server.URL, "token").ResolveWebTTYServerClient(context.Background(), projectID, serverID, ResolveWebTTYServerClientRequest{
+		DeviceProofs: []WorkspaceDeviceAccessProof{{
+			DeviceFingerprint: "sha256:device",
+			Challenge:         "challenge",
+			SignedAt:          "2026-06-08T10:00:00Z",
+			Signature:         "signature",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("ResolveWebTTYServerClient() error = %v", err)
+	}
+	if !response.E2ERequired || response.ServerPublicKey == nil || *response.ServerPublicKey != publicKey || response.EncryptionPolicy != "workspace_managed" {
+		t.Fatalf("unexpected response: %#v", response)
+	}
+}
+
 func TestProjectOperationsAndWorkspaceMembersEndpoints(t *testing.T) {
 	projectID := "workspace/project id"
 	domainID := "domain/with space"

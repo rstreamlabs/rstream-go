@@ -18,6 +18,8 @@ func FormatForwardingAddr(props TunnelProperties) (string, error) {
 		switch {
 		case props.Protocol != nil && *props.Protocol == ProtocolHTTP:
 			return "https://" + host, nil
+		case props.Protocol != nil && *props.Protocol == ProtocolWebTTY:
+			return "https://" + host + " (webtty)", nil
 		case props.Protocol != nil && *props.Protocol == ProtocolTLS:
 			return host + " (tls)", nil
 		case props.Protocol != nil && *props.Protocol == ProtocolDTLS:
@@ -105,6 +107,8 @@ func FormatForwardedHostPort(host, port string, props TunnelProperties) (string,
 			}
 		case ProtocolQUIC:
 			b.WriteString(" (quic)")
+		case ProtocolWebTTY:
+			b.WriteString(" (webtty)")
 		}
 	}
 	return b.String(), nil

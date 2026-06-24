@@ -390,6 +390,10 @@ func TestEnumParsersAcceptTrimmedCaseInsensitiveInput(t *testing.T) {
 	if err != nil || protocol != rstream.ProtocolHTTP {
 		t.Fatalf("parseProtocol got %q err=%v", protocol, err)
 	}
+	protocol, err = parseProtocol(" WebTTY ")
+	if err != nil || protocol != rstream.ProtocolWebTTY {
+		t.Fatalf("parseProtocol got %q err=%v", protocol, err)
+	}
 	tunnelType, err := parseTunnelType(" DATAGRAM ")
 	if err != nil || tunnelType != rstream.TunnelTypeDatagram {
 		t.Fatalf("parseTunnelType got %q err=%v", tunnelType, err)

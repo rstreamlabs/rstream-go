@@ -20,29 +20,29 @@ FORWARDING=
 FORWARD_LOG=
 
 cleanup() {
-  local pid
-  for pid in "${PIDS[@]:-}"; do
-    kill "$pid" 2>/dev/null || true
-    wait "$pid" 2>/dev/null || true
-  done
-  rm -rf "$TMP_DIR"
+    local pid
+    for pid in "${PIDS[@]:-}"; do
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    done
+    rm -rf "$TMP_DIR"
 }
 trap cleanup EXIT
 
 fail() {
-  printf "FAIL %-58s %s\n" "$1" "$2" >&2
-  FAIL=$((FAIL + 1))
+    printf "FAIL %-58s %s\n" "$1" "$2" >&2
+    FAIL=$((FAIL + 1))
 }
 
 pass() {
-  printf "PASS %-58s\n" "$1"
-  PASS=$((PASS + 1))
+    printf "PASS %-58s\n" "$1"
+    PASS=$((PASS + 1))
 }
 
 require_executable "$RSTREAM_BIN"
 if [ -z "$CONTROL_TOKEN" ]; then
-  printf "ERROR set RSTREAM_RUNTIME_CONTROL_TOKEN to a PAT with credential, token, and project read permissions\n" >&2
-  exit 2
+    printf "ERROR set RSTREAM_RUNTIME_CONTROL_TOKEN to a PAT with credential, token, and project read permissions\n" >&2
+    exit 2
 fi
 
 cat >"$TMP_DIR/runtime_api.py" <<'PY'
@@ -372,7 +372,7 @@ if __name__ == "__main__":
 PY
 
 json_get() {
-  "$PYTHON" - "$1" "$2" <<'PY'
+    "$PYTHON" - "$1" "$2" <<'PY'
 import json
 import sys
 
@@ -385,36 +385,36 @@ PY
 }
 
 wait_ready() {
-  local pid=$1 log=$2 label=$3
-  local deadline=$((SECONDS + TIMEOUT_SECONDS))
-  while [ "$SECONDS" -lt "$deadline" ]; do
-    if grep -q "^READY " "$log" 2>/dev/null; then
-      awk '/^READY / {print $2; exit}' "$log"
-      return 0
-    fi
-    if ! kill -0 "$pid" 2>/dev/null; then
-      fail "$label" "upstream exited early"
-      tail -20 "$log" >&2 || true
-      return 1
-    fi
-    sleep 0.2
-  done
-  fail "$label" "upstream did not become ready"
-  tail -20 "$log" >&2 || true
-  return 1
+    local pid=$1 log=$2 label=$3
+    local deadline=$((SECONDS + TIMEOUT_SECONDS))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if grep -q "^READY " "$log" 2>/dev/null; then
+            awk '/^READY / {print $2; exit}' "$log"
+            return 0
+        fi
+        if ! kill -0 "$pid" 2>/dev/null; then
+            fail "$label" "upstream exited early"
+            tail -20 "$log" >&2 || true
+            return 1
+        fi
+        sleep 0.2
+    done
+    fail "$label" "upstream did not become ready"
+    tail -20 "$log" >&2 || true
+    return 1
 }
 
 start_upstream() {
-  local label=$1
-  local log="$TMP_DIR/upstream-$label.log"
-  "$PYTHON" "$ROOT/test/e2e/runtime_harness.py" serve http >"$log" 2>&1 &
-  local pid=$!
-  PIDS+=("$pid")
-  UPSTREAM_ADDR=$(wait_ready "$pid" "$log" "$label")
+    local label=$1
+    local log="$TMP_DIR/upstream-$label.log"
+    "$PYTHON" "$ROOT/test/e2e/runtime_harness.py" serve http >"$log" 2>&1 &
+    local pid=$!
+    PIDS+=("$pid")
+    UPSTREAM_ADDR=$(wait_ready "$pid" "$log" "$label")
 }
 
 extract_forwarding() {
-  "$PYTHON" - "$1" <<'PY'
+    "$PYTHON" - "$1" <<'PY'
 import json
 import sys
 
@@ -432,63 +432,63 @@ PY
 }
 
 start_forward_with_env() {
-  local label=$1 engine=$2 token=$3
-  shift 3
-  FORWARD_LOG="$TMP_DIR/forward-$label.log"
-  : >"$FORWARD_LOG"
-  env -u RSTREAM_CONTEXT -u RSTREAM_MTLS_CERT_FILE -u RSTREAM_MTLS_KEY_FILE \
-    RSTREAM_ENGINE="$engine" \
-    RSTREAM_AUTHENTICATION_TOKEN="$token" \
-    "$RSTREAM_BIN" forward "$UPSTREAM_ADDR" --output json --no-retry "$@" >"$FORWARD_LOG" 2>&1 &
-  FORWARD_PID=$!
-  PIDS+=("$FORWARD_PID")
-  local deadline=$((SECONDS + TIMEOUT_SECONDS))
-  while [ "$SECONDS" -lt "$deadline" ]; do
-    if FORWARDING=$(extract_forwarding "$FORWARD_LOG"); then
-      return 0
-    fi
-    if ! kill -0 "$FORWARD_PID" 2>/dev/null; then
-      tail -40 "$FORWARD_LOG" >&2 || true
-      return 1
-    fi
-    if grep -Eiq "tunnel creation failed|connection failed|failed to create tunnel|Unauthorized|Forbidden" "$FORWARD_LOG"; then
-      tail -40 "$FORWARD_LOG" >&2 || true
-      return 1
-    fi
-    sleep 0.2
-  done
-  tail -40 "$FORWARD_LOG" >&2 || true
-  return 1
+    local label=$1 engine=$2 token=$3
+    shift 3
+    FORWARD_LOG="$TMP_DIR/forward-$label.log"
+    : >"$FORWARD_LOG"
+    env -u RSTREAM_CONTEXT -u RSTREAM_MTLS_CERT_FILE -u RSTREAM_MTLS_KEY_FILE \
+        RSTREAM_ENGINE="$engine" \
+        RSTREAM_AUTHENTICATION_TOKEN="$token" \
+        "$RSTREAM_BIN" forward "$UPSTREAM_ADDR" --output json --no-retry "$@" >"$FORWARD_LOG" 2>&1 &
+    FORWARD_PID=$!
+    PIDS+=("$FORWARD_PID")
+    local deadline=$((SECONDS + TIMEOUT_SECONDS))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+        if FORWARDING=$(extract_forwarding "$FORWARD_LOG"); then
+            return 0
+        fi
+        if ! kill -0 "$FORWARD_PID" 2>/dev/null; then
+            tail -40 "$FORWARD_LOG" >&2 || true
+            return 1
+        fi
+        if grep -Eiq "tunnel creation failed|connection failed|failed to create tunnel|Unauthorized|Forbidden" "$FORWARD_LOG"; then
+            tail -40 "$FORWARD_LOG" >&2 || true
+            return 1
+        fi
+        sleep 0.2
+    done
+    tail -40 "$FORWARD_LOG" >&2 || true
+    return 1
 }
 
 expect_forward_denied() {
-  local label=$1 engine=$2 token=$3
-  shift 3
-  local log="$TMP_DIR/denied-$label.log"
-  if env -u RSTREAM_CONTEXT -u RSTREAM_MTLS_CERT_FILE -u RSTREAM_MTLS_KEY_FILE \
-    RSTREAM_ENGINE="$engine" \
-    RSTREAM_AUTHENTICATION_TOKEN="$token" \
-    "$RSTREAM_BIN" forward "$UPSTREAM_ADDR" --output json --no-retry "$@" >"$log" 2>&1; then
-    cat "$log" >&2
-    return 1
-  fi
+    local label=$1 engine=$2 token=$3
+    shift 3
+    local log="$TMP_DIR/denied-$label.log"
+    if env -u RSTREAM_CONTEXT -u RSTREAM_MTLS_CERT_FILE -u RSTREAM_MTLS_KEY_FILE \
+        RSTREAM_ENGINE="$engine" \
+        RSTREAM_AUTHENTICATION_TOKEN="$token" \
+        "$RSTREAM_BIN" forward "$UPSTREAM_ADDR" --output json --no-retry "$@" >"$log" 2>&1; then
+        cat "$log" >&2
+        return 1
+    fi
 }
 
 control_status() {
-  "$PYTHON" "$TMP_DIR/runtime_api.py" control-status "$@"
+    "$PYTHON" "$TMP_DIR/runtime_api.py" control-status "$@"
 }
 
 engine_status() {
-  "$PYTHON" "$TMP_DIR/runtime_api.py" engine-status "$@"
+    "$PYTHON" "$TMP_DIR/runtime_api.py" engine-status "$@"
 }
 
 http_status() {
-  local token=$1 url=$2
-  if [ -n "$token" ]; then
-    curl -sk -H "Authorization: Bearer $token" -o "$TMP_DIR/http-body.txt" -w "%{http_code}" "$url" || true
-  else
-    curl -sk -o "$TMP_DIR/http-body.txt" -w "%{http_code}" "$url" || true
-  fi
+    local token=$1 url=$2
+    if [ -n "$token" ]; then
+        curl -sk -H "Authorization: Bearer $token" -o "$TMP_DIR/http-body.txt" -w "%{http_code}" "$url" || true
+    else
+        curl -sk -o "$TMP_DIR/http-body.txt" -w "%{http_code}" "$url" || true
+    fi
 }
 
 export RSTREAM_RUNTIME_API_URL="$API_URL"
@@ -514,15 +514,15 @@ CONNECT_ALLOWED_TOKEN="$(json_get "$TMP_DIR/setup.json" tokens.connectAllowedPat
 CONNECT_NO_PERMISSION_TOKEN="$(json_get "$TMP_DIR/setup.json" tokens.connectNoPermission)"
 
 if [ "$(json_get "$TMP_DIR/setup.json" invalidResourceRejected)" = "True" ]; then
-  pass "invalid tunnel resource shape is rejected"
+    pass "invalid tunnel resource shape is rejected"
 else
-  fail "invalid tunnel resource shape is rejected" "root array was accepted"
+    fail "invalid tunnel resource shape is rejected" "root array was accepted"
 fi
 
 if [ "$(json_get "$TMP_DIR/setup.json" permissionResourceMismatchRejected)" = "True" ]; then
-  pass "token mint rejects resources that do not allow requested permission"
+    pass "token mint rejects resources that do not allow requested permission"
 else
-  fail "token mint rejects resources that do not allow requested permission" "resource/permission mismatch was accepted"
+    fail "token mint rejects resources that do not allow requested permission" "resource/permission mismatch was accepted"
 fi
 
 status=$(control_status "$CONTROL_PROJECTS_TOKEN" GET "/api/projects/tunnels?pageSize=1")
@@ -548,24 +548,24 @@ if [ "$status" = "403" ]; then pass "empty permission token cannot read Control 
 
 start_upstream "allowed"
 if start_forward_with_env "forced-create" "$PROJECT_ENGINE" "$CREATE_FORCED_TOKEN"; then
-  ALLOWED_FORWARDING="$FORWARDING"
-  ALLOWED_PID="$FORWARD_PID"
-  pass "create scope forces published HTTP token-auth tunnel properties"
+    ALLOWED_FORWARDING="$FORWARDING"
+    ALLOWED_PID="$FORWARD_PID"
+    pass "create scope forces published HTTP token-auth tunnel properties"
 else
-  fail "create scope forces published HTTP token-auth tunnel properties" "forward did not become ready"
-  printf "\nResults: %d passed, %d failed\n" "$PASS" "$FAIL"
-  exit 1
+    fail "create scope forces published HTTP token-auth tunnel properties" "forward did not become ready"
+    printf "\nResults: %d passed, %d failed\n" "$PASS" "$FAIL"
+    exit 1
 fi
 
 start_upstream "denied"
 if start_forward_with_env "unrestricted-denied" "$PROJECT_ENGINE" "$CONTROL_TOKEN" --http --publish --token-auth --name "$DENIED_NAME" --label "suite=$NAME_PREFIX"; then
-  DENIED_FORWARDING="$FORWARDING"
-  DENIED_PID="$FORWARD_PID"
-  pass "unrestricted token creates comparison tunnel"
+    DENIED_FORWARDING="$FORWARDING"
+    DENIED_PID="$FORWARD_PID"
+    pass "unrestricted token creates comparison tunnel"
 else
-  fail "unrestricted token creates comparison tunnel" "forward did not become ready"
-  printf "\nResults: %d passed, %d failed\n" "$PASS" "$FAIL"
-  exit 1
+    fail "unrestricted token creates comparison tunnel" "forward did not become ready"
+    printf "\nResults: %d passed, %d failed\n" "$PASS" "$FAIL"
+    exit 1
 fi
 
 status=$(http_status "" "$ALLOWED_FORWARDING/ping")
@@ -582,32 +582,32 @@ if [ "$status" = "403" ]; then pass "connect scope still requires Engine API str
 
 start_upstream "wrong-name"
 if expect_forward_denied "wrong-name" "$PROJECT_ENGINE" "$CREATE_FORCED_TOKEN" --http --publish --token-auth --name "$DENIED_NAME" --label "suite=$NAME_PREFIX"; then
-  pass "create scope rejects explicit non matching tunnel name"
+    pass "create scope rejects explicit non matching tunnel name"
 else
-  fail "create scope rejects explicit non matching tunnel name" "denied create succeeded"
+    fail "create scope rejects explicit non matching tunnel name" "denied create succeeded"
 fi
 
 start_upstream "wrong-label"
 if expect_forward_denied "wrong-label" "$PROJECT_ENGINE" "$CREATE_FORCED_TOKEN" --http --publish --token-auth --name "$ALLOWED_NAME" --label "suite=wrong"; then
-  pass "create scope rejects explicit non matching label"
+    pass "create scope rejects explicit non matching label"
 else
-  fail "create scope rejects explicit non matching label" "denied create succeeded"
+    fail "create scope rejects explicit non matching label" "denied create succeeded"
 fi
 
 start_upstream "no-publish"
 if expect_forward_denied "no-publish" "$PROJECT_ENGINE" "$CREATE_FORCED_TOKEN" --no-publish --name "$ALLOWED_NAME"; then
-  pass "create scope rejects explicit non matching publish mode"
+    pass "create scope rejects explicit non matching publish mode"
 else
-  fail "create scope rejects explicit non matching publish mode" "denied create succeeded"
+    fail "create scope rejects explicit non matching publish mode" "denied create succeeded"
 fi
 
 status=$(engine_status "$PROJECT_ENGINE" "$LIST_SELECTED_TOKEN" "/api/tunnels")
 if [ "$status" = "200" ]; then pass "Engine API read permission allows tunnel list"; else fail "Engine API read permission allows tunnel list" "status=$status"; fi
 
 if "$PYTHON" "$TMP_DIR/runtime_api.py" engine-list-check "$PROJECT_ENGINE" "$LIST_SELECTED_TOKEN" --expect "$ALLOWED_NAME" --deny "$DENIED_NAME" --selected; then
-  pass "list scope filters and projects selected tunnel fields"
+    pass "list scope filters and projects selected tunnel fields"
 else
-  fail "list scope filters and projects selected tunnel fields" "unexpected tunnel list"
+    fail "list scope filters and projects selected tunnel fields" "unexpected tunnel list"
 fi
 
 status=$(engine_status "$PROJECT_ENGINE" "$CREATE_FORCED_TOKEN" "/api/tunnels")
@@ -617,30 +617,30 @@ status=$(engine_status "$PROJECT_ENGINE" "$LIST_AND_DENIED_PROJECT_TOKEN" "/api/
 if [ "$status" = "403" ]; then pass "AND resource denies other project branch"; else fail "AND resource denies other project branch" "status=$status"; fi
 
 if "$PYTHON" "$TMP_DIR/runtime_api.py" engine-list-check "$PROJECT_ENGINE" "$LIST_OR_NAMES_TOKEN" --expect "$ALLOWED_NAME" --expect "$DENIED_NAME"; then
-  pass "OR resource allows either listed tunnel name"
+    pass "OR resource allows either listed tunnel name"
 else
-  fail "OR resource allows either listed tunnel name" "unexpected tunnel list"
+    fail "OR resource allows either listed tunnel name" "unexpected tunnel list"
 fi
 
 status=$(engine_status "$PROJECT_ENGINE" "$LIST_SELECTED_TOKEN" "/api/tunnels" --query-token)
 if [ "$status" = "401" ]; then pass "query auth token is rejected on non streaming Engine API"; else fail "query auth token is rejected on non streaming Engine API" "status=$status"; fi
 
 if "$PYTHON" "$TMP_DIR/runtime_api.py" watch-check sse "$PROJECT_ENGINE" "$LIST_SELECTED_TOKEN" --expect "$ALLOWED_NAME" --deny "$DENIED_NAME" --selected; then
-  pass "SSE watch applies list scope filters and selection"
+    pass "SSE watch applies list scope filters and selection"
 else
-  fail "SSE watch applies list scope filters and selection" "unexpected initial event"
+    fail "SSE watch applies list scope filters and selection" "unexpected initial event"
 fi
 
 if "$PYTHON" "$TMP_DIR/runtime_api.py" watch-check sse "$PROJECT_ENGINE" "$LIST_SELECTED_TOKEN" --query-token --expect "$ALLOWED_NAME" --deny "$DENIED_NAME" --selected; then
-  pass "SSE watch accepts short-lived read-only query token"
+    pass "SSE watch accepts short-lived read-only query token"
 else
-  fail "SSE watch accepts short-lived read-only query token" "query token watch failed"
+    fail "SSE watch accepts short-lived read-only query token" "query token watch failed"
 fi
 
 if "$PYTHON" "$TMP_DIR/runtime_api.py" watch-check websocket "$PROJECT_ENGINE" "$LIST_SELECTED_TOKEN" --query-token --expect "$ALLOWED_NAME" --deny "$DENIED_NAME" --selected; then
-  pass "WebSocket watch accepts short-lived read-only query token"
+    pass "WebSocket watch accepts short-lived read-only query token"
 else
-  fail "WebSocket watch accepts short-lived read-only query token" "query token watch failed"
+    fail "WebSocket watch accepts short-lived read-only query token" "query token watch failed"
 fi
 
 kill "$ALLOWED_PID" "$DENIED_PID" 2>/dev/null || true

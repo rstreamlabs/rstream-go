@@ -3,7 +3,9 @@
 package webtty
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"io"
 	"net/http"
@@ -60,17 +62,30 @@ func TestClientSessionConfigConversionsCopySlices(t *testing.T) {
 		CmdArgs:     []string{"sh", "-lc", "true"},
 		Interactive: true,
 		AllocateTTY: true,
+		Attach: &AttachConfig{
+			SessionID:     "session-1",
+			ParticipantID: "participant-1",
+			AttachGrant:   []byte("grant"),
+			Capabilities:  []AttachCapability{AttachCapabilityReadStream},
+		},
 	}).sessionConfig()
 	cfg.EnvVars[0] = "A=2"
 	cfg.CmdArgs[0] = "bash"
+	cfg.Attach.AttachGrant[0] = 'G'
+	cfg.Attach.Capabilities[0] = AttachCapabilityRequestControl
 	if got := (&ClientConfig{EnvVars: []string{"A=1"}, CmdArgs: []string{"sh"}}).sessionConfig(); got.EnvVars[0] != "A=1" || got.CmdArgs[0] != "sh" {
 		t.Fatalf("sessionConfig should copy slices")
 	}
 	clientCfg := cfg.clientConfig()
 	clientCfg.EnvVars[0] = "A=3"
 	clientCfg.CmdArgs[0] = "zsh"
+	clientCfg.Attach.AttachGrant[0] = 'R'
+	clientCfg.Attach.Capabilities[0] = AttachCapabilityReceiveControl
 	if cfg.EnvVars[0] != "A=2" || cfg.CmdArgs[0] != "bash" {
 		t.Fatalf("clientConfig should copy slices")
+	}
+	if string(cfg.Attach.AttachGrant) != "Grant" || cfg.Attach.Capabilities[0] != AttachCapabilityRequestControl {
+		t.Fatalf("clientConfig should deep-copy attach slices: %#v", cfg.Attach)
 	}
 	if clientCfg.Workdir != &workdir || clientCfg.Username != &username {
 		t.Fatalf("pointer fields should be preserved")
@@ -80,6 +95,24 @@ func TestClientSessionConfigConversionsCopySlices(t *testing.T) {
 	}
 	if (*SessionConfig)(nil).clientConfig() != nil {
 		t.Fatalf("nil session config should convert to nil client config")
+	}
+}
+
+func TestCloneTLSConfigWithWebTTYDefaults(t *testing.T) {
+	cfg := cloneTLSConfigWithWebTTYDefaults(nil)
+	if cfg == nil || cfg.MinVersion != tls.VersionTLS13 {
+		t.Fatalf("nil TLS config default = %#v, want TLS 1.3 minimum", cfg)
+	}
+	custom := &tls.Config{ServerName: "terminal.example", MinVersion: tls.VersionTLS12}
+	cloned := cloneTLSConfigWithWebTTYDefaults(custom)
+	if cloned == custom {
+		t.Fatalf("expected TLS config to be cloned")
+	}
+	if cloned.ServerName != "terminal.example" || cloned.MinVersion != tls.VersionTLS13 {
+		t.Fatalf("custom TLS config defaults not applied: %#v", cloned)
+	}
+	if custom.ServerName != "terminal.example" || custom.MinVersion != tls.VersionTLS12 {
+		t.Fatalf("source TLS config was mutated")
 	}
 }
 
@@ -134,6 +167,261 @@ func TestDecodeClientSessionEvent(t *testing.T) {
 	}
 }
 
+func TestClientSessionPayloadCryptoSendsEncryptedInput(t *testing.T) {
+	received := make(chan *pb.Message, 2)
+	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		received <- readWebTTYMessage(t, conn)
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}})
+		received <- readWebTTYMessage(t, conn)
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Close{Close: &pb.Close{ReturnCode: 0}}})
+	})
+	defer server.Close()
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:          testWebTTYURL(server.URL),
+		OpenDeadline: durationPtr(time.Second),
+		PayloadCrypto: &PayloadCrypto{
+			EncryptStdin: func(_ context.Context, payload []byte) (*EncryptedPayload, error) {
+				return &EncryptedPayload{
+					Ciphertext:      append([]byte("enc:"), payload...),
+					PlaintextLength: uint32(len(payload)),
+					PayloadCrypto: &PayloadCryptoMetadata{
+						PayloadSuite: PayloadCipherSuiteAES256GCM,
+						PayloadKeyID: []byte("payload-key"),
+					},
+				}, nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	if open := receiveMessage(t, received).GetOpen(); len(open.Capabilities) == 0 || open.Capabilities[0] != pb.OpenCapability_OPEN_CAPABILITY_ENCRYPTED_PAYLOAD {
+		t.Fatalf("expected encrypted payload capability, got %#v", open)
+	}
+	if err := session.SendText("hello"); err != nil {
+		t.Fatalf("SendText() error = %v", err)
+	}
+	stdin := receiveMessage(t, received).GetData().GetEncryptedData()
+	if stdin == nil {
+		t.Fatalf("expected encrypted stdin payload")
+	}
+	if string(stdin.Ciphertext) != "enc:hello" || stdin.PlaintextLength != 5 {
+		t.Fatalf("unexpected encrypted payload: %#v", stdin)
+	}
+	if stdin.PayloadCrypto.GetPayloadSuite() != pb.PayloadCipherSuite_PAYLOAD_CIPHER_SUITE_AES_256_GCM || !bytes.Equal(stdin.PayloadCrypto.GetPayloadKeyId(), []byte("payload-key")) {
+		t.Fatalf("unexpected payload crypto metadata: %#v", stdin.PayloadCrypto)
+	}
+	exitCode, err := session.Wait()
+	if err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v", exitCode, err)
+	}
+}
+
+func TestClientSessionPayloadCryptoDecryptsEncryptedEvents(t *testing.T) {
+	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		_ = readWebTTYMessage(t, conn)
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}})
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{
+			Type: pb.Data_TYPE_STDOUT,
+			Payload: &pb.Data_EncryptedData{EncryptedData: &pb.EncryptedPayload{
+				Ciphertext:      []byte("out"),
+				PlaintextLength: 3,
+			}},
+		}}})
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Close{Close: &pb.Close{ReturnCode: 0}}})
+	})
+	defer server.Close()
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:          testWebTTYURL(server.URL),
+		OpenDeadline: durationPtr(time.Second),
+		PayloadCrypto: &PayloadCrypto{
+			DecryptStdout: func(_ context.Context, payload *EncryptedPayload) ([]byte, error) {
+				return append([]byte("dec:"), payload.Ciphertext...), nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	event := receiveClientSessionEvent(t, session.Events())
+	if event.Stream != ClientSessionStdout || string(event.Data) != "dec:out" {
+		t.Fatalf("unexpected event: %#v", event)
+	}
+	exitCode, err := session.Wait()
+	if err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v", exitCode, err)
+	}
+}
+
+func TestClientSessionPayloadCryptoRejectsEncryptedOutputWithoutHook(t *testing.T) {
+	data := &pb.Data{Type: pb.Data_TYPE_STDOUT, Payload: &pb.Data_EncryptedData{EncryptedData: &pb.EncryptedPayload{Ciphertext: []byte("out")}}}
+	if _, _, err := decodeClientSessionEvent(data); err == nil || !strings.Contains(err.Error(), "decrypt hook") {
+		t.Fatalf("expected missing decrypt hook error, got %v", err)
+	}
+}
+
+func TestOpenClientSessionRequiresServerHelloWhenServerIdentityExpected(t *testing.T) {
+	serverIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity() error = %v", err)
+	}
+	serverPublic := serverIdentity.Public()
+	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}})
+		_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		if _, _, err := conn.ReadMessage(); err == nil {
+			t.Fatalf("client sent an open message before receiving a signed server hello")
+		}
+	})
+	defer server.Close()
+	_, err = OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    testWebTTYURL(server.URL),
+		OpenDeadline:           durationPtr(time.Second),
+		ExpectedServerIdentity: &serverPublic,
+	})
+	if err == nil || !strings.Contains(err.Error(), "expected WebTTY server hello") {
+		t.Fatalf("OpenClientSession() error = %v, want expected server hello error", err)
+	}
+}
+
+func TestOpenClientSessionReturnsProtocolErrorBeforeServerHello(t *testing.T) {
+	serverIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity() error = %v", err)
+	}
+	serverPublic := serverIdentity.Public()
+	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_ProtocolError{ProtocolError: &pb.ProtocolError{Code: pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_CLIENT_PROOF_REQUIRED}}})
+	})
+	defer server.Close()
+	_, err = OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    testWebTTYURL(server.URL),
+		OpenDeadline:           durationPtr(time.Second),
+		ExpectedServerIdentity: &serverPublic,
+	})
+	if err == nil || !strings.Contains(err.Error(), "client proof") {
+		t.Fatalf("OpenClientSession() error = %v, want protocol client proof error", err)
+	}
+}
+
+func TestOpenClientSessionRejectsUnsignedServerHelloBeforeOpen(t *testing.T) {
+	serverIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(server) error = %v", err)
+	}
+	clientIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(client) error = %v", err)
+	}
+	serverPublic := serverIdentity.Public()
+	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		hello := signedServerHelloForTest(t, serverIdentity, WebTTYTransportWebSocket, "workspace-1", "project-1", "server-1", "session-1", AuthRequirementClientProof)
+		hello.ServerProof.Signature[0] ^= 0xff
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_ServerHello{ServerHello: hello}})
+		_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		if _, _, err := conn.ReadMessage(); err == nil {
+			t.Fatalf("client sent an open message after an invalid server hello")
+		}
+	})
+	defer server.Close()
+	_, err = OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    testWebTTYURL(server.URL),
+		OpenDeadline:           durationPtr(time.Second),
+		EndpointIdentity:       clientIdentity,
+		ExpectedServerIdentity: &serverPublic,
+		CmdArgs:                []string{"whoami"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "WebTTY server proof") {
+		t.Fatalf("OpenClientSession() error = %v, want server proof error", err)
+	}
+}
+
+func TestOpenClientSessionRejectsClientProofRequirementWithoutIdentityBeforeOpen(t *testing.T) {
+	serverIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity() error = %v", err)
+	}
+	serverPublic := serverIdentity.Public()
+	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		hello := signedServerHelloForTest(t, serverIdentity, WebTTYTransportWebSocket, "workspace-1", "project-1", "server-1", "session-1", AuthRequirementClientProof)
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_ServerHello{ServerHello: hello}})
+		_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		if _, _, err := conn.ReadMessage(); err == nil {
+			t.Fatalf("client sent an open message without a client endpoint identity")
+		}
+	})
+	defer server.Close()
+	_, err = OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    testWebTTYURL(server.URL),
+		OpenDeadline:           durationPtr(time.Second),
+		ExpectedServerIdentity: &serverPublic,
+		CmdArgs:                []string{"whoami"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "client endpoint identity") {
+		t.Fatalf("OpenClientSession() error = %v, want client endpoint identity error", err)
+	}
+}
+
+func TestOpenClientSessionSendsClientProofAfterSignedServerHello(t *testing.T) {
+	serverIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(server) error = %v", err)
+	}
+	clientIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(client) error = %v", err)
+	}
+	serverPublic := serverIdentity.Public()
+	credential := []byte("workspace-managed-client-credential")
+	received := make(chan *pb.Open, 1)
+	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		hello := signedServerHelloForTest(t, serverIdentity, WebTTYTransportWebSocket, "workspace-1", "project-1", "server-1", "session-1", AuthRequirementClientProof)
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_ServerHello{ServerHello: hello}})
+		open := readWebTTYMessage(t, conn).GetOpen()
+		received <- open
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}})
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Close{Close: &pb.Close{ReturnCode: 0}}})
+	})
+	defer server.Close()
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    testWebTTYURL(server.URL),
+		OpenDeadline:           durationPtr(time.Second),
+		EndpointIdentity:       clientIdentity,
+		ExpectedServerIdentity: &serverPublic,
+		ClientCredential:       credential,
+		CmdArgs:                []string{"whoami"},
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	var open *pb.Open
+	select {
+	case open = <-received:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for open message")
+	}
+	if open == nil || open.ClientProof == nil {
+		t.Fatalf("client proof is missing from open message: %#v", open)
+	}
+	if !bytes.Equal(open.ClientProof.SigningKeyId, clientIdentity.Signing.KeyID) {
+		t.Fatalf("client proof signing key id mismatch")
+	}
+	if open.ClientProof.Credential == nil || !bytes.Equal(open.ClientProof.Credential.Value, credential) {
+		t.Fatalf("client proof credential mismatch: %#v", open.ClientProof.Credential)
+	}
+	exitCode, err := session.Wait()
+	if err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v", exitCode, err)
+	}
+}
+
 func TestClientSessionWaitClosedChannel(t *testing.T) {
 	session := &ClientSession{resultCh: make(chan clientSessionResult)}
 	close(session.resultCh)
@@ -171,11 +459,11 @@ func TestClientSessionRunRejectsMalformedMessages(t *testing.T) {
 		{msg: &pb.Message{Payload: &pb.Message_Error{}}},
 	}
 	for i, event := range cases {
-		session := newBareClientSession()
+		session := newBareClientSession(t)
 		readEvents := make(chan clientEvent, 1)
 		loopErrCh := make(chan error, 1)
 		readEvents <- event
-		go session.run(readEvents, loopErrCh)
+		go session.run(t.Context(), readEvents, loopErrCh)
 		exitCode, err := session.Wait()
 		if exitCode != -1 || err == nil {
 			t.Fatalf("case %d: Wait() = %d, %v; want error", i, exitCode, err)
@@ -237,6 +525,100 @@ func TestOpenClientSessionSendsInputEOFResizeAndWaitsForClose(t *testing.T) {
 	exitCode, err := session.Wait()
 	if err != nil || exitCode != 7 {
 		t.Fatalf("Wait() = %d, %v", exitCode, err)
+	}
+}
+
+func TestOpenClientSessionSendsAttachMessage(t *testing.T) {
+	received := make(chan *pb.Message, 1)
+	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		received <- readWebTTYMessage(t, conn)
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}})
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{Type: pb.Data_TYPE_STDOUT, Payload: &pb.Data_Data{Data: []byte("live")}}}})
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Close{Close: &pb.Close{ReturnCode: 0}}})
+	})
+	defer server.Close()
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:          testWebTTYURL(server.URL),
+		OpenDeadline: durationPtr(time.Second),
+		Attach: &AttachConfig{
+			SessionID:     "session-1",
+			ParticipantID: "participant-1",
+			AttachGrant:   []byte("grant"),
+			RequestedRole: AttachRoleSpectator,
+			Transport:     WebTTYTransportWebSocket,
+			Capabilities:  []AttachCapability{AttachCapabilityReadStream, AttachCapabilityRequestControl},
+			DeviceID:      "device-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	attach := receiveMessage(t, received).GetAttach()
+	if attach == nil {
+		t.Fatalf("expected attach message")
+	}
+	if attach.SessionId != "session-1" || attach.ParticipantId != "participant-1" || !bytes.Equal(attach.AttachGrant, []byte("grant")) {
+		t.Fatalf("attach identity fields not sent: %#v", attach)
+	}
+	if attach.RequestedRole != pb.AttachRole_ATTACH_ROLE_SPECTATOR ||
+		attach.Transport != pb.AttachTransport_ATTACH_TRANSPORT_WEBSOCKET ||
+		attach.GetDeviceId().GetValue() != "device-1" {
+		t.Fatalf("attach metadata not sent: %#v", attach)
+	}
+	event := receiveClientSessionEvent(t, session.Events())
+	if event.Stream != ClientSessionStdout || string(event.Data) != "live" {
+		t.Fatalf("unexpected attached event: %#v", event)
+	}
+	exitCode, err := session.Wait()
+	if err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v", exitCode, err)
+	}
+}
+
+func TestOpenClientSessionReturnsAttachServerError(t *testing.T) {
+	received := make(chan *pb.Message, 1)
+	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		received <- readWebTTYMessage(t, conn)
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Error{Error: &pb.Error{Msg: "workspace-managed WebTTY client device is not trusted for this server"}}})
+	})
+	defer server.Close()
+	_, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:          testWebTTYURL(server.URL),
+		OpenDeadline: durationPtr(time.Second),
+		Attach: &AttachConfig{
+			SessionID:     "session-1",
+			ParticipantID: "participant-1",
+			AttachGrant:   []byte("grant"),
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "workspace-managed WebTTY client device is not trusted") {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	if attach := receiveMessage(t, received).GetAttach(); attach == nil {
+		t.Fatalf("expected attach message")
+	}
+}
+
+func TestOpenClientSessionReturnsOpenServerError(t *testing.T) {
+	received := make(chan *pb.Message, 1)
+	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		received <- readWebTTYMessage(t, conn)
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Error{Error: &pb.Error{Msg: "WebTTY client proof is required"}}})
+	})
+	defer server.Close()
+	_, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:          testWebTTYURL(server.URL),
+		OpenDeadline: durationPtr(time.Second),
+		CmdArgs:      []string{"whoami"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "WebTTY client proof is required") {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	if open := receiveMessage(t, received).GetOpen(); open == nil {
+		t.Fatalf("expected open message")
 	}
 }
 
@@ -412,6 +794,17 @@ func receiveMessage(t *testing.T, ch <-chan *pb.Message) *pb.Message {
 	}
 }
 
+func receiveClientSessionEvent(t *testing.T, ch <-chan ClientSessionEvent) ClientSessionEvent {
+	t.Helper()
+	select {
+	case event := <-ch:
+		return event
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for client session event")
+		return ClientSessionEvent{}
+	}
+}
+
 func testWebTTYURL(raw string) string {
 	return "ws" + strings.TrimPrefix(raw, "http")
 }
@@ -420,8 +813,9 @@ func durationPtr(value time.Duration) *time.Duration {
 	return &value
 }
 
-func newBareClientSession() *ClientSession {
-	_, cancel := context.WithCancel(context.Background())
+func newBareClientSession(t *testing.T) *ClientSession {
+	t.Helper()
+	_, cancel := context.WithCancel(t.Context())
 	return &ClientSession{
 		loopCancel: cancel,
 		doneRead:   make(chan struct{}),

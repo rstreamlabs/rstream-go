@@ -5,12 +5,15 @@ package webtty
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 func TestNormalizeWebTTYURL(t *testing.T) {
@@ -79,6 +82,61 @@ func TestResolveWebTTYEndpoint(t *testing.T) {
 				t.Fatalf("unexpected custom dial requirement: got %t want %t", got.RequiresCustomDial, tt.wantRequiresCustom)
 			}
 		})
+	}
+}
+
+func TestResolvePlainWebTTYEndpoint(t *testing.T) {
+	tcp, err := resolveWebTTYEndpointWithTransport("tcp://127.0.0.1:2222", WebTTYTransportPlain)
+	if err != nil {
+		t.Fatalf("resolve tcp plain endpoint: %v", err)
+	}
+	if tcp.Transport != WebTTYTransportPlain || tcp.Address != "127.0.0.1:2222" || tcp.TLS || tcp.RequiresCustomDial {
+		t.Fatalf("unexpected tcp plain endpoint: %#v", tcp)
+	}
+	bare, err := resolveWebTTYEndpointWithTransport("127.0.0.1:2222", WebTTYTransportPlain)
+	if err != nil {
+		t.Fatalf("resolve bare plain endpoint: %v", err)
+	}
+	if bare.Transport != WebTTYTransportPlain || bare.Address != "127.0.0.1:2222" || bare.TLS || bare.RequiresCustomDial {
+		t.Fatalf("unexpected bare plain endpoint: %#v", bare)
+	}
+	tlsEndpoint, err := resolveWebTTYEndpointWithTransport("tls://terminal.example", WebTTYTransportPlain)
+	if err != nil {
+		t.Fatalf("resolve tls plain endpoint: %v", err)
+	}
+	if tlsEndpoint.Transport != WebTTYTransportPlain || tlsEndpoint.Address != "terminal.example:443" || !tlsEndpoint.TLS {
+		t.Fatalf("unexpected tls plain endpoint: %#v", tlsEndpoint)
+	}
+	rstrm, err := resolveWebTTYEndpointWithTransport("rstrm://shell", WebTTYTransportPlain)
+	if err != nil {
+		t.Fatalf("resolve rstrm plain endpoint: %v", err)
+	}
+	if rstrm.Transport != WebTTYTransportPlain || rstrm.Address != "shell" || !rstrm.RequiresCustomDial {
+		t.Fatalf("unexpected rstrm plain endpoint: %#v", rstrm)
+	}
+}
+
+func TestResolveWebTransportWebTTYEndpoint(t *testing.T) {
+	httpsEndpoint, err := resolveWebTTYEndpointWithTransport("https://terminal.example/session", WebTTYTransportWebTransport)
+	if err != nil {
+		t.Fatalf("resolve https webtransport endpoint: %v", err)
+	}
+	if httpsEndpoint.Transport != WebTTYTransportWebTransport || httpsEndpoint.URL != "https://terminal.example/session" || httpsEndpoint.RequiresCustomDial {
+		t.Fatalf("unexpected https webtransport endpoint: %#v", httpsEndpoint)
+	}
+	defaultEndpoint, err := resolveWebTTYEndpointWithTransport("terminal.example", WebTTYTransportWebTransport)
+	if err != nil {
+		t.Fatalf("resolve default webtransport endpoint: %v", err)
+	}
+	if defaultEndpoint.URL != "https://terminal.example/" {
+		t.Fatalf("unexpected default webtransport url: %#v", defaultEndpoint)
+	}
+	rstrmEndpoint, err := resolveWebTTYEndpointWithTransport("rstrm://shell", WebTTYTransportWebTransport)
+	if err != nil {
+		t.Fatalf("resolve rstrm webtransport endpoint: %v", err)
+	}
+	if rstrmEndpoint.URL != "https://shell/" || !rstrmEndpoint.RequiresCustomDial || rstrmEndpoint.Address != "shell" {
+		t.Fatalf("unexpected rstrm webtransport endpoint: %#v", rstrmEndpoint)
 	}
 }
 
@@ -151,6 +209,12 @@ func TestHandleOpenMessage(t *testing.T) {
 	if err := runtime.handleOpenMessage(&pb.Message{Payload: &pb.Message_Error{}}); !errors.Is(err, errClientServer) {
 		t.Fatalf("handleOpenMessage(empty error) = %v", err)
 	}
+	if err := runtime.handleOpenMessage(&pb.Message{Payload: &pb.Message_ServerHello{ServerHello: &pb.ServerHello{}}}); err == nil || !strings.Contains(err.Error(), "known server endpoint identity") {
+		t.Fatalf("handleOpenMessage(server hello) = %v", err)
+	}
+	if err := runtime.handleOpenMessage(&pb.Message{Payload: &pb.Message_ProtocolError{ProtocolError: &pb.ProtocolError{Code: pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_CLIENT_UNAUTHORIZED}}}); err == nil || !strings.Contains(err.Error(), "not authorized") {
+		t.Fatalf("handleOpenMessage(protocol error) = %v", err)
+	}
 	if err := runtime.handleOpenMessage(&pb.Message{Payload: &pb.Message_Close{Close: &pb.Close{ReturnCode: 0}}}); err == nil {
 		t.Fatalf("handleOpenMessage(close) returned nil")
 	}
@@ -159,7 +223,7 @@ func TestHandleOpenMessage(t *testing.T) {
 func TestHandleSessionMessage(t *testing.T) {
 	var stdout bytes.Buffer
 	runtime := &clientRuntime{cfg: &ClientConfig{Stdout: &stdout, Stderr: &bytes.Buffer{}}}
-	exitCode, done, err := runtime.handleSessionMessage(&pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{Type: pb.Data_TYPE_STDOUT, Payload: &pb.Data_Data{Data: []byte("ok")}}}})
+	exitCode, done, err := runtime.handleSessionMessage(context.TODO(), &pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{Type: pb.Data_TYPE_STDOUT, Payload: &pb.Data_Data{Data: []byte("ok")}}}})
 	if err != nil {
 		t.Fatalf("handleSessionMessage(data) returned error: %v", err)
 	}
@@ -172,7 +236,7 @@ func TestHandleSessionMessage(t *testing.T) {
 	if got := stdout.String(); got != "ok" {
 		t.Fatalf("unexpected stdout payload: got %q want %q", got, "ok")
 	}
-	exitCode, done, err = runtime.handleSessionMessage(&pb.Message{Payload: &pb.Message_Close{Close: &pb.Close{ReturnCode: 7}}})
+	exitCode, done, err = runtime.handleSessionMessage(context.TODO(), &pb.Message{Payload: &pb.Message_Close{Close: &pb.Close{ReturnCode: 7}}})
 	if err != nil {
 		t.Fatalf("handleSessionMessage(close) returned error: %v", err)
 	}
@@ -182,13 +246,16 @@ func TestHandleSessionMessage(t *testing.T) {
 	if exitCode != 7 {
 		t.Fatalf("unexpected exit code for close: got %d want 7", exitCode)
 	}
-	if _, done, err := runtime.handleSessionMessage(&pb.Message{Payload: &pb.Message_Close{}}); !errors.Is(err, errClientProtocol) || !done {
+	if _, done, err := runtime.handleSessionMessage(context.TODO(), &pb.Message{Payload: &pb.Message_Close{}}); !errors.Is(err, errClientProtocol) || !done {
 		t.Fatalf("handleSessionMessage(empty close) = done %v err %v", done, err)
 	}
-	if _, done, err := runtime.handleSessionMessage(&pb.Message{Payload: &pb.Message_Error{}}); !errors.Is(err, errClientServer) || !done {
+	if _, done, err := runtime.handleSessionMessage(context.TODO(), &pb.Message{Payload: &pb.Message_Error{}}); !errors.Is(err, errClientServer) || !done {
 		t.Fatalf("handleSessionMessage(empty error) = done %v err %v", done, err)
 	}
-	if _, done, err := runtime.handleSessionMessage(&pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}}); err == nil || !done {
+	if _, done, err := runtime.handleSessionMessage(context.TODO(), &pb.Message{Payload: &pb.Message_ProtocolError{ProtocolError: &pb.ProtocolError{Code: pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_CLIENT_PROOF_REQUIRED}}}); err == nil || !strings.Contains(err.Error(), "client proof") || !done {
+		t.Fatalf("handleSessionMessage(protocol error) = done %v err %v", done, err)
+	}
+	if _, done, err := runtime.handleSessionMessage(context.TODO(), &pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}}); err == nil || !done {
 		t.Fatalf("handleSessionMessage(ack) should fail and finish the session")
 	}
 }
@@ -206,9 +273,9 @@ func TestBuildOpenMessage(t *testing.T) {
 		Username:      &username,
 		CmdArgs:       []string{"bash", "-lc", "echo ok"},
 	}}
-	msg, err := runtime.buildOpenMessage()
+	msg, err := runtime.buildOpenMessage(WebTTYTransportWebSocket, nil)
 	if err != nil {
-		t.Fatalf("buildOpenMessage() error = %v", err)
+		t.Fatalf("buildOpenMessage(WebTTYTransportWebSocket, nil) error = %v", err)
 	}
 	open := msg.GetOpen()
 	if open == nil || open.Config == nil {
@@ -235,12 +302,482 @@ func TestBuildOpenMessage(t *testing.T) {
 	}
 }
 
+func TestBuildOpenMessageAdvertisesPayloadCrypto(t *testing.T) {
+	runtime := &clientRuntime{cfg: &ClientConfig{
+		PayloadCrypto: &PayloadCrypto{
+			Capabilities: []OpenCapability{OpenCapabilitySessionKeyGrant},
+			SessionKeyGrant: &SessionKeyGrant{
+				PayloadSuite:     PayloadCipherSuiteAES256GCM,
+				PayloadKeyID:     []byte("workspace-key"),
+				KeyEnvelopeSuite: KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM,
+				KeyEnvelopes: []KeyEnvelope{{
+					RecipientKeyID:  []byte{1, 2},
+					EncapsulatedKey: []byte{3, 4},
+					WrappedKey:      []byte{5, 6},
+				}},
+				KeyContext: []byte{7, 8},
+			},
+			EncryptStdin: func(context.Context, []byte) (*EncryptedPayload, error) {
+				return &EncryptedPayload{Ciphertext: []byte("unused"), PlaintextLength: 6}, nil
+			},
+		},
+	}}
+	msg, err := runtime.buildOpenMessage(WebTTYTransportWebSocket, nil)
+	if err != nil {
+		t.Fatalf("buildOpenMessage(WebTTYTransportWebSocket, nil) error = %v", err)
+	}
+	open := msg.GetOpen()
+	if len(open.Capabilities) != 2 {
+		t.Fatalf("capabilities = %#v, want 2 entries", open.Capabilities)
+	}
+	if open.Capabilities[0] != pb.OpenCapability_OPEN_CAPABILITY_ENCRYPTED_PAYLOAD {
+		t.Fatalf("encrypted payload capability missing: %#v", open.Capabilities)
+	}
+	if open.Capabilities[1] != pb.OpenCapability_OPEN_CAPABILITY_SESSION_CRYPTO {
+		t.Fatalf("session key grant capability missing: %#v", open.Capabilities)
+	}
+	if open.SessionKeyGrant.GetPayloadSuite() != pb.PayloadCipherSuite_PAYLOAD_CIPHER_SUITE_AES_256_GCM ||
+		!bytes.Equal(open.SessionKeyGrant.GetPayloadKeyId(), []byte("workspace-key")) ||
+		open.SessionKeyGrant.GetKeyEnvelopeSuite() != pb.KeyEnvelopeSuite_KEY_ENVELOPE_SUITE_HPKE_X25519_HKDF_SHA256_AES_256_GCM {
+		t.Fatalf("session key grant not encoded: %#v", open.SessionKeyGrant)
+	}
+	if len(open.SessionKeyGrant.KeyEnvelopes) != 1 ||
+		!bytes.Equal(open.SessionKeyGrant.KeyEnvelopes[0].RecipientKeyId, []byte{1, 2}) ||
+		!bytes.Equal(open.SessionKeyGrant.KeyEnvelopes[0].EncapsulatedKey, []byte{3, 4}) ||
+		!bytes.Equal(open.SessionKeyGrant.KeyEnvelopes[0].WrappedKey, []byte{5, 6}) ||
+		!bytes.Equal(open.SessionKeyGrant.KeyContext, []byte{7, 8}) {
+		t.Fatalf("session key grant bytes not copied: %#v", open.SessionKeyGrant)
+	}
+}
+
+func TestBuildOpenMessageIncludesClientProofBoundToOpenAndServerHello(t *testing.T) {
+	serverIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(server) error = %v", err)
+	}
+	clientIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(client) error = %v", err)
+	}
+	serverPublic := serverIdentity.Public()
+	hello := &pb.ServerHello{
+		ProtocolVersion: pb.ProtocolVersion_PROTOCOL_VERSION_WEBTTY_1,
+		SessionNonce:    []byte("server-nonce"),
+		ServerIdentity:  endpointIdentityPublicToProto(serverPublic),
+		AuthRequirement: pb.AuthRequirement_AUTH_REQUIREMENT_CLIENT_PROOF,
+		WorkspaceId:     wrapperspb.String("workspace-1"),
+		ProjectId:       wrapperspb.String("project-1"),
+		ServerId:        wrapperspb.String("server-1"),
+		SessionId:       "session-1",
+	}
+	credential := []byte("workspace-credential")
+	runtime := &clientRuntime{cfg: &ClientConfig{
+		CmdArgs:                []string{"sh", "-lc", "echo ok"},
+		EndpointIdentity:       clientIdentity,
+		ExpectedServerIdentity: &serverPublic,
+		ClientCredential:       credential,
+		ClientPrincipalID:      "device-1",
+		ClientDeviceID:         "device-1",
+		PayloadCrypto: &PayloadCrypto{
+			Capabilities: []OpenCapability{OpenCapabilitySessionKeyGrant},
+			SessionKeyGrant: &SessionKeyGrant{
+				PayloadSuite:     PayloadCipherSuiteAES256GCM,
+				PayloadKeyID:     []byte("payload-key-id"),
+				KeyEnvelopeSuite: KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM,
+				KeyEnvelopes: []KeyEnvelope{{
+					RecipientKeyID:  serverIdentity.Encryption.KeyID,
+					EncapsulatedKey: []byte("encapsulated-key"),
+					WrappedKey:      []byte("wrapped-key"),
+				}},
+				KeyContext: []byte("key-context"),
+			},
+		},
+	}}
+	msg, err := runtime.buildOpenMessage(WebTTYTransportWebSocket, hello)
+	if err != nil {
+		t.Fatalf("buildOpenMessage(WebTTYTransportWebSocket, hello) error = %v", err)
+	}
+	open := msg.GetOpen()
+	if open == nil || open.ClientProof == nil {
+		t.Fatalf("expected open client proof, got %#v", open)
+	}
+	proof := open.ClientProof
+	if proof.PrincipalId == nil || proof.PrincipalId.Value != "device-1" {
+		t.Fatalf("unexpected proof principal: %#v", proof.PrincipalId)
+	}
+	if proof.DeviceId == nil || proof.DeviceId.Value != "device-1" {
+		t.Fatalf("unexpected proof device: %#v", proof.DeviceId)
+	}
+	if proof.Credential == nil || !bytes.Equal(proof.Credential.Value, credential) {
+		t.Fatalf("unexpected proof credential: %#v", proof.Credential)
+	}
+	sessionKeyGrantHash, err := HashWebTTYSessionKeyGrant(open.SessionKeyGrant)
+	if err != nil {
+		t.Fatalf("HashWebTTYSessionKeyGrant() error = %v", err)
+	}
+	configHash, err := HashWebTTYConfig(open.Config)
+	if err != nil {
+		t.Fatalf("HashWebTTYConfig() error = %v", err)
+	}
+	transcript := ClientProofTranscript{
+		ProtocolVersion:       ProtocolVersionWebTTY1,
+		Transport:             string(WebTTYTransportWebSocket),
+		WorkspaceID:           "workspace-1",
+		ProjectID:             "project-1",
+		ServerID:              "server-1",
+		SessionID:             "session-1",
+		ServerSigningKeyID:    serverPublic.SigningKeyID,
+		ServerEncryptionKeyID: serverPublic.EncryptionKeyID,
+		ServerNonce:           []byte("server-nonce"),
+		AuthRequirement:       AuthRequirementClientProof,
+		PayloadSuite:          PayloadCipherSuiteAES256GCM,
+		KeyEnvelopeSuite:      KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM,
+		SessionKeyGrantHash:   sessionKeyGrantHash,
+		CommandConfigHash:     configHash,
+		ClientPrincipalID:     "device-1",
+		ClientSigningKeyID:    clientIdentity.Signing.KeyID,
+		ClientCredentialHash:  HashWebTTYClientCredential(credential),
+		IssuedAt:              proof.IssuedAt,
+		ExpiresAt:             proof.ExpiresAt,
+	}
+	if !bytes.Equal(proof.TranscriptHash, transcript.Hash()) {
+		t.Fatalf("unexpected proof transcript hash")
+	}
+	if err := VerifyWebTTYClientProofTranscript(clientIdentity.Signing.PublicKey, transcript, proof.Signature); err != nil {
+		t.Fatalf("proof signature is invalid: %v", err)
+	}
+	transcript.CommandConfigHash = HashWebTTYClientCredential([]byte("different-command-config"))
+	if err := VerifyWebTTYClientProofTranscript(clientIdentity.Signing.PublicKey, transcript, proof.Signature); err == nil {
+		t.Fatalf("proof signature verified after command config hash changed")
+	}
+}
+
+func TestBuildOpenMessageRequiresExpectedServerIdentityForClientProof(t *testing.T) {
+	serverIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(server) error = %v", err)
+	}
+	clientIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(client) error = %v", err)
+	}
+	runtime := &clientRuntime{cfg: &ClientConfig{
+		CmdArgs:           []string{"sh", "-lc", "echo ok"},
+		EndpointIdentity:  clientIdentity,
+		ClientCredential:  []byte("workspace-credential"),
+		ClientPrincipalID: "device-1",
+	}}
+	_, err = runtime.buildOpenMessage(WebTTYTransportWebSocket, &pb.ServerHello{
+		ProtocolVersion: pb.ProtocolVersion_PROTOCOL_VERSION_WEBTTY_1,
+		SessionNonce:    []byte("server-nonce"),
+		ServerIdentity:  endpointIdentityPublicToProto(serverIdentity.Public()),
+		AuthRequirement: pb.AuthRequirement_AUTH_REQUIREMENT_CLIENT_PROOF,
+	})
+	if err == nil || !strings.Contains(err.Error(), "expected server endpoint identity") {
+		t.Fatalf("expected missing expected server identity error, got %v", err)
+	}
+}
+
+func TestBuildOpenMessageRequiresServerHelloIdentityForClientProof(t *testing.T) {
+	serverIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(server) error = %v", err)
+	}
+	clientIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(client) error = %v", err)
+	}
+	serverPublic := serverIdentity.Public()
+	runtime := &clientRuntime{cfg: &ClientConfig{
+		CmdArgs:                []string{"sh", "-lc", "echo ok"},
+		EndpointIdentity:       clientIdentity,
+		ExpectedServerIdentity: &serverPublic,
+		ClientCredential:       []byte("workspace-credential"),
+		ClientPrincipalID:      "device-1",
+	}}
+	_, err = runtime.buildOpenMessage(WebTTYTransportWebSocket, &pb.ServerHello{
+		ProtocolVersion: pb.ProtocolVersion_PROTOCOL_VERSION_WEBTTY_1,
+		SessionNonce:    []byte("server-nonce"),
+		AuthRequirement: pb.AuthRequirement_AUTH_REQUIREMENT_CLIENT_PROOF,
+	})
+	if err == nil || !strings.Contains(err.Error(), "server hello is missing server identity") {
+		t.Fatalf("expected missing server hello identity error, got %v", err)
+	}
+}
+
+func TestBuildOpenMessageDoesNotAttachProofWhenServerHelloDoesNotRequireIt(t *testing.T) {
+	clientIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(client) error = %v", err)
+	}
+	runtime := &clientRuntime{cfg: &ClientConfig{
+		CmdArgs:           []string{"sh", "-lc", "echo ok"},
+		EndpointIdentity:  clientIdentity,
+		ClientCredential:  []byte("workspace-credential"),
+		ClientPrincipalID: "device-1",
+	}}
+	msg, err := runtime.buildOpenMessage(WebTTYTransportWebSocket, &pb.ServerHello{AuthRequirement: pb.AuthRequirement_AUTH_REQUIREMENT_NONE})
+	if err != nil {
+		t.Fatalf("buildOpenMessage(WebTTYTransportWebSocket, hello) error = %v", err)
+	}
+	if proof := msg.GetOpen().GetClientProof(); proof != nil {
+		t.Fatalf("unexpected client proof when server hello does not require it: %#v", proof)
+	}
+}
+
+func TestVerifyServerHelloAcceptsSignedExpectedIdentity(t *testing.T) {
+	serverIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(server) error = %v", err)
+	}
+	serverPublic := serverIdentity.Public()
+	runtime := &clientRuntime{cfg: &ClientConfig{ExpectedServerIdentity: &serverPublic}}
+	hello := signedServerHelloForTest(t, serverIdentity, WebTTYTransportWebSocket, "workspace-1", "project-1", "server-1", "session-1", AuthRequirementClientProof)
+	if err := runtime.verifyServerHello(hello, WebTTYTransportWebSocket); err != nil {
+		t.Fatalf("verifyServerHello() error = %v", err)
+	}
+}
+
+func TestVerifyServerHelloRejectsUnexpectedServerIdentity(t *testing.T) {
+	expectedIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(expected) error = %v", err)
+	}
+	actualIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(actual) error = %v", err)
+	}
+	expectedPublic := expectedIdentity.Public()
+	runtime := &clientRuntime{cfg: &ClientConfig{ExpectedServerIdentity: &expectedPublic}}
+	hello := signedServerHelloForTest(t, actualIdentity, WebTTYTransportWebSocket, "workspace-1", "project-1", "server-1", "session-1", AuthRequirementClientProof)
+	err = runtime.verifyServerHello(hello, WebTTYTransportWebSocket)
+	if err == nil || !strings.Contains(err.Error(), "does not match the expected identity") {
+		t.Fatalf("expected server identity mismatch error, got %v", err)
+	}
+}
+
+func TestVerifyServerHelloRejectsTamperedTranscript(t *testing.T) {
+	serverIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(server) error = %v", err)
+	}
+	serverPublic := serverIdentity.Public()
+	runtime := &clientRuntime{cfg: &ClientConfig{ExpectedServerIdentity: &serverPublic}}
+	hello := signedServerHelloForTest(t, serverIdentity, WebTTYTransportWebSocket, "workspace-1", "project-1", "server-1", "session-1", AuthRequirementClientProof)
+	hello.ProjectId = wrapperspb.String("project-2")
+	err = runtime.verifyServerHello(hello, WebTTYTransportWebSocket)
+	if err == nil || !strings.Contains(err.Error(), "transcript hash does not match") {
+		t.Fatalf("expected transcript hash mismatch error, got %v", err)
+	}
+}
+
+func signedServerHelloForTest(t *testing.T, identity *WebTTYEndpointIdentity, transport WebTTYTransport, workspaceID, projectID, serverID, sessionID string, authRequirement AuthRequirement) *pb.ServerHello {
+	t.Helper()
+	public := identity.Public()
+	nonce := []byte("server-nonce")
+	transcript := ServerProofTranscript{
+		ProtocolVersion:       ProtocolVersionWebTTY1,
+		Transport:             string(transport),
+		WorkspaceID:           workspaceID,
+		ProjectID:             projectID,
+		ServerID:              serverID,
+		SessionID:             sessionID,
+		ServerSigningKeyID:    public.SigningKeyID,
+		ServerEncryptionKeyID: public.EncryptionKeyID,
+		ServerNonce:           nonce,
+		AuthRequirement:       authRequirement,
+		PayloadSuites:         []PayloadCipherSuite{PayloadCipherSuiteAES256GCM},
+		KeyEnvelopeSuites:     []KeyEnvelopeSuite{KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM},
+		SignatureSuites:       []SignatureSuite{SignatureSuiteECDSAP256SHA256},
+	}
+	privateKey, err := ParseWebTTYSigningPrivateKey(identity.Signing.PrivateKey)
+	if err != nil {
+		t.Fatalf("ParseWebTTYSigningPrivateKey() error = %v", err)
+	}
+	transcriptHash, signature, err := SignWebTTYServerProofTranscript(rand.Reader, privateKey, transcript)
+	if err != nil {
+		t.Fatalf("SignWebTTYServerProofTranscript() error = %v", err)
+	}
+	return &pb.ServerHello{
+		ProtocolVersion:   pb.ProtocolVersion_PROTOCOL_VERSION_WEBTTY_1,
+		SessionNonce:      cloneBytes(nonce),
+		ServerIdentity:    endpointIdentityPublicToProto(public),
+		PayloadSuites:     []pb.PayloadCipherSuite{pb.PayloadCipherSuite_PAYLOAD_CIPHER_SUITE_AES_256_GCM},
+		KeyEnvelopeSuites: []pb.KeyEnvelopeSuite{pb.KeyEnvelopeSuite_KEY_ENVELOPE_SUITE_HPKE_X25519_HKDF_SHA256_AES_256_GCM},
+		SignatureSuites:   []pb.SignatureSuite{pb.SignatureSuite_SIGNATURE_SUITE_ECDSA_P256_SHA256},
+		AuthRequirement:   pb.AuthRequirement(authRequirement),
+		WorkspaceId:       wrapperspb.String(workspaceID),
+		ProjectId:         wrapperspb.String(projectID),
+		ServerId:          wrapperspb.String(serverID),
+		SessionId:         sessionID,
+		ServerProof: &pb.ServerProof{
+			SignatureSuite: pb.SignatureSuite_SIGNATURE_SUITE_ECDSA_P256_SHA256,
+			SigningKeyId:   cloneBytes(public.SigningKeyID),
+			TranscriptHash: cloneBytes(transcriptHash),
+			Signature:      cloneBytes(signature),
+		},
+	}
+}
+
+func TestBuildAttachMessage(t *testing.T) {
+	runtime := &clientRuntime{cfg: &ClientConfig{Attach: &AttachConfig{
+		SessionID:     " session-1 ",
+		WorkspaceID:   " workspace-1 ",
+		ProjectID:     " project-1 ",
+		ServerID:      " server-1 ",
+		ParticipantID: " participant-1 ",
+		AttachGrant:   []byte("grant"),
+		RequestedRole: AttachRoleSpectator,
+		Transport:     WebTTYTransportWebSocket,
+		Capabilities:  []AttachCapability{AttachCapabilityReadStream, AttachCapabilityRequestControl},
+		DeviceID:      " device-1 ",
+		BrowserID:     " browser-1 ",
+	}}}
+	msg, err := runtime.buildHandshakeMessage(WebTTYTransportWebSocket, nil)
+	if err != nil {
+		t.Fatalf("buildHandshakeMessage() error = %v", err)
+	}
+	attach := msg.GetAttach()
+	if attach == nil {
+		t.Fatalf("expected attach message, got %#v", msg)
+	}
+	if attach.SessionId != "session-1" || attach.ParticipantId != "participant-1" || !bytes.Equal(attach.AttachGrant, []byte("grant")) {
+		t.Fatalf("attach identity fields not encoded: %#v", attach)
+	}
+	if attach.RequestedRole != pb.AttachRole_ATTACH_ROLE_SPECTATOR || attach.Transport != pb.AttachTransport_ATTACH_TRANSPORT_WEBSOCKET {
+		t.Fatalf("attach role/transport not encoded: %#v", attach)
+	}
+	if len(attach.Capabilities) != 2 ||
+		attach.Capabilities[0] != pb.AttachCapability_ATTACH_CAPABILITY_READ_STREAM ||
+		attach.Capabilities[1] != pb.AttachCapability_ATTACH_CAPABILITY_REQUEST_CONTROL {
+		t.Fatalf("attach capabilities not encoded: %#v", attach.Capabilities)
+	}
+	if attach.GetDeviceId().GetValue() != "device-1" || attach.GetBrowserId().GetValue() != "browser-1" {
+		t.Fatalf("attach device/browser fields not trimmed: %#v", attach)
+	}
+}
+
+func TestBuildAttachMessageIncludesClientProof(t *testing.T) {
+	identity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity() error = %v", err)
+	}
+	credential := []byte("workspace-credential")
+	runtime := &clientRuntime{cfg: &ClientConfig{
+		EndpointIdentity:  identity,
+		ClientCredential:  credential,
+		ClientPrincipalID: "device-1",
+		ClientDeviceID:    "device-1",
+		Attach: &AttachConfig{
+			SessionID:     "session-1",
+			WorkspaceID:   "workspace-1",
+			ProjectID:     "project-1",
+			ServerID:      "server-1",
+			ParticipantID: "participant-1",
+			AttachGrant:   []byte("grant"),
+			RequestedRole: AttachRoleController,
+			Transport:     WebTTYTransportWebSocket,
+		},
+	}}
+	msg, err := runtime.buildAttachMessage(WebTTYTransportWebSocket)
+	if err != nil {
+		t.Fatalf("buildAttachMessage() error = %v", err)
+	}
+	attach := msg.GetAttach()
+	if attach == nil || attach.ClientProof == nil {
+		t.Fatalf("attach client proof is missing: %#v", attach)
+	}
+	proof := attach.ClientProof
+	if proof.PrincipalId == nil || proof.PrincipalId.Value != "device-1" {
+		t.Fatalf("unexpected proof principal: %#v", proof.PrincipalId)
+	}
+	if proof.DeviceId == nil || proof.DeviceId.Value != "device-1" {
+		t.Fatalf("unexpected proof device: %#v", proof.DeviceId)
+	}
+	if proof.Credential == nil || !bytes.Equal(proof.Credential.Value, credential) {
+		t.Fatalf("unexpected proof credential: %#v", proof.Credential)
+	}
+	transcript := ClientProofTranscript{
+		ProtocolVersion:      ProtocolVersionWebTTY1,
+		Transport:            string(WebTTYTransportWebSocket),
+		WorkspaceID:          "workspace-1",
+		ProjectID:            "project-1",
+		ServerID:             "server-1",
+		SessionID:            "session-1",
+		AuthRequirement:      AuthRequirementClientProof,
+		PayloadSuite:         PayloadCipherSuiteAES256GCM,
+		KeyEnvelopeSuite:     KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM,
+		AttachGrantHash:      HashWebTTYAttachGrant([]byte("grant")),
+		RequestedRole:        string(AttachRoleController),
+		ClientPrincipalID:    "device-1",
+		ClientSigningKeyID:   identity.Signing.KeyID,
+		ClientCredentialHash: HashWebTTYClientCredential(credential),
+		IssuedAt:             proof.IssuedAt,
+		ExpiresAt:            proof.ExpiresAt,
+	}
+	if !bytes.Equal(proof.TranscriptHash, transcript.Hash()) {
+		t.Fatalf("unexpected proof transcript hash")
+	}
+	if err := VerifyWebTTYClientProofTranscript(identity.Signing.PublicKey, transcript, proof.Signature); err != nil {
+		t.Fatalf("proof signature is invalid: %v", err)
+	}
+}
+
+func TestBuildAttachMessageRejectsCredentialWithoutIdentity(t *testing.T) {
+	runtime := &clientRuntime{cfg: &ClientConfig{
+		ClientCredential: []byte("workspace-credential"),
+		Attach: &AttachConfig{
+			SessionID:     "session-1",
+			ParticipantID: "participant-1",
+			AttachGrant:   []byte("grant"),
+		},
+	}}
+	if _, err := runtime.buildAttachMessage(WebTTYTransportWebSocket); err == nil || !strings.Contains(err.Error(), "client endpoint identity") {
+		t.Fatalf("expected missing identity error, got %v", err)
+	}
+}
+
+func TestBuildAttachMessageDefaultsAndValidation(t *testing.T) {
+	valid := &AttachConfig{SessionID: "session", ParticipantID: "participant", AttachGrant: []byte("grant")}
+	runtime := &clientRuntime{cfg: &ClientConfig{Attach: valid}}
+	msg, err := runtime.buildHandshakeMessage(WebTTYTransportPlain, nil)
+	if err != nil {
+		t.Fatalf("default attach build error = %v", err)
+	}
+	attach := msg.GetAttach()
+	if attach.RequestedRole != pb.AttachRole_ATTACH_ROLE_SPECTATOR ||
+		attach.Transport != pb.AttachTransport_ATTACH_TRANSPORT_PLAIN ||
+		len(attach.Capabilities) != 1 ||
+		attach.Capabilities[0] != pb.AttachCapability_ATTACH_CAPABILITY_READ_STREAM {
+		t.Fatalf("attach defaults not applied: %#v", attach)
+	}
+	cases := []struct {
+		name string
+		cfg  *AttachConfig
+	}{
+		{name: "missing session", cfg: &AttachConfig{ParticipantID: "participant", AttachGrant: []byte("grant")}},
+		{name: "missing participant", cfg: &AttachConfig{SessionID: "session", AttachGrant: []byte("grant")}},
+		{name: "missing grant", cfg: &AttachConfig{SessionID: "session", ParticipantID: "participant"}},
+		{name: "bad role", cfg: &AttachConfig{SessionID: "session", ParticipantID: "participant", AttachGrant: []byte("grant"), RequestedRole: AttachRole("owner")}},
+		{name: "bad transport", cfg: &AttachConfig{SessionID: "session", ParticipantID: "participant", AttachGrant: []byte("grant"), Transport: WebTTYTransport("sctp")}},
+		{name: "bad capability", cfg: &AttachConfig{SessionID: "session", ParticipantID: "participant", AttachGrant: []byte("grant"), Capabilities: []AttachCapability{"write_all"}}},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			runtime := &clientRuntime{cfg: &ClientConfig{Attach: tt.cfg}}
+			if _, err := runtime.buildHandshakeMessage(WebTTYTransportWebSocket, nil); err == nil {
+				t.Fatalf("expected validation error")
+			}
+		})
+	}
+}
+
 func TestBuildOpenMessagePreservesExplicitTERM(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	runtime := &clientRuntime{cfg: &ClientConfig{AllocateTTY: true, EnvVars: []string{"TERM=screen"}}}
-	msg, err := runtime.buildOpenMessage()
+	msg, err := runtime.buildOpenMessage(WebTTYTransportWebSocket, nil)
 	if err != nil {
-		t.Fatalf("buildOpenMessage() error = %v", err)
+		t.Fatalf("buildOpenMessage(WebTTYTransportWebSocket, nil) error = %v", err)
 	}
 	env := msg.GetOpen().Config.EnvVars
 	if len(env) != 1 || env[0].Key != "TERM" || env[0].Value != "screen" {
@@ -253,16 +790,16 @@ func TestWaitForOpen(t *testing.T) {
 	runtime := &clientRuntime{cfg: &ClientConfig{OpenDeadline: &deadline}}
 	events := make(chan clientEvent, 1)
 	events <- clientEvent{msg: &pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}}}
-	if err := runtime.waitForOpen(context.Background(), events); err != nil {
+	if err := runtime.waitForOpen(t.Context(), events); err != nil {
 		t.Fatalf("waitForOpen(ack) error = %v", err)
 	}
 	events = make(chan clientEvent, 1)
 	events <- clientEvent{err: os.ErrClosed}
-	if err := runtime.waitForOpen(context.Background(), events); !errors.Is(err, os.ErrClosed) {
+	if err := runtime.waitForOpen(t.Context(), events); !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("waitForOpen(event error) = %v", err)
 	}
 	events = make(chan clientEvent)
-	if err := runtime.waitForOpen(context.Background(), events); !errors.Is(err, errClientOperationTimeout) {
+	if err := runtime.waitForOpen(t.Context(), events); !errors.Is(err, errClientOperationTimeout) {
 		t.Fatalf("waitForOpen(timeout) = %v", err)
 	}
 }
@@ -270,19 +807,19 @@ func TestWaitForOpen(t *testing.T) {
 func TestHandleDataValidation(t *testing.T) {
 	var stderr bytes.Buffer
 	runtime := &clientRuntime{cfg: &ClientConfig{Stdout: &bytes.Buffer{}, Stderr: &stderr}}
-	if err := runtime.handleData(&pb.Data{Type: pb.Data_TYPE_STDERR, Payload: &pb.Data_Data{Data: []byte("err")}}); err != nil {
+	if err := runtime.handleData(context.TODO(), &pb.Data{Type: pb.Data_TYPE_STDERR, Payload: &pb.Data_Data{Data: []byte("err")}}); err != nil {
 		t.Fatalf("handleData(stderr) error = %v", err)
 	}
 	if stderr.String() != "err" {
 		t.Fatalf("stderr payload = %q", stderr.String())
 	}
-	if err := runtime.handleData(nil); err == nil {
+	if err := runtime.handleData(context.TODO(), nil); err == nil {
 		t.Fatalf("expected nil data error")
 	}
-	if err := runtime.handleData(&pb.Data{Type: pb.Data_TYPE_STDIN, Payload: &pb.Data_Data{Data: []byte("in")}}); err == nil {
+	if err := runtime.handleData(context.TODO(), &pb.Data{Type: pb.Data_TYPE_STDIN, Payload: &pb.Data_Data{Data: []byte("in")}}); err == nil {
 		t.Fatalf("expected unexpected stream error")
 	}
-	if err := runtime.handleData(&pb.Data{Type: pb.Data_TYPE_STDOUT}); err == nil {
+	if err := runtime.handleData(context.TODO(), &pb.Data{Type: pb.Data_TYPE_STDOUT}); err == nil {
 		t.Fatalf("expected unexpected payload error")
 	}
 }

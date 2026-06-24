@@ -2,6 +2,8 @@
 
 syntax = "proto3";
 
+import "google/protobuf/wrappers.proto";
+
 option go_package = "./pb";
 
 message Options {
@@ -34,8 +36,198 @@ message Config {
   Username username = 5;
 }
 
+enum OpenCapability {
+  OPEN_CAPABILITY_UNSPECIFIED = 0;
+  // The endpoint can carry stdin/stdout/stderr bytes in Data.encrypted_data.
+  OPEN_CAPABILITY_ENCRYPTED_PAYLOAD = 1;
+  // The endpoint can exchange session-level grants in Open.session_key_grant.
+  OPEN_CAPABILITY_SESSION_CRYPTO = 2;
+}
+
+// Payload cipher suites apply only to terminal stream bytes. The WebTTY
+// protobuf envelope remains visible to the managed server for routing,
+// recording metadata, policy decisions, and session lifecycle handling.
+enum PayloadCipherSuite {
+  PAYLOAD_CIPHER_SUITE_UNSPECIFIED = 0;
+  PAYLOAD_CIPHER_SUITE_AES_256_GCM = 1;
+  PAYLOAD_CIPHER_SUITE_CHACHA20_POLY1305 = 2;
+}
+
+// Key envelope suites are used to wrap per-session or per-payload keys for
+// authorized recipients. Implementations should use standard HPKE primitives;
+// the protocol does not define custom cryptography.
+enum KeyEnvelopeSuite {
+  KEY_ENVELOPE_SUITE_UNSPECIFIED = 0;
+  KEY_ENVELOPE_SUITE_HPKE_X25519_HKDF_SHA256_AES_256_GCM = 1;
+  KEY_ENVELOPE_SUITE_HPKE_X25519_HKDF_SHA256_CHACHA20_POLY1305 = 2;
+}
+
+enum ProtocolVersion {
+  PROTOCOL_VERSION_UNSPECIFIED = 0;
+  PROTOCOL_VERSION_WEBTTY_1 = 1;
+}
+
+enum SignatureSuite {
+  SIGNATURE_SUITE_UNSPECIFIED = 0;
+  SIGNATURE_SUITE_ECDSA_P256_SHA256 = 1;
+}
+
+enum AuthRequirement {
+  AUTH_REQUIREMENT_UNSPECIFIED = 0;
+  AUTH_REQUIREMENT_NONE = 1;
+  AUTH_REQUIREMENT_CLIENT_PROOF = 2;
+}
+
+enum ProtocolErrorCode {
+  PROTOCOL_ERROR_CODE_UNSPECIFIED = 0;
+  PROTOCOL_ERROR_CODE_UNKNOWN_SERVER = 1;
+  PROTOCOL_ERROR_CODE_SERVER_KEY_CHANGED = 2;
+  PROTOCOL_ERROR_CODE_SERVER_PROOF_INVALID = 3;
+  PROTOCOL_ERROR_CODE_CLIENT_PROOF_REQUIRED = 4;
+  PROTOCOL_ERROR_CODE_CLIENT_PROOF_INVALID = 5;
+  PROTOCOL_ERROR_CODE_CLIENT_UNAUTHORIZED = 6;
+  PROTOCOL_ERROR_CODE_CLIENT_REVOKED = 7;
+  PROTOCOL_ERROR_CODE_CHALLENGE_EXPIRED = 8;
+  PROTOCOL_ERROR_CODE_CHALLENGE_REPLAYED = 9;
+  PROTOCOL_ERROR_CODE_DOWNGRADE_DETECTED = 10;
+  PROTOCOL_ERROR_CODE_UNSUPPORTED_SUITE = 11;
+  PROTOCOL_ERROR_CODE_WORKSPACE_TRUST_REQUIRED = 12;
+  PROTOCOL_ERROR_CODE_WORKSPACE_DEVICE_UNTRUSTED = 13;
+  PROTOCOL_ERROR_CODE_REGISTERED_SERVER_MISMATCH = 14;
+}
+
+// KeyEnvelope grants one recipient access to the payload key material.
+message KeyEnvelope {
+  bytes recipient_key_id = 1;
+  bytes encapsulated_key = 2;
+  bytes wrapped_key = 3;
+}
+
+// EndpointIdentity carries public endpoint keys by purpose. Signing keys prove
+// endpoint identity; encryption keys receive payload key grants.
+message EndpointIdentity {
+  bytes signing_key_id = 1;
+  bytes signing_public_key = 2;
+  SignatureSuite signature_suite = 3;
+  bytes encryption_key_id = 4;
+  bytes encryption_public_key = 5;
+  KeyEnvelopeSuite key_envelope_suite = 6;
+}
+
+// ServerProof signs the canonical server transcript for the current handshake.
+message ServerProof {
+  SignatureSuite signature_suite = 1;
+  bytes signing_key_id = 2;
+  bytes transcript_hash = 3;
+  bytes signature = 4;
+}
+
+// ServerHello advertises the server identity, freshness nonce, supported
+// suites, and authentication requirements before an Open message is accepted.
+message ServerHello {
+  ProtocolVersion protocol_version = 1;
+  bytes session_nonce = 2;
+  EndpointIdentity server_identity = 3;
+  repeated PayloadCipherSuite payload_suites = 4;
+  repeated KeyEnvelopeSuite key_envelope_suites = 5;
+  repeated SignatureSuite signature_suites = 6;
+  AuthRequirement auth_requirement = 7;
+  google.protobuf.StringValue workspace_id = 8;
+  google.protobuf.StringValue project_id = 9;
+  google.protobuf.StringValue server_id = 10;
+  string session_id = 11;
+  ServerProof server_proof = 12;
+}
+
+// ClientHello lets transports that require client-originated stream activity
+// ask the server to send ServerHello before Open.
+message ClientHello {
+  ProtocolVersion protocol_version = 1;
+}
+
+// SessionKeyGrant carries session-level encrypted grants. It intentionally has
+// no payload nonce; per-message nonces live in PayloadCrypto.
+message SessionKeyGrant {
+  PayloadCipherSuite payload_suite = 1;
+  bytes payload_key_id = 2;
+  repeated KeyEnvelope key_envelopes = 3;
+  bytes key_context = 4;
+  KeyEnvelopeSuite key_envelope_suite = 5;
+}
+
+// PayloadCrypto carries per-payload encryption metadata. It intentionally has
+// no key envelopes; recipient grants live in SessionKeyGrant.
+message PayloadCrypto {
+  PayloadCipherSuite payload_suite = 1;
+  bytes payload_key_id = 2;
+  bytes nonce = 3;
+  bytes aad_context = 4;
+}
+
+// ClientProof signs the canonical client transcript for Open and Attach. The
+// credential field can carry a workspace or control-plane assertion when the
+// public signing key alone is not sufficient to authorize the endpoint.
+message ClientProof {
+  google.protobuf.StringValue principal_id = 1;
+  bytes signing_key_id = 2;
+  bytes signing_public_key = 3;
+  SignatureSuite signature_suite = 4;
+  bytes transcript_hash = 5;
+  bytes signature = 6;
+  string issued_at = 7;
+  string expires_at = 8;
+  google.protobuf.StringValue device_id = 9;
+  google.protobuf.StringValue browser_id = 10;
+  google.protobuf.BytesValue credential = 11;
+}
+
+message ProtocolError {
+  ProtocolErrorCode code = 1;
+  string msg = 2;
+}
+
 message Open {
   Config config = 1;
+  repeated OpenCapability capabilities = 2;
+  reserved 3;
+  reserved "session_crypto";
+  SessionKeyGrant session_key_grant = 4;
+  ClientProof client_proof = 5;
+}
+
+enum AttachRole {
+  ATTACH_ROLE_UNSPECIFIED = 0;
+  ATTACH_ROLE_SPECTATOR = 1;
+  ATTACH_ROLE_CONTROLLER = 2;
+}
+
+enum AttachTransport {
+  ATTACH_TRANSPORT_UNSPECIFIED = 0;
+  ATTACH_TRANSPORT_PLAIN = 1;
+  ATTACH_TRANSPORT_WEBSOCKET = 2;
+  ATTACH_TRANSPORT_WEBTRANSPORT = 3;
+}
+
+enum AttachCapability {
+  ATTACH_CAPABILITY_UNSPECIFIED = 0;
+  ATTACH_CAPABILITY_READ_STREAM = 1;
+  ATTACH_CAPABILITY_REQUEST_CONTROL = 2;
+  ATTACH_CAPABILITY_RECEIVE_CONTROL = 3;
+}
+
+// Attach joins an existing managed WebTTY session. The attach grant is an
+// opaque, short-lived authorization value issued by the HTTP control plane and
+// verified by the WebTTY data plane before terminal messages are accepted.
+message Attach {
+  string session_id = 1;
+  string participant_id = 2;
+  bytes attach_grant = 3;
+  AttachRole requested_role = 4;
+  AttachTransport transport = 5;
+  repeated AttachCapability capabilities = 6;
+  google.protobuf.StringValue device_id = 7;
+  google.protobuf.StringValue browser_id = 8;
+  ClientProof client_proof = 9;
 }
 
 message Ack { }
@@ -50,6 +242,14 @@ message Close {
 
 message EndOfStream { }
 
+message EncryptedPayload {
+  bytes ciphertext = 1;
+  uint32 plaintext_length = 2;
+  reserved 3;
+  reserved "crypto";
+  PayloadCrypto payload_crypto = 4;
+}
+
 message Data {
   enum Type {
     TYPE_STDIN = 0;
@@ -60,6 +260,7 @@ message Data {
   oneof payload {
     bytes data = 2;
     EndOfStream eos = 3;
+    EncryptedPayload encrypted_data = 4;
   }
 }
 
@@ -87,5 +288,9 @@ message Message {
     Data data = 5;
     Parameter parameter = 6;
     Heartbeat heartbeat = 7;
+    Attach attach = 8;
+    ServerHello server_hello = 9;
+    ProtocolError protocol_error = 10;
+    ClientHello client_hello = 11;
   }
 }

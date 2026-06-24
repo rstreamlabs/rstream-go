@@ -3,17 +3,67 @@
 package webtty
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/quic-go/quic-go/http3"
+	"github.com/quic-go/webtransport-go"
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
 )
+
+func testShellCommand(posixScript, windowsScript string) []string {
+	if runtime.GOOS == "windows" {
+		return []string{"powershell", "-NoProfile", "-Command", windowsScript}
+	}
+	return []string{"/bin/sh", "-c", posixScript}
+}
+
+func testPathEqual(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.Clean(a), filepath.Clean(b))
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
+}
+
+func testInterruptHelperCommand() []string {
+	return []string{os.Args[0], "-test.run=^TestWebTTYInterruptHelperProcess$"}
+}
+
+func TestWebTTYInterruptHelperProcess(t *testing.T) {
+	if os.Getenv("RSTREAM_WEBTTY_TEST_INTERRUPT_HELPER") != "1" {
+		return
+	}
+	signalCh := make(chan os.Signal, 1)
+	signal.Notify(signalCh, os.Interrupt)
+	defer signal.Stop(signalCh)
+	if _, err := os.Stdout.Write([]byte("ready\n")); err != nil {
+		os.Exit(8)
+	}
+	select {
+	case <-signalCh:
+		os.Exit(7)
+	case <-time.After(10 * time.Second):
+		os.Exit(9)
+	}
+}
 
 func TestResolveServerConfigDefaultsAndHandlerDrain(t *testing.T) {
 	cfg := resolveServerConfig(nil)
@@ -42,7 +92,7 @@ func TestResolveServerConfigDefaultsAndHandlerDrain(t *testing.T) {
 	if handler.registerSession(&session{}) {
 		t.Fatalf("registration should fail while draining")
 	}
-	if err := handler.Shutdown(context.Background()); err != nil {
+	if err := handler.Shutdown(t.Context()); err != nil {
 		t.Fatalf("shutdown without sessions: %v", err)
 	}
 }
@@ -63,8 +113,13 @@ func TestWebTTYHandlerExecutesProcessAndStreamsOutput(t *testing.T) {
 	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	defer handler.Shutdown(context.Background())
-	session, err := OpenClientSession(t.Context(), &SessionConfig{URL: testWebTTYURL(server.URL), CmdArgs: []string{"/bin/sh", "-c", "printf stdout; printf stderr >&2; exit 6"}, OpenDeadline: durationPtr(time.Second), CloseDeadline: durationPtr(time.Second)})
+	defer handler.Shutdown(t.Context())
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:           testWebTTYURL(server.URL),
+		CmdArgs:       testShellCommand("printf stdout; printf stderr >&2; exit 6", "[Console]::Out.Write('stdout'); [Console]::Error.Write('stderr'); exit 6"),
+		OpenDeadline:  durationPtr(time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
 	if err != nil {
 		t.Fatalf("OpenClientSession() error = %v", err)
 	}
@@ -82,8 +137,13 @@ func TestWebTTYHandlerDrainsNonTTYOutputBeforeWait(t *testing.T) {
 	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	defer handler.Shutdown(context.Background())
-	session, err := OpenClientSession(t.Context(), &SessionConfig{URL: testWebTTYURL(server.URL), CmdArgs: []string{"/bin/sh", "-c", "i=0; while [ $i -lt 8192 ]; do printf 0123456789abcdef; i=$((i+1)); done"}, OpenDeadline: durationPtr(time.Second), CloseDeadline: durationPtr(time.Second)})
+	defer handler.Shutdown(t.Context())
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:           testWebTTYURL(server.URL),
+		CmdArgs:       testShellCommand("i=0; while [ $i -lt 8192 ]; do printf 0123456789abcdef; i=$((i+1)); done", "[Console]::Out.Write(('0123456789abcdef' * 8192))"),
+		OpenDeadline:  durationPtr(time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
 	if err != nil {
 		t.Fatalf("OpenClientSession() error = %v", err)
 	}
@@ -100,14 +160,111 @@ func TestWebTTYHandlerDrainsNonTTYOutputBeforeWait(t *testing.T) {
 	}
 }
 
+func TestWebTTYHandlerShutdownDeliversProtocolClose(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX signal trap test")
+	}
+	zero := time.Duration(0)
+	closeDeadline := 2 * time.Second
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:    &zero,
+		SessionCloseDeadline: &closeDeadline,
+	}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:           testWebTTYURL(server.URL),
+		CmdArgs:       testInterruptHelperCommand(),
+		EnvVars:       []string{"RSTREAM_WEBTTY_TEST_INTERRUPT_HELPER=1"},
+		OpenDeadline:  durationPtr(time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	waitForClientStdout(t, session, "ready\n")
+	shutdownCtx, cancel := context.WithTimeout(t.Context(), closeDeadline)
+	defer cancel()
+	if err := handler.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	_, _, exitCode, err := collectClientSessionOutput(t, session)
+	if err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if exitCode != 7 {
+		t.Fatalf("shutdown exit code = %d, want trapped interrupt exit code 7", exitCode)
+	}
+}
+
+func TestWebTTYHandlerShutdownDeliversProtocolClosePlain(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX signal trap test")
+	}
+	zero := time.Duration(0)
+	closeDeadline := 2 * time.Second
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:    &zero,
+		SessionCloseDeadline: &closeDeadline,
+	}))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	defer listener.Close()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go handler.ServeConn(conn)
+		}
+	}()
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:           "tcp://" + listener.Addr().String(),
+		CmdArgs:       testInterruptHelperCommand(),
+		EnvVars:       []string{"RSTREAM_WEBTTY_TEST_INTERRUPT_HELPER=1"},
+		OpenDeadline:  durationPtr(time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	waitForClientStdout(t, session, "ready\n")
+	shutdownCtx, cancel := context.WithTimeout(t.Context(), closeDeadline)
+	defer cancel()
+	if err := handler.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	_, _, exitCode, err := collectClientSessionOutput(t, session)
+	if err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if exitCode != 7 {
+		t.Fatalf("plain shutdown exit code = %d, want trapped interrupt exit code 7", exitCode)
+	}
+	listener.Close()
+	<-done
+}
+
 func TestWebTTYHandlerPassesStdinWorkdirAndEnvironment(t *testing.T) {
 	zero := time.Duration(0)
 	workdir := t.TempDir()
 	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	defer handler.Shutdown(context.Background())
-	session, err := OpenClientSession(t.Context(), &SessionConfig{URL: testWebTTYURL(server.URL), EnvVars: []string{"CUSTOM=value"}, Workdir: &workdir, CmdArgs: []string{"/bin/sh", "-c", "read line; printf \"%s|%s|%s\" \"$line\" \"$CUSTOM\" \"$(pwd)\""}, OpenDeadline: durationPtr(time.Second), CloseDeadline: durationPtr(time.Second)})
+	defer handler.Shutdown(t.Context())
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:           testWebTTYURL(server.URL),
+		EnvVars:       []string{"CUSTOM=value"},
+		Workdir:       &workdir,
+		CmdArgs:       testShellCommand("read line; printf \"%s|%s|%s\" \"$line\" \"$CUSTOM\" \"$(pwd)\"", "$line = [Console]::In.ReadLine(); [Console]::Out.Write($line + '|' + $env:CUSTOM + '|' + (Get-Location).ProviderPath)"),
+		OpenDeadline:  durationPtr(time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
 	if err != nil {
 		t.Fatalf("OpenClientSession() error = %v", err)
 	}
@@ -125,8 +282,856 @@ func TestWebTTYHandlerPassesStdinWorkdirAndEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EvalSymlinks() error = %v", err)
 	}
-	if stdout != "typed|value|"+resolvedWorkdir {
-		t.Fatalf("stdout=%q, want typed|value|%s", stdout, resolvedWorkdir)
+	wantWorkdirOutput := "typed|value|" + resolvedWorkdir
+	if !testPathEqual(strings.TrimPrefix(stdout, "typed|value|"), resolvedWorkdir) || !strings.HasPrefix(stdout, "typed|value|") {
+		t.Fatalf("stdout=%q, want %s", stdout, wantWorkdirOutput)
+	}
+}
+
+func TestWebTTYHandlerPayloadCryptoRoundTrip(t *testing.T) {
+	zero := time.Duration(0)
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval: &zero,
+		PayloadCrypto: &PayloadCrypto{
+			DecryptStdin: func(_ context.Context, payload *EncryptedPayload) ([]byte, error) {
+				text := string(payload.Ciphertext)
+				if !strings.HasPrefix(text, "client:") {
+					t.Fatalf("encrypted stdin = %q, want client prefix", text)
+				}
+				return []byte(strings.TrimPrefix(text, "client:")), nil
+			},
+			EncryptStdout: func(_ context.Context, payload []byte) (*EncryptedPayload, error) {
+				return &EncryptedPayload{
+					Ciphertext:      append([]byte("server:"), payload...),
+					PlaintextLength: uint32(len(payload)),
+				}, nil
+			},
+		},
+	}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:           testWebTTYURL(server.URL),
+		CmdArgs:       testShellCommand("read line; printf \"%s\" \"$line\"", "$line = [Console]::In.ReadLine(); [Console]::Out.Write($line)"),
+		OpenDeadline:  durationPtr(time.Second),
+		CloseDeadline: durationPtr(time.Second),
+		PayloadCrypto: &PayloadCrypto{
+			EncryptStdin: func(_ context.Context, payload []byte) (*EncryptedPayload, error) {
+				return &EncryptedPayload{
+					Ciphertext:      append([]byte("client:"), payload...),
+					PlaintextLength: uint32(len(payload)),
+				}, nil
+			},
+			DecryptStdout: func(_ context.Context, payload *EncryptedPayload) ([]byte, error) {
+				text := string(payload.Ciphertext)
+				if !strings.HasPrefix(text, "server:") {
+					t.Fatalf("encrypted stdout = %q, want server prefix", text)
+				}
+				return []byte(strings.TrimPrefix(text, "server:")), nil
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	if err := session.SendText("typed\n"); err != nil {
+		t.Fatalf("SendText() error = %v", err)
+	}
+	if err := session.SendEOF(); err != nil {
+		t.Fatalf("SendEOF() error = %v", err)
+	}
+	stdout, stderr, exitCode, err := collectClientSessionOutput(t, session)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v", exitCode, err)
+	}
+	if stdout != "typed" || stderr != "" {
+		t.Fatalf("stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+func TestWebTTYHandlerE2ERoundTripWebSocket(t *testing.T) {
+	zero := time.Duration(0)
+	required := true
+	serverIdentity, clientIdentity, clientCrypto := newTestE2ECryptoPair(t, "test/websocket")
+	serverPublic := serverIdentity.Public()
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:     &zero,
+		PayloadCryptoResolver: NewE2EServerPayloadCryptoResolver(serverIdentity.Encryption),
+		EndpointIdentity:      serverIdentity,
+		RequireClientProof:    &required,
+		AuthorizedClientSigningKeys: map[string][]byte{
+			string(clientIdentity.Signing.KeyID): clientIdentity.Signing.PublicKey,
+		},
+	}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    testWebTTYURL(server.URL),
+		CmdArgs:                testShellCommand("read line; printf \"%s\" \"$line\"", "$line = [Console]::In.ReadLine(); [Console]::Out.Write($line)"),
+		OpenDeadline:           durationPtr(time.Second),
+		CloseDeadline:          durationPtr(time.Second),
+		PayloadCrypto:          clientCrypto,
+		EndpointIdentity:       clientIdentity,
+		ExpectedServerIdentity: &serverPublic,
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	if err := session.SendText("typed\n"); err != nil {
+		t.Fatalf("SendText() error = %v", err)
+	}
+	if err := session.SendEOF(); err != nil {
+		t.Fatalf("SendEOF() error = %v", err)
+	}
+	stdout, stderr, exitCode, err := collectClientSessionOutput(t, session)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v", exitCode, err)
+	}
+	if stdout != "typed" || stderr != "" {
+		t.Fatalf("stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+func TestWebTTYHandlerMutualAuthAcceptsAuthorizedClient(t *testing.T) {
+	zero := time.Duration(0)
+	required := true
+	serverIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(server) error = %v", err)
+	}
+	clientIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(client) error = %v", err)
+	}
+	clientCrypto, err := NewE2EClientPayloadCrypto(E2EPayloadCryptoConfig{
+		KeyContext: []byte("test/mutual-auth"),
+		Recipients: []E2ERecipient{{
+			KeyID:     serverIdentity.Encryption.KeyID,
+			PublicKey: serverIdentity.Encryption.PublicKey,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NewE2EClientPayloadCrypto() error = %v", err)
+	}
+	serverPublic := serverIdentity.Public()
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:      &zero,
+		PayloadCryptoResolver:  NewE2EServerPayloadCryptoResolver(serverIdentity.Encryption),
+		RequireSessionKeyGrant: &required,
+		EndpointIdentity:       serverIdentity,
+		RequireClientProof:     &required,
+		AuthorizedClientSigningKeys: map[string][]byte{
+			string(clientIdentity.Signing.KeyID): clientIdentity.Signing.PublicKey,
+		},
+		ServerID: "shell",
+	}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    testWebTTYURL(server.URL),
+		CmdArgs:                testShellCommand("printf ok", "[Console]::Out.Write('ok')"),
+		OpenDeadline:           durationPtr(time.Second),
+		CloseDeadline:          durationPtr(time.Second),
+		PayloadCrypto:          clientCrypto,
+		EndpointIdentity:       clientIdentity,
+		ExpectedServerIdentity: &serverPublic,
+		ClientPrincipalID:      "user-1",
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	stdout, stderr, exitCode, err := collectClientSessionOutput(t, session)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v", exitCode, err)
+	}
+	if stdout != "ok" || stderr != "" {
+		t.Fatalf("stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+func TestWebTTYHandlerWorkspaceManagedVerifierAcceptsTrustedClient(t *testing.T) {
+	zero := time.Duration(0)
+	required := true
+	serverIdentity, clientIdentity, clientCrypto := newTestE2ECryptoPair(t, "test/workspace-managed-verifier")
+	serverPublic := serverIdentity.Public()
+	credential := []byte("workspace-managed-client-credential")
+	verifierCalled := false
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:      &zero,
+		PayloadCryptoResolver:  NewE2EServerPayloadCryptoResolver(serverIdentity.Encryption),
+		RequireSessionKeyGrant: &required,
+		EndpointIdentity:       serverIdentity,
+		RequireClientProof:     &required,
+		WorkspaceID:            "workspace-1",
+		ProjectID:              "project-1",
+		ServerID:               "server-1",
+		ClientProofVerifier: func(_ context.Context, verification ClientProofVerification) ([]byte, error) {
+			verifierCalled = true
+			if !bytes.Equal(verification.Credential, credential) {
+				return nil, errors.New("unexpected workspace credential")
+			}
+			if verification.Transcript.WorkspaceID != "workspace-1" ||
+				verification.Transcript.ProjectID != "project-1" ||
+				verification.Transcript.ServerID != "server-1" ||
+				verification.Transcript.ClientPrincipalID != "device-1" {
+				return nil, errors.New("unexpected workspace-managed client proof scope")
+			}
+			if !bytes.Equal(verification.Transcript.ClientSigningKeyID, clientIdentity.Signing.KeyID) {
+				return nil, errors.New("unexpected workspace-managed client signing key")
+			}
+			return verification.Proof.SigningPublicKey, nil
+		},
+	}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    testWebTTYURL(server.URL),
+		CmdArgs:                testShellCommand("printf ok", "[Console]::Out.Write('ok')"),
+		OpenDeadline:           durationPtr(time.Second),
+		CloseDeadline:          durationPtr(time.Second),
+		PayloadCrypto:          clientCrypto,
+		EndpointIdentity:       clientIdentity,
+		ExpectedServerIdentity: &serverPublic,
+		ClientCredential:       credential,
+		ClientPrincipalID:      "device-1",
+		ClientDeviceID:         "device-1",
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	stdout, stderr, exitCode, err := collectClientSessionOutput(t, session)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v", exitCode, err)
+	}
+	if stdout != "ok" || stderr != "" {
+		t.Fatalf("stdout=%q stderr=%q", stdout, stderr)
+	}
+	if !verifierCalled {
+		t.Fatal("workspace-managed client proof verifier was not called")
+	}
+}
+
+func TestWebTTYHandlerWorkspaceManagedVerifierRejectsUntrustedClient(t *testing.T) {
+	zero := time.Duration(0)
+	required := true
+	serverIdentity, clientIdentity, clientCrypto := newTestE2ECryptoPair(t, "test/workspace-managed-verifier-reject")
+	serverPublic := serverIdentity.Public()
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:      &zero,
+		PayloadCryptoResolver:  NewE2EServerPayloadCryptoResolver(serverIdentity.Encryption),
+		RequireSessionKeyGrant: &required,
+		EndpointIdentity:       serverIdentity,
+		RequireClientProof:     &required,
+		WorkspaceID:            "workspace-1",
+		ProjectID:              "project-1",
+		ServerID:               "server-1",
+		ClientProofVerifier: func(context.Context, ClientProofVerification) ([]byte, error) {
+			return nil, errors.New("workspace-managed WebTTY client device is not trusted for this server")
+		},
+	}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    testWebTTYURL(server.URL),
+		CmdArgs:                testShellCommand("printf should-not-run", "[Console]::Out.Write('should-not-run')"),
+		OpenDeadline:           durationPtr(time.Second),
+		CloseDeadline:          durationPtr(time.Second),
+		PayloadCrypto:          clientCrypto,
+		EndpointIdentity:       clientIdentity,
+		ExpectedServerIdentity: &serverPublic,
+		ClientCredential:       []byte("workspace-managed-client-credential"),
+		ClientPrincipalID:      "device-1",
+		ClientDeviceID:         "device-1",
+	})
+	if err == nil {
+		_ = session.Close()
+		t.Fatalf("expected untrusted workspace-managed client to be rejected")
+	}
+	if !strings.Contains(err.Error(), "workspace-managed WebTTY client device is not trusted") {
+		t.Fatalf("unexpected workspace-managed auth error: %v", err)
+	}
+}
+
+func TestWebTTYHandlerWorkspaceManagedVerifierOverridesStaticAuthorizedClient(t *testing.T) {
+	zero := time.Duration(0)
+	required := true
+	serverIdentity, clientIdentity, clientCrypto := newTestE2ECryptoPair(t, "test/workspace-managed-verifier-authority")
+	serverPublic := serverIdentity.Public()
+	verifierCalled := false
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:      &zero,
+		PayloadCryptoResolver:  NewE2EServerPayloadCryptoResolver(serverIdentity.Encryption),
+		RequireSessionKeyGrant: &required,
+		EndpointIdentity:       serverIdentity,
+		RequireClientProof:     &required,
+		WorkspaceID:            "workspace-1",
+		ProjectID:              "project-1",
+		ServerID:               "server-1",
+		AuthorizedClientSigningKeys: map[string][]byte{
+			string(clientIdentity.Signing.KeyID): clientIdentity.Signing.PublicKey,
+		},
+		ClientProofVerifier: func(context.Context, ClientProofVerification) ([]byte, error) {
+			verifierCalled = true
+			return nil, errors.New("workspace-managed WebTTY client device is not trusted for this server")
+		},
+	}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    testWebTTYURL(server.URL),
+		CmdArgs:                testShellCommand("printf should-not-run", "[Console]::Out.Write('should-not-run')"),
+		OpenDeadline:           durationPtr(time.Second),
+		CloseDeadline:          durationPtr(time.Second),
+		PayloadCrypto:          clientCrypto,
+		EndpointIdentity:       clientIdentity,
+		ExpectedServerIdentity: &serverPublic,
+		ClientCredential:       []byte("workspace-managed-client-credential"),
+		ClientPrincipalID:      "device-1",
+		ClientDeviceID:         "device-1",
+	})
+	if err == nil {
+		_ = session.Close()
+		t.Fatalf("expected workspace-managed verifier to reject static authorized client fallback")
+	}
+	if !verifierCalled {
+		t.Fatal("workspace-managed verifier was not called")
+	}
+	if !strings.Contains(err.Error(), "workspace-managed WebTTY client device is not trusted") {
+		t.Fatalf("unexpected workspace-managed auth error: %v", err)
+	}
+}
+
+func TestWebTTYHandlerMutualAuthRejectsUnauthorizedClient(t *testing.T) {
+	zero := time.Duration(0)
+	required := true
+	serverIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(server) error = %v", err)
+	}
+	clientIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(client) error = %v", err)
+	}
+	clientCrypto, err := NewE2EClientPayloadCrypto(E2EPayloadCryptoConfig{
+		KeyContext: []byte("test/mutual-auth-reject"),
+		Recipients: []E2ERecipient{{
+			KeyID:     serverIdentity.Encryption.KeyID,
+			PublicKey: serverIdentity.Encryption.PublicKey,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NewE2EClientPayloadCrypto() error = %v", err)
+	}
+	serverPublic := serverIdentity.Public()
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:      &zero,
+		PayloadCryptoResolver:  NewE2EServerPayloadCryptoResolver(serverIdentity.Encryption),
+		RequireSessionKeyGrant: &required,
+		EndpointIdentity:       serverIdentity,
+		RequireClientProof:     &required,
+		ServerID:               "shell",
+	}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    testWebTTYURL(server.URL),
+		CmdArgs:                testShellCommand("printf should-not-run", "[Console]::Out.Write('should-not-run')"),
+		OpenDeadline:           durationPtr(time.Second),
+		CloseDeadline:          durationPtr(time.Second),
+		PayloadCrypto:          clientCrypto,
+		EndpointIdentity:       clientIdentity,
+		ExpectedServerIdentity: &serverPublic,
+		ClientPrincipalID:      "user-1",
+	})
+	if err == nil {
+		_ = session.Close()
+		t.Fatalf("expected unauthorized client to be rejected")
+	}
+	if !strings.Contains(err.Error(), "not authorized") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWebTTYHandlerRequireSessionKeyGrantRejectsPlainOpen(t *testing.T) {
+	zero := time.Duration(0)
+	required := true
+	serverIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(server) error = %v", err)
+	}
+	clientIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(client) error = %v", err)
+	}
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:      &zero,
+		PayloadCryptoResolver:  NewE2EServerPayloadCryptoResolver(serverIdentity.Encryption),
+		RequireSessionKeyGrant: &required,
+		EndpointIdentity:       serverIdentity,
+		RequireClientProof:     &required,
+		AuthorizedClientSigningKeys: map[string][]byte{
+			string(clientIdentity.Signing.KeyID): clientIdentity.Signing.PublicKey,
+		},
+	}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	serverPublic := serverIdentity.Public()
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    testWebTTYURL(server.URL),
+		CmdArgs:                testShellCommand("printf no", "[Console]::Out.Write('no')"),
+		OpenDeadline:           durationPtr(time.Second),
+		CloseDeadline:          durationPtr(time.Second),
+		EndpointIdentity:       clientIdentity,
+		ExpectedServerIdentity: &serverPublic,
+	})
+	if err == nil {
+		_ = session.Close()
+		t.Fatalf("expected OpenClientSession() to reject missing E2E session key grant")
+	}
+	if !strings.Contains(err.Error(), "session key grant") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestWebTTYHandlerE2ERoundTripPlain(t *testing.T) {
+	zero := time.Duration(0)
+	required := true
+	serverIdentity, clientIdentity, clientCrypto := newTestE2ECryptoPair(t, "test/plain")
+	serverPublic := serverIdentity.Public()
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:     &zero,
+		PayloadCryptoResolver: NewE2EServerPayloadCryptoResolver(serverIdentity.Encryption),
+		EndpointIdentity:      serverIdentity,
+		RequireClientProof:    &required,
+		AuthorizedClientSigningKeys: map[string][]byte{
+			string(clientIdentity.Signing.KeyID): clientIdentity.Signing.PublicKey,
+		},
+	}))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	defer listener.Close()
+	defer handler.Shutdown(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go handler.ServeConn(conn)
+		}
+	}()
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    "tcp://" + listener.Addr().String(),
+		CmdArgs:                testShellCommand("read line; printf \"%s\" \"$line\"", "$line = [Console]::In.ReadLine(); [Console]::Out.Write($line)"),
+		OpenDeadline:           durationPtr(time.Second),
+		CloseDeadline:          durationPtr(time.Second),
+		PayloadCrypto:          clientCrypto,
+		EndpointIdentity:       clientIdentity,
+		ExpectedServerIdentity: &serverPublic,
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	if err := session.SendText("typed\n"); err != nil {
+		t.Fatalf("SendText() error = %v", err)
+	}
+	if err := session.SendEOF(); err != nil {
+		t.Fatalf("SendEOF() error = %v", err)
+	}
+	stdout, stderr, exitCode, err := collectClientSessionOutput(t, session)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v", exitCode, err)
+	}
+	if stdout != "typed" || stderr != "" {
+		t.Fatalf("stdout=%q stderr=%q", stdout, stderr)
+	}
+	listener.Close()
+	<-done
+}
+
+func TestWebTTYHandlerMutualAuthRejectsUnauthorizedClientPlain(t *testing.T) {
+	zero := time.Duration(0)
+	required := true
+	serverIdentity, clientIdentity, clientCrypto := newTestE2ECryptoPair(t, "test/plain-mutual-auth-reject")
+	serverPublic := serverIdentity.Public()
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:     &zero,
+		PayloadCryptoResolver: NewE2EServerPayloadCryptoResolver(serverIdentity.Encryption),
+		EndpointIdentity:      serverIdentity,
+		RequireClientProof:    &required,
+	}))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go handler.ServeConn(conn)
+		}
+	}()
+	defer func() {
+		listener.Close()
+		<-done
+		handler.Shutdown(t.Context())
+	}()
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    "tcp://" + listener.Addr().String(),
+		CmdArgs:                testShellCommand("printf should-not-run", "[Console]::Out.Write('should-not-run')"),
+		OpenDeadline:           durationPtr(time.Second),
+		CloseDeadline:          durationPtr(time.Second),
+		PayloadCrypto:          clientCrypto,
+		EndpointIdentity:       clientIdentity,
+		ExpectedServerIdentity: &serverPublic,
+	})
+	if err == nil {
+		_ = session.Close()
+		t.Fatalf("expected unauthorized plain client to be rejected")
+	}
+	if !strings.Contains(err.Error(), "not authorized") {
+		t.Fatalf("unexpected plain auth error: %v", err)
+	}
+}
+
+func TestWebTTYHandlerServesPlainTransport(t *testing.T) {
+	zero := time.Duration(0)
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	defer listener.Close()
+	defer handler.Shutdown(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go handler.ServeConn(conn)
+		}
+	}()
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:           "tcp://" + listener.Addr().String(),
+		CmdArgs:       testShellCommand("printf plain", "[Console]::Out.Write('plain')"),
+		OpenDeadline:  durationPtr(time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	stdout, stderr, exitCode, err := collectClientSessionOutput(t, session)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v", exitCode, err)
+	}
+	if stdout != "plain" || stderr != "" {
+		t.Fatalf("stdout=%q stderr=%q", stdout, stderr)
+	}
+	listener.Close()
+	<-done
+}
+
+func TestWebTTYHandlerServesWebTransport(t *testing.T) {
+	zero := time.Duration(0)
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
+	packetConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket() error = %v", err)
+	}
+	defer packetConn.Close()
+	mux := http.NewServeMux()
+	server := webtransport.Server{
+		H3: &http3.Server{
+			Handler:         mux,
+			TLSConfig:       testWebTransportTLSConfig(t),
+			EnableDatagrams: true,
+		},
+		CheckOrigin: func(*http.Request) bool { return true },
+	}
+	webtransport.ConfigureHTTP3Server(server.H3)
+	mux.HandleFunc("/webtty", func(w http.ResponseWriter, r *http.Request) {
+		session, err := server.Upgrade(w, r)
+		if err != nil {
+			http.Error(w, "upgrade failed", http.StatusBadRequest)
+			return
+		}
+		go handler.ServeWebTransportSession(session.Context(), session)
+	})
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Serve(packetConn) }()
+	defer server.Close()
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:           "https://" + packetConn.LocalAddr().String() + "/webtty",
+		Transport:     WebTTYTransportWebTransport,
+		TLSConfig:     &tls.Config{InsecureSkipVerify: true},
+		CmdArgs:       testShellCommand("printf webtransport", "[Console]::Out.Write('webtransport')"),
+		OpenDeadline:  durationPtr(3 * time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	stdout, stderr, exitCode, err := collectClientSessionOutput(t, session)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v", exitCode, err)
+	}
+	if stdout != "webtransport" || stderr != "" {
+		t.Fatalf("stdout=%q stderr=%q", stdout, stderr)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil && !strings.Contains(err.Error(), "server closed") {
+			t.Fatalf("WebTransport server error = %v", err)
+		}
+	default:
+	}
+}
+
+func TestWebTTYHandlerE2ERoundTripWebTransport(t *testing.T) {
+	zero := time.Duration(0)
+	required := true
+	serverIdentity, clientIdentity, clientCrypto := newTestE2ECryptoPair(t, "test/webtransport")
+	serverPublic := serverIdentity.Public()
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:     &zero,
+		PayloadCryptoResolver: NewE2EServerPayloadCryptoResolver(serverIdentity.Encryption),
+		EndpointIdentity:      serverIdentity,
+		RequireClientProof:    &required,
+		AuthorizedClientSigningKeys: map[string][]byte{
+			string(clientIdentity.Signing.KeyID): clientIdentity.Signing.PublicKey,
+		},
+	}))
+	packetConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket() error = %v", err)
+	}
+	defer packetConn.Close()
+	mux := http.NewServeMux()
+	server := webtransport.Server{
+		H3: &http3.Server{
+			Handler:         mux,
+			TLSConfig:       testWebTransportTLSConfig(t),
+			EnableDatagrams: true,
+		},
+		CheckOrigin: func(*http.Request) bool { return true },
+	}
+	webtransport.ConfigureHTTP3Server(server.H3)
+	mux.HandleFunc("/webtty", func(w http.ResponseWriter, r *http.Request) {
+		session, err := server.Upgrade(w, r)
+		if err != nil {
+			http.Error(w, "upgrade failed", http.StatusBadRequest)
+			return
+		}
+		go handler.ServeWebTransportSession(session.Context(), session)
+	})
+	go func() { _ = server.Serve(packetConn) }()
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    "https://" + packetConn.LocalAddr().String() + "/webtty",
+		Transport:              WebTTYTransportWebTransport,
+		TLSConfig:              &tls.Config{InsecureSkipVerify: true},
+		CmdArgs:                testShellCommand("read line; printf \"%s\" \"$line\"", "$line = [Console]::In.ReadLine(); [Console]::Out.Write($line)"),
+		OpenDeadline:           durationPtr(3 * time.Second),
+		CloseDeadline:          durationPtr(time.Second),
+		PayloadCrypto:          clientCrypto,
+		EndpointIdentity:       clientIdentity,
+		ExpectedServerIdentity: &serverPublic,
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	if err := session.SendText("typed\n"); err != nil {
+		t.Fatalf("SendText() error = %v", err)
+	}
+	if err := session.SendEOF(); err != nil {
+		t.Fatalf("SendEOF() error = %v", err)
+	}
+	stdout, stderr, exitCode, err := collectClientSessionOutput(t, session)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v", exitCode, err)
+	}
+	if stdout != "typed" || stderr != "" {
+		t.Fatalf("stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+func TestWebTTYHandlerMutualAuthWebTransport(t *testing.T) {
+	zero := time.Duration(0)
+	required := true
+	serverIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(server) error = %v", err)
+	}
+	clientIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(client) error = %v", err)
+	}
+	clientCrypto, err := NewE2EClientPayloadCrypto(E2EPayloadCryptoConfig{
+		KeyContext: []byte("test/webtransport-mutual-auth"),
+		Recipients: []E2ERecipient{{
+			KeyID:     serverIdentity.Encryption.KeyID,
+			PublicKey: serverIdentity.Encryption.PublicKey,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NewE2EClientPayloadCrypto() error = %v", err)
+	}
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:      &zero,
+		PayloadCryptoResolver:  NewE2EServerPayloadCryptoResolver(serverIdentity.Encryption),
+		RequireSessionKeyGrant: &required,
+		EndpointIdentity:       serverIdentity,
+		RequireClientProof:     &required,
+		AuthorizedClientSigningKeys: map[string][]byte{
+			string(clientIdentity.Signing.KeyID): clientIdentity.Signing.PublicKey,
+		},
+		ServerID: "shell",
+	}))
+	packetConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket() error = %v", err)
+	}
+	defer packetConn.Close()
+	mux := http.NewServeMux()
+	server := webtransport.Server{
+		H3: &http3.Server{
+			Handler:         mux,
+			TLSConfig:       testWebTransportTLSConfig(t),
+			EnableDatagrams: true,
+		},
+		CheckOrigin: func(*http.Request) bool { return true },
+	}
+	webtransport.ConfigureHTTP3Server(server.H3)
+	mux.HandleFunc("/webtty", func(w http.ResponseWriter, r *http.Request) {
+		session, err := server.Upgrade(w, r)
+		if err != nil {
+			http.Error(w, "upgrade failed", http.StatusBadRequest)
+			return
+		}
+		go handler.ServeWebTransportSession(session.Context(), session)
+	})
+	go func() { _ = server.Serve(packetConn) }()
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	serverPublic := serverIdentity.Public()
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    "https://" + packetConn.LocalAddr().String() + "/webtty",
+		Transport:              WebTTYTransportWebTransport,
+		TLSConfig:              &tls.Config{InsecureSkipVerify: true},
+		CmdArgs:                testShellCommand("printf ok", "[Console]::Out.Write('ok')"),
+		OpenDeadline:           durationPtr(3 * time.Second),
+		CloseDeadline:          durationPtr(time.Second),
+		PayloadCrypto:          clientCrypto,
+		EndpointIdentity:       clientIdentity,
+		ExpectedServerIdentity: &serverPublic,
+		ClientPrincipalID:      "user-1",
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	stdout, stderr, exitCode, err := collectClientSessionOutput(t, session)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v", exitCode, err)
+	}
+	if stdout != "ok" || stderr != "" {
+		t.Fatalf("stdout=%q stderr=%q", stdout, stderr)
+	}
+}
+
+func TestWebTTYHandlerMutualAuthRejectsUnauthorizedClientWebTransport(t *testing.T) {
+	zero := time.Duration(0)
+	required := true
+	serverIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(server) error = %v", err)
+	}
+	clientIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(client) error = %v", err)
+	}
+	clientCrypto, err := NewE2EClientPayloadCrypto(E2EPayloadCryptoConfig{
+		KeyContext: []byte("test/webtransport-mutual-auth-reject"),
+		Recipients: []E2ERecipient{{
+			KeyID:     serverIdentity.Encryption.KeyID,
+			PublicKey: serverIdentity.Encryption.PublicKey,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NewE2EClientPayloadCrypto() error = %v", err)
+	}
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:      &zero,
+		PayloadCryptoResolver:  NewE2EServerPayloadCryptoResolver(serverIdentity.Encryption),
+		RequireSessionKeyGrant: &required,
+		EndpointIdentity:       serverIdentity,
+		RequireClientProof:     &required,
+		ServerID:               "shell",
+	}))
+	packetConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket() error = %v", err)
+	}
+	defer packetConn.Close()
+	mux := http.NewServeMux()
+	server := webtransport.Server{
+		H3: &http3.Server{
+			Handler:         mux,
+			TLSConfig:       testWebTransportTLSConfig(t),
+			EnableDatagrams: true,
+		},
+		CheckOrigin: func(*http.Request) bool { return true },
+	}
+	webtransport.ConfigureHTTP3Server(server.H3)
+	mux.HandleFunc("/webtty", func(w http.ResponseWriter, r *http.Request) {
+		session, err := server.Upgrade(w, r)
+		if err != nil {
+			http.Error(w, "upgrade failed", http.StatusBadRequest)
+			return
+		}
+		go handler.ServeWebTransportSession(session.Context(), session)
+	})
+	go func() { _ = server.Serve(packetConn) }()
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	serverPublic := serverIdentity.Public()
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:                    "https://" + packetConn.LocalAddr().String() + "/webtty",
+		Transport:              WebTTYTransportWebTransport,
+		TLSConfig:              &tls.Config{InsecureSkipVerify: true},
+		CmdArgs:                testShellCommand("printf should-not-run", "[Console]::Out.Write('should-not-run')"),
+		OpenDeadline:           durationPtr(3 * time.Second),
+		CloseDeadline:          durationPtr(time.Second),
+		PayloadCrypto:          clientCrypto,
+		EndpointIdentity:       clientIdentity,
+		ExpectedServerIdentity: &serverPublic,
+		ClientPrincipalID:      "user-1",
+	})
+	if err == nil {
+		_ = session.Close()
+		t.Fatalf("expected unauthorized WebTransport client to be rejected")
+	}
+	if !strings.Contains(err.Error(), "not authorized") {
+		t.Fatalf("unexpected WebTransport auth error: %v", err)
 	}
 }
 
@@ -135,10 +1140,19 @@ func TestRunClientInteractivePipeSession(t *testing.T) {
 	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	defer handler.Shutdown(context.Background())
+	defer handler.Shutdown(t.Context())
 	var stdout strings.Builder
 	var stderr strings.Builder
-	exitCode, err := RunClient(t.Context(), &ClientConfig{URL: testWebTTYURL(server.URL), Interactive: true, Stdin: strings.NewReader("typed\n"), Stdout: &stdout, Stderr: &stderr, CmdArgs: []string{"/bin/sh", "-c", "read line; printf \"%s\" \"$line\"; printf err >&2; exit 5"}, OpenDeadline: durationPtr(time.Second), CloseDeadline: durationPtr(time.Second)})
+	exitCode, err := RunClient(t.Context(), &ClientConfig{
+		URL:           testWebTTYURL(server.URL),
+		Interactive:   true,
+		Stdin:         strings.NewReader("typed\n"),
+		Stdout:        &stdout,
+		Stderr:        &stderr,
+		CmdArgs:       testShellCommand("read line; printf \"%s\" \"$line\"; printf err >&2; exit 5", "$line = [Console]::In.ReadLine(); [Console]::Out.Write($line); [Console]::Error.Write('err'); exit 5"),
+		OpenDeadline:  durationPtr(time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
 	if err != nil || exitCode != 5 {
 		t.Fatalf("RunClient() = %d, %v", exitCode, err)
 	}
@@ -152,7 +1166,7 @@ func TestWebTTYHandlerReportsOpenConfigErrors(t *testing.T) {
 	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	defer handler.Shutdown(context.Background())
+	defer handler.Shutdown(t.Context())
 	conn, _, err := websocket.DefaultDialer.Dial(testWebTTYURL(server.URL), nil)
 	if err != nil {
 		t.Fatalf("Dial() error = %v", err)
@@ -165,12 +1179,37 @@ func TestWebTTYHandlerReportsOpenConfigErrors(t *testing.T) {
 	}
 }
 
+func TestWebTTYHandlerRejectsManagedAttach(t *testing.T) {
+	zero := time.Duration(0)
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	conn, _, err := websocket.DefaultDialer.Dial(testWebTTYURL(server.URL), nil)
+	if err != nil {
+		t.Fatalf("Dial() error = %v", err)
+	}
+	defer conn.Close()
+	writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Attach{Attach: &pb.Attach{
+		SessionId:     "session-1",
+		ParticipantId: "participant-1",
+		AttachGrant:   []byte("grant"),
+		RequestedRole: pb.AttachRole_ATTACH_ROLE_SPECTATOR,
+		Transport:     pb.AttachTransport_ATTACH_TRANSPORT_WEBSOCKET,
+		Capabilities:  []pb.AttachCapability{pb.AttachCapability_ATTACH_CAPABILITY_READ_STREAM},
+	}}})
+	msg := readWebTTYMessage(t, conn)
+	if msg.GetError() == nil || msg.GetError().Msg != managedAttachUnsupportedMessage {
+		t.Fatalf("unexpected error message: %#v", msg)
+	}
+}
+
 func TestWebTTYHandlerOpenTimeoutClosesIdleConnection(t *testing.T) {
 	openDeadline := 20 * time.Millisecond
 	handler := NewWebTTYHandler(testServerConfig(ServerConfig{SessionOpenDeadline: &openDeadline}))
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	defer handler.Shutdown(context.Background())
+	defer handler.Shutdown(t.Context())
 	conn, _, err := websocket.DefaultDialer.Dial(testWebTTYURL(server.URL), nil)
 	if err != nil {
 		t.Fatalf("Dial() error = %v", err)
@@ -211,7 +1250,7 @@ func TestWebTTYHandlerRequiresBearerToken(t *testing.T) {
 	handler := NewWebTTYHandler(&ServerConfig{AuthToken: &token})
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	defer handler.Shutdown(context.Background())
+	defer handler.Shutdown(t.Context())
 	if _, _, err := websocket.DefaultDialer.Dial(testWebTTYURL(server.URL), nil); err == nil {
 		t.Fatalf("expected unauthenticated websocket dial to fail")
 	}
@@ -229,7 +1268,7 @@ func TestWebTTYHandlerRejectsCrossOrigin(t *testing.T) {
 	handler := NewWebTTYHandler(&ServerConfig{AllowUnauthenticated: &allow})
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	defer handler.Shutdown(context.Background())
+	defer handler.Shutdown(t.Context())
 	header := http.Header{}
 	header.Set("Origin", "https://evil.example")
 	if _, _, err := websocket.DefaultDialer.Dial(testWebTTYURL(server.URL), header); err == nil {
@@ -245,7 +1284,7 @@ func TestWebTTYHandlerAllowsExplicitWildcardOrigin(t *testing.T) {
 	})
 	server := httptest.NewServer(handler)
 	defer server.Close()
-	defer handler.Shutdown(context.Background())
+	defer handler.Shutdown(t.Context())
 	header := http.Header{}
 	header.Set("Origin", "http://localhost:3000")
 	conn, _, err := websocket.DefaultDialer.Dial(testWebTTYURL(server.URL), header)
@@ -292,6 +1331,49 @@ func testServerConfig(cfg ServerConfig) *ServerConfig {
 	return &cfg
 }
 
+func newTestE2ECryptoPair(t *testing.T, keyContext string) (*WebTTYEndpointIdentity, *WebTTYEndpointIdentity, *PayloadCrypto) {
+	t.Helper()
+	serverIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(server) error = %v", err)
+	}
+	clientIdentity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity(client) error = %v", err)
+	}
+	clientCrypto, err := NewE2EClientPayloadCrypto(E2EPayloadCryptoConfig{
+		KeyContext: []byte(keyContext),
+		Recipients: []E2ERecipient{{
+			KeyID:     serverIdentity.Encryption.KeyID,
+			PublicKey: serverIdentity.Encryption.PublicKey,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("NewE2EClientPayloadCrypto() error = %v", err)
+	}
+	return serverIdentity, clientIdentity, clientCrypto
+}
+
+func testWebTransportTLSConfig(t *testing.T) *tls.Config {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("GenerateKey() error = %v", err)
+	}
+	template := x509.Certificate{SerialNumber: big.NewInt(1)}
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("CreateCertificate() error = %v", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	cert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatalf("X509KeyPair() error = %v", err)
+	}
+	return &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{http3.NextProtoH3}}
+}
+
 func collectClientSessionOutput(t *testing.T, session *ClientSession) (string, string, int, error) {
 	t.Helper()
 	resultCh := make(chan clientSessionResult, 1)
@@ -324,4 +1406,29 @@ func collectClientSessionOutput(t *testing.T, session *ClientSession) (string, s
 		}
 	}
 	return stdout.String(), stderr.String(), result.exitCode, result.err
+}
+
+func waitForClientStdout(t *testing.T, session *ClientSession, want string) {
+	t.Helper()
+	events := session.Events()
+	var stdout strings.Builder
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case event, ok := <-events:
+			if !ok {
+				t.Fatalf("webtty session events closed before stdout %q", want)
+			}
+			if event.Stream != ClientSessionStdout {
+				continue
+			}
+			stdout.Write(event.Data)
+			if strings.Contains(stdout.String(), want) {
+				return
+			}
+		case <-timer.C:
+			t.Fatalf("timed out waiting for stdout %q; got %q", want, stdout.String())
+		}
+	}
 }

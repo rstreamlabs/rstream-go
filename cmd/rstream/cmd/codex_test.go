@@ -26,6 +26,17 @@ func TestCodexRstreamMCPBlockPreservesExplicitRstreamConfig(t *testing.T) {
 	}
 }
 
+func TestCodexRstreamMCPBlockPreservesRstreamRuntimeOverrides(t *testing.T) {
+	t.Setenv("RSTREAM_API_URL", "http://localhost:3000")
+	t.Setenv("RSTREAM_CONFIG", `/tmp/rstream config/config.yaml`)
+	t.Setenv("RSTREAM_CONTEXT", "tests")
+	block := codexRstreamMCPBlock(`/tmp/rstream`)
+	want := `env = { RSTREAM_API_URL = "http://localhost:3000", RSTREAM_CONFIG = "/tmp/rstream config/config.yaml", RSTREAM_CONTEXT = "tests" }`
+	if !strings.Contains(block, want) {
+		t.Fatalf("block missing rstream runtime env:\n%s", block)
+	}
+}
+
 func TestUpsertTomlSection(t *testing.T) {
 	content := "model = \"gpt-5\"\n\n[mcp_servers.old]\ncommand = \"old\"\n"
 	block := "[mcp_servers.rstream]\ncommand = \"rstream\"\n"

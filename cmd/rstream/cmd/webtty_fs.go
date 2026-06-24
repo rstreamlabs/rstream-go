@@ -62,7 +62,12 @@ var webttyFSCmd = &cobra.Command{
 	Use:          "fs",
 	Short:        "Access a WebTTY filesystem sidecar",
 	Long:         "Access a WebTTY filesystem sidecar. Paths are relative to the server --fs-root: / is the configured filesystem root, not necessarily the remote host filesystem root.",
+	GroupID:      "webtty-connect",
 	SilenceUsage: true,
+	Args:         cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return cmd.Help()
+	},
 }
 
 var webttyFSListCmd = &cobra.Command{

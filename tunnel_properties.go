@@ -14,10 +14,11 @@ const (
 type Protocol string
 
 const (
-	ProtocolTLS  Protocol = "tls"  // bytestream
-	ProtocolDTLS Protocol = "dtls" // datagram
-	ProtocolQUIC Protocol = "quic" // datagram
-	ProtocolHTTP Protocol = "http" // bytestream (HTTP/1.1, HTTP/2) or datagram (HTTP/3)
+	ProtocolTLS    Protocol = "tls"    // bytestream
+	ProtocolDTLS   Protocol = "dtls"   // datagram
+	ProtocolQUIC   Protocol = "quic"   // datagram
+	ProtocolHTTP   Protocol = "http"   // bytestream (HTTP/1.1, HTTP/2) or datagram (HTTP/3)
+	ProtocolWebTTY Protocol = "webtty" // managed WebTTY envelope
 )
 
 type TLSMode string
@@ -63,8 +64,10 @@ type TunnelProperties struct {
 
 type TunnelInventory struct {
 	TunnelProperties
-	Status   string `json:"status"`
-	ClientID string `json:"client_id,omitempty"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	ProjectID   string `json:"project_id,omitempty"`
+	Status      string `json:"status"`
+	ClientID    string `json:"client_id,omitempty"`
 }
 
 type ListTunnelsFilters struct {
