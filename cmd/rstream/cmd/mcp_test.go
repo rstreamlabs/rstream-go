@@ -21,6 +21,7 @@ import (
 
 	"github.com/rstreamlabs/rstream-go/config"
 	"github.com/rstreamlabs/rstream-go/controlplane"
+	"github.com/rstreamlabs/rstream-go/webtty"
 	"github.com/spf13/cobra"
 )
 
@@ -99,7 +100,7 @@ func TestMCPToolsListContainsAgentNativeTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal returned error: %v", err)
 	}
-	for _, want := range []string{"rstream_auth_poll", "rstream_auth_start", "rstream_context_list", "rstream_context_get", "rstream_project_creation_options", "rstream_project_create", "rstream_project_delete", "rstream_project_events_list", "rstream_project_list", "rstream_project_logs", "rstream_project_usage", "rstream_project_plan_get", "rstream_project_turn_usage", "rstream_project_turn_credentials_create", "rstream_project_webhooks_list", "rstream_project_webhook_deliveries_list", "rstream_project_webhook_delivery_get", "rstream_project_domains_list", "rstream_project_domain_create", "rstream_project_domain_get", "rstream_project_domain_delete", "rstream_project_domain_verify", "rstream_project_domain_connect", "rstream_project_settings_get", "rstream_project_settings_patch", "rstream_project_settings_reset", "rstream_local_tunnel_expose", "rstream_local_tunnel_list", "rstream_local_tunnel_stop", "rstream_remote_expose", "rstream_remote_expose_stop", "rstream_remote_mcp_discover", "rstream_remote_mcp_tools", "rstream_remote_mcp_call", "rstream_runtime_prepare", "rstream_runtime_status", "rstream_token_create", "rstream_workspace_list", "rstream_workspace_members_list", "rstream_webtty_list", "rstream_webtty_exec", "rstream_webtty_fs_list", "rstream_webtty_fs_read", "rstream_webtty_fs_download", "rstream_webtty_fs_write", "rstream_webtty_fs_mkdir", "rstream_webtty_fs_delete"} {
+	for _, want := range []string{"rstream_auth_poll", "rstream_auth_start", "rstream_context_list", "rstream_context_get", "rstream_project_creation_options", "rstream_project_create", "rstream_project_delete", "rstream_project_events_list", "rstream_project_list", "rstream_project_logs", "rstream_project_usage", "rstream_project_plan_get", "rstream_project_turn_usage", "rstream_project_turn_credentials_create", "rstream_project_webhooks_list", "rstream_project_webhook_deliveries_list", "rstream_project_webhook_delivery_get", "rstream_project_domains_list", "rstream_project_domain_create", "rstream_project_domain_get", "rstream_project_domain_delete", "rstream_project_domain_verify", "rstream_project_domain_connect", "rstream_project_settings_get", "rstream_project_settings_patch", "rstream_project_settings_reset", "rstream_local_tunnel_expose", "rstream_local_tunnel_list", "rstream_local_tunnel_stop", "rstream_remote_expose", "rstream_remote_expose_stop", "rstream_remote_mcp_discover", "rstream_remote_mcp_tools", "rstream_remote_mcp_call", "rstream_runtime_prepare", "rstream_runtime_status", "rstream_token_create", "rstream_workspace_list", "rstream_workspace_members_list", "rstream_webtty_list", "rstream_webtty_servers_list", "rstream_webtty_server_get", "rstream_webtty_server_create", "rstream_webtty_server_update", "rstream_webtty_server_delete", "rstream_webtty_server_enrollment_get", "rstream_webtty_exec", "rstream_webtty_sessions_list", "rstream_webtty_session_get", "rstream_webtty_session_events", "rstream_webtty_session_export", "rstream_webtty_session_participants", "rstream_webtty_control_requests_list", "rstream_webtty_control_request_create", "rstream_webtty_control_request_resolve", "rstream_webtty_fs_list", "rstream_webtty_fs_read", "rstream_webtty_fs_download", "rstream_webtty_fs_write", "rstream_webtty_fs_mkdir", "rstream_webtty_fs_delete"} {
 		if !strings.Contains(string(payload), want) {
 			t.Fatalf("tools/list missing %q: %s", want, string(payload))
 		}
@@ -124,13 +125,28 @@ func TestMCPToolsListContainsAgentNativeTools(t *testing.T) {
 		Key  string
 		Name string
 		Want bool
-	}{{"destructiveHint", "rstream_webtty_exec", true}, {"destructiveHint", "rstream_webtty_fs_write", true}, {"destructiveHint", "rstream_remote_mcp_call", true}, {"openWorldHint", "rstream_project_list", true}, {"readOnlyHint", "rstream_project_creation_options", true}, {"readOnlyHint", "rstream_project_domain_connect", true}} {
+	}{{"destructiveHint", "rstream_webtty_exec", true}, {"destructiveHint", "rstream_webtty_fs_write", true}, {"destructiveHint", "rstream_webtty_control_request_create", true}, {"destructiveHint", "rstream_webtty_control_request_resolve", true}, {"destructiveHint", "rstream_remote_mcp_call", true}, {"openWorldHint", "rstream_project_list", true}, {"readOnlyHint", "rstream_project_creation_options", true}, {"readOnlyHint", "rstream_project_domain_connect", true}, {"readOnlyHint", "rstream_webtty_session_export", true}} {
 		if got := toolsByName[check.Name][check.Key]; got != check.Want {
 			t.Fatalf("%s %s = %#v, want %v", check.Name, check.Key, got, check.Want)
 		}
 	}
 	if !strings.Contains(string(payload), `"outputSchema"`) || !strings.Contains(string(payload), `"login_url"`) || !strings.Contains(string(payload), `"suggested_next_tool"`) {
 		t.Fatalf("tools/list does not expose key output schemas: %s", string(payload))
+	}
+	for _, want := range []string{"rstream_webtty_list", "rstream_webtty_exec", "rstream_webtty_servers_list", "rstream_webtty_sessions_list", "rstream_webtty_session_export", "rstream_webtty_fs_read"} {
+		needle := fmt.Sprintf(`"name":%q`, want)
+		index := strings.Index(string(payload), needle)
+		if index < 0 {
+			t.Fatalf("tools/list missing %q: %s", want, string(payload))
+		}
+		nextName := strings.Index(string(payload)[index+len(needle):], `"name":`)
+		chunk := string(payload)[index:]
+		if nextName >= 0 {
+			chunk = string(payload)[index : index+len(needle)+nextName]
+		}
+		if !strings.Contains(chunk, `"outputSchema"`) {
+			t.Fatalf("tools/list tool %q does not expose outputSchema: %s", want, chunk)
+		}
 	}
 	if !strings.Contains(string(payload), "read-only project token") || !strings.Contains(string(payload), "tunnels.resources.read-only requires list") {
 		t.Fatalf("tools/list does not document token resource examples: %s", string(payload))
@@ -152,7 +168,7 @@ func TestMCPAgentGuidanceIncludesEngineAuthBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal returned error: %v", err)
 	}
-	for _, want := range []string{"/api/clients", "/api/tunnels", "/api/sse", "/api/websocket", "rstream.token", "short-lived auth or app token", "watch-only/list resources"} {
+	for _, want := range []string{"/api/clients", "/api/tunnels", "/api/sse", "/api/websocket", "rstream.token", "short-lived auth or app token", "explicit read-only watch permissions", "list-only tunnel resources"} {
 		if !strings.Contains(string(payload), want) {
 			t.Fatalf("engine auth guidance missing %q: %s", want, string(payload))
 		}
@@ -495,6 +511,97 @@ func TestMCPWebTTYFilterArgs(t *testing.T) {
 		if gotFilter != tc.WantFilter || gotName != tc.WantName {
 			t.Fatalf("mcpWebTTYFilterArgs(%#v) = %q, %q; want %q, %q", tc.Args, gotFilter, gotName, tc.WantFilter, tc.WantName)
 		}
+	}
+}
+
+func TestMCPWebTTYExecClientConfigKeepsPlainWhenNoE2ESignal(t *testing.T) {
+	clearRstreamTestEnv(t)
+	args := map[string]json.RawMessage{
+		"url": json.RawMessage(`"ws://127.0.0.1:6002"`),
+		"env": json.RawMessage(`["A=B"]`),
+	}
+	workdir := "/tmp"
+	args["workdir"] = json.RawMessage(`"` + workdir + `"`)
+	cfg, err := mcpWebTTYExecClientConfig(t.Context(), args, []string{"whoami"})
+	if err != nil {
+		t.Fatalf("mcpWebTTYExecClientConfig() error = %v", err)
+	}
+	if cfg.PayloadCrypto != nil {
+		t.Fatalf("plain MCP WebTTY exec should not enable payload crypto: %#v", cfg.PayloadCrypto)
+	}
+	if cfg.URL != "ws://127.0.0.1:6002" || len(cfg.CmdArgs) != 1 || cfg.CmdArgs[0] != "whoami" || cfg.Workdir == nil || *cfg.Workdir != workdir {
+		t.Fatalf("unexpected MCP WebTTY exec config: %#v", cfg)
+	}
+}
+
+func TestMCPWebTTYExecClientConfigUsesKnownServerKey(t *testing.T) {
+	clearRstreamTestEnv(t)
+	identity, err := webtty.GenerateE2EIdentity()
+	if err != nil {
+		t.Fatalf("GenerateE2EIdentity() error = %v", err)
+	}
+	t.Setenv(webTTYKnownServerKeyEnv, webtty.EncodeE2EKeyMaterial(identity.PublicKey))
+	cfg, err := mcpWebTTYExecClientConfig(t.Context(), map[string]json.RawMessage{
+		"url": json.RawMessage(`"ws://127.0.0.1:6002"`),
+	}, []string{"whoami"})
+	if err != nil {
+		t.Fatalf("mcpWebTTYExecClientConfig() error = %v", err)
+	}
+	if cfg.PayloadCrypto == nil || cfg.PayloadCrypto.SessionKeyGrant == nil || len(cfg.PayloadCrypto.SessionKeyGrant.KeyEnvelopes) != 1 {
+		t.Fatalf("expected MCP WebTTY exec E2E payload crypto from known server key, got %#v", cfg.PayloadCrypto)
+	}
+}
+
+func TestMCPWebTTYExecClientConfigUsesKnownServerName(t *testing.T) {
+	clearRstreamTestEnv(t)
+	serverIdentity, err := webtty.GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity() error = %v", err)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	path, err := webtty.DefaultKnownServerKeysPath()
+	if err != nil {
+		t.Fatalf("DefaultKnownServerKeysPath() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	doc := webtty.KnownServerKeysFile{
+		Version:     webtty.E2EIdentityFileVersion,
+		CryptoSuite: webtty.E2EKeyFileCryptoSuite,
+		KnownServers: []webtty.KnownServerKeyEntry{{
+			Name:             "prod-shell",
+			KeyID:            webtty.EncodeE2EKeyMaterial(serverIdentity.Encryption.KeyID),
+			PublicKey:        webtty.EncodeE2EKeyMaterial(serverIdentity.Encryption.PublicKey),
+			SigningKeyID:     webtty.EncodeE2EKeyMaterial(serverIdentity.Signing.KeyID),
+			SigningPublicKey: webtty.EncodeE2EKeyMaterial(serverIdentity.Signing.PublicKey),
+			ClientIdentity:   "operator-laptop",
+		}},
+	}
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if _, err := writeTestWebTTYEndpointIdentity(t, "operator-laptop"); err != nil {
+		t.Fatalf("writeTestWebTTYEndpointIdentity() error = %v", err)
+	}
+	cfg, err := mcpWebTTYExecClientConfig(t.Context(), map[string]json.RawMessage{
+		"url":          json.RawMessage(`"ws://127.0.0.1:6002"`),
+		"known_server": json.RawMessage(`"prod-shell"`),
+	}, []string{"whoami"})
+	if err != nil {
+		t.Fatalf("mcpWebTTYExecClientConfig() error = %v", err)
+	}
+	if cfg.PayloadCrypto == nil || cfg.ExpectedServerIdentity == nil || cfg.EndpointIdentity == nil {
+		t.Fatalf("expected MCP WebTTY exec crypto and endpoint identity from known server, got %#v", cfg)
+	}
+	if !bytes.Equal(cfg.ExpectedServerIdentity.SigningKeyID, serverIdentity.Signing.KeyID) {
+		t.Fatalf("known_server selected wrong server identity")
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -143,6 +144,15 @@ func isNilDialer(d Dialer) bool {
 
 func (c *Client) dialEngine(ctx context.Context, engine *string, nextProtos *[]string) (net.Conn, error) {
 	return c.dialEngineWithTransport(ctx, engine, nextProtos, nil)
+}
+
+func (c *Client) DialEngineHTTP1(ctx context.Context, addr string) (net.Conn, error) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return nil, errors.New("engine address is required")
+	}
+	nextProtos := []string{"http/1.1"}
+	return c.dialEngineWithTransport(ctx, &addr, &nextProtos, c.apiDialer())
 }
 
 func (c *Client) dialEngineWithTransport(ctx context.Context, engine *string, nextProtos *[]string, override Dialer) (net.Conn, error) {

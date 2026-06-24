@@ -42,7 +42,7 @@ tunnels:
       publish: true
       labels:
         app: "web"
-      protocol: "http"           # http|tls|dtls|quic
+      protocol: "http"           # http|tls|dtls|quic|webtty
       type: "bytestream"         # bytestream|datagram (optional)
       host: "web-project.t.cluster.example.com" # optional stable domain
       upstreamTLS: true          # optional, applies to published protocols
@@ -113,7 +113,7 @@ labels:
 
 - `rstream.tunnel.<name>.forward` (required)
 - `rstream.tunnel.<name>.publish` (true|false, default true)
-- `rstream.tunnel.<name>.protocol` (http|tls|dtls|quic, default http)
+- `rstream.tunnel.<name>.protocol` (http|tls|dtls|quic|webtty, default http)
 - `rstream.tunnel.<name>.type` (bytestream|datagram)
 - `rstream.tunnel.<name>.host` (Stable domain)
 - `rstream.tunnel.<name>.upstream-tls` (true|false)

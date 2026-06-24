@@ -36,8 +36,12 @@ func TestMCPAuthStartAndPollStoresTokenWithoutReturningIt(t *testing.T) {
 			hasEventRead := strings.Contains(scope, "network.events.read-only")
 			hasWebhookRead := strings.Contains(scope, "network.webhooks.read-only")
 			hasWebhookWrite := strings.Contains(scope, "network.webhooks.read-write")
+			hasWebTTYServerRead := strings.Contains(scope, "network.webtty-servers.read-only")
+			hasWebTTYServerWrite := strings.Contains(scope, "network.webtty-servers.read-write")
+			hasWebTTYSessionReadWrite := strings.Contains(scope, "webtty.sessions.read-write")
+			hasWebTTYLogsRead := strings.Contains(scope, "webtty.logs.read-only")
 			hasTunnelCreate := strings.Contains(scope, "tunnels.tunnels.create-delete")
-			if r.Form.Get("client_id") != rstreamOAuthClientID || !hasPlanRead || !hasProjectWrite || !hasTokenCreate || !hasWorkspaceRead || !hasStreamRead || !hasEventRead || !hasWebhookRead || hasWebhookWrite || !hasTunnelCreate {
+			if r.Form.Get("client_id") != rstreamOAuthClientID || !hasPlanRead || !hasProjectWrite || !hasTokenCreate || !hasWorkspaceRead || !hasStreamRead || !hasEventRead || !hasWebhookRead || hasWebhookWrite || !hasWebTTYServerRead || hasWebTTYServerWrite || hasWebTTYSessionReadWrite || hasWebTTYLogsRead || !hasTunnelCreate {
 				t.Fatalf("unexpected device authorization form: %s", r.Form.Encode())
 			}
 			_ = json.NewEncoder(w).Encode(controlplane.OAuthDeviceAuthorizationResponse{DeviceCode: "device-code", UserCode: "USER-CODE", VerificationURI: serverURL(r, "/activate"), VerificationURIComplete: serverURL(r, "/activate?user_code=USER-CODE"), ExpiresIn: 60, Interval: 1})

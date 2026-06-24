@@ -11,6 +11,7 @@ package pb
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	wrapperspb "google.golang.org/protobuf/types/known/wrapperspb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -22,6 +23,540 @@ const (
 	// Verify that runtime/protoimpl is sufficiently up-to-date.
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
+
+type OpenCapability int32
+
+const (
+	OpenCapability_OPEN_CAPABILITY_UNSPECIFIED OpenCapability = 0
+	// The endpoint can carry stdin/stdout/stderr bytes in Data.encrypted_data.
+	OpenCapability_OPEN_CAPABILITY_ENCRYPTED_PAYLOAD OpenCapability = 1
+	// The endpoint can exchange session-level grants in Open.session_key_grant.
+	OpenCapability_OPEN_CAPABILITY_SESSION_CRYPTO OpenCapability = 2
+)
+
+// Enum value maps for OpenCapability.
+var (
+	OpenCapability_name = map[int32]string{
+		0: "OPEN_CAPABILITY_UNSPECIFIED",
+		1: "OPEN_CAPABILITY_ENCRYPTED_PAYLOAD",
+		2: "OPEN_CAPABILITY_SESSION_CRYPTO",
+	}
+	OpenCapability_value = map[string]int32{
+		"OPEN_CAPABILITY_UNSPECIFIED":       0,
+		"OPEN_CAPABILITY_ENCRYPTED_PAYLOAD": 1,
+		"OPEN_CAPABILITY_SESSION_CRYPTO":    2,
+	}
+)
+
+func (x OpenCapability) Enum() *OpenCapability {
+	p := new(OpenCapability)
+	*p = x
+	return p
+}
+
+func (x OpenCapability) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (OpenCapability) Descriptor() protoreflect.EnumDescriptor {
+	return file_pb_webtty_proto_enumTypes[0].Descriptor()
+}
+
+func (OpenCapability) Type() protoreflect.EnumType {
+	return &file_pb_webtty_proto_enumTypes[0]
+}
+
+func (x OpenCapability) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use OpenCapability.Descriptor instead.
+func (OpenCapability) EnumDescriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{0}
+}
+
+// Payload cipher suites apply only to terminal stream bytes. The WebTTY
+// protobuf envelope remains visible to the managed server for routing,
+// recording metadata, policy decisions, and session lifecycle handling.
+type PayloadCipherSuite int32
+
+const (
+	PayloadCipherSuite_PAYLOAD_CIPHER_SUITE_UNSPECIFIED       PayloadCipherSuite = 0
+	PayloadCipherSuite_PAYLOAD_CIPHER_SUITE_AES_256_GCM       PayloadCipherSuite = 1
+	PayloadCipherSuite_PAYLOAD_CIPHER_SUITE_CHACHA20_POLY1305 PayloadCipherSuite = 2
+)
+
+// Enum value maps for PayloadCipherSuite.
+var (
+	PayloadCipherSuite_name = map[int32]string{
+		0: "PAYLOAD_CIPHER_SUITE_UNSPECIFIED",
+		1: "PAYLOAD_CIPHER_SUITE_AES_256_GCM",
+		2: "PAYLOAD_CIPHER_SUITE_CHACHA20_POLY1305",
+	}
+	PayloadCipherSuite_value = map[string]int32{
+		"PAYLOAD_CIPHER_SUITE_UNSPECIFIED":       0,
+		"PAYLOAD_CIPHER_SUITE_AES_256_GCM":       1,
+		"PAYLOAD_CIPHER_SUITE_CHACHA20_POLY1305": 2,
+	}
+)
+
+func (x PayloadCipherSuite) Enum() *PayloadCipherSuite {
+	p := new(PayloadCipherSuite)
+	*p = x
+	return p
+}
+
+func (x PayloadCipherSuite) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PayloadCipherSuite) Descriptor() protoreflect.EnumDescriptor {
+	return file_pb_webtty_proto_enumTypes[1].Descriptor()
+}
+
+func (PayloadCipherSuite) Type() protoreflect.EnumType {
+	return &file_pb_webtty_proto_enumTypes[1]
+}
+
+func (x PayloadCipherSuite) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PayloadCipherSuite.Descriptor instead.
+func (PayloadCipherSuite) EnumDescriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{1}
+}
+
+// Key envelope suites are used to wrap per-session or per-payload keys for
+// authorized recipients. Implementations should use standard HPKE primitives;
+// the protocol does not define custom cryptography.
+type KeyEnvelopeSuite int32
+
+const (
+	KeyEnvelopeSuite_KEY_ENVELOPE_SUITE_UNSPECIFIED                               KeyEnvelopeSuite = 0
+	KeyEnvelopeSuite_KEY_ENVELOPE_SUITE_HPKE_X25519_HKDF_SHA256_AES_256_GCM       KeyEnvelopeSuite = 1
+	KeyEnvelopeSuite_KEY_ENVELOPE_SUITE_HPKE_X25519_HKDF_SHA256_CHACHA20_POLY1305 KeyEnvelopeSuite = 2
+)
+
+// Enum value maps for KeyEnvelopeSuite.
+var (
+	KeyEnvelopeSuite_name = map[int32]string{
+		0: "KEY_ENVELOPE_SUITE_UNSPECIFIED",
+		1: "KEY_ENVELOPE_SUITE_HPKE_X25519_HKDF_SHA256_AES_256_GCM",
+		2: "KEY_ENVELOPE_SUITE_HPKE_X25519_HKDF_SHA256_CHACHA20_POLY1305",
+	}
+	KeyEnvelopeSuite_value = map[string]int32{
+		"KEY_ENVELOPE_SUITE_UNSPECIFIED":                               0,
+		"KEY_ENVELOPE_SUITE_HPKE_X25519_HKDF_SHA256_AES_256_GCM":       1,
+		"KEY_ENVELOPE_SUITE_HPKE_X25519_HKDF_SHA256_CHACHA20_POLY1305": 2,
+	}
+)
+
+func (x KeyEnvelopeSuite) Enum() *KeyEnvelopeSuite {
+	p := new(KeyEnvelopeSuite)
+	*p = x
+	return p
+}
+
+func (x KeyEnvelopeSuite) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (KeyEnvelopeSuite) Descriptor() protoreflect.EnumDescriptor {
+	return file_pb_webtty_proto_enumTypes[2].Descriptor()
+}
+
+func (KeyEnvelopeSuite) Type() protoreflect.EnumType {
+	return &file_pb_webtty_proto_enumTypes[2]
+}
+
+func (x KeyEnvelopeSuite) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use KeyEnvelopeSuite.Descriptor instead.
+func (KeyEnvelopeSuite) EnumDescriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{2}
+}
+
+type ProtocolVersion int32
+
+const (
+	ProtocolVersion_PROTOCOL_VERSION_UNSPECIFIED ProtocolVersion = 0
+	ProtocolVersion_PROTOCOL_VERSION_WEBTTY_1    ProtocolVersion = 1
+)
+
+// Enum value maps for ProtocolVersion.
+var (
+	ProtocolVersion_name = map[int32]string{
+		0: "PROTOCOL_VERSION_UNSPECIFIED",
+		1: "PROTOCOL_VERSION_WEBTTY_1",
+	}
+	ProtocolVersion_value = map[string]int32{
+		"PROTOCOL_VERSION_UNSPECIFIED": 0,
+		"PROTOCOL_VERSION_WEBTTY_1":    1,
+	}
+)
+
+func (x ProtocolVersion) Enum() *ProtocolVersion {
+	p := new(ProtocolVersion)
+	*p = x
+	return p
+}
+
+func (x ProtocolVersion) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ProtocolVersion) Descriptor() protoreflect.EnumDescriptor {
+	return file_pb_webtty_proto_enumTypes[3].Descriptor()
+}
+
+func (ProtocolVersion) Type() protoreflect.EnumType {
+	return &file_pb_webtty_proto_enumTypes[3]
+}
+
+func (x ProtocolVersion) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ProtocolVersion.Descriptor instead.
+func (ProtocolVersion) EnumDescriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{3}
+}
+
+type SignatureSuite int32
+
+const (
+	SignatureSuite_SIGNATURE_SUITE_UNSPECIFIED       SignatureSuite = 0
+	SignatureSuite_SIGNATURE_SUITE_ECDSA_P256_SHA256 SignatureSuite = 1
+)
+
+// Enum value maps for SignatureSuite.
+var (
+	SignatureSuite_name = map[int32]string{
+		0: "SIGNATURE_SUITE_UNSPECIFIED",
+		1: "SIGNATURE_SUITE_ECDSA_P256_SHA256",
+	}
+	SignatureSuite_value = map[string]int32{
+		"SIGNATURE_SUITE_UNSPECIFIED":       0,
+		"SIGNATURE_SUITE_ECDSA_P256_SHA256": 1,
+	}
+)
+
+func (x SignatureSuite) Enum() *SignatureSuite {
+	p := new(SignatureSuite)
+	*p = x
+	return p
+}
+
+func (x SignatureSuite) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SignatureSuite) Descriptor() protoreflect.EnumDescriptor {
+	return file_pb_webtty_proto_enumTypes[4].Descriptor()
+}
+
+func (SignatureSuite) Type() protoreflect.EnumType {
+	return &file_pb_webtty_proto_enumTypes[4]
+}
+
+func (x SignatureSuite) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SignatureSuite.Descriptor instead.
+func (SignatureSuite) EnumDescriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{4}
+}
+
+type AuthRequirement int32
+
+const (
+	AuthRequirement_AUTH_REQUIREMENT_UNSPECIFIED  AuthRequirement = 0
+	AuthRequirement_AUTH_REQUIREMENT_NONE         AuthRequirement = 1
+	AuthRequirement_AUTH_REQUIREMENT_CLIENT_PROOF AuthRequirement = 2
+)
+
+// Enum value maps for AuthRequirement.
+var (
+	AuthRequirement_name = map[int32]string{
+		0: "AUTH_REQUIREMENT_UNSPECIFIED",
+		1: "AUTH_REQUIREMENT_NONE",
+		2: "AUTH_REQUIREMENT_CLIENT_PROOF",
+	}
+	AuthRequirement_value = map[string]int32{
+		"AUTH_REQUIREMENT_UNSPECIFIED":  0,
+		"AUTH_REQUIREMENT_NONE":         1,
+		"AUTH_REQUIREMENT_CLIENT_PROOF": 2,
+	}
+)
+
+func (x AuthRequirement) Enum() *AuthRequirement {
+	p := new(AuthRequirement)
+	*p = x
+	return p
+}
+
+func (x AuthRequirement) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AuthRequirement) Descriptor() protoreflect.EnumDescriptor {
+	return file_pb_webtty_proto_enumTypes[5].Descriptor()
+}
+
+func (AuthRequirement) Type() protoreflect.EnumType {
+	return &file_pb_webtty_proto_enumTypes[5]
+}
+
+func (x AuthRequirement) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AuthRequirement.Descriptor instead.
+func (AuthRequirement) EnumDescriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{5}
+}
+
+type ProtocolErrorCode int32
+
+const (
+	ProtocolErrorCode_PROTOCOL_ERROR_CODE_UNSPECIFIED                ProtocolErrorCode = 0
+	ProtocolErrorCode_PROTOCOL_ERROR_CODE_UNKNOWN_SERVER             ProtocolErrorCode = 1
+	ProtocolErrorCode_PROTOCOL_ERROR_CODE_SERVER_KEY_CHANGED         ProtocolErrorCode = 2
+	ProtocolErrorCode_PROTOCOL_ERROR_CODE_SERVER_PROOF_INVALID       ProtocolErrorCode = 3
+	ProtocolErrorCode_PROTOCOL_ERROR_CODE_CLIENT_PROOF_REQUIRED      ProtocolErrorCode = 4
+	ProtocolErrorCode_PROTOCOL_ERROR_CODE_CLIENT_PROOF_INVALID       ProtocolErrorCode = 5
+	ProtocolErrorCode_PROTOCOL_ERROR_CODE_CLIENT_UNAUTHORIZED        ProtocolErrorCode = 6
+	ProtocolErrorCode_PROTOCOL_ERROR_CODE_CLIENT_REVOKED             ProtocolErrorCode = 7
+	ProtocolErrorCode_PROTOCOL_ERROR_CODE_CHALLENGE_EXPIRED          ProtocolErrorCode = 8
+	ProtocolErrorCode_PROTOCOL_ERROR_CODE_CHALLENGE_REPLAYED         ProtocolErrorCode = 9
+	ProtocolErrorCode_PROTOCOL_ERROR_CODE_DOWNGRADE_DETECTED         ProtocolErrorCode = 10
+	ProtocolErrorCode_PROTOCOL_ERROR_CODE_UNSUPPORTED_SUITE          ProtocolErrorCode = 11
+	ProtocolErrorCode_PROTOCOL_ERROR_CODE_WORKSPACE_TRUST_REQUIRED   ProtocolErrorCode = 12
+	ProtocolErrorCode_PROTOCOL_ERROR_CODE_WORKSPACE_DEVICE_UNTRUSTED ProtocolErrorCode = 13
+	ProtocolErrorCode_PROTOCOL_ERROR_CODE_REGISTERED_SERVER_MISMATCH ProtocolErrorCode = 14
+)
+
+// Enum value maps for ProtocolErrorCode.
+var (
+	ProtocolErrorCode_name = map[int32]string{
+		0:  "PROTOCOL_ERROR_CODE_UNSPECIFIED",
+		1:  "PROTOCOL_ERROR_CODE_UNKNOWN_SERVER",
+		2:  "PROTOCOL_ERROR_CODE_SERVER_KEY_CHANGED",
+		3:  "PROTOCOL_ERROR_CODE_SERVER_PROOF_INVALID",
+		4:  "PROTOCOL_ERROR_CODE_CLIENT_PROOF_REQUIRED",
+		5:  "PROTOCOL_ERROR_CODE_CLIENT_PROOF_INVALID",
+		6:  "PROTOCOL_ERROR_CODE_CLIENT_UNAUTHORIZED",
+		7:  "PROTOCOL_ERROR_CODE_CLIENT_REVOKED",
+		8:  "PROTOCOL_ERROR_CODE_CHALLENGE_EXPIRED",
+		9:  "PROTOCOL_ERROR_CODE_CHALLENGE_REPLAYED",
+		10: "PROTOCOL_ERROR_CODE_DOWNGRADE_DETECTED",
+		11: "PROTOCOL_ERROR_CODE_UNSUPPORTED_SUITE",
+		12: "PROTOCOL_ERROR_CODE_WORKSPACE_TRUST_REQUIRED",
+		13: "PROTOCOL_ERROR_CODE_WORKSPACE_DEVICE_UNTRUSTED",
+		14: "PROTOCOL_ERROR_CODE_REGISTERED_SERVER_MISMATCH",
+	}
+	ProtocolErrorCode_value = map[string]int32{
+		"PROTOCOL_ERROR_CODE_UNSPECIFIED":                0,
+		"PROTOCOL_ERROR_CODE_UNKNOWN_SERVER":             1,
+		"PROTOCOL_ERROR_CODE_SERVER_KEY_CHANGED":         2,
+		"PROTOCOL_ERROR_CODE_SERVER_PROOF_INVALID":       3,
+		"PROTOCOL_ERROR_CODE_CLIENT_PROOF_REQUIRED":      4,
+		"PROTOCOL_ERROR_CODE_CLIENT_PROOF_INVALID":       5,
+		"PROTOCOL_ERROR_CODE_CLIENT_UNAUTHORIZED":        6,
+		"PROTOCOL_ERROR_CODE_CLIENT_REVOKED":             7,
+		"PROTOCOL_ERROR_CODE_CHALLENGE_EXPIRED":          8,
+		"PROTOCOL_ERROR_CODE_CHALLENGE_REPLAYED":         9,
+		"PROTOCOL_ERROR_CODE_DOWNGRADE_DETECTED":         10,
+		"PROTOCOL_ERROR_CODE_UNSUPPORTED_SUITE":          11,
+		"PROTOCOL_ERROR_CODE_WORKSPACE_TRUST_REQUIRED":   12,
+		"PROTOCOL_ERROR_CODE_WORKSPACE_DEVICE_UNTRUSTED": 13,
+		"PROTOCOL_ERROR_CODE_REGISTERED_SERVER_MISMATCH": 14,
+	}
+)
+
+func (x ProtocolErrorCode) Enum() *ProtocolErrorCode {
+	p := new(ProtocolErrorCode)
+	*p = x
+	return p
+}
+
+func (x ProtocolErrorCode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ProtocolErrorCode) Descriptor() protoreflect.EnumDescriptor {
+	return file_pb_webtty_proto_enumTypes[6].Descriptor()
+}
+
+func (ProtocolErrorCode) Type() protoreflect.EnumType {
+	return &file_pb_webtty_proto_enumTypes[6]
+}
+
+func (x ProtocolErrorCode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ProtocolErrorCode.Descriptor instead.
+func (ProtocolErrorCode) EnumDescriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{6}
+}
+
+type AttachRole int32
+
+const (
+	AttachRole_ATTACH_ROLE_UNSPECIFIED AttachRole = 0
+	AttachRole_ATTACH_ROLE_SPECTATOR   AttachRole = 1
+	AttachRole_ATTACH_ROLE_CONTROLLER  AttachRole = 2
+)
+
+// Enum value maps for AttachRole.
+var (
+	AttachRole_name = map[int32]string{
+		0: "ATTACH_ROLE_UNSPECIFIED",
+		1: "ATTACH_ROLE_SPECTATOR",
+		2: "ATTACH_ROLE_CONTROLLER",
+	}
+	AttachRole_value = map[string]int32{
+		"ATTACH_ROLE_UNSPECIFIED": 0,
+		"ATTACH_ROLE_SPECTATOR":   1,
+		"ATTACH_ROLE_CONTROLLER":  2,
+	}
+)
+
+func (x AttachRole) Enum() *AttachRole {
+	p := new(AttachRole)
+	*p = x
+	return p
+}
+
+func (x AttachRole) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AttachRole) Descriptor() protoreflect.EnumDescriptor {
+	return file_pb_webtty_proto_enumTypes[7].Descriptor()
+}
+
+func (AttachRole) Type() protoreflect.EnumType {
+	return &file_pb_webtty_proto_enumTypes[7]
+}
+
+func (x AttachRole) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AttachRole.Descriptor instead.
+func (AttachRole) EnumDescriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{7}
+}
+
+type AttachTransport int32
+
+const (
+	AttachTransport_ATTACH_TRANSPORT_UNSPECIFIED  AttachTransport = 0
+	AttachTransport_ATTACH_TRANSPORT_PLAIN        AttachTransport = 1
+	AttachTransport_ATTACH_TRANSPORT_WEBSOCKET    AttachTransport = 2
+	AttachTransport_ATTACH_TRANSPORT_WEBTRANSPORT AttachTransport = 3
+)
+
+// Enum value maps for AttachTransport.
+var (
+	AttachTransport_name = map[int32]string{
+		0: "ATTACH_TRANSPORT_UNSPECIFIED",
+		1: "ATTACH_TRANSPORT_PLAIN",
+		2: "ATTACH_TRANSPORT_WEBSOCKET",
+		3: "ATTACH_TRANSPORT_WEBTRANSPORT",
+	}
+	AttachTransport_value = map[string]int32{
+		"ATTACH_TRANSPORT_UNSPECIFIED":  0,
+		"ATTACH_TRANSPORT_PLAIN":        1,
+		"ATTACH_TRANSPORT_WEBSOCKET":    2,
+		"ATTACH_TRANSPORT_WEBTRANSPORT": 3,
+	}
+)
+
+func (x AttachTransport) Enum() *AttachTransport {
+	p := new(AttachTransport)
+	*p = x
+	return p
+}
+
+func (x AttachTransport) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AttachTransport) Descriptor() protoreflect.EnumDescriptor {
+	return file_pb_webtty_proto_enumTypes[8].Descriptor()
+}
+
+func (AttachTransport) Type() protoreflect.EnumType {
+	return &file_pb_webtty_proto_enumTypes[8]
+}
+
+func (x AttachTransport) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AttachTransport.Descriptor instead.
+func (AttachTransport) EnumDescriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{8}
+}
+
+type AttachCapability int32
+
+const (
+	AttachCapability_ATTACH_CAPABILITY_UNSPECIFIED     AttachCapability = 0
+	AttachCapability_ATTACH_CAPABILITY_READ_STREAM     AttachCapability = 1
+	AttachCapability_ATTACH_CAPABILITY_REQUEST_CONTROL AttachCapability = 2
+	AttachCapability_ATTACH_CAPABILITY_RECEIVE_CONTROL AttachCapability = 3
+)
+
+// Enum value maps for AttachCapability.
+var (
+	AttachCapability_name = map[int32]string{
+		0: "ATTACH_CAPABILITY_UNSPECIFIED",
+		1: "ATTACH_CAPABILITY_READ_STREAM",
+		2: "ATTACH_CAPABILITY_REQUEST_CONTROL",
+		3: "ATTACH_CAPABILITY_RECEIVE_CONTROL",
+	}
+	AttachCapability_value = map[string]int32{
+		"ATTACH_CAPABILITY_UNSPECIFIED":     0,
+		"ATTACH_CAPABILITY_READ_STREAM":     1,
+		"ATTACH_CAPABILITY_REQUEST_CONTROL": 2,
+		"ATTACH_CAPABILITY_RECEIVE_CONTROL": 3,
+	}
+)
+
+func (x AttachCapability) Enum() *AttachCapability {
+	p := new(AttachCapability)
+	*p = x
+	return p
+}
+
+func (x AttachCapability) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AttachCapability) Descriptor() protoreflect.EnumDescriptor {
+	return file_pb_webtty_proto_enumTypes[9].Descriptor()
+}
+
+func (AttachCapability) Type() protoreflect.EnumType {
+	return &file_pb_webtty_proto_enumTypes[9]
+}
+
+func (x AttachCapability) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AttachCapability.Descriptor instead.
+func (AttachCapability) EnumDescriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{9}
+}
 
 type Data_Type int32
 
@@ -56,11 +591,11 @@ func (x Data_Type) String() string {
 }
 
 func (Data_Type) Descriptor() protoreflect.EnumDescriptor {
-	return file_pb_webtty_proto_enumTypes[0].Descriptor()
+	return file_pb_webtty_proto_enumTypes[10].Descriptor()
 }
 
 func (Data_Type) Type() protoreflect.EnumType {
-	return &file_pb_webtty_proto_enumTypes[0]
+	return &file_pb_webtty_proto_enumTypes[10]
 }
 
 func (x Data_Type) Number() protoreflect.EnumNumber {
@@ -69,7 +604,7 @@ func (x Data_Type) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Data_Type.Descriptor instead.
 func (Data_Type) EnumDescriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{10, 0}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{21, 0}
 }
 
 type Options struct {
@@ -386,16 +921,742 @@ func (x *Config) GetUsername() *Username {
 	return nil
 }
 
-type Open struct {
+// KeyEnvelope grants one recipient access to the payload key material.
+type KeyEnvelope struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	RecipientKeyId  []byte                 `protobuf:"bytes,1,opt,name=recipient_key_id,json=recipientKeyId,proto3" json:"recipient_key_id,omitempty"`
+	EncapsulatedKey []byte                 `protobuf:"bytes,2,opt,name=encapsulated_key,json=encapsulatedKey,proto3" json:"encapsulated_key,omitempty"`
+	WrappedKey      []byte                 `protobuf:"bytes,3,opt,name=wrapped_key,json=wrappedKey,proto3" json:"wrapped_key,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *KeyEnvelope) Reset() {
+	*x = KeyEnvelope{}
+	mi := &file_pb_webtty_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *KeyEnvelope) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*KeyEnvelope) ProtoMessage() {}
+
+func (x *KeyEnvelope) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_webtty_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use KeyEnvelope.ProtoReflect.Descriptor instead.
+func (*KeyEnvelope) Descriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *KeyEnvelope) GetRecipientKeyId() []byte {
+	if x != nil {
+		return x.RecipientKeyId
+	}
+	return nil
+}
+
+func (x *KeyEnvelope) GetEncapsulatedKey() []byte {
+	if x != nil {
+		return x.EncapsulatedKey
+	}
+	return nil
+}
+
+func (x *KeyEnvelope) GetWrappedKey() []byte {
+	if x != nil {
+		return x.WrappedKey
+	}
+	return nil
+}
+
+// EndpointIdentity carries public endpoint keys by purpose. Signing keys prove
+// endpoint identity; encryption keys receive payload key grants.
+type EndpointIdentity struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	SigningKeyId        []byte                 `protobuf:"bytes,1,opt,name=signing_key_id,json=signingKeyId,proto3" json:"signing_key_id,omitempty"`
+	SigningPublicKey    []byte                 `protobuf:"bytes,2,opt,name=signing_public_key,json=signingPublicKey,proto3" json:"signing_public_key,omitempty"`
+	SignatureSuite      SignatureSuite         `protobuf:"varint,3,opt,name=signature_suite,json=signatureSuite,proto3,enum=SignatureSuite" json:"signature_suite,omitempty"`
+	EncryptionKeyId     []byte                 `protobuf:"bytes,4,opt,name=encryption_key_id,json=encryptionKeyId,proto3" json:"encryption_key_id,omitempty"`
+	EncryptionPublicKey []byte                 `protobuf:"bytes,5,opt,name=encryption_public_key,json=encryptionPublicKey,proto3" json:"encryption_public_key,omitempty"`
+	KeyEnvelopeSuite    KeyEnvelopeSuite       `protobuf:"varint,6,opt,name=key_envelope_suite,json=keyEnvelopeSuite,proto3,enum=KeyEnvelopeSuite" json:"key_envelope_suite,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *EndpointIdentity) Reset() {
+	*x = EndpointIdentity{}
+	mi := &file_pb_webtty_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EndpointIdentity) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EndpointIdentity) ProtoMessage() {}
+
+func (x *EndpointIdentity) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_webtty_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EndpointIdentity.ProtoReflect.Descriptor instead.
+func (*EndpointIdentity) Descriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *EndpointIdentity) GetSigningKeyId() []byte {
+	if x != nil {
+		return x.SigningKeyId
+	}
+	return nil
+}
+
+func (x *EndpointIdentity) GetSigningPublicKey() []byte {
+	if x != nil {
+		return x.SigningPublicKey
+	}
+	return nil
+}
+
+func (x *EndpointIdentity) GetSignatureSuite() SignatureSuite {
+	if x != nil {
+		return x.SignatureSuite
+	}
+	return SignatureSuite_SIGNATURE_SUITE_UNSPECIFIED
+}
+
+func (x *EndpointIdentity) GetEncryptionKeyId() []byte {
+	if x != nil {
+		return x.EncryptionKeyId
+	}
+	return nil
+}
+
+func (x *EndpointIdentity) GetEncryptionPublicKey() []byte {
+	if x != nil {
+		return x.EncryptionPublicKey
+	}
+	return nil
+}
+
+func (x *EndpointIdentity) GetKeyEnvelopeSuite() KeyEnvelopeSuite {
+	if x != nil {
+		return x.KeyEnvelopeSuite
+	}
+	return KeyEnvelopeSuite_KEY_ENVELOPE_SUITE_UNSPECIFIED
+}
+
+// ServerProof signs the canonical server transcript for the current handshake.
+type ServerProof struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	SignatureSuite SignatureSuite         `protobuf:"varint,1,opt,name=signature_suite,json=signatureSuite,proto3,enum=SignatureSuite" json:"signature_suite,omitempty"`
+	SigningKeyId   []byte                 `protobuf:"bytes,2,opt,name=signing_key_id,json=signingKeyId,proto3" json:"signing_key_id,omitempty"`
+	TranscriptHash []byte                 `protobuf:"bytes,3,opt,name=transcript_hash,json=transcriptHash,proto3" json:"transcript_hash,omitempty"`
+	Signature      []byte                 `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ServerProof) Reset() {
+	*x = ServerProof{}
+	mi := &file_pb_webtty_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ServerProof) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ServerProof) ProtoMessage() {}
+
+func (x *ServerProof) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_webtty_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ServerProof.ProtoReflect.Descriptor instead.
+func (*ServerProof) Descriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ServerProof) GetSignatureSuite() SignatureSuite {
+	if x != nil {
+		return x.SignatureSuite
+	}
+	return SignatureSuite_SIGNATURE_SUITE_UNSPECIFIED
+}
+
+func (x *ServerProof) GetSigningKeyId() []byte {
+	if x != nil {
+		return x.SigningKeyId
+	}
+	return nil
+}
+
+func (x *ServerProof) GetTranscriptHash() []byte {
+	if x != nil {
+		return x.TranscriptHash
+	}
+	return nil
+}
+
+func (x *ServerProof) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
+// ServerHello advertises the server identity, freshness nonce, supported
+// suites, and authentication requirements before an Open message is accepted.
+type ServerHello struct {
+	state             protoimpl.MessageState  `protogen:"open.v1"`
+	ProtocolVersion   ProtocolVersion         `protobuf:"varint,1,opt,name=protocol_version,json=protocolVersion,proto3,enum=ProtocolVersion" json:"protocol_version,omitempty"`
+	SessionNonce      []byte                  `protobuf:"bytes,2,opt,name=session_nonce,json=sessionNonce,proto3" json:"session_nonce,omitempty"`
+	ServerIdentity    *EndpointIdentity       `protobuf:"bytes,3,opt,name=server_identity,json=serverIdentity,proto3" json:"server_identity,omitempty"`
+	PayloadSuites     []PayloadCipherSuite    `protobuf:"varint,4,rep,packed,name=payload_suites,json=payloadSuites,proto3,enum=PayloadCipherSuite" json:"payload_suites,omitempty"`
+	KeyEnvelopeSuites []KeyEnvelopeSuite      `protobuf:"varint,5,rep,packed,name=key_envelope_suites,json=keyEnvelopeSuites,proto3,enum=KeyEnvelopeSuite" json:"key_envelope_suites,omitempty"`
+	SignatureSuites   []SignatureSuite        `protobuf:"varint,6,rep,packed,name=signature_suites,json=signatureSuites,proto3,enum=SignatureSuite" json:"signature_suites,omitempty"`
+	AuthRequirement   AuthRequirement         `protobuf:"varint,7,opt,name=auth_requirement,json=authRequirement,proto3,enum=AuthRequirement" json:"auth_requirement,omitempty"`
+	WorkspaceId       *wrapperspb.StringValue `protobuf:"bytes,8,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	ProjectId         *wrapperspb.StringValue `protobuf:"bytes,9,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	ServerId          *wrapperspb.StringValue `protobuf:"bytes,10,opt,name=server_id,json=serverId,proto3" json:"server_id,omitempty"`
+	SessionId         string                  `protobuf:"bytes,11,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	ServerProof       *ServerProof            `protobuf:"bytes,12,opt,name=server_proof,json=serverProof,proto3" json:"server_proof,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *ServerHello) Reset() {
+	*x = ServerHello{}
+	mi := &file_pb_webtty_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ServerHello) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ServerHello) ProtoMessage() {}
+
+func (x *ServerHello) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_webtty_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ServerHello.ProtoReflect.Descriptor instead.
+func (*ServerHello) Descriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ServerHello) GetProtocolVersion() ProtocolVersion {
+	if x != nil {
+		return x.ProtocolVersion
+	}
+	return ProtocolVersion_PROTOCOL_VERSION_UNSPECIFIED
+}
+
+func (x *ServerHello) GetSessionNonce() []byte {
+	if x != nil {
+		return x.SessionNonce
+	}
+	return nil
+}
+
+func (x *ServerHello) GetServerIdentity() *EndpointIdentity {
+	if x != nil {
+		return x.ServerIdentity
+	}
+	return nil
+}
+
+func (x *ServerHello) GetPayloadSuites() []PayloadCipherSuite {
+	if x != nil {
+		return x.PayloadSuites
+	}
+	return nil
+}
+
+func (x *ServerHello) GetKeyEnvelopeSuites() []KeyEnvelopeSuite {
+	if x != nil {
+		return x.KeyEnvelopeSuites
+	}
+	return nil
+}
+
+func (x *ServerHello) GetSignatureSuites() []SignatureSuite {
+	if x != nil {
+		return x.SignatureSuites
+	}
+	return nil
+}
+
+func (x *ServerHello) GetAuthRequirement() AuthRequirement {
+	if x != nil {
+		return x.AuthRequirement
+	}
+	return AuthRequirement_AUTH_REQUIREMENT_UNSPECIFIED
+}
+
+func (x *ServerHello) GetWorkspaceId() *wrapperspb.StringValue {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return nil
+}
+
+func (x *ServerHello) GetProjectId() *wrapperspb.StringValue {
+	if x != nil {
+		return x.ProjectId
+	}
+	return nil
+}
+
+func (x *ServerHello) GetServerId() *wrapperspb.StringValue {
+	if x != nil {
+		return x.ServerId
+	}
+	return nil
+}
+
+func (x *ServerHello) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ServerHello) GetServerProof() *ServerProof {
+	if x != nil {
+		return x.ServerProof
+	}
+	return nil
+}
+
+// ClientHello lets transports that require client-originated stream activity
+// ask the server to send ServerHello before Open.
+type ClientHello struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	ProtocolVersion ProtocolVersion        `protobuf:"varint,1,opt,name=protocol_version,json=protocolVersion,proto3,enum=ProtocolVersion" json:"protocol_version,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *ClientHello) Reset() {
+	*x = ClientHello{}
+	mi := &file_pb_webtty_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientHello) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientHello) ProtoMessage() {}
+
+func (x *ClientHello) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_webtty_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientHello.ProtoReflect.Descriptor instead.
+func (*ClientHello) Descriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ClientHello) GetProtocolVersion() ProtocolVersion {
+	if x != nil {
+		return x.ProtocolVersion
+	}
+	return ProtocolVersion_PROTOCOL_VERSION_UNSPECIFIED
+}
+
+// SessionKeyGrant carries session-level encrypted grants. It intentionally has
+// no payload nonce; per-message nonces live in PayloadCrypto.
+type SessionKeyGrant struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	PayloadSuite     PayloadCipherSuite     `protobuf:"varint,1,opt,name=payload_suite,json=payloadSuite,proto3,enum=PayloadCipherSuite" json:"payload_suite,omitempty"`
+	PayloadKeyId     []byte                 `protobuf:"bytes,2,opt,name=payload_key_id,json=payloadKeyId,proto3" json:"payload_key_id,omitempty"`
+	KeyEnvelopes     []*KeyEnvelope         `protobuf:"bytes,3,rep,name=key_envelopes,json=keyEnvelopes,proto3" json:"key_envelopes,omitempty"`
+	KeyContext       []byte                 `protobuf:"bytes,4,opt,name=key_context,json=keyContext,proto3" json:"key_context,omitempty"`
+	KeyEnvelopeSuite KeyEnvelopeSuite       `protobuf:"varint,5,opt,name=key_envelope_suite,json=keyEnvelopeSuite,proto3,enum=KeyEnvelopeSuite" json:"key_envelope_suite,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *SessionKeyGrant) Reset() {
+	*x = SessionKeyGrant{}
+	mi := &file_pb_webtty_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SessionKeyGrant) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SessionKeyGrant) ProtoMessage() {}
+
+func (x *SessionKeyGrant) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_webtty_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SessionKeyGrant.ProtoReflect.Descriptor instead.
+func (*SessionKeyGrant) Descriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *SessionKeyGrant) GetPayloadSuite() PayloadCipherSuite {
+	if x != nil {
+		return x.PayloadSuite
+	}
+	return PayloadCipherSuite_PAYLOAD_CIPHER_SUITE_UNSPECIFIED
+}
+
+func (x *SessionKeyGrant) GetPayloadKeyId() []byte {
+	if x != nil {
+		return x.PayloadKeyId
+	}
+	return nil
+}
+
+func (x *SessionKeyGrant) GetKeyEnvelopes() []*KeyEnvelope {
+	if x != nil {
+		return x.KeyEnvelopes
+	}
+	return nil
+}
+
+func (x *SessionKeyGrant) GetKeyContext() []byte {
+	if x != nil {
+		return x.KeyContext
+	}
+	return nil
+}
+
+func (x *SessionKeyGrant) GetKeyEnvelopeSuite() KeyEnvelopeSuite {
+	if x != nil {
+		return x.KeyEnvelopeSuite
+	}
+	return KeyEnvelopeSuite_KEY_ENVELOPE_SUITE_UNSPECIFIED
+}
+
+// PayloadCrypto carries per-payload encryption metadata. It intentionally has
+// no key envelopes; recipient grants live in SessionKeyGrant.
+type PayloadCrypto struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Config        *Config                `protobuf:"bytes,1,opt,name=config,proto3" json:"config,omitempty"`
+	PayloadSuite  PayloadCipherSuite     `protobuf:"varint,1,opt,name=payload_suite,json=payloadSuite,proto3,enum=PayloadCipherSuite" json:"payload_suite,omitempty"`
+	PayloadKeyId  []byte                 `protobuf:"bytes,2,opt,name=payload_key_id,json=payloadKeyId,proto3" json:"payload_key_id,omitempty"`
+	Nonce         []byte                 `protobuf:"bytes,3,opt,name=nonce,proto3" json:"nonce,omitempty"`
+	AadContext    []byte                 `protobuf:"bytes,4,opt,name=aad_context,json=aadContext,proto3" json:"aad_context,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
+func (x *PayloadCrypto) Reset() {
+	*x = PayloadCrypto{}
+	mi := &file_pb_webtty_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PayloadCrypto) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PayloadCrypto) ProtoMessage() {}
+
+func (x *PayloadCrypto) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_webtty_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PayloadCrypto.ProtoReflect.Descriptor instead.
+func (*PayloadCrypto) Descriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *PayloadCrypto) GetPayloadSuite() PayloadCipherSuite {
+	if x != nil {
+		return x.PayloadSuite
+	}
+	return PayloadCipherSuite_PAYLOAD_CIPHER_SUITE_UNSPECIFIED
+}
+
+func (x *PayloadCrypto) GetPayloadKeyId() []byte {
+	if x != nil {
+		return x.PayloadKeyId
+	}
+	return nil
+}
+
+func (x *PayloadCrypto) GetNonce() []byte {
+	if x != nil {
+		return x.Nonce
+	}
+	return nil
+}
+
+func (x *PayloadCrypto) GetAadContext() []byte {
+	if x != nil {
+		return x.AadContext
+	}
+	return nil
+}
+
+// ClientProof signs the canonical client transcript for Open and Attach. The
+// credential field can carry a workspace or control-plane assertion when the
+// public signing key alone is not sufficient to authorize the endpoint.
+type ClientProof struct {
+	state            protoimpl.MessageState  `protogen:"open.v1"`
+	PrincipalId      *wrapperspb.StringValue `protobuf:"bytes,1,opt,name=principal_id,json=principalId,proto3" json:"principal_id,omitempty"`
+	SigningKeyId     []byte                  `protobuf:"bytes,2,opt,name=signing_key_id,json=signingKeyId,proto3" json:"signing_key_id,omitempty"`
+	SigningPublicKey []byte                  `protobuf:"bytes,3,opt,name=signing_public_key,json=signingPublicKey,proto3" json:"signing_public_key,omitempty"`
+	SignatureSuite   SignatureSuite          `protobuf:"varint,4,opt,name=signature_suite,json=signatureSuite,proto3,enum=SignatureSuite" json:"signature_suite,omitempty"`
+	TranscriptHash   []byte                  `protobuf:"bytes,5,opt,name=transcript_hash,json=transcriptHash,proto3" json:"transcript_hash,omitempty"`
+	Signature        []byte                  `protobuf:"bytes,6,opt,name=signature,proto3" json:"signature,omitempty"`
+	IssuedAt         string                  `protobuf:"bytes,7,opt,name=issued_at,json=issuedAt,proto3" json:"issued_at,omitempty"`
+	ExpiresAt        string                  `protobuf:"bytes,8,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	DeviceId         *wrapperspb.StringValue `protobuf:"bytes,9,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	BrowserId        *wrapperspb.StringValue `protobuf:"bytes,10,opt,name=browser_id,json=browserId,proto3" json:"browser_id,omitempty"`
+	Credential       *wrapperspb.BytesValue  `protobuf:"bytes,11,opt,name=credential,proto3" json:"credential,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ClientProof) Reset() {
+	*x = ClientProof{}
+	mi := &file_pb_webtty_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientProof) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientProof) ProtoMessage() {}
+
+func (x *ClientProof) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_webtty_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientProof.ProtoReflect.Descriptor instead.
+func (*ClientProof) Descriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ClientProof) GetPrincipalId() *wrapperspb.StringValue {
+	if x != nil {
+		return x.PrincipalId
+	}
+	return nil
+}
+
+func (x *ClientProof) GetSigningKeyId() []byte {
+	if x != nil {
+		return x.SigningKeyId
+	}
+	return nil
+}
+
+func (x *ClientProof) GetSigningPublicKey() []byte {
+	if x != nil {
+		return x.SigningPublicKey
+	}
+	return nil
+}
+
+func (x *ClientProof) GetSignatureSuite() SignatureSuite {
+	if x != nil {
+		return x.SignatureSuite
+	}
+	return SignatureSuite_SIGNATURE_SUITE_UNSPECIFIED
+}
+
+func (x *ClientProof) GetTranscriptHash() []byte {
+	if x != nil {
+		return x.TranscriptHash
+	}
+	return nil
+}
+
+func (x *ClientProof) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
+func (x *ClientProof) GetIssuedAt() string {
+	if x != nil {
+		return x.IssuedAt
+	}
+	return ""
+}
+
+func (x *ClientProof) GetExpiresAt() string {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return ""
+}
+
+func (x *ClientProof) GetDeviceId() *wrapperspb.StringValue {
+	if x != nil {
+		return x.DeviceId
+	}
+	return nil
+}
+
+func (x *ClientProof) GetBrowserId() *wrapperspb.StringValue {
+	if x != nil {
+		return x.BrowserId
+	}
+	return nil
+}
+
+func (x *ClientProof) GetCredential() *wrapperspb.BytesValue {
+	if x != nil {
+		return x.Credential
+	}
+	return nil
+}
+
+type ProtocolError struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          ProtocolErrorCode      `protobuf:"varint,1,opt,name=code,proto3,enum=ProtocolErrorCode" json:"code,omitempty"`
+	Msg           string                 `protobuf:"bytes,2,opt,name=msg,proto3" json:"msg,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProtocolError) Reset() {
+	*x = ProtocolError{}
+	mi := &file_pb_webtty_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProtocolError) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProtocolError) ProtoMessage() {}
+
+func (x *ProtocolError) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_webtty_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProtocolError.ProtoReflect.Descriptor instead.
+func (*ProtocolError) Descriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *ProtocolError) GetCode() ProtocolErrorCode {
+	if x != nil {
+		return x.Code
+	}
+	return ProtocolErrorCode_PROTOCOL_ERROR_CODE_UNSPECIFIED
+}
+
+func (x *ProtocolError) GetMsg() string {
+	if x != nil {
+		return x.Msg
+	}
+	return ""
+}
+
+type Open struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Config          *Config                `protobuf:"bytes,1,opt,name=config,proto3" json:"config,omitempty"`
+	Capabilities    []OpenCapability       `protobuf:"varint,2,rep,packed,name=capabilities,proto3,enum=OpenCapability" json:"capabilities,omitempty"`
+	SessionKeyGrant *SessionKeyGrant       `protobuf:"bytes,4,opt,name=session_key_grant,json=sessionKeyGrant,proto3" json:"session_key_grant,omitempty"`
+	ClientProof     *ClientProof           `protobuf:"bytes,5,opt,name=client_proof,json=clientProof,proto3" json:"client_proof,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
 func (x *Open) Reset() {
 	*x = Open{}
-	mi := &file_pb_webtty_proto_msgTypes[5]
+	mi := &file_pb_webtty_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -407,7 +1668,7 @@ func (x *Open) String() string {
 func (*Open) ProtoMessage() {}
 
 func (x *Open) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[5]
+	mi := &file_pb_webtty_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -420,12 +1681,144 @@ func (x *Open) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Open.ProtoReflect.Descriptor instead.
 func (*Open) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{5}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *Open) GetConfig() *Config {
 	if x != nil {
 		return x.Config
+	}
+	return nil
+}
+
+func (x *Open) GetCapabilities() []OpenCapability {
+	if x != nil {
+		return x.Capabilities
+	}
+	return nil
+}
+
+func (x *Open) GetSessionKeyGrant() *SessionKeyGrant {
+	if x != nil {
+		return x.SessionKeyGrant
+	}
+	return nil
+}
+
+func (x *Open) GetClientProof() *ClientProof {
+	if x != nil {
+		return x.ClientProof
+	}
+	return nil
+}
+
+// Attach joins an existing managed WebTTY session. The attach grant is an
+// opaque, short-lived authorization value issued by the HTTP control plane and
+// verified by the WebTTY data plane before terminal messages are accepted.
+type Attach struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	SessionId     string                  `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	ParticipantId string                  `protobuf:"bytes,2,opt,name=participant_id,json=participantId,proto3" json:"participant_id,omitempty"`
+	AttachGrant   []byte                  `protobuf:"bytes,3,opt,name=attach_grant,json=attachGrant,proto3" json:"attach_grant,omitempty"`
+	RequestedRole AttachRole              `protobuf:"varint,4,opt,name=requested_role,json=requestedRole,proto3,enum=AttachRole" json:"requested_role,omitempty"`
+	Transport     AttachTransport         `protobuf:"varint,5,opt,name=transport,proto3,enum=AttachTransport" json:"transport,omitempty"`
+	Capabilities  []AttachCapability      `protobuf:"varint,6,rep,packed,name=capabilities,proto3,enum=AttachCapability" json:"capabilities,omitempty"`
+	DeviceId      *wrapperspb.StringValue `protobuf:"bytes,7,opt,name=device_id,json=deviceId,proto3" json:"device_id,omitempty"`
+	BrowserId     *wrapperspb.StringValue `protobuf:"bytes,8,opt,name=browser_id,json=browserId,proto3" json:"browser_id,omitempty"`
+	ClientProof   *ClientProof            `protobuf:"bytes,9,opt,name=client_proof,json=clientProof,proto3" json:"client_proof,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Attach) Reset() {
+	*x = Attach{}
+	mi := &file_pb_webtty_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Attach) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Attach) ProtoMessage() {}
+
+func (x *Attach) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_webtty_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Attach.ProtoReflect.Descriptor instead.
+func (*Attach) Descriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *Attach) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *Attach) GetParticipantId() string {
+	if x != nil {
+		return x.ParticipantId
+	}
+	return ""
+}
+
+func (x *Attach) GetAttachGrant() []byte {
+	if x != nil {
+		return x.AttachGrant
+	}
+	return nil
+}
+
+func (x *Attach) GetRequestedRole() AttachRole {
+	if x != nil {
+		return x.RequestedRole
+	}
+	return AttachRole_ATTACH_ROLE_UNSPECIFIED
+}
+
+func (x *Attach) GetTransport() AttachTransport {
+	if x != nil {
+		return x.Transport
+	}
+	return AttachTransport_ATTACH_TRANSPORT_UNSPECIFIED
+}
+
+func (x *Attach) GetCapabilities() []AttachCapability {
+	if x != nil {
+		return x.Capabilities
+	}
+	return nil
+}
+
+func (x *Attach) GetDeviceId() *wrapperspb.StringValue {
+	if x != nil {
+		return x.DeviceId
+	}
+	return nil
+}
+
+func (x *Attach) GetBrowserId() *wrapperspb.StringValue {
+	if x != nil {
+		return x.BrowserId
+	}
+	return nil
+}
+
+func (x *Attach) GetClientProof() *ClientProof {
+	if x != nil {
+		return x.ClientProof
 	}
 	return nil
 }
@@ -438,7 +1831,7 @@ type Ack struct {
 
 func (x *Ack) Reset() {
 	*x = Ack{}
-	mi := &file_pb_webtty_proto_msgTypes[6]
+	mi := &file_pb_webtty_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -450,7 +1843,7 @@ func (x *Ack) String() string {
 func (*Ack) ProtoMessage() {}
 
 func (x *Ack) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[6]
+	mi := &file_pb_webtty_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -463,7 +1856,7 @@ func (x *Ack) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Ack.ProtoReflect.Descriptor instead.
 func (*Ack) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{6}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{16}
 }
 
 type Error struct {
@@ -475,7 +1868,7 @@ type Error struct {
 
 func (x *Error) Reset() {
 	*x = Error{}
-	mi := &file_pb_webtty_proto_msgTypes[7]
+	mi := &file_pb_webtty_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -487,7 +1880,7 @@ func (x *Error) String() string {
 func (*Error) ProtoMessage() {}
 
 func (x *Error) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[7]
+	mi := &file_pb_webtty_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -500,7 +1893,7 @@ func (x *Error) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Error.ProtoReflect.Descriptor instead.
 func (*Error) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{7}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *Error) GetMsg() string {
@@ -519,7 +1912,7 @@ type Close struct {
 
 func (x *Close) Reset() {
 	*x = Close{}
-	mi := &file_pb_webtty_proto_msgTypes[8]
+	mi := &file_pb_webtty_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -531,7 +1924,7 @@ func (x *Close) String() string {
 func (*Close) ProtoMessage() {}
 
 func (x *Close) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[8]
+	mi := &file_pb_webtty_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -544,7 +1937,7 @@ func (x *Close) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Close.ProtoReflect.Descriptor instead.
 func (*Close) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{8}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Close) GetReturnCode() int32 {
@@ -562,7 +1955,7 @@ type EndOfStream struct {
 
 func (x *EndOfStream) Reset() {
 	*x = EndOfStream{}
-	mi := &file_pb_webtty_proto_msgTypes[9]
+	mi := &file_pb_webtty_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -574,7 +1967,7 @@ func (x *EndOfStream) String() string {
 func (*EndOfStream) ProtoMessage() {}
 
 func (x *EndOfStream) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[9]
+	mi := &file_pb_webtty_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -587,7 +1980,67 @@ func (x *EndOfStream) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EndOfStream.ProtoReflect.Descriptor instead.
 func (*EndOfStream) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{9}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{19}
+}
+
+type EncryptedPayload struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Ciphertext      []byte                 `protobuf:"bytes,1,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
+	PlaintextLength uint32                 `protobuf:"varint,2,opt,name=plaintext_length,json=plaintextLength,proto3" json:"plaintext_length,omitempty"`
+	PayloadCrypto   *PayloadCrypto         `protobuf:"bytes,4,opt,name=payload_crypto,json=payloadCrypto,proto3" json:"payload_crypto,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *EncryptedPayload) Reset() {
+	*x = EncryptedPayload{}
+	mi := &file_pb_webtty_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EncryptedPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EncryptedPayload) ProtoMessage() {}
+
+func (x *EncryptedPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_webtty_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EncryptedPayload.ProtoReflect.Descriptor instead.
+func (*EncryptedPayload) Descriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *EncryptedPayload) GetCiphertext() []byte {
+	if x != nil {
+		return x.Ciphertext
+	}
+	return nil
+}
+
+func (x *EncryptedPayload) GetPlaintextLength() uint32 {
+	if x != nil {
+		return x.PlaintextLength
+	}
+	return 0
+}
+
+func (x *EncryptedPayload) GetPayloadCrypto() *PayloadCrypto {
+	if x != nil {
+		return x.PayloadCrypto
+	}
+	return nil
 }
 
 type Data struct {
@@ -597,6 +2050,7 @@ type Data struct {
 	//
 	//	*Data_Data
 	//	*Data_Eos
+	//	*Data_EncryptedData
 	Payload       isData_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -604,7 +2058,7 @@ type Data struct {
 
 func (x *Data) Reset() {
 	*x = Data{}
-	mi := &file_pb_webtty_proto_msgTypes[10]
+	mi := &file_pb_webtty_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -616,7 +2070,7 @@ func (x *Data) String() string {
 func (*Data) ProtoMessage() {}
 
 func (x *Data) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[10]
+	mi := &file_pb_webtty_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -629,7 +2083,7 @@ func (x *Data) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Data.ProtoReflect.Descriptor instead.
 func (*Data) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{10}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *Data) GetType() Data_Type {
@@ -664,6 +2118,15 @@ func (x *Data) GetEos() *EndOfStream {
 	return nil
 }
 
+func (x *Data) GetEncryptedData() *EncryptedPayload {
+	if x != nil {
+		if x, ok := x.Payload.(*Data_EncryptedData); ok {
+			return x.EncryptedData
+		}
+	}
+	return nil
+}
+
 type isData_Payload interface {
 	isData_Payload()
 }
@@ -676,9 +2139,15 @@ type Data_Eos struct {
 	Eos *EndOfStream `protobuf:"bytes,3,opt,name=eos,proto3,oneof"`
 }
 
+type Data_EncryptedData struct {
+	EncryptedData *EncryptedPayload `protobuf:"bytes,4,opt,name=encrypted_data,json=encryptedData,proto3,oneof"`
+}
+
 func (*Data_Data) isData_Payload() {}
 
 func (*Data_Eos) isData_Payload() {}
+
+func (*Data_EncryptedData) isData_Payload() {}
 
 type TerminalSize struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -692,7 +2161,7 @@ type TerminalSize struct {
 
 func (x *TerminalSize) Reset() {
 	*x = TerminalSize{}
-	mi := &file_pb_webtty_proto_msgTypes[11]
+	mi := &file_pb_webtty_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -704,7 +2173,7 @@ func (x *TerminalSize) String() string {
 func (*TerminalSize) ProtoMessage() {}
 
 func (x *TerminalSize) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[11]
+	mi := &file_pb_webtty_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -717,7 +2186,7 @@ func (x *TerminalSize) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TerminalSize.ProtoReflect.Descriptor instead.
 func (*TerminalSize) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{11}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *TerminalSize) GetRow() uint32 {
@@ -760,7 +2229,7 @@ type Parameter struct {
 
 func (x *Parameter) Reset() {
 	*x = Parameter{}
-	mi := &file_pb_webtty_proto_msgTypes[12]
+	mi := &file_pb_webtty_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -772,7 +2241,7 @@ func (x *Parameter) String() string {
 func (*Parameter) ProtoMessage() {}
 
 func (x *Parameter) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[12]
+	mi := &file_pb_webtty_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -785,7 +2254,7 @@ func (x *Parameter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Parameter.ProtoReflect.Descriptor instead.
 func (*Parameter) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{12}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *Parameter) GetParameter() isParameter_Parameter {
@@ -822,7 +2291,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_pb_webtty_proto_msgTypes[13]
+	mi := &file_pb_webtty_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -834,7 +2303,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[13]
+	mi := &file_pb_webtty_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -847,7 +2316,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{13}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{24}
 }
 
 type Message struct {
@@ -861,6 +2330,10 @@ type Message struct {
 	//	*Message_Data
 	//	*Message_Parameter
 	//	*Message_Heartbeat
+	//	*Message_Attach
+	//	*Message_ServerHello
+	//	*Message_ProtocolError
+	//	*Message_ClientHello
 	Payload       isMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -868,7 +2341,7 @@ type Message struct {
 
 func (x *Message) Reset() {
 	*x = Message{}
-	mi := &file_pb_webtty_proto_msgTypes[14]
+	mi := &file_pb_webtty_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -880,7 +2353,7 @@ func (x *Message) String() string {
 func (*Message) ProtoMessage() {}
 
 func (x *Message) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[14]
+	mi := &file_pb_webtty_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -893,7 +2366,7 @@ func (x *Message) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Message.ProtoReflect.Descriptor instead.
 func (*Message) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{14}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *Message) GetPayload() isMessage_Payload {
@@ -966,6 +2439,42 @@ func (x *Message) GetHeartbeat() *Heartbeat {
 	return nil
 }
 
+func (x *Message) GetAttach() *Attach {
+	if x != nil {
+		if x, ok := x.Payload.(*Message_Attach); ok {
+			return x.Attach
+		}
+	}
+	return nil
+}
+
+func (x *Message) GetServerHello() *ServerHello {
+	if x != nil {
+		if x, ok := x.Payload.(*Message_ServerHello); ok {
+			return x.ServerHello
+		}
+	}
+	return nil
+}
+
+func (x *Message) GetProtocolError() *ProtocolError {
+	if x != nil {
+		if x, ok := x.Payload.(*Message_ProtocolError); ok {
+			return x.ProtocolError
+		}
+	}
+	return nil
+}
+
+func (x *Message) GetClientHello() *ClientHello {
+	if x != nil {
+		if x, ok := x.Payload.(*Message_ClientHello); ok {
+			return x.ClientHello
+		}
+	}
+	return nil
+}
+
 type isMessage_Payload interface {
 	isMessage_Payload()
 }
@@ -998,6 +2507,22 @@ type Message_Heartbeat struct {
 	Heartbeat *Heartbeat `protobuf:"bytes,7,opt,name=heartbeat,proto3,oneof"`
 }
 
+type Message_Attach struct {
+	Attach *Attach `protobuf:"bytes,8,opt,name=attach,proto3,oneof"`
+}
+
+type Message_ServerHello struct {
+	ServerHello *ServerHello `protobuf:"bytes,9,opt,name=server_hello,json=serverHello,proto3,oneof"`
+}
+
+type Message_ProtocolError struct {
+	ProtocolError *ProtocolError `protobuf:"bytes,10,opt,name=protocol_error,json=protocolError,proto3,oneof"`
+}
+
+type Message_ClientHello struct {
+	ClientHello *ClientHello `protobuf:"bytes,11,opt,name=client_hello,json=clientHello,proto3,oneof"`
+}
+
 func (*Message_Open) isMessage_Payload() {}
 
 func (*Message_Ack) isMessage_Payload() {}
@@ -1012,11 +2537,19 @@ func (*Message_Parameter) isMessage_Payload() {}
 
 func (*Message_Heartbeat) isMessage_Payload() {}
 
+func (*Message_Attach) isMessage_Payload() {}
+
+func (*Message_ServerHello) isMessage_Payload() {}
+
+func (*Message_ProtocolError) isMessage_Payload() {}
+
+func (*Message_ClientHello) isMessage_Payload() {}
+
 var File_pb_webtty_proto protoreflect.FileDescriptor
 
 const file_pb_webtty_proto_rawDesc = "" +
 	"\n" +
-	"\x0fpb/webtty.proto\"u\n" +
+	"\x0fpb/webtty.proto\x1a\x1egoogle/protobuf/wrappers.proto\"u\n" +
 	"\aOptions\x12 \n" +
 	"\vinteractive\x18\x01 \x01(\bR\vinteractive\x12!\n" +
 	"\fallocate_tty\x18\x02 \x01(\bR\vallocateTty\x12%\n" +
@@ -1035,21 +2568,111 @@ const file_pb_webtty_proto_rawDesc = "" +
 	"\bcmd_args\x18\x02 \x03(\tR\acmdArgs\x12'\n" +
 	"\benv_vars\x18\x03 \x03(\v2\f.EnvironmentR\aenvVars\x12\"\n" +
 	"\aworkdir\x18\x04 \x01(\v2\b.WorkdirR\aworkdir\x12%\n" +
-	"\busername\x18\x05 \x01(\v2\t.UsernameR\busername\"'\n" +
+	"\busername\x18\x05 \x01(\v2\t.UsernameR\busername\"\x83\x01\n" +
+	"\vKeyEnvelope\x12(\n" +
+	"\x10recipient_key_id\x18\x01 \x01(\fR\x0erecipientKeyId\x12)\n" +
+	"\x10encapsulated_key\x18\x02 \x01(\fR\x0fencapsulatedKey\x12\x1f\n" +
+	"\vwrapped_key\x18\x03 \x01(\fR\n" +
+	"wrappedKey\"\xc1\x02\n" +
+	"\x10EndpointIdentity\x12$\n" +
+	"\x0esigning_key_id\x18\x01 \x01(\fR\fsigningKeyId\x12,\n" +
+	"\x12signing_public_key\x18\x02 \x01(\fR\x10signingPublicKey\x128\n" +
+	"\x0fsignature_suite\x18\x03 \x01(\x0e2\x0f.SignatureSuiteR\x0esignatureSuite\x12*\n" +
+	"\x11encryption_key_id\x18\x04 \x01(\fR\x0fencryptionKeyId\x122\n" +
+	"\x15encryption_public_key\x18\x05 \x01(\fR\x13encryptionPublicKey\x12?\n" +
+	"\x12key_envelope_suite\x18\x06 \x01(\x0e2\x11.KeyEnvelopeSuiteR\x10keyEnvelopeSuite\"\xb4\x01\n" +
+	"\vServerProof\x128\n" +
+	"\x0fsignature_suite\x18\x01 \x01(\x0e2\x0f.SignatureSuiteR\x0esignatureSuite\x12$\n" +
+	"\x0esigning_key_id\x18\x02 \x01(\fR\fsigningKeyId\x12'\n" +
+	"\x0ftranscript_hash\x18\x03 \x01(\fR\x0etranscriptHash\x12\x1c\n" +
+	"\tsignature\x18\x04 \x01(\fR\tsignature\"\xac\x05\n" +
+	"\vServerHello\x12;\n" +
+	"\x10protocol_version\x18\x01 \x01(\x0e2\x10.ProtocolVersionR\x0fprotocolVersion\x12#\n" +
+	"\rsession_nonce\x18\x02 \x01(\fR\fsessionNonce\x12:\n" +
+	"\x0fserver_identity\x18\x03 \x01(\v2\x11.EndpointIdentityR\x0eserverIdentity\x12:\n" +
+	"\x0epayload_suites\x18\x04 \x03(\x0e2\x13.PayloadCipherSuiteR\rpayloadSuites\x12A\n" +
+	"\x13key_envelope_suites\x18\x05 \x03(\x0e2\x11.KeyEnvelopeSuiteR\x11keyEnvelopeSuites\x12:\n" +
+	"\x10signature_suites\x18\x06 \x03(\x0e2\x0f.SignatureSuiteR\x0fsignatureSuites\x12;\n" +
+	"\x10auth_requirement\x18\a \x01(\x0e2\x10.AuthRequirementR\x0fauthRequirement\x12?\n" +
+	"\fworkspace_id\x18\b \x01(\v2\x1c.google.protobuf.StringValueR\vworkspaceId\x12;\n" +
+	"\n" +
+	"project_id\x18\t \x01(\v2\x1c.google.protobuf.StringValueR\tprojectId\x129\n" +
+	"\tserver_id\x18\n" +
+	" \x01(\v2\x1c.google.protobuf.StringValueR\bserverId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\v \x01(\tR\tsessionId\x12/\n" +
+	"\fserver_proof\x18\f \x01(\v2\f.ServerProofR\vserverProof\"J\n" +
+	"\vClientHello\x12;\n" +
+	"\x10protocol_version\x18\x01 \x01(\x0e2\x10.ProtocolVersionR\x0fprotocolVersion\"\x86\x02\n" +
+	"\x0fSessionKeyGrant\x128\n" +
+	"\rpayload_suite\x18\x01 \x01(\x0e2\x13.PayloadCipherSuiteR\fpayloadSuite\x12$\n" +
+	"\x0epayload_key_id\x18\x02 \x01(\fR\fpayloadKeyId\x121\n" +
+	"\rkey_envelopes\x18\x03 \x03(\v2\f.KeyEnvelopeR\fkeyEnvelopes\x12\x1f\n" +
+	"\vkey_context\x18\x04 \x01(\fR\n" +
+	"keyContext\x12?\n" +
+	"\x12key_envelope_suite\x18\x05 \x01(\x0e2\x11.KeyEnvelopeSuiteR\x10keyEnvelopeSuite\"\xa6\x01\n" +
+	"\rPayloadCrypto\x128\n" +
+	"\rpayload_suite\x18\x01 \x01(\x0e2\x13.PayloadCipherSuiteR\fpayloadSuite\x12$\n" +
+	"\x0epayload_key_id\x18\x02 \x01(\fR\fpayloadKeyId\x12\x14\n" +
+	"\x05nonce\x18\x03 \x01(\fR\x05nonce\x12\x1f\n" +
+	"\vaad_context\x18\x04 \x01(\fR\n" +
+	"aadContext\"\x94\x04\n" +
+	"\vClientProof\x12?\n" +
+	"\fprincipal_id\x18\x01 \x01(\v2\x1c.google.protobuf.StringValueR\vprincipalId\x12$\n" +
+	"\x0esigning_key_id\x18\x02 \x01(\fR\fsigningKeyId\x12,\n" +
+	"\x12signing_public_key\x18\x03 \x01(\fR\x10signingPublicKey\x128\n" +
+	"\x0fsignature_suite\x18\x04 \x01(\x0e2\x0f.SignatureSuiteR\x0esignatureSuite\x12'\n" +
+	"\x0ftranscript_hash\x18\x05 \x01(\fR\x0etranscriptHash\x12\x1c\n" +
+	"\tsignature\x18\x06 \x01(\fR\tsignature\x12\x1b\n" +
+	"\tissued_at\x18\a \x01(\tR\bissuedAt\x12\x1d\n" +
+	"\n" +
+	"expires_at\x18\b \x01(\tR\texpiresAt\x129\n" +
+	"\tdevice_id\x18\t \x01(\v2\x1c.google.protobuf.StringValueR\bdeviceId\x12;\n" +
+	"\n" +
+	"browser_id\x18\n" +
+	" \x01(\v2\x1c.google.protobuf.StringValueR\tbrowserId\x12;\n" +
+	"\n" +
+	"credential\x18\v \x01(\v2\x1b.google.protobuf.BytesValueR\n" +
+	"credential\"I\n" +
+	"\rProtocolError\x12&\n" +
+	"\x04code\x18\x01 \x01(\x0e2\x12.ProtocolErrorCodeR\x04code\x12\x10\n" +
+	"\x03msg\x18\x02 \x01(\tR\x03msg\"\xe1\x01\n" +
 	"\x04Open\x12\x1f\n" +
-	"\x06config\x18\x01 \x01(\v2\a.ConfigR\x06config\"\x05\n" +
+	"\x06config\x18\x01 \x01(\v2\a.ConfigR\x06config\x123\n" +
+	"\fcapabilities\x18\x02 \x03(\x0e2\x0f.OpenCapabilityR\fcapabilities\x12<\n" +
+	"\x11session_key_grant\x18\x04 \x01(\v2\x10.SessionKeyGrantR\x0fsessionKeyGrant\x12/\n" +
+	"\fclient_proof\x18\x05 \x01(\v2\f.ClientProofR\vclientProofJ\x04\b\x03\x10\x04R\x0esession_crypto\"\xb5\x03\n" +
+	"\x06Attach\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12%\n" +
+	"\x0eparticipant_id\x18\x02 \x01(\tR\rparticipantId\x12!\n" +
+	"\fattach_grant\x18\x03 \x01(\fR\vattachGrant\x122\n" +
+	"\x0erequested_role\x18\x04 \x01(\x0e2\v.AttachRoleR\rrequestedRole\x12.\n" +
+	"\ttransport\x18\x05 \x01(\x0e2\x10.AttachTransportR\ttransport\x125\n" +
+	"\fcapabilities\x18\x06 \x03(\x0e2\x11.AttachCapabilityR\fcapabilities\x129\n" +
+	"\tdevice_id\x18\a \x01(\v2\x1c.google.protobuf.StringValueR\bdeviceId\x12;\n" +
+	"\n" +
+	"browser_id\x18\b \x01(\v2\x1c.google.protobuf.StringValueR\tbrowserId\x12/\n" +
+	"\fclient_proof\x18\t \x01(\v2\f.ClientProofR\vclientProof\"\x05\n" +
 	"\x03Ack\"\x19\n" +
 	"\x05Error\x12\x10\n" +
 	"\x03msg\x18\x01 \x01(\tR\x03msg\"(\n" +
 	"\x05Close\x12\x1f\n" +
 	"\vreturn_code\x18\x01 \x01(\x05R\n" +
 	"returnCode\"\r\n" +
-	"\vEndOfStream\"\xa3\x01\n" +
+	"\vEndOfStream\"\xa2\x01\n" +
+	"\x10EncryptedPayload\x12\x1e\n" +
+	"\n" +
+	"ciphertext\x18\x01 \x01(\fR\n" +
+	"ciphertext\x12)\n" +
+	"\x10plaintext_length\x18\x02 \x01(\rR\x0fplaintextLength\x125\n" +
+	"\x0epayload_crypto\x18\x04 \x01(\v2\x0e.PayloadCryptoR\rpayloadCryptoJ\x04\b\x03\x10\x04R\x06crypto\"\xdf\x01\n" +
 	"\x04Data\x12\x1e\n" +
 	"\x04type\x18\x01 \x01(\x0e2\n" +
 	".Data.TypeR\x04type\x12\x14\n" +
 	"\x04data\x18\x02 \x01(\fH\x00R\x04data\x12 \n" +
-	"\x03eos\x18\x03 \x01(\v2\f.EndOfStreamH\x00R\x03eos\"8\n" +
+	"\x03eos\x18\x03 \x01(\v2\f.EndOfStreamH\x00R\x03eos\x12:\n" +
+	"\x0eencrypted_data\x18\x04 \x01(\v2\x11.EncryptedPayloadH\x00R\rencryptedData\"8\n" +
 	"\x04Type\x12\x0e\n" +
 	"\n" +
 	"TYPE_STDIN\x10\x00\x12\x0f\n" +
@@ -1064,7 +2687,7 @@ const file_pb_webtty_proto_rawDesc = "" +
 	"\tParameter\x124\n" +
 	"\rterminal_size\x18\x01 \x01(\v2\r.TerminalSizeH\x00R\fterminalSizeB\v\n" +
 	"\tparameter\"\v\n" +
-	"\tHeartbeat\"\x80\x02\n" +
+	"\tHeartbeat\"\xc2\x03\n" +
 	"\aMessage\x12\x1b\n" +
 	"\x04open\x18\x01 \x01(\v2\x05.OpenH\x00R\x04open\x12\x18\n" +
 	"\x03ack\x18\x02 \x01(\v2\x04.AckH\x00R\x03ack\x12\x1e\n" +
@@ -1074,8 +2697,67 @@ const file_pb_webtty_proto_rawDesc = "" +
 	"\tparameter\x18\x06 \x01(\v2\n" +
 	".ParameterH\x00R\tparameter\x12*\n" +
 	"\theartbeat\x18\a \x01(\v2\n" +
-	".HeartbeatH\x00R\theartbeatB\t\n" +
-	"\apayloadB\x06Z\x04./pbb\x06proto3"
+	".HeartbeatH\x00R\theartbeat\x12!\n" +
+	"\x06attach\x18\b \x01(\v2\a.AttachH\x00R\x06attach\x121\n" +
+	"\fserver_hello\x18\t \x01(\v2\f.ServerHelloH\x00R\vserverHello\x127\n" +
+	"\x0eprotocol_error\x18\n" +
+	" \x01(\v2\x0e.ProtocolErrorH\x00R\rprotocolError\x121\n" +
+	"\fclient_hello\x18\v \x01(\v2\f.ClientHelloH\x00R\vclientHelloB\t\n" +
+	"\apayload*|\n" +
+	"\x0eOpenCapability\x12\x1f\n" +
+	"\x1bOPEN_CAPABILITY_UNSPECIFIED\x10\x00\x12%\n" +
+	"!OPEN_CAPABILITY_ENCRYPTED_PAYLOAD\x10\x01\x12\"\n" +
+	"\x1eOPEN_CAPABILITY_SESSION_CRYPTO\x10\x02*\x8c\x01\n" +
+	"\x12PayloadCipherSuite\x12$\n" +
+	" PAYLOAD_CIPHER_SUITE_UNSPECIFIED\x10\x00\x12$\n" +
+	" PAYLOAD_CIPHER_SUITE_AES_256_GCM\x10\x01\x12*\n" +
+	"&PAYLOAD_CIPHER_SUITE_CHACHA20_POLY1305\x10\x02*\xb4\x01\n" +
+	"\x10KeyEnvelopeSuite\x12\"\n" +
+	"\x1eKEY_ENVELOPE_SUITE_UNSPECIFIED\x10\x00\x12:\n" +
+	"6KEY_ENVELOPE_SUITE_HPKE_X25519_HKDF_SHA256_AES_256_GCM\x10\x01\x12@\n" +
+	"<KEY_ENVELOPE_SUITE_HPKE_X25519_HKDF_SHA256_CHACHA20_POLY1305\x10\x02*R\n" +
+	"\x0fProtocolVersion\x12 \n" +
+	"\x1cPROTOCOL_VERSION_UNSPECIFIED\x10\x00\x12\x1d\n" +
+	"\x19PROTOCOL_VERSION_WEBTTY_1\x10\x01*X\n" +
+	"\x0eSignatureSuite\x12\x1f\n" +
+	"\x1bSIGNATURE_SUITE_UNSPECIFIED\x10\x00\x12%\n" +
+	"!SIGNATURE_SUITE_ECDSA_P256_SHA256\x10\x01*q\n" +
+	"\x0fAuthRequirement\x12 \n" +
+	"\x1cAUTH_REQUIREMENT_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15AUTH_REQUIREMENT_NONE\x10\x01\x12!\n" +
+	"\x1dAUTH_REQUIREMENT_CLIENT_PROOF\x10\x02*\xb4\x05\n" +
+	"\x11ProtocolErrorCode\x12#\n" +
+	"\x1fPROTOCOL_ERROR_CODE_UNSPECIFIED\x10\x00\x12&\n" +
+	"\"PROTOCOL_ERROR_CODE_UNKNOWN_SERVER\x10\x01\x12*\n" +
+	"&PROTOCOL_ERROR_CODE_SERVER_KEY_CHANGED\x10\x02\x12,\n" +
+	"(PROTOCOL_ERROR_CODE_SERVER_PROOF_INVALID\x10\x03\x12-\n" +
+	")PROTOCOL_ERROR_CODE_CLIENT_PROOF_REQUIRED\x10\x04\x12,\n" +
+	"(PROTOCOL_ERROR_CODE_CLIENT_PROOF_INVALID\x10\x05\x12+\n" +
+	"'PROTOCOL_ERROR_CODE_CLIENT_UNAUTHORIZED\x10\x06\x12&\n" +
+	"\"PROTOCOL_ERROR_CODE_CLIENT_REVOKED\x10\a\x12)\n" +
+	"%PROTOCOL_ERROR_CODE_CHALLENGE_EXPIRED\x10\b\x12*\n" +
+	"&PROTOCOL_ERROR_CODE_CHALLENGE_REPLAYED\x10\t\x12*\n" +
+	"&PROTOCOL_ERROR_CODE_DOWNGRADE_DETECTED\x10\n" +
+	"\x12)\n" +
+	"%PROTOCOL_ERROR_CODE_UNSUPPORTED_SUITE\x10\v\x120\n" +
+	",PROTOCOL_ERROR_CODE_WORKSPACE_TRUST_REQUIRED\x10\f\x122\n" +
+	".PROTOCOL_ERROR_CODE_WORKSPACE_DEVICE_UNTRUSTED\x10\r\x122\n" +
+	".PROTOCOL_ERROR_CODE_REGISTERED_SERVER_MISMATCH\x10\x0e*`\n" +
+	"\n" +
+	"AttachRole\x12\x1b\n" +
+	"\x17ATTACH_ROLE_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15ATTACH_ROLE_SPECTATOR\x10\x01\x12\x1a\n" +
+	"\x16ATTACH_ROLE_CONTROLLER\x10\x02*\x92\x01\n" +
+	"\x0fAttachTransport\x12 \n" +
+	"\x1cATTACH_TRANSPORT_UNSPECIFIED\x10\x00\x12\x1a\n" +
+	"\x16ATTACH_TRANSPORT_PLAIN\x10\x01\x12\x1e\n" +
+	"\x1aATTACH_TRANSPORT_WEBSOCKET\x10\x02\x12!\n" +
+	"\x1dATTACH_TRANSPORT_WEBTRANSPORT\x10\x03*\xa6\x01\n" +
+	"\x10AttachCapability\x12!\n" +
+	"\x1dATTACH_CAPABILITY_UNSPECIFIED\x10\x00\x12!\n" +
+	"\x1dATTACH_CAPABILITY_READ_STREAM\x10\x01\x12%\n" +
+	"!ATTACH_CAPABILITY_REQUEST_CONTROL\x10\x02\x12%\n" +
+	"!ATTACH_CAPABILITY_RECEIVE_CONTROL\x10\x03B\x06Z\x04./pbb\x06proto3"
 
 var (
 	file_pb_webtty_proto_rawDescOnce sync.Once
@@ -1089,47 +2771,109 @@ func file_pb_webtty_proto_rawDescGZIP() []byte {
 	return file_pb_webtty_proto_rawDescData
 }
 
-var file_pb_webtty_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_pb_webtty_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_pb_webtty_proto_enumTypes = make([]protoimpl.EnumInfo, 11)
+var file_pb_webtty_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_pb_webtty_proto_goTypes = []any{
-	(Data_Type)(0),       // 0: Data.Type
-	(*Options)(nil),      // 1: Options
-	(*Environment)(nil),  // 2: Environment
-	(*Username)(nil),     // 3: Username
-	(*Workdir)(nil),      // 4: Workdir
-	(*Config)(nil),       // 5: Config
-	(*Open)(nil),         // 6: Open
-	(*Ack)(nil),          // 7: Ack
-	(*Error)(nil),        // 8: Error
-	(*Close)(nil),        // 9: Close
-	(*EndOfStream)(nil),  // 10: EndOfStream
-	(*Data)(nil),         // 11: Data
-	(*TerminalSize)(nil), // 12: TerminalSize
-	(*Parameter)(nil),    // 13: Parameter
-	(*Heartbeat)(nil),    // 14: Heartbeat
-	(*Message)(nil),      // 15: Message
+	(OpenCapability)(0),            // 0: OpenCapability
+	(PayloadCipherSuite)(0),        // 1: PayloadCipherSuite
+	(KeyEnvelopeSuite)(0),          // 2: KeyEnvelopeSuite
+	(ProtocolVersion)(0),           // 3: ProtocolVersion
+	(SignatureSuite)(0),            // 4: SignatureSuite
+	(AuthRequirement)(0),           // 5: AuthRequirement
+	(ProtocolErrorCode)(0),         // 6: ProtocolErrorCode
+	(AttachRole)(0),                // 7: AttachRole
+	(AttachTransport)(0),           // 8: AttachTransport
+	(AttachCapability)(0),          // 9: AttachCapability
+	(Data_Type)(0),                 // 10: Data.Type
+	(*Options)(nil),                // 11: Options
+	(*Environment)(nil),            // 12: Environment
+	(*Username)(nil),               // 13: Username
+	(*Workdir)(nil),                // 14: Workdir
+	(*Config)(nil),                 // 15: Config
+	(*KeyEnvelope)(nil),            // 16: KeyEnvelope
+	(*EndpointIdentity)(nil),       // 17: EndpointIdentity
+	(*ServerProof)(nil),            // 18: ServerProof
+	(*ServerHello)(nil),            // 19: ServerHello
+	(*ClientHello)(nil),            // 20: ClientHello
+	(*SessionKeyGrant)(nil),        // 21: SessionKeyGrant
+	(*PayloadCrypto)(nil),          // 22: PayloadCrypto
+	(*ClientProof)(nil),            // 23: ClientProof
+	(*ProtocolError)(nil),          // 24: ProtocolError
+	(*Open)(nil),                   // 25: Open
+	(*Attach)(nil),                 // 26: Attach
+	(*Ack)(nil),                    // 27: Ack
+	(*Error)(nil),                  // 28: Error
+	(*Close)(nil),                  // 29: Close
+	(*EndOfStream)(nil),            // 30: EndOfStream
+	(*EncryptedPayload)(nil),       // 31: EncryptedPayload
+	(*Data)(nil),                   // 32: Data
+	(*TerminalSize)(nil),           // 33: TerminalSize
+	(*Parameter)(nil),              // 34: Parameter
+	(*Heartbeat)(nil),              // 35: Heartbeat
+	(*Message)(nil),                // 36: Message
+	(*wrapperspb.StringValue)(nil), // 37: google.protobuf.StringValue
+	(*wrapperspb.BytesValue)(nil),  // 38: google.protobuf.BytesValue
 }
 var file_pb_webtty_proto_depIdxs = []int32{
-	1,  // 0: Config.options:type_name -> Options
-	2,  // 1: Config.env_vars:type_name -> Environment
-	4,  // 2: Config.workdir:type_name -> Workdir
-	3,  // 3: Config.username:type_name -> Username
-	5,  // 4: Open.config:type_name -> Config
-	0,  // 5: Data.type:type_name -> Data.Type
-	10, // 6: Data.eos:type_name -> EndOfStream
-	12, // 7: Parameter.terminal_size:type_name -> TerminalSize
-	6,  // 8: Message.open:type_name -> Open
-	7,  // 9: Message.ack:type_name -> Ack
-	8,  // 10: Message.error:type_name -> Error
-	9,  // 11: Message.close:type_name -> Close
-	11, // 12: Message.data:type_name -> Data
-	13, // 13: Message.parameter:type_name -> Parameter
-	14, // 14: Message.heartbeat:type_name -> Heartbeat
-	15, // [15:15] is the sub-list for method output_type
-	15, // [15:15] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	11, // 0: Config.options:type_name -> Options
+	12, // 1: Config.env_vars:type_name -> Environment
+	14, // 2: Config.workdir:type_name -> Workdir
+	13, // 3: Config.username:type_name -> Username
+	4,  // 4: EndpointIdentity.signature_suite:type_name -> SignatureSuite
+	2,  // 5: EndpointIdentity.key_envelope_suite:type_name -> KeyEnvelopeSuite
+	4,  // 6: ServerProof.signature_suite:type_name -> SignatureSuite
+	3,  // 7: ServerHello.protocol_version:type_name -> ProtocolVersion
+	17, // 8: ServerHello.server_identity:type_name -> EndpointIdentity
+	1,  // 9: ServerHello.payload_suites:type_name -> PayloadCipherSuite
+	2,  // 10: ServerHello.key_envelope_suites:type_name -> KeyEnvelopeSuite
+	4,  // 11: ServerHello.signature_suites:type_name -> SignatureSuite
+	5,  // 12: ServerHello.auth_requirement:type_name -> AuthRequirement
+	37, // 13: ServerHello.workspace_id:type_name -> google.protobuf.StringValue
+	37, // 14: ServerHello.project_id:type_name -> google.protobuf.StringValue
+	37, // 15: ServerHello.server_id:type_name -> google.protobuf.StringValue
+	18, // 16: ServerHello.server_proof:type_name -> ServerProof
+	3,  // 17: ClientHello.protocol_version:type_name -> ProtocolVersion
+	1,  // 18: SessionKeyGrant.payload_suite:type_name -> PayloadCipherSuite
+	16, // 19: SessionKeyGrant.key_envelopes:type_name -> KeyEnvelope
+	2,  // 20: SessionKeyGrant.key_envelope_suite:type_name -> KeyEnvelopeSuite
+	1,  // 21: PayloadCrypto.payload_suite:type_name -> PayloadCipherSuite
+	37, // 22: ClientProof.principal_id:type_name -> google.protobuf.StringValue
+	4,  // 23: ClientProof.signature_suite:type_name -> SignatureSuite
+	37, // 24: ClientProof.device_id:type_name -> google.protobuf.StringValue
+	37, // 25: ClientProof.browser_id:type_name -> google.protobuf.StringValue
+	38, // 26: ClientProof.credential:type_name -> google.protobuf.BytesValue
+	6,  // 27: ProtocolError.code:type_name -> ProtocolErrorCode
+	15, // 28: Open.config:type_name -> Config
+	0,  // 29: Open.capabilities:type_name -> OpenCapability
+	21, // 30: Open.session_key_grant:type_name -> SessionKeyGrant
+	23, // 31: Open.client_proof:type_name -> ClientProof
+	7,  // 32: Attach.requested_role:type_name -> AttachRole
+	8,  // 33: Attach.transport:type_name -> AttachTransport
+	9,  // 34: Attach.capabilities:type_name -> AttachCapability
+	37, // 35: Attach.device_id:type_name -> google.protobuf.StringValue
+	37, // 36: Attach.browser_id:type_name -> google.protobuf.StringValue
+	23, // 37: Attach.client_proof:type_name -> ClientProof
+	22, // 38: EncryptedPayload.payload_crypto:type_name -> PayloadCrypto
+	10, // 39: Data.type:type_name -> Data.Type
+	30, // 40: Data.eos:type_name -> EndOfStream
+	31, // 41: Data.encrypted_data:type_name -> EncryptedPayload
+	33, // 42: Parameter.terminal_size:type_name -> TerminalSize
+	25, // 43: Message.open:type_name -> Open
+	27, // 44: Message.ack:type_name -> Ack
+	28, // 45: Message.error:type_name -> Error
+	29, // 46: Message.close:type_name -> Close
+	32, // 47: Message.data:type_name -> Data
+	34, // 48: Message.parameter:type_name -> Parameter
+	35, // 49: Message.heartbeat:type_name -> Heartbeat
+	26, // 50: Message.attach:type_name -> Attach
+	19, // 51: Message.server_hello:type_name -> ServerHello
+	24, // 52: Message.protocol_error:type_name -> ProtocolError
+	20, // 53: Message.client_hello:type_name -> ClientHello
+	54, // [54:54] is the sub-list for method output_type
+	54, // [54:54] is the sub-list for method input_type
+	54, // [54:54] is the sub-list for extension type_name
+	54, // [54:54] is the sub-list for extension extendee
+	0,  // [0:54] is the sub-list for field type_name
 }
 
 func init() { file_pb_webtty_proto_init() }
@@ -1141,14 +2885,15 @@ func file_pb_webtty_proto_init() {
 		(*Username_Name)(nil),
 		(*Username_Id)(nil),
 	}
-	file_pb_webtty_proto_msgTypes[10].OneofWrappers = []any{
+	file_pb_webtty_proto_msgTypes[21].OneofWrappers = []any{
 		(*Data_Data)(nil),
 		(*Data_Eos)(nil),
+		(*Data_EncryptedData)(nil),
 	}
-	file_pb_webtty_proto_msgTypes[12].OneofWrappers = []any{
+	file_pb_webtty_proto_msgTypes[23].OneofWrappers = []any{
 		(*Parameter_TerminalSize)(nil),
 	}
-	file_pb_webtty_proto_msgTypes[14].OneofWrappers = []any{
+	file_pb_webtty_proto_msgTypes[25].OneofWrappers = []any{
 		(*Message_Open)(nil),
 		(*Message_Ack)(nil),
 		(*Message_Error)(nil),
@@ -1156,14 +2901,18 @@ func file_pb_webtty_proto_init() {
 		(*Message_Data)(nil),
 		(*Message_Parameter)(nil),
 		(*Message_Heartbeat)(nil),
+		(*Message_Attach)(nil),
+		(*Message_ServerHello)(nil),
+		(*Message_ProtocolError)(nil),
+		(*Message_ClientHello)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pb_webtty_proto_rawDesc), len(file_pb_webtty_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   15,
+			NumEnums:      11,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

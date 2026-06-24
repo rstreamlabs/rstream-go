@@ -10,7 +10,7 @@ Typical setup (CLI):
 
 ```bash
 rstream login <token>
-rstream project use <project-endpoint> --default
+rstream project use <project-endpoint>
 ```
 
 ## Run

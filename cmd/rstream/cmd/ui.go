@@ -44,7 +44,7 @@ var uiCmd = &cobra.Command{
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
 		go store.run(ctx, client)
-		ui, err := newUIApp(ctx, cancel, client, store, uiConnectionInfo{
+		ui, err := newUIApp(ctx, cancel, client, store, runtime, uiConnectionInfo{
 			ContextName: runtime.Resolved.ContextName,
 			APIURL:      runtime.Resolved.APIURL,
 			Engine:      runtime.Resolved.Engine,

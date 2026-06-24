@@ -3,14 +3,18 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/webtty"
 )
 
 func TestMCPRemoteExposeArgsBuildsPublishedMCPForward(t *testing.T) {
@@ -79,6 +83,65 @@ func TestRemoteExposeShellScriptUsesSafeIDAndQuotedCommand(t *testing.T) {
 	script := remoteExposeShellScript(expose)
 	if !strings.Contains(script, "id='robot-rm--rf'") || !strings.Contains(script, "'/tmp/rstream cli'") || !strings.Contains(script, "printf '%s%s\\n' 'RSTREAM_REMOTE_EXPOSE_JSON_LINE=' \"$line\"") {
 		t.Fatalf("unexpected shell script: %s", script)
+	}
+}
+
+func TestMCPRemoteExposeWebTTYCommandUsesSharedTrustConfig(t *testing.T) {
+	clearRstreamTestEnv(t)
+	serverIdentity, err := webtty.GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity() error = %v", err)
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	path, err := webtty.DefaultKnownServerKeysPath()
+	if err != nil {
+		t.Fatalf("DefaultKnownServerKeysPath() error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+	doc := webtty.KnownServerKeysFile{
+		Version:     webtty.E2EIdentityFileVersion,
+		CryptoSuite: webtty.E2EKeyFileCryptoSuite,
+		KnownServers: []webtty.KnownServerKeyEntry{{
+			Name:             "robot-shell",
+			KeyID:            webtty.EncodeE2EKeyMaterial(serverIdentity.Encryption.KeyID),
+			PublicKey:        webtty.EncodeE2EKeyMaterial(serverIdentity.Encryption.PublicKey),
+			SigningKeyID:     webtty.EncodeE2EKeyMaterial(serverIdentity.Signing.KeyID),
+			SigningPublicKey: webtty.EncodeE2EKeyMaterial(serverIdentity.Signing.PublicKey),
+			ClientIdentity:   "operator-laptop",
+		}},
+	}
+	data, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	clientIdentity, err := writeTestWebTTYEndpointIdentity(t, "operator-laptop")
+	if err != nil {
+		t.Fatalf("writeTestWebTTYEndpointIdentity() error = %v", err)
+	}
+	cfg, err := mcpWebTTYCommandClientConfig(t.Context(), map[string]json.RawMessage{
+		"known_server": json.RawMessage(`"robot-shell"`),
+	}, "ws://127.0.0.1:6002", "/exec", []string{"sh", "-lc", "true"}, []string{"A=B"}, nil, nil)
+	if err != nil {
+		t.Fatalf("mcpWebTTYCommandClientConfig() error = %v", err)
+	}
+	if cfg.URL != "ws://127.0.0.1:6002/exec" || cfg.PayloadCrypto == nil || cfg.ExpectedServerIdentity == nil || cfg.EndpointIdentity == nil {
+		t.Fatalf("expected shared WebTTY trust config, got %#v", cfg)
+	}
+	if !bytes.Equal(cfg.ExpectedServerIdentity.SigningKeyID, serverIdentity.Signing.KeyID) {
+		t.Fatalf("selected wrong known server identity")
+	}
+	if !bytes.Equal(cfg.EndpointIdentity.Signing.KeyID, clientIdentity.Signing.KeyID) {
+		t.Fatalf("selected wrong client identity")
+	}
+	if len(cfg.EnvVars) != 1 || cfg.EnvVars[0] != "A=B" {
+		t.Fatalf("env was not forwarded: %#v", cfg.EnvVars)
 	}
 }
 

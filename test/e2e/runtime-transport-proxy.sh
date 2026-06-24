@@ -66,20 +66,20 @@ start_proxy() {
   local label=$1 mode=$2
   local log="$TMP_DIR/proxy-$label.log"
   case "$mode" in
-    http|socks5)
-      "$BIN/proxy/server" --mode "$mode" >"$log" 2>&1 &
-      ;;
-    masque)
-      if [ -z "$MASQUE_CERT" ] || [ -z "$MASQUE_KEY" ]; then
-        printf "ERROR MASQUE proxy case requires RSTREAM_RUNTIME_MASQUE_PROXY_CERT_FILE and RSTREAM_RUNTIME_MASQUE_PROXY_KEY_FILE\n" >&2
-        exit 2
-      fi
-      "$BIN/proxy/server" --mode masque --public-host "$MASQUE_HOST" --cert "$MASQUE_CERT" --key "$MASQUE_KEY" >"$log" 2>&1 &
-      ;;
-    *)
-      printf "ERROR unknown proxy mode: %s\n" "$mode" >&2
+  http | socks5)
+    "$BIN/proxy/server" --mode "$mode" >"$log" 2>&1 &
+    ;;
+  masque)
+    if [ -z "$MASQUE_CERT" ] || [ -z "$MASQUE_KEY" ]; then
+      printf "ERROR MASQUE proxy case requires RSTREAM_RUNTIME_MASQUE_PROXY_CERT_FILE and RSTREAM_RUNTIME_MASQUE_PROXY_KEY_FILE\n" >&2
       exit 2
-      ;;
+    fi
+    "$BIN/proxy/server" --mode masque --public-host "$MASQUE_HOST" --cert "$MASQUE_CERT" --key "$MASQUE_KEY" >"$log" 2>&1 &
+    ;;
+  *)
+    printf "ERROR unknown proxy mode: %s\n" "$mode" >&2
+    exit 2
+    ;;
   esac
   local pid=$!
   PIDS+=("$pid")

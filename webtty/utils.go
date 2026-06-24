@@ -44,6 +44,7 @@ func DefaultLabels() map[string]string {
 	labels := map[string]string{
 		webTTYApplicationProtocolKey: WebTTYApplicationProtocol,
 		webTTYCapabilitiesLabel:      WebTTYCapabilityExec,
+		webTTYExecutionModeLabel:     string(WebTTYExecutionModeSpawn),
 		webTTYExecPathLabel:          WebTTYDefaultExecPath,
 	}
 	set := func(k, v string) {
@@ -103,6 +104,14 @@ func webTTYMessageType(msg *pb.Message) string {
 		return "parameter"
 	case *pb.Message_Heartbeat:
 		return "heartbeat"
+	case *pb.Message_Attach:
+		return "attach"
+	case *pb.Message_ServerHello:
+		return "server_hello"
+	case *pb.Message_ProtocolError:
+		return "protocol_error"
+	case *pb.Message_ClientHello:
+		return "client_hello"
 	default:
 		return "unknown"
 	}

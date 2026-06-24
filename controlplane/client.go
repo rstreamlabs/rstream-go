@@ -82,9 +82,18 @@ func (c *Client) Whoami(ctx context.Context) (Whoami, error) {
 	return out, err
 }
 
-func (c *Client) ListWorkspaces(ctx context.Context) (ListWorkspacesResponse, error) {
+func (c *Client) ListWorkspaces(ctx context.Context, params ...ListWorkspacesParams) (ListWorkspacesResponse, error) {
 	var out ListWorkspacesResponse
-	_, err := c.doJSON(ctx, http.MethodGet, "/api/workspaces", nil, &out)
+	query := url.Values{}
+	if len(params) > 0 {
+		if params[0].Type != "" {
+			query.Set("type", params[0].Type)
+		}
+		if params[0].MembershipStatus != "" {
+			query.Set("membershipStatus", params[0].MembershipStatus)
+		}
+	}
+	_, err := c.doJSON(ctx, http.MethodGet, "/api/workspaces", query, &out)
 	return out, err
 }
 
@@ -200,6 +209,94 @@ func (c *Client) CreateToken(ctx context.Context, request CreateTokenRequest) (C
 	var out CreateTokenResponse
 	_, err := c.doJSONBody(ctx, http.MethodPost, "/api/tokens", nil, request, &out)
 	return out, err
+}
+
+func (c *Client) ListWebTTYServers(ctx context.Context, projectID string, params ListWebTTYServersParams) (ListWebTTYServersResponse, error) {
+	var out ListWebTTYServersResponse
+	query := url.Values{}
+	if params.Query != "" {
+		query.Set("q", params.Query)
+	}
+	if params.Status != "" {
+		query.Set("status", params.Status)
+	}
+	if params.Page != nil {
+		query.Set("page", strconv.Itoa(*params.Page))
+	}
+	if params.PageSize != nil {
+		query.Set("pageSize", strconv.Itoa(*params.PageSize))
+	}
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webtty/servers"
+	_, err := c.doJSON(ctx, http.MethodGet, path, query, &out)
+	return out, err
+}
+
+func (c *Client) CreateWebTTYServer(ctx context.Context, projectID string, request CreateWebTTYServerRequest) (CreateWebTTYServerResponse, error) {
+	var out CreateWebTTYServerResponse
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webtty/servers"
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
+	return out, err
+}
+
+func (c *Client) GetWebTTYServer(ctx context.Context, projectID string, serverID string) (WebTTYServer, error) {
+	var out WebTTYServer
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webtty/servers/" + url.PathEscape(serverID)
+	_, err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) UpdateWebTTYServer(ctx context.Context, projectID string, serverID string, request UpdateWebTTYServerRequest) (WebTTYServer, error) {
+	var out WebTTYServer
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webtty/servers/" + url.PathEscape(serverID)
+	_, err := c.doJSONBody(ctx, http.MethodPatch, path, nil, request, &out)
+	return out, err
+}
+
+func (c *Client) DeleteWebTTYServer(ctx context.Context, projectID string, serverID string) error {
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webtty/servers/" + url.PathEscape(serverID)
+	_, err := c.doJSON(ctx, http.MethodDelete, path, nil, nil)
+	return err
+}
+
+func (c *Client) EnrollWebTTYServer(ctx context.Context, projectID string, serverID string, request EnrollWebTTYServerRequest) (WebTTYServer, error) {
+	var out WebTTYServer
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webtty/servers/" + url.PathEscape(serverID) + "/enroll"
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
+	return out, err
+}
+
+func (c *Client) ApproveWebTTYServerWorkspaceTrust(ctx context.Context, projectID string, serverID string, request ApproveWebTTYServerWorkspaceTrustRequest) (WebTTYServer, error) {
+	var out WebTTYServer
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webtty/servers/" + url.PathEscape(serverID) + "/workspace-trust"
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
+	return out, err
+}
+
+func (c *Client) ResolveWebTTYServerClient(ctx context.Context, projectID string, serverID string, request ResolveWebTTYServerClientRequest) (ResolveWebTTYServerClientResponse, error) {
+	var out ResolveWebTTYServerClientResponse
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/webtty/servers/" + url.PathEscape(serverID) + "/client-resolution"
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
+	return out, err
+}
+
+func (c *Client) CreateWorkspaceDeviceKey(ctx context.Context, workspaceID string, request CreateWorkspaceDeviceKeyRequest) (CreateWorkspaceDeviceKeyResponse, error) {
+	var out CreateWorkspaceDeviceKeyResponse
+	path := "/api/workspaces/" + url.PathEscape(workspaceID) + "/enterprise/devices"
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
+	return out, err
+}
+
+func (c *Client) LookupWorkspaceDeviceKeys(ctx context.Context, workspaceID string, request LookupWorkspaceDeviceKeysRequest) (LookupWorkspaceDeviceKeysResponse, error) {
+	var out LookupWorkspaceDeviceKeysResponse
+	path := "/api/workspaces/" + url.PathEscape(workspaceID) + "/enterprise/devices/lookup"
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
+	return out, err
+}
+
+func (c *Client) RevokeWorkspaceDeviceKey(ctx context.Context, workspaceID string, deviceKeyID string, request RevokeWorkspaceDeviceKeyRequest) error {
+	path := "/api/workspaces/" + url.PathEscape(workspaceID) + "/enterprise/devices/" + url.PathEscape(deviceKeyID) + "/revoke"
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, nil)
+	return err
 }
 
 func (c *Client) GetProjectUsage(ctx context.Context, projectID string) (ProjectUsage, error) {
