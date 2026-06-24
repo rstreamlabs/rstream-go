@@ -21,12 +21,15 @@ type UserInfo struct {
 }
 
 func GetUserInfo(u *UsernameVariant) (*UserInfo, error) {
-	if u != nil && (u.Name != nil || u.UID != nil) {
-		return nil, fmt.Errorf("changing user is not supported on Windows")
-	}
 	name, err := currentWindowsUsername()
 	if err != nil {
 		return nil, fmt.Errorf("user lookup: %w", err)
+	}
+	if u != nil && u.UID != nil {
+		return nil, fmt.Errorf("Windows user lookup by numeric UID is not supported")
+	}
+	if u != nil && u.Name != nil && !windowsUsernameMatches(name, *u.Name) {
+		return nil, fmt.Errorf("changing user is not supported on Windows")
 	}
 	shell, err := DefaultShellWindows()
 	if err != nil {
@@ -44,6 +47,16 @@ func GetUserInfo(u *UsernameVariant) (*UserInfo, error) {
 		Home:  home,
 		Shell: shell,
 	}, nil
+}
+
+func windowsUsernameMatches(current string, requested string) bool {
+	current = strings.TrimSpace(current)
+	requested = strings.TrimSpace(requested)
+	if strings.EqualFold(current, requested) {
+		return true
+	}
+	parts := strings.Split(requested, `\`)
+	return len(parts) > 0 && strings.EqualFold(current, strings.TrimSpace(parts[len(parts)-1]))
 }
 
 var (

@@ -71,18 +71,18 @@ start_upstream() {
   local label=$1 mode=$2
   local log="$TMP_DIR/upstream-$label.log"
   case "$mode" in
-    tcp|http|udp)
-      "$PYTHON" "$ROOT/test/e2e/runtime_harness.py" serve "$mode" >"$log" 2>&1 &
-      ;;
-    tls)
-      "$PYTHON" "$ROOT/test/e2e/runtime_harness.py" serve tls \
-        --cert "$TMP_DIR/upstream.crt" \
-        --key "$TMP_DIR/upstream.key" >"$log" 2>&1 &
-      ;;
-    *)
-      printf "ERROR unknown upstream mode: %s\n" "$mode" >&2
-      exit 2
-      ;;
+  tcp | http | udp)
+    "$PYTHON" "$ROOT/test/e2e/runtime_harness.py" serve "$mode" >"$log" 2>&1 &
+    ;;
+  tls)
+    "$PYTHON" "$ROOT/test/e2e/runtime_harness.py" serve tls \
+      --cert "$TMP_DIR/upstream.crt" \
+      --key "$TMP_DIR/upstream.key" >"$log" 2>&1 &
+    ;;
+  *)
+    printf "ERROR unknown upstream mode: %s\n" "$mode" >&2
+    exit 2
+    ;;
   esac
   local pid=$!
   PIDS+=("$pid")

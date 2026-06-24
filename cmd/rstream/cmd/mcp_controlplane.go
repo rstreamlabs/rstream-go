@@ -148,7 +148,7 @@ func mcpAgentGuidance() map[string]any {
 		"engine_api_auth": map[string]any{
 			"bearer_endpoints":      []string{"/api/clients", "/api/tunnels", "/api/sse", "/api/websocket"},
 			"query_token_endpoints": []string{"/api/sse", "/api/websocket"},
-			"query_token_rules":     "Use rstream.token only for browser watch transports that cannot attach Authorization headers. The token must be a short-lived auth or app token with watch-only/list resources, not a personal token and not create/connect permissions.",
+			"query_token_rules":     "Use rstream.token only for browser watch transports that cannot attach Authorization headers. The token must be a short-lived auth or app token with explicit read-only watch permissions and list-only tunnel resources; do not include personal, create, connect, WebTTY session, or WebTTY log permissions.",
 			"query_token_not_for":   []string{"/api/clients", "/api/tunnels"},
 		},
 		"self_hosted_ce": "Self-hosted rstream Engine CE is a direct-engine runtime, not a Hosted project. It uses rstream/rstream-engine-ce, engine.host and *.t.<engine.host> DNS, static TLS certificates, locally signed JWT agent authentication, direct engine contexts or RSTREAM_ENGINE plus RSTREAM_AUTHENTICATION_TOKEN, Prometheus metrics, bytestream tunnels, published HTTP/TLS over the TCP/TLS listener, and private bytestream tunnels. Do not use Hosted workspaces, projects, billing, plan gates, rstream Auth, WebTTY, HTTP tunnel token auth, challenge mode, managed resource policies, Geo/IP or trusted-IP policies, managed logs, managed TURN, automatic certificates, QUIC, DTLS, or datagram tunnels as CE features. For CLI-created rstream forward tunnels, cleanup means stopping the owning process, and MCP-created resources use their returned MCP cleanup tool.",
@@ -686,6 +686,9 @@ func mcpTokenCreateErrorPayload(message string) map[string]any {
 		"tunnels.resources.read-only":   "list",
 		"tunnels.streams.create-delete": "connect",
 		"tunnels.tunnels.create-delete": "create",
+		"webtty.sessions.read-only":     "list",
+		"webtty.sessions.read-write":    "list,connect",
+		"webtty.logs.read-only":         "list",
 	}
 	payload["examples"] = map[string]string{
 		"connect_project_tunnels": `{"tunnels":{"projects":["PROJECT_ID"],"scopes":{"tunnels":{"connect":true}}}}`,

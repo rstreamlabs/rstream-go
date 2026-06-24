@@ -19,9 +19,10 @@ import (
 )
 
 const (
-	uiPageInventory = "inventory"
-	uiPageSession   = "session"
-	uiPageHelp      = "help"
+	uiPageInventory      = "inventory"
+	uiPageSession        = "session"
+	uiPageHelp           = "help"
+	uiPageIdentityPicker = "identity-picker"
 )
 
 var (
@@ -44,6 +45,7 @@ type uiApp struct {
 	cancel        context.CancelFunc
 	client        *rstream.Client
 	store         *uiStore
+	runtime       *resolvedRuntime
 	connection    uiConnectionInfo
 	app           *tview.Application
 	screen        tcell.Screen
@@ -87,7 +89,18 @@ type uiSessionHandle struct {
 	root     tview.Primitive
 }
 
-func newUIApp(ctx context.Context, cancel context.CancelFunc, client *rstream.Client, store *uiStore, connection uiConnectionInfo) (*uiApp, error) {
+type uiWebTTYSessionPlan struct {
+	config             *webtty.SessionConfig
+	rememberServerName string
+	rememberIdentity   string
+}
+
+type uiWebTTYIdentitySelection struct {
+	knownServerName string
+	identities      []map[string]any
+}
+
+func newUIApp(ctx context.Context, cancel context.CancelFunc, client *rstream.Client, store *uiStore, runtime *resolvedRuntime, connection uiConnectionInfo) (*uiApp, error) {
 	initUIBorders()
 	screen, err := tcell.NewScreen()
 	if err != nil {
@@ -98,6 +111,7 @@ func newUIApp(ctx context.Context, cancel context.CancelFunc, client *rstream.Cl
 		cancel:     cancel,
 		client:     client,
 		store:      store,
+		runtime:    runtime,
 		connection: connection,
 		app:        tview.NewApplication(),
 		screen:     screen,
@@ -430,7 +444,7 @@ func (u *uiApp) renderWebTTY() {
 	u.webttyRows = append([]webtty.ServerInfo(nil), u.snapshot.WebTTY...)
 	u.table.SetTitle(" WebTTY Servers ")
 	u.table.Clear()
-	addHeaderRow(u.table, []string{"TARGET", "STATUS", "HOSTNAME", "SYSTEM", "ARCH", "DOMAIN/HOST"})
+	addHeaderRow(u.table, []string{"TARGET", "STATUS", "SECURITY", "HOSTNAME", "SYSTEM", "DOMAIN/HOST"})
 	if len(u.webttyRows) == 0 {
 		addPlaceholderRow(u.table, "No WebTTY servers are currently available")
 		return
@@ -444,9 +458,9 @@ func (u *uiApp) renderWebTTY() {
 			[]string{
 				server.Target,
 				server.Status,
+				webTTYSecuritySummary(server),
 				webTTYValue(server.Hostname),
 				webTTYSystem(server),
-				webTTYValue(server.Arch),
 				webTTYValue(server.Host),
 			},
 			server.TunnelID,
@@ -539,6 +553,10 @@ func (u *uiApp) openSelectedWebTTY() {
 		u.setMessage("No WebTTY server selected")
 		return
 	}
+	u.openWebTTY(server, "", false)
+}
+
+func (u *uiApp) openWebTTY(server webtty.ServerInfo, selectedIdentity string, rememberIdentity bool) {
 	if strings.ToLower(strings.TrimSpace(server.Status)) != "online" {
 		u.setMessage(fmt.Sprintf("WebTTY server %s is not online", server.Target))
 		return
@@ -546,19 +564,30 @@ func (u *uiApp) openSelectedWebTTY() {
 	u.closeSession("")
 	sessionCtx, sessionCancel := context.WithCancel(u.ctx)
 	logger := slog.With("cmd", "ui", "component", "webtty")
-	sessionCfg := &webtty.SessionConfig{
-		URL:           server.RstreamURL,
-		DialContext:   newWebTTYClientDialContext(u.client),
-		Interactive:   true,
-		AllocateTTY:   true,
-		SendHeartbeat: true,
-		Logger:        logger,
+	sessionPlan, selection, err := u.webTTYSessionConfig(sessionCtx, server, logger, selectedIdentity, rememberIdentity)
+	if err != nil {
+		sessionCancel()
+		u.setMessage(fmt.Sprintf("Failed to configure %s: %v", server.Target, err))
+		return
 	}
-	session, err := webtty.OpenClientSession(sessionCtx, sessionCfg)
+	if selection != nil {
+		sessionCancel()
+		u.showWebTTYIdentityPicker(server, selection)
+		return
+	}
+	session, err := webtty.OpenClientSession(sessionCtx, sessionPlan.config)
 	if err != nil {
 		sessionCancel()
 		u.setMessage(fmt.Sprintf("Failed to connect to %s: %v", server.Target, err))
 		return
+	}
+	rememberMessage := ""
+	if strings.TrimSpace(sessionPlan.rememberServerName) != "" && strings.TrimSpace(sessionPlan.rememberIdentity) != "" {
+		if err := rememberWebTTYKnownServerClientIdentity(sessionPlan.rememberServerName, sessionPlan.rememberIdentity); err != nil {
+			rememberMessage = fmt.Sprintf("Connected. Could not remember identity: %v", err)
+		} else {
+			rememberMessage = fmt.Sprintf("Connected. Remembered identity %s for %s.", sessionPlan.rememberIdentity, sessionPlan.rememberServerName)
+		}
 	}
 	handle := &uiSessionHandle{
 		cancel:   sessionCancel,
@@ -576,7 +605,7 @@ func (u *uiApp) openSelectedWebTTY() {
 	handle.view = newUITerminalView(u.app, session, u.copyTerminalSelection)
 	handle.root = u.buildSessionPage(handle)
 	u.session = handle
-	u.state.Message = ""
+	u.state.Message = rememberMessage
 	u.sessionLeader = false
 	u.pages.AddAndSwitchToPage(uiPageSession, handle.root, true)
 	u.activePage = uiPageSession
@@ -604,6 +633,232 @@ func (u *uiApp) openSelectedWebTTY() {
 			u.closeSession(fmt.Sprintf("Session closed for %s", server.Target))
 		})
 	}()
+}
+
+func (u *uiApp) webTTYSessionConfig(ctx context.Context, server webtty.ServerInfo, logger *slog.Logger, selectedIdentity string, rememberIdentity bool) (*uiWebTTYSessionPlan, *uiWebTTYIdentitySelection, error) {
+	runtimeE2E, err := webTTYClientRuntimeE2EContextFromServerInfo(ctx, u.runtime, server)
+	if err != nil {
+		return nil, nil, err
+	}
+	scope := webTTYClientSecurityScopeFromServerInfo(server.Target, &server)
+	cryptoConfig, err := webTTYClientCryptoForRuntimeAndScope(ctx, runtimeE2E, scope)
+	if err != nil {
+		return nil, nil, err
+	}
+	endpointIdentity := cryptoConfig.EndpointIdentity
+	if cryptoConfig.ExpectedServerIdentity != nil && endpointIdentity == nil {
+		switch {
+		case strings.TrimSpace(cryptoConfig.ClientIdentityName) != "":
+			endpointIdentity, err = webTTYClientEndpointIdentityByName(cryptoConfig.ClientIdentityName)
+			if err != nil {
+				return nil, nil, err
+			}
+		case strings.TrimSpace(selectedIdentity) != "":
+			endpointIdentity, err = webTTYClientEndpointIdentityByName(selectedIdentity)
+			if err != nil {
+				return nil, nil, err
+			}
+		default:
+			identities, err := listLocalWebTTYIdentities()
+			if err != nil {
+				return nil, nil, err
+			}
+			knownServerName, err := webTTYKnownServerNameForScope(scope, cryptoConfig.ExpectedServerIdentity)
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, &uiWebTTYIdentitySelection{knownServerName: knownServerName, identities: identities}, nil
+		}
+	}
+	plan := &uiWebTTYSessionPlan{
+		config: &webtty.SessionConfig{
+			URL:                    server.RstreamURL,
+			DialContext:            newWebTTYClientDialContext(u.client),
+			Interactive:            true,
+			AllocateTTY:            true,
+			SendHeartbeat:          true,
+			PayloadCrypto:          cryptoConfig.PayloadCrypto,
+			EndpointIdentity:       endpointIdentity,
+			ClientCredential:       cryptoConfig.ClientCredential,
+			ExpectedServerIdentity: cryptoConfig.ExpectedServerIdentity,
+			Logger:                 logger,
+		},
+	}
+	if cryptoConfig.ExpectedServerIdentity != nil && strings.TrimSpace(selectedIdentity) != "" && rememberIdentity {
+		knownServerName, err := webTTYKnownServerNameForScope(scope, cryptoConfig.ExpectedServerIdentity)
+		if err != nil {
+			return nil, nil, err
+		}
+		if strings.TrimSpace(knownServerName) != "" {
+			plan.rememberServerName = knownServerName
+			plan.rememberIdentity = strings.TrimSpace(selectedIdentity)
+		}
+	}
+	return plan, nil, nil
+}
+
+func (u *uiApp) showWebTTYIdentityPicker(server webtty.ServerInfo, selection *uiWebTTYIdentitySelection) {
+	if selection == nil {
+		u.setMessage("No WebTTY identity selection is available")
+		return
+	}
+	list := tview.NewList().ShowSecondaryText(true)
+	actions := make([]func(), 0)
+	addAction := func(main string, secondary string, shortcut rune, action func()) {
+		actions = append(actions, action)
+		list.AddItem(main, secondary, shortcut, action)
+	}
+	list.SetBackgroundColor(uiColorPanel)
+	list.SetMainTextColor(uiColorText)
+	list.SetSecondaryTextColor(uiColorMuted)
+	list.SetSelectedTextColor(uiColorText)
+	list.SetSelectedBackgroundColor(uiColorSelection)
+	list.SetBorder(true).SetBorderColor(uiColorBorder).SetTitle(" WebTTY Identity ").SetTitleColor(uiColorText)
+	if len(selection.identities) == 0 {
+		name := webTTYIdentitySuggestion(server)
+		addAction(
+			"No local WebTTY identity",
+			fmt.Sprintf("Create one with: rstream webtty identity create --name %s", name),
+			0,
+			func() {
+				u.closeIdentityPicker()
+				u.setMessage(fmt.Sprintf("Create an identity first: rstream webtty identity create --name %s", name))
+			},
+		)
+	} else {
+		shortcut := '1'
+		for _, item := range selection.identities {
+			name := strings.TrimSpace(fmt.Sprint(item["name"]))
+			signing := strings.TrimSpace(fmt.Sprint(item["signing_key_id"]))
+			if name == "" {
+				continue
+			}
+			useShortcut := rune(0)
+			if shortcut <= '9' {
+				useShortcut = shortcut
+				shortcut++
+			}
+			useDetail := "Connect without changing local known-server state"
+			if signing != "" && signing != "<nil>" {
+				useDetail += " - signing " + signing
+			}
+			addAction("Use "+name+" once", useDetail, useShortcut, func(identity string) func() {
+				return func() {
+					u.closeIdentityPicker()
+					u.openWebTTY(server, identity, false)
+				}
+			}(name))
+			rememberShortcut := rune(0)
+			if shortcut <= '9' {
+				rememberShortcut = shortcut
+				shortcut++
+			}
+			rememberDetail := "Persist only after successful authentication"
+			if strings.TrimSpace(selection.knownServerName) != "" {
+				rememberDetail = "Persist for " + selection.knownServerName + " after successful authentication"
+			}
+			addAction("Use "+name+" and remember", rememberDetail, rememberShortcut, func(identity string) func() {
+				return func() {
+					u.closeIdentityPicker()
+					u.openWebTTY(server, identity, true)
+				}
+			}(name))
+		}
+	}
+	addAction("Cancel", "Return to the WebTTY server list", 'q', func() {
+		u.closeIdentityPicker()
+		u.setMessage("WebTTY connection cancelled")
+	})
+	list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyEnter:
+			runWebTTYIdentityPickerAction(list, actions)
+			return nil
+		case tcell.KeyEscape:
+			u.closeIdentityPicker()
+			u.setMessage("WebTTY connection cancelled")
+			return nil
+		}
+		if event.Key() == tcell.KeyRune && unicodeLower(event.Rune()) == 'q' {
+			u.closeIdentityPicker()
+			u.setMessage("WebTTY connection cancelled")
+			return nil
+		}
+		return event
+	})
+	list.SetSelectedFunc(func(int, string, string, rune) {
+		runWebTTYIdentityPickerAction(list, actions)
+	})
+	list.SetDoneFunc(func() {
+		u.closeIdentityPicker()
+	})
+	u.pages.AddAndSwitchToPage(uiPageIdentityPicker, uiCenteredPrimitive(list, 92, 18), true)
+	u.activePage = uiPageIdentityPicker
+	u.app.SetFocus(list)
+}
+
+func runWebTTYIdentityPickerAction(list *tview.List, actions []func()) {
+	current := list.GetCurrentItem()
+	if current >= 0 && current < len(actions) && actions[current] != nil {
+		actions[current]()
+	}
+}
+
+func (u *uiApp) closeIdentityPicker() {
+	u.pages.RemovePage(uiPageIdentityPicker)
+	u.activePage = uiPageInventory
+	u.pages.SwitchToPage(uiPageInventory)
+	u.app.SetFocus(u.table)
+}
+
+func webTTYIdentitySuggestion(server webtty.ServerInfo) string {
+	target := strings.TrimSpace(server.Target)
+	if target == "" && server.ServerID != nil {
+		target = strings.TrimSpace(*server.ServerID)
+	}
+	if target == "" {
+		target = "operator"
+	}
+	target = strings.ToLower(target)
+	replacer := strings.NewReplacer(" ", "-", "_", "-", ".", "-", ":", "-", "/", "-")
+	target = replacer.Replace(target)
+	target = strings.Trim(target, "-")
+	if target == "" {
+		return "operator"
+	}
+	return target + "-client"
+}
+
+func rememberWebTTYKnownServerClientIdentity(name string, identity string) error {
+	name = strings.TrimSpace(name)
+	identity = strings.TrimSpace(identity)
+	if name == "" {
+		return fmt.Errorf("known WebTTY server name is empty")
+	}
+	if identity == "" {
+		return fmt.Errorf("WebTTY client identity is empty")
+	}
+	if err := validateWebTTYServerID(name); err != nil {
+		return fmt.Errorf("known WebTTY server name contains unsupported characters")
+	}
+	if err := validateWebTTYServerID(identity); err != nil {
+		return fmt.Errorf("WebTTY client identity contains unsupported characters")
+	}
+	path, err := webtty.DefaultKnownServerKeysPath()
+	if err != nil {
+		return err
+	}
+	_, err = webtty.UpdateKnownServerKeysFile(path, func(doc *webtty.KnownServerKeysFile) error {
+		for i := range doc.KnownServers {
+			if doc.KnownServers[i].Name != name {
+				continue
+			}
+			doc.KnownServers[i].ClientIdentity = identity
+			return nil
+		}
+		return fmt.Errorf("known WebTTY server %q was not found", name)
+	})
+	return err
 }
 
 func (u *uiApp) closeSession(message string) {
@@ -700,6 +955,24 @@ func (u *uiApp) captureInput(event *tcell.EventKey) *tcell.EventKey {
 			if u.session != nil && u.session.view != nil {
 				u.session.view.SendKey(event)
 			}
+			return nil
+		}
+		return event
+	}
+	if u.activePage == uiPageIdentityPicker {
+		switch event.Key() {
+		case tcell.KeyEscape:
+			u.closeIdentityPicker()
+			u.setMessage("WebTTY connection cancelled")
+			return nil
+		case tcell.KeyCtrlC:
+			u.cancel()
+			u.app.Stop()
+			return nil
+		}
+		if event.Key() == tcell.KeyRune && unicodeLower(event.Rune()) == 'q' {
+			u.closeIdentityPicker()
+			u.setMessage("WebTTY connection cancelled")
 			return nil
 		}
 		return event
@@ -945,6 +1218,10 @@ func (u *uiApp) formatWebTTYDetail(server webtty.ServerInfo) string {
 		fmt.Sprintf("Tunnel name        %s", uiSafe(optionalValue(server.TunnelName))),
 		fmt.Sprintf("rstream URL        %s", uiSafe(server.RstreamURL)),
 		fmt.Sprintf("Published          %t", server.Publish),
+		fmt.Sprintf("Security           %s", uiSafe(webTTYSecuritySummary(server))),
+		fmt.Sprintf("Encryption policy  %s", uiSafe(emptyDash(trimOptionalString(server.EncryptionPolicy)))),
+		fmt.Sprintf("Client proof       %s", uiSafe(webTTYClientProofSummary(server))),
+		fmt.Sprintf("Host key           %s", uiSafe(emptyDash(trimOptionalString(server.HostKeyID)))),
 		fmt.Sprintf("Domain / host      %s", uiSafe(optionalValue(server.Host))),
 		fmt.Sprintf("Hostname           %s", uiSafe(optionalValue(server.Hostname))),
 		fmt.Sprintf("System             %s", uiSafe(webTTYSystem(server))),
@@ -958,6 +1235,9 @@ func formatSessionInfo(server webtty.ServerInfo) string {
 		fmt.Sprintf("Target             %s", uiSafe(server.Target)),
 		fmt.Sprintf("Status             %s", uiSafe(server.Status)),
 		fmt.Sprintf("rstream URL        %s", uiSafe(server.RstreamURL)),
+		fmt.Sprintf("Security           %s", uiSafe(webTTYSecuritySummary(server))),
+		fmt.Sprintf("Encryption policy  %s", uiSafe(emptyDash(trimOptionalString(server.EncryptionPolicy)))),
+		fmt.Sprintf("Client proof       %s", uiSafe(webTTYClientProofSummary(server))),
 		fmt.Sprintf("Domain / host      %s", uiSafe(optionalValue(server.Host))),
 		fmt.Sprintf("Hostname           %s", uiSafe(optionalValue(server.Hostname))),
 		fmt.Sprintf("System             %s", uiSafe(webTTYSystem(server))),
@@ -981,6 +1261,29 @@ func formatLabelBlock(labels map[string]string) string {
 		lines = append(lines, fmt.Sprintf("  %s=%s", uiSafe(key), uiSafe(labels[key])))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func webTTYSecuritySummary(server webtty.ServerInfo) string {
+	if server.E2E != nil && strings.EqualFold(strings.TrimSpace(*server.E2E), webtty.WebTTYE2ERequired) {
+		if server.ClientProof != nil && strings.EqualFold(strings.TrimSpace(*server.ClientProof), webtty.WebTTYClientProofRequired) {
+			return "E2E, client proof"
+		}
+		return "E2E"
+	}
+	if strings.TrimSpace(trimOptionalString(server.HostKeyID)) != "" {
+		return "E2E, client proof"
+	}
+	return "plain"
+}
+
+func webTTYClientProofSummary(server webtty.ServerInfo) string {
+	if server.ClientProof != nil && strings.EqualFold(strings.TrimSpace(*server.ClientProof), webtty.WebTTYClientProofRequired) {
+		return "required"
+	}
+	if strings.TrimSpace(trimOptionalString(server.HostKeyID)) != "" {
+		return "required"
+	}
+	return "not required"
 }
 
 func formatRawObject(value any) string {

@@ -84,8 +84,10 @@ func defaultCodexConfigPath() (string, error) {
 
 func codexRstreamMCPBlock(commandPath string) string {
 	env := map[string]string{}
-	if configPath := strings.TrimSpace(os.Getenv("RSTREAM_CONFIG")); configPath != "" {
-		env["RSTREAM_CONFIG"] = configPath
+	for _, name := range []string{"RSTREAM_API_URL", "RSTREAM_CONFIG", "RSTREAM_CONTEXT"} {
+		if value := strings.TrimSpace(os.Getenv(name)); value != "" {
+			env[name] = value
+		}
 	}
 	return codexRstreamMCPBlockWithEnv(commandPath, env)
 }

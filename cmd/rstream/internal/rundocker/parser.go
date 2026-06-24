@@ -375,6 +375,8 @@ func parseProtocol(val string) (rstream.Protocol, error) {
 		return rstream.ProtocolDTLS, nil
 	case string(rstream.ProtocolQUIC):
 		return rstream.ProtocolQUIC, nil
+	case string(rstream.ProtocolWebTTY):
+		return rstream.ProtocolWebTTY, nil
 	default:
 		return "", fmt.Errorf("invalid protocol %q", val)
 	}

@@ -189,14 +189,52 @@ rstream forward 22 --tls --no-publish --name ssh-tunnel
 Private tunnels require rstream clients to connect and are identified by name or ID rather than public URLs.
 
 ### WebTTY remote terminal
-Use `rstream webtty server --rstream` to expose a remote shell through rstream. In rstream mode, WebTTY defaults to a published HTTP/WebSocket tunnel with the standard WebTTY labels. Add `--no-publish` to create a private tunnel instead.
+Use `rstream webtty server -v --rstream` to expose a remote shell through rstream. In rstream mode, WebTTY defaults to a published HTTP/WebSocket tunnel with the standard WebTTY labels. Add `--no-publish` to create a private tunnel instead.
 
 ```bash
 # Start a published WebTTY server over rstream
-rstream webtty server --rstream --name shell
+rstream webtty server -v --rstream --name shell
 
 # Start a private WebTTY server over rstream
-rstream webtty server --rstream --name shell --no-publish
+rstream webtty server -v --rstream --name shell --no-publish
+
+# Create and enroll a registered WebTTY server on this machine
+rstream project use project-endpoint
+rstream webtty server create prod-shell --enroll
+
+# Start an enrolled registered WebTTY server over managed rstream WebTTY
+rstream webtty server -v --server-id server_id
+
+# If the server record is created from another machine, enroll on the runtime host
+rstream project use project-endpoint
+rstream webtty server create prod-shell
+rstream webtty server enroll server_id
+
+# Start a WebTTY daemon from an operator-managed runtime config
+rstream webtty server -v --webtty-config /etc/rstream/webtty/prod-shell.yaml
+
+# Start a local plain WebTTY server over TLS
+rstream webtty server -v --transport plain --allow-unauthenticated --tls-cert-file server.crt --tls-key-file server.key
+
+# Start a local WebTransport WebTTY server for a browser app
+rstream webtty server -v --transport webtransport --allow-unauthenticated --allowed-origin http://127.0.0.1:3000 --tls-cert-file server.crt --tls-key-file server.key
+
+# Create and show local WebTTY endpoint identities
+rstream webtty identity create --name dev-shell
+rstream webtty identity show --name dev-shell --endpoint-identity
+rstream webtty identity create --name client-laptop
+rstream webtty identity show --name client-laptop --endpoint-identity
+rstream webtty identity list
+
+# Authorize the client public endpoint identity on the server host
+rstream webtty authorized-client add client-laptop --identity dev-shell --key client_endpoint_identity
+rstream webtty authorized-client list --identity dev-shell
+
+# Start a local WebTTY server that requires E2E and client proof
+rstream webtty server -v --allow-unauthenticated --identity dev-shell
+
+# Start a server that requires an explicit OS login identity
+rstream webtty server -v --execution-mode login --login-user operator
 
 # Connect through a standard websocket endpoint
 rstream webtty client --url wss://example.rstream.io/ -- whoami
@@ -207,14 +245,37 @@ rstream webtty client --url rstrm://shell -- whoami
 # Execute a command with JSON output for agents and scripts
 rstream webtty exec --url rstrm://shell -- uname -a
 
+# Execute through a locally known E2E WebTTY server endpoint identity
+rstream webtty known-server add dev-shell --key server_endpoint_identity --client-identity client-laptop
+rstream webtty known-server list
+rstream webtty exec --url rstrm://dev-shell -- whoami
+rstream webtty exec --url ws://127.0.0.1:8080 --known-server dev-shell -- whoami
+
 # Expose a WebDAV filesystem sidecar rooted at $HOME
-rstream webtty server --rstream --name shell --fs-root "$HOME"
+rstream webtty server -v --rstream --name shell --fs-root "$HOME"
 
 # Read a file through the filesystem sidecar
 rstream webtty fs read --url rstrm://shell /README.md
 
 # List the available WebTTY servers
 rstream webtty list
+
+# Inspect managed WebTTY sessions and recorded events
+rstream webtty sessions list
+rstream webtty sessions show session_id
+rstream webtty sessions events session_id
+rstream webtty sessions export session_id --format text
+rstream webtty sessions export session_id --format json --file session-export.json
+rstream webtty sessions participants session_id
+rstream webtty sessions join session_id
+rstream webtty sessions join session_id --interactive --request-control
+rstream webtty sessions control-requests session_id
+
+# List workspaces, select a project, and enroll this CLI as a trusted device
+rstream workspace list
+rstream project use project-endpoint
+rstream workspace device enroll --label ops-cli
+rstream workspace device status
 
 # Use advertised exec_path and fs_path values even when they match the defaults
 
@@ -223,6 +284,7 @@ rstream codex setup
 
 # From Codex MCP, expose a service that is local to the remote WebTTY host
 # rstream_remote_expose webtty_url=rstrm://shell port=8765 protocol=http
+# For a direct authenticated-E2E WebTTY URL, also pass known_server=shell
 
 # From Codex MCP, expose and discover a remote MCP surface on that host
 # rstream_remote_expose webtty_url=rstrm://shell port=8765 mcp_path=/mcp labels=role=robot
@@ -239,7 +301,128 @@ rstream mcp publish --name codex-rstream-mcp --label role=codex
 rstream ui
 ```
 
-Published WebTTY tunnels can be reached either through their forwarding `wss://` address or through the native `rstrm://<tunnel-id-or-name>` form. Private WebTTY tunnels are reachable only through the native `rstrm://` form. WebTTY servers advertise capabilities and endpoint paths through labels: command execution uses `exec_path`, currently `/` by default, and the optional filesystem sidecar uses `fs_path`, currently `/fs` when `--fs-root` is set. Filesystem paths are relative to that configured root: if the server starts with `--fs-root "$HOME/project"`, read `compose.yaml` as `/compose.yaml`, not `/home/user/project/compose.yaml`. The sidecar rejects symlinks that resolve outside the configured root, but it is not a sandbox and still uses the WebTTY server process permissions.
+Login execution mode is passwordless. On Unix-like systems, switching to a
+different configured or client-requested OS user applies the target uid, primary
+gid, and supplementary groups, and requires the WebTTY server process to have
+the corresponding OS privileges. On Windows, run the server under the desired
+Windows account; password-based user switching is not supported.
+
+Published WebTTY tunnels can be reached either through their forwarding `wss://` address or through the native `rstrm://<tunnel-id-or-name>` form. Private WebTTY tunnels are reachable only through the native `rstrm://` form. WebTTY servers advertise capabilities, execution mode, and endpoint paths through labels: command execution uses `exec_path`, currently `/` by default, and the optional filesystem sidecar uses `fs_path`, currently `/fs` when `--fs-root` is set. Filesystem paths are relative to that configured root: if the server starts with `--fs-root "$HOME/project"`, read `compose.yaml` as `/compose.yaml`, not `/home/user/project/compose.yaml`. The sidecar rejects symlinks that resolve outside the configured root, but it is not a sandbox and still uses the WebTTY server process permissions. The filesystem sidecar is a separate WebDAV surface and is rejected when WebTTY E2E payload encryption is active.
+
+Tunnel WebTTY servers created with `rstream webtty server -v --rstream` use the
+HTTP/WebSocket tunnel path with standard WebTTY inventory labels. Registered
+WebTTY servers are normally created and enrolled on the runtime host with
+`rstream webtty server create <name> --enroll`. Split-machine setup creates the
+record first, then runs `rstream webtty server enroll <server-id>` on the
+runtime host. The generated local enrollment is stored under
+`~/.rstream/webtty/enrollments/<server-id>.yaml`, and publish managed
+`protocol=webtty` tunnels when started with `--server-id`. The enrollment stores
+the control-plane server ID, project ID, server public key fingerprint, local
+identity file path, and server encryption policy. Enrollment uses the local
+authenticated rstream context and is not the operator runtime config.
+
+Live managed attach is engine-coordinated: the participant and control request
+resources use the HTTP control API, then the terminal stream upgrades to WebTTY
+protobuf with an `Attach` handshake. Direct WebTTY servers accept only new
+`Open` sessions and reject managed attach handshakes with a clear protocol
+error. CLI live attach first checks the engine capability document and then
+resolves E2E decrypt material from trusted workspace devices or local WebTTY
+identity grants before opening the terminal stream.
+
+Use `--webtty-config` or `RSTREAM_WEBTTY_CONFIG` when a daemon should be
+configured from YAML instead of a long flag list. This runtime config is
+operator-managed and may contain `server.serverId`; when it does, the CLI loads
+the generated enrollment for that server ID before publishing managed WebTTY:
+
+```yaml
+version: 1
+server:
+  serverId: srv_prod_shell_01
+  transport: websocket
+  executionMode: login
+  loginUser: operator
+  labels:
+    env: production
+    role: bastion
+```
+
+CLI flags override values from `--webtty-config`, and `--server-id` implies
+rstream managed mode. `server.serverEnrollment` can be used in the runtime
+config only when the generated enrollment lives outside the default
+`~/.rstream/webtty/enrollments/<server-id>.yaml` path.
+
+WebTTY E2E keeps the protobuf session envelope visible while encrypting
+stdin/stdout/stderr payload bytes. Server identities are local host identities,
+stored by default under `~/.rstream/webtty/identities/*.identity.json` with file
+mode `0600`. Workspace keys are separate product keys and should live under the
+workspace key hierarchy, not in the WebTTY identity directory. Explicit server
+identity material, known server keys, or an enrolled server whose policy
+requires encryption imply protected mode. For `rstrm://...` targets, the client
+can resolve labels and local known-server entries before opening the session.
+Direct `ws://...` targets need direct server trust material. Use
+`--known-server <name>` to select a pinned server from the local trust store, or
+pass `--known-server-key` when automation owns the trust material directly.
+`--e2e` is only a fail-closed assertion when a command must refuse plaintext.
+
+Local WebTTY files use this layout:
+
+- `~/.rstream/webtty/identities/<name>.identity.json`
+- `~/.rstream/webtty/enrollments/<server-id>.yaml`
+- `~/.rstream/webtty/known_servers.json`
+- `~/.rstream/workspaces/<workspace-id>/devices/<device-id>.json`
+- operator-managed daemon configs such as `/etc/rstream/webtty/prod-shell.yaml`
+
+Identity, enrollment, known-server, and workspace-device files are created
+with `0600` permissions on POSIX systems and rejected at runtime if group or
+other users can read them.
+
+Environment overrides are available for container and CI deployments:
+`RSTREAM_WEBTTY_CONFIG`, `RSTREAM_WEBTTY_AUTH_TOKEN`,
+`RSTREAM_WEBTTY_IDENTITY`, `RSTREAM_WEBTTY_IDENTITY_FILE`,
+`RSTREAM_WEBTTY_AUTHORIZED_CLIENT_KEYS`, `RSTREAM_WEBTTY_KNOWN_SERVER_KEY`,
+and `RSTREAM_WEBTTY_KNOWN_SERVERS_FILE`.
+
+Server identity precedence is `RSTREAM_WEBTTY_IDENTITY` for an inline endpoint
+identity JSON document, then `--identity-file`, then `--identity`, then
+`RSTREAM_WEBTTY_IDENTITY_FILE`, then the registered server enrollment identity
+file, then the default
+`~/.rstream/webtty/identities/default.identity.json` for ad hoc servers started
+with `--e2e` and no explicit identity. E2E servers require authorized client
+signing keys from the default authorized-client store, `--authorized-client-key`,
+`RSTREAM_WEBTTY_AUTHORIZED_CLIENT_KEYS`, or an explicit authorized-clients file.
+
+Client identity precedence uses the same endpoint identity sources:
+`RSTREAM_WEBTTY_IDENTITY`, then `--identity-file`, then `--identity`, then
+`RSTREAM_WEBTTY_IDENTITY_FILE`, then the target-scoped `client_identity`
+stored in `~/.rstream/webtty/known_servers.json`. Authenticated E2E clients do
+not silently use the default identity. Client known server material comes from
+`--known-server`, repeated `--known-server-key`,
+`RSTREAM_WEBTTY_KNOWN_SERVER_KEY`, `--known-servers-file`, or
+`RSTREAM_WEBTTY_KNOWN_SERVERS_FILE`; the key value should normally be the
+endpoint identity printed by `rstream webtty identity show --endpoint-identity`.
+The default known-server store is target-scoped for resolved `rstrm://...`
+connections. Direct `ws://...` connections should pass `--known-server <name>`
+or explicit trust material when no resolved tunnel metadata is available.
+The two-field encryption-only form remains accepted by lower-level helpers for
+specialized encryption-only integrations, but it is not the recommended
+operator workflow. The default
+`~/.rstream/webtty/known_servers.json` is loaded when no explicit trusted
+server keys were provided, so E2E can be inferred without an extra client flag.
+
+Workspace-managed registered servers pin the public workspace keyset identity
+automatically during server enrollment when the runtime host is already a
+trusted workspace device. If local trust material changes later, refresh the
+pin with `rstream webtty server trust <server-id>`. That repair command lets
+the remote server verify workspace-managed client proofs without copying
+workspace private keys to the host.
+
+The implemented E2E helper suite is AES-256-GCM payload encryption with fresh
+96-bit nonces and HPKE Base
+`DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-256-GCM` key envelopes.
+Go WebTTY `tls://` plain transport and local WebTransport use TLS 1.3 minimum.
+
+See [docs/WEBTTY.md](docs/WEBTTY.md) for the complete WebTTY CLI, local file,
+runtime config, and E2E workflow reference.
 
 `rstream codex setup` preserves an explicit `RSTREAM_CONFIG` in the generated MCP server entry when one is set. `rstream mcp serve` exposes local rstream tools over MCP stdio for Codex and other local agent runtimes. The tool surface includes OAuth login start/poll tools, runtime preparation for a selected project, local context/status inspection, workspace and tunnel project discovery, project creation options, explicit project creation or checkout start, project plan inspection, project logs, usage, TURN usage, short-lived TURN credential minting, stable domain inspection and management, project settings, short-lived delegated auth token minting, managed local tunnels that can be listed and stopped across Codex sessions, WebTTY inventory, WebTTY command execution, WebDAV filesystem sidecar access, remote service exposure through WebTTY, and remote MCP surface discovery and invocation. `rstream mcp publish` serves the same local tools over Streamable HTTP at `/mcp` and publishes them through a token-protected HTTP tunnel.
 
@@ -248,6 +431,8 @@ Use rstream CLI 1.18.1 or later for the full Codex MCP workflow, including runti
 On a Codex workstation, `rstream_runtime_prepare` is the setup tool for managed local tunnels, WebTTY, remote exposure, and remote MCP. It uses the long-lived rstream login credential stored in the CLI config, creates or repairs the selected project context, and does not mint a short-lived delegated token. If several tunnel projects are available and the user has not named one, the agent should list the choices and ask instead of inferring from naming conventions alone or adding a preferred example. `rstream_token_create` is reserved for immediate handoff flows such as protected URLs, browser-constrained clients, or remote runtime startup commands.
 
 The remote exposure tools intentionally run `rstream forward` on the WebTTY host. That makes network access complete for agent workflows: Codex can execute commands, read or write the advertised filesystem root, and expose a remote-local HTTP, TCP, UDP, TLS, DTLS, or QUIC service through the same rstream project. The persistent remote runner currently expects a POSIX shell on the WebTTY host. When `mcp_path` is set, the created tunnel is labeled as an MCP surface so agents can discover it with `rstream_remote_mcp_discover` and call it through `rstream_remote_mcp_tools` and `rstream_remote_mcp_call`.
+
+For direct authenticated-E2E WebTTY URLs, pass `known_server=<name>` to `rstream_remote_expose` or `rstream_remote_expose_stop`. The MCP server then uses the same local known-server store as `rstream webtty exec`: it verifies the pinned server endpoint identity, loads the associated client identity, and does not call the Control plane for direct URLs. For `rstrm://...` targets, MCP resolves live WebTTY inventory first and only uses the Control plane when workspace-managed trust requires it.
 
 For private remote exposures, HTTP/1.x, HTTP/2, MCP, TCP, and TLS services are carried over a private bytestream tunnel, while UDP, HTTP/3, DTLS, and QUIC services are carried over a private datagram tunnel. Published exposures use the requested edge-facing protocol.
 
@@ -392,7 +577,7 @@ func main() {
 }
 ```
 
-### Manual client options (exception)
+### Explicit client options (exception)
 
 Use this only when bypassing config and environment resolution is required.
 

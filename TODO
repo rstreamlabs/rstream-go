@@ -5,3 +5,15 @@
 
 - Add an explicit WebTTY termination control message
   WebTTY already supports stdin EOF through stream closure, and transport/session close tears down the server-side process. A future protocol revision should add an intentional client-to-server termination message, optionally carrying a signal where the platform supports it, so SDKs can distinguish a deliberate process termination from a network failure without inferring intent from WebSocket close.
+
+- Keep WebTTY E2E crypto agility scoped and explicit
+  The protocol reserves ChaCha20-Poly1305 suite identifiers, but the current implementation intentionally supports only the AES-256-GCM payload suite and HPKE X25519 / HKDF-SHA256 / AES-256-GCM key envelopes. Do not enable ChaCha20-Poly1305 until all SDKs have audited implementations, shared test vectors, cross-SDK runtime coverage, and product documentation that explains suite negotiation and fail-closed behavior.
+
+- Keep the WebTTY cybersecurity audit current
+  The 2026-06-24 audit is stored outside the repository in the internal release reports. Update it before release when the WebTTY protocol, endpoint authentication, workspace-managed trust, recording encryption, log export, permissions, CLI/config/env surfaces, or cross-SDK runtime behavior change.
+
+- Keep cross-SDK WebTTY mutual-auth coverage synchronized
+  The Go WebTTY client/server enforce protocol-bound server authenticity, client authenticity, freshness, and downgrade resistance for E2E sessions. Keep the transcript format synchronized with the JS and C++ SDKs, and retain cross-SDK runtime tests for explicit-key and workspace-managed trust providers before declaring the protocol stable.
+
+- Design a secure WebTTY registered-server identity rotation workflow
+  A registered WebTTY server whose local identity is lost currently needs a new server record. That is intentional for now: a simple reset path would make server-id takeover too easy. A future workflow may add explicit owner/admin approval, old-key revocation, audit events, and engine-side admission checks so replacing a server identity stays secure and observable.

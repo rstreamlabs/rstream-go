@@ -201,6 +201,7 @@ func TestTransportDialProxyUsesCustomDNSTarget(t *testing.T) {
 }
 
 func TestTransportDialProxyAppliesForcedTargetIPFamily(t *testing.T) {
+	resolverAddr := startDNSResolutionTestServer(t, dnsAnswerAllA("127.0.0.1"))
 	httpProxy := newTestHTTPProxy(t, func(req *http.Request) {
 		if req.Host != "127.0.0.1:443" {
 			t.Fatalf("HTTP proxy target = %q, want IPv4 literal", req.Host)
@@ -209,9 +210,10 @@ func TestTransportDialProxyAppliesForcedTargetIPFamily(t *testing.T) {
 	defer httpProxy.close()
 	httpProxyURL := "http://" + httpProxy.addr
 	httpConn, err := (&Transport{
-		ForceIPv4: BoolPtr(true),
-		ProxyHTTP: StringPtr(httpProxyURL),
-	}).Dial(t.Context(), "localhost:443", nil)
+		DNSOverride: StringPtr(resolverAddr),
+		ForceIPv4:   BoolPtr(true),
+		ProxyHTTP:   StringPtr(httpProxyURL),
+	}).Dial(t.Context(), "engine.example.test:443", nil)
 	if err != nil {
 		t.Fatalf("Dial() through HTTP proxy with forced IPv4 error = %v", err)
 	}
@@ -229,9 +231,10 @@ func TestTransportDialProxyAppliesForcedTargetIPFamily(t *testing.T) {
 	defer socksProxy.close()
 	socksProxyURL := "socks5://" + socksProxy.addr
 	socksConn, err := (&Transport{
+		DNSOverride: StringPtr(resolverAddr),
 		ForceIPv4:   BoolPtr(true),
 		ProxySOCKS5: StringPtr(socksProxyURL),
-	}).Dial(t.Context(), "localhost:443", nil)
+	}).Dial(t.Context(), "engine.example.test:443", nil)
 	if err != nil {
 		t.Fatalf("Dial() through SOCKS5 proxy with forced IPv4 error = %v", err)
 	}

@@ -23,7 +23,7 @@ func SetupCredential(cmd *exec.Cmd, ui *UserInfo) error {
 		}
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Credential: &syscall.Credential{Uid: ui.UID, Gid: ui.GID},
+		Credential: &syscall.Credential{Uid: ui.UID, Gid: ui.GID, Groups: ui.Groups},
 	}
 	return nil
 }

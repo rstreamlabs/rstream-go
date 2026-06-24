@@ -367,23 +367,71 @@ func remoteExposeShellScript(expose remoteExposeArgs) string {
 }
 
 func runMCPWebTTYCommand(ctx context.Context, runtimeArgs map[string]json.RawMessage, rawURL string, execPath string, command []string, envVars []string, workdir *string, username *string) (*webTTYClientResult, error) {
-	urlValue, err := resolveWebTTYExecURL(rawURL, execPath)
+	cfg, err := mcpWebTTYCommandClientConfig(ctx, runtimeArgs, rawURL, execPath, command, envVars, workdir, username)
 	if err != nil {
 		return nil, err
 	}
-	cfg := &webtty.ClientConfig{URL: urlValue, Interactive: false, AllocateTTY: false, SendHeartbeat: true, EnvVars: envVars, Workdir: workdir, Username: username, CmdArgs: command}
-	if webttyClientUsesRstream(urlValue) {
-		runtime, err := resolveMCPRuntimeForArgs(ctx, runtimeArgs)
-		if err != nil {
-			return nil, err
-		}
-		client, err := newClientFromResolved(runtime.Resolved)
-		if err != nil {
-			return nil, err
-		}
-		cfg.DialContext = newWebTTYClientDialContext(client)
-	}
 	return runWebTTYClientCapture(ctx, cfg)
+}
+
+func mcpWebTTYCommandClientConfig(ctx context.Context, runtimeArgs map[string]json.RawMessage, rawURL string, execPath string, command []string, envVars []string, workdir *string, username *string) (*webtty.ClientConfig, error) {
+	args, err := mcpWebTTYCommandArgs(runtimeArgs, rawURL, execPath, envVars, workdir, username)
+	if err != nil {
+		return nil, err
+	}
+	return mcpWebTTYExecClientConfig(ctx, args, command)
+}
+
+func mcpWebTTYCommandArgs(runtimeArgs map[string]json.RawMessage, rawURL string, execPath string, envVars []string, workdir *string, username *string) (map[string]json.RawMessage, error) {
+	args := make(map[string]json.RawMessage, len(runtimeArgs)+5)
+	for key, value := range runtimeArgs {
+		args[key] = value
+	}
+	if err := mcpSetStringArg(args, "url", rawURL); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(execPath) != "" {
+		if err := mcpSetStringArg(args, "exec_path", execPath); err != nil {
+			return nil, err
+		}
+	} else {
+		delete(args, "exec_path")
+	}
+	if len(envVars) > 0 {
+		if err := mcpSetJSONArg(args, "env", envVars); err != nil {
+			return nil, err
+		}
+	} else {
+		delete(args, "env")
+	}
+	if workdir != nil {
+		if err := mcpSetStringArg(args, "workdir", *workdir); err != nil {
+			return nil, err
+		}
+	} else {
+		delete(args, "workdir")
+	}
+	if username != nil {
+		if err := mcpSetStringArg(args, "user", *username); err != nil {
+			return nil, err
+		}
+	} else {
+		delete(args, "user")
+	}
+	return args, nil
+}
+
+func mcpSetStringArg(args map[string]json.RawMessage, key string, value string) error {
+	return mcpSetJSONArg(args, key, value)
+}
+
+func mcpSetJSONArg(args map[string]json.RawMessage, key string, value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	args[key] = data
+	return nil
 }
 
 func parseRemoteExposeResult(expose remoteExposeArgs, command []string, result *webTTYClientResult) (remoteExposeResult, error) {
