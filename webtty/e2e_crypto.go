@@ -15,7 +15,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"strings"
 )
 
@@ -311,7 +310,7 @@ func (c *e2ePayloadCipher) sessionKeyGrant() *SessionKeyGrant {
 
 func (c *e2ePayloadCipher) encryptFunc(stream string) PayloadEncryptFunc {
 	return func(_ context.Context, payload []byte) (*EncryptedPayload, error) {
-		if len(payload) > math.MaxUint32 {
+		if uint64(len(payload)) > uint64(^uint32(0)) {
 			return nil, fmt.Errorf("E2E payload is too large: %d bytes", len(payload))
 		}
 		aead, err := c.payloadAEAD()
