@@ -3,10 +3,29 @@
 package cmd
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/spf13/cobra"
 )
+
+func TestNetcatRunResultMasksContextCancellation(t *testing.T) {
+	if err := netcatRunResult(context.Canceled); err != nil {
+		t.Fatalf("netcatRunResult(context.Canceled) = %v, want nil", err)
+	}
+	if err := netcatRunResult(fmt.Errorf("session: %w", context.Canceled)); err != nil {
+		t.Fatalf("netcatRunResult(wrapped cancel) = %v, want nil", err)
+	}
+	cause := errors.New("session failed")
+	if err := netcatRunResult(cause); !errors.Is(err, cause) {
+		t.Fatalf("netcatRunResult(real error) = %v, want passthrough", err)
+	}
+	if err := netcatRunResult(nil); err != nil {
+		t.Fatalf("netcatRunResult(nil) = %v, want nil", err)
+	}
+}
 
 func newTestNetcatCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "netcat"}
@@ -16,6 +35,10 @@ func newTestNetcatCommand() *cobra.Command {
 	cmd.Flags().String("sh-exec", "", "")
 	cmd.Flags().Bool("interactive", false, "")
 	cmd.Flags().Bool("no-interactive", false, "")
+	cmd.Flags().Bool("datagram", false, "")
+	cmd.Flags().String("framing", string(netcatFramingRFC4571), "")
+	cmd.Flags().Duration("idle-timeout", 0, "")
+	cmd.Flags().String("udp-peer", "", "")
 	cmd.Flags().Int("max-connections", defaultNetcatMaxConns, "")
 	return cmd
 }
@@ -97,6 +120,108 @@ func TestValidateNetcatFlags(t *testing.T) {
 				return cmd.Flags().Set("remote", "127.0.0.1:22")
 			},
 			wantErr: true,
+		},
+		{
+			name: "client mode accepts exec",
+			args: []string{"rstrm://media"},
+			config: func(cmd *cobra.Command) error {
+				return cmd.Flags().Set("sh-exec", "cat")
+			},
+			wantErr: false,
+		},
+		{
+			name: "client mode rejects interactive flags with exec",
+			args: []string{"rstrm://media"},
+			config: func(cmd *cobra.Command) error {
+				if err := cmd.Flags().Set("sh-exec", "cat"); err != nil {
+					return err
+				}
+				return cmd.Flags().Set("interactive", "true")
+			},
+			wantErr: true,
+		},
+		{
+			name: "client mode rejects remote",
+			args: []string{"rstrm://media"},
+			config: func(cmd *cobra.Command) error {
+				return cmd.Flags().Set("remote", "127.0.0.1:22")
+			},
+			wantErr: true,
+		},
+		{
+			name: "framing requires datagram",
+			args: []string{"rstrm://media"},
+			config: func(cmd *cobra.Command) error {
+				return cmd.Flags().Set("framing", "rfc4571")
+			},
+			wantErr: true,
+		},
+		{
+			name: "idle timeout requires datagram",
+			args: []string{"rstrm://media"},
+			config: func(cmd *cobra.Command) error {
+				return cmd.Flags().Set("idle-timeout", "30s")
+			},
+			wantErr: true,
+		},
+		{
+			name: "datagram client accepts rfc4571 framing",
+			args: []string{"rstrm://media"},
+			config: func(cmd *cobra.Command) error {
+				if err := cmd.Flags().Set("datagram", "true"); err != nil {
+					return err
+				}
+				return cmd.Flags().Set("framing", "rfc4571")
+			},
+			wantErr: false,
+		},
+		{
+			name: "datagram rejects unsupported framing",
+			args: []string{"rstrm://media"},
+			config: func(cmd *cobra.Command) error {
+				if err := cmd.Flags().Set("datagram", "true"); err != nil {
+					return err
+				}
+				return cmd.Flags().Set("framing", "none")
+			},
+			wantErr: true,
+		},
+		{
+			name: "datagram rejects negative idle timeout",
+			args: []string{"rstrm://media"},
+			config: func(cmd *cobra.Command) error {
+				if err := cmd.Flags().Set("datagram", "true"); err != nil {
+					return err
+				}
+				return cmd.Flags().Set("idle-timeout", "-1s")
+			},
+			wantErr: true,
+		},
+		{
+			name: "datagram server mode rejects remote",
+			config: func(cmd *cobra.Command) error {
+				if err := cmd.Flags().Set("listen", "rstrm://media"); err != nil {
+					return err
+				}
+				if err := cmd.Flags().Set("datagram", "true"); err != nil {
+					return err
+				}
+				return cmd.Flags().Set("remote", "127.0.0.1:5004")
+			},
+			wantErr: true,
+		},
+		{
+			name: "datagram server mode accepts exec",
+			config: func(cmd *cobra.Command) error {
+				if err := cmd.Flags().Set("listen", "rstrm://media"); err != nil {
+					return err
+				}
+				if err := cmd.Flags().Set("datagram", "true"); err != nil {
+					return err
+				}
+				return cmd.Flags().Set("sh-exec", "cat")
+			},
+			wantErr: false,
 		},
 	}
 	for _, tt := range tests {

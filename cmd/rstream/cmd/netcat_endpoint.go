@@ -18,6 +18,7 @@ type netcatEndpointKind string
 const (
 	netcatEndpointTCP     netcatEndpointKind = "tcp"
 	netcatEndpointRstream netcatEndpointKind = "rstream"
+	netcatEndpointUDP     netcatEndpointKind = "udp"
 )
 
 type netcatDialTarget struct {
@@ -32,20 +33,28 @@ type netcatListenTarget struct {
 }
 
 func (t netcatDialTarget) String() string {
-	if t.Kind == netcatEndpointRstream {
+	switch t.Kind {
+	case netcatEndpointRstream:
 		return "rstrm://" + t.Address
+	case netcatEndpointUDP:
+		return "udp://" + t.Address
+	default:
+		return t.Address
 	}
-	return t.Address
 }
 
 func (t netcatListenTarget) String() string {
-	if t.Kind == netcatEndpointRstream {
+	switch t.Kind {
+	case netcatEndpointRstream:
 		if t.Name == nil {
 			return "rstrm://"
 		}
 		return "rstrm://" + *t.Name
+	case netcatEndpointUDP:
+		return "udp://" + t.Address
+	default:
+		return t.Address
 	}
-	return t.Address
 }
 
 func parseNetcatDialTarget(raw string) (netcatDialTarget, error) {
@@ -60,14 +69,22 @@ func parseNetcatDialTarget(raw string) (netcatDialTarget, error) {
 	if err != nil {
 		return netcatDialTarget{}, fmt.Errorf("invalid endpoint %q: %w", raw, err)
 	}
-	if strings.ToLower(strings.TrimSpace(u.Scheme)) != "rstrm" {
-		return netcatDialTarget{}, fmt.Errorf("invalid endpoint scheme %q (expected host:port or rstrm://<id-or-name>)", u.Scheme)
+	switch strings.ToLower(strings.TrimSpace(u.Scheme)) {
+	case "rstrm":
+		host, err := parseNetcatRstreamAuthority(u, false)
+		if err != nil {
+			return netcatDialTarget{}, err
+		}
+		return netcatDialTarget{Kind: netcatEndpointRstream, Address: host}, nil
+	case "udp":
+		addr, err := parseNetcatUDPAuthority(u)
+		if err != nil {
+			return netcatDialTarget{}, err
+		}
+		return netcatDialTarget{Kind: netcatEndpointUDP, Address: addr}, nil
+	default:
+		return netcatDialTarget{}, fmt.Errorf("invalid endpoint scheme %q (expected host:port, rstrm://<id-or-name>, or udp://host:port)", u.Scheme)
 	}
-	host, err := parseNetcatRstreamAuthority(u, false)
-	if err != nil {
-		return netcatDialTarget{}, err
-	}
-	return netcatDialTarget{Kind: netcatEndpointRstream, Address: host}, nil
 }
 
 func parseNetcatListenTarget(raw string) (netcatListenTarget, error) {
@@ -82,18 +99,43 @@ func parseNetcatListenTarget(raw string) (netcatListenTarget, error) {
 	if err != nil {
 		return netcatListenTarget{}, fmt.Errorf("invalid listen endpoint %q: %w", raw, err)
 	}
-	if strings.ToLower(strings.TrimSpace(u.Scheme)) != "rstrm" {
-		return netcatListenTarget{}, fmt.Errorf("invalid listen endpoint scheme %q (expected host:port or rstrm://[name])", u.Scheme)
+	switch strings.ToLower(strings.TrimSpace(u.Scheme)) {
+	case "rstrm":
+		host, err := parseNetcatRstreamAuthority(u, true)
+		if err != nil {
+			return netcatListenTarget{}, err
+		}
+		out := netcatListenTarget{Kind: netcatEndpointRstream}
+		if host != "" {
+			out.Name = &host
+		}
+		return out, nil
+	case "udp":
+		addr, err := parseNetcatUDPAuthority(u)
+		if err != nil {
+			return netcatListenTarget{}, err
+		}
+		return netcatListenTarget{Kind: netcatEndpointUDP, Address: addr}, nil
+	default:
+		return netcatListenTarget{}, fmt.Errorf("invalid listen endpoint scheme %q (expected host:port, rstrm://[name], or udp://host:port)", u.Scheme)
 	}
-	host, err := parseNetcatRstreamAuthority(u, true)
-	if err != nil {
-		return netcatListenTarget{}, err
+}
+
+func parseNetcatUDPAuthority(u *url.URL) (string, error) {
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("udp endpoints do not support user info, query parameters, or fragments")
 	}
-	out := netcatListenTarget{Kind: netcatEndpointRstream}
-	if host != "" {
-		out.Name = &host
+	if path := strings.TrimSpace(u.EscapedPath()); path != "" && path != "/" {
+		return "", fmt.Errorf("invalid udp endpoint path %q", u.Path)
 	}
-	return out, nil
+	host := strings.TrimSpace(u.Host)
+	if host == "" {
+		return "", fmt.Errorf("udp endpoint requires host:port")
+	}
+	if _, _, err := net.SplitHostPort(host); err != nil {
+		return "", fmt.Errorf("invalid udp endpoint %q: %w", host, err)
+	}
+	return host, nil
 }
 
 func parseNetcatRstreamAuthority(u *url.URL, allowEmpty bool) (string, error) {
@@ -202,6 +244,66 @@ func newNetcatListenerFactory(target netcatListenTarget, client *rstream.Client)
 			}
 			return &netcatListenerResult{Listener: listener, Display: listener.Addr().String()}, nil
 		}
+	}
+}
+
+func newNetcatPacketDialer(target netcatDialTarget, client *rstream.Client) netcatPacketDialer {
+	return func(ctx context.Context) (net.PacketConn, net.Addr, error) {
+		if client == nil {
+			return nil, nil, fmt.Errorf("rstream client is required")
+		}
+		raddr := &rstream.Addr{IdOrName: target.Address}
+		conn, err := client.PacketDial(ctx, *raddr)
+		if err != nil {
+			return nil, nil, err
+		}
+		return conn, raddr, nil
+	}
+}
+
+func newNetcatPacketListenerFactory(target netcatListenTarget, client *rstream.Client) netcatPacketListenerFactory {
+	return func(ctx context.Context) (*netcatPacketListenerResult, error) {
+		if client == nil {
+			return nil, fmt.Errorf("rstream client is required")
+		}
+		ctrl, err := client.Connect(ctx, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to rstream engine server: %w", err)
+		}
+		tunnelType := rstream.TunnelTypeDatagram
+		props := rstream.TunnelProperties{
+			Name:    target.Name,
+			Type:    &tunnelType,
+			Publish: rstream.BoolPtr(false),
+		}
+		tunnel, err := ctrl.CreateTunnel(ctx, props)
+		if err != nil {
+			ctrl.Close()
+			return nil, fmt.Errorf("failed to create tunnel: %w", err)
+		}
+		listener, ok := tunnel.(rstream.DatagramTunnel)
+		if !ok {
+			tunnel.Close()
+			ctrl.Close()
+			return nil, fmt.Errorf("tunnel does not implement rstream.DatagramTunnel")
+		}
+		props, err = tunnel.Properties()
+		if err != nil {
+			listener.Close()
+			ctrl.Close()
+			return nil, fmt.Errorf("failed to get tunnel properties: %w", err)
+		}
+		display, err := netcatTunnelDisplay(props)
+		if err != nil {
+			listener.Close()
+			ctrl.Close()
+			return nil, err
+		}
+		return &netcatPacketListenerResult{
+			Listener:  &netcatManagedPacketListener{PacketListener: listener, ctrl: ctrl},
+			Display:   display,
+			Generated: target.Name == nil,
+		}, nil
 	}
 }
 

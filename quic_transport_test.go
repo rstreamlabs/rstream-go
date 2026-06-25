@@ -54,13 +54,15 @@ func TestQUICDatagramChannelWritePrefixesChannelID(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	channel := &quicDatagramChannel{
-		channelID: mustDatagramChannelID(t, "01020304abcd000000000001"),
-		provider:  provider,
-		laddr:     stubNetAddr("local"),
-		raddr:     stubNetAddr("remote"),
-		recvCh:    make(chan []byte, 1),
-		ctx:       ctx,
-		cancel:    cancel,
+		channelID:     mustDatagramChannelID(t, "01020304abcd000000000001"),
+		provider:      provider,
+		laddr:         stubNetAddr("local"),
+		raddr:         stubNetAddr("remote"),
+		recvCh:        make(chan []byte, 1),
+		ctx:           ctx,
+		cancel:        cancel,
+		readDeadline:  newDatagramDeadline(),
+		writeDeadline: newDatagramDeadline(),
 	}
 	n, err := channel.WriteTo([]byte("payload"), stubNetAddr("remote"))
 	if err != nil || n != len("payload") {
@@ -77,6 +79,10 @@ func TestQUICDatagramChannelWritePrefixesChannelID(t *testing.T) {
 	if _, err := channel.WriteTo([]byte("payload"), stubNetAddr("remote")); err == nil {
 		t.Fatalf("expected provider error")
 	}
+	provider.err = &quic.DatagramTooLargeError{MaxDatagramPayloadSize: 1200}
+	if _, err := channel.WriteTo([]byte("payload"), stubNetAddr("remote")); !errors.Is(err, ErrDatagramTooLarge) {
+		t.Fatalf("WriteTo() oversized error = %v, want ErrDatagramTooLarge", err)
+	}
 }
 
 func mustDatagramChannelID(t *testing.T, streamID string) datagramChannelID {
@@ -91,12 +97,14 @@ func mustDatagramChannelID(t *testing.T, streamID string) datagramChannelID {
 func TestQUICDatagramChannelReadAndClose(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	channel := &quicDatagramChannel{
-		provider: &recordingDatagramProvider{},
-		laddr:    stubNetAddr("local"),
-		raddr:    stubNetAddr("remote"),
-		recvCh:   make(chan []byte, 1),
-		ctx:      ctx,
-		cancel:   cancel,
+		provider:      &recordingDatagramProvider{},
+		laddr:         stubNetAddr("local"),
+		raddr:         stubNetAddr("remote"),
+		recvCh:        make(chan []byte, 1),
+		ctx:           ctx,
+		cancel:        cancel,
+		readDeadline:  newDatagramDeadline(),
+		writeDeadline: newDatagramDeadline(),
 	}
 	channel.recvCh <- []byte("packet")
 	buf := make([]byte, 16)
@@ -110,14 +118,24 @@ func TestQUICDatagramChannelReadAndClose(t *testing.T) {
 	if channel.LocalAddr() != stubNetAddr("local") {
 		t.Fatalf("LocalAddr() = %v, want local", channel.LocalAddr())
 	}
-	if err := channel.SetDeadline(time.Now()); !errors.Is(err, errDatagramDeadlineUnsupported) {
-		t.Fatalf("SetDeadline() error = %v, want errDatagramDeadlineUnsupported", err)
+	if err := channel.SetReadDeadline(time.Now().Add(-time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline() error = %v", err)
 	}
-	if err := channel.SetReadDeadline(time.Now()); !errors.Is(err, errDatagramDeadlineUnsupported) {
-		t.Fatalf("SetReadDeadline() error = %v, want errDatagramDeadlineUnsupported", err)
+	if _, _, err := channel.ReadFrom(buf); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("ReadFrom() with expired deadline error = %v, want os.ErrDeadlineExceeded", err)
 	}
-	if err := channel.SetWriteDeadline(time.Now()); !errors.Is(err, errDatagramDeadlineUnsupported) {
-		t.Fatalf("SetWriteDeadline() error = %v, want errDatagramDeadlineUnsupported", err)
+	if err := channel.SetWriteDeadline(time.Now().Add(-time.Second)); err != nil {
+		t.Fatalf("SetWriteDeadline() error = %v", err)
+	}
+	if _, err := channel.WriteTo([]byte("packet"), stubNetAddr("remote")); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("WriteTo() with expired deadline error = %v, want os.ErrDeadlineExceeded", err)
+	}
+	if err := channel.SetDeadline(time.Time{}); err != nil {
+		t.Fatalf("SetDeadline(zero) error = %v", err)
+	}
+	channel.recvCh <- []byte("again")
+	if _, _, err := channel.ReadFrom(buf); err != nil {
+		t.Fatalf("ReadFrom() after clearing deadline error = %v", err)
 	}
 	if err := channel.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
