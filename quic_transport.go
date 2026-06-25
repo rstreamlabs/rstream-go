@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -16,7 +17,9 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-var errDatagramDeadlineUnsupported = errors.New("QUIC datagram PacketConn deadlines are not supported")
+// ErrDatagramTooLarge is returned by datagram channel writes when the payload
+// exceeds what the underlying QUIC connection can carry in a single datagram.
+var ErrDatagramTooLarge = errors.New("datagram payload too large")
 
 const datagramChannelIDSize = 12
 
@@ -371,21 +374,81 @@ func hexNibble(c byte) (byte, bool) {
 	}
 }
 
+// datagramDeadline tracks one read or write deadline for a datagram channel.
+// wait() returns a channel closed once the deadline expires; setting a new
+// deadline replaces the channel so pending waiters only observe the deadline
+// that was active when they started waiting.
+type datagramDeadline struct {
+	mu    sync.Mutex
+	timer *time.Timer
+	ch    chan struct{}
+}
+
+func newDatagramDeadline() *datagramDeadline {
+	return &datagramDeadline{ch: make(chan struct{})}
+}
+
+func (d *datagramDeadline) set(t time.Time) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.timer != nil {
+		d.timer.Stop()
+		d.timer = nil
+	}
+	select {
+	case <-d.ch:
+		d.ch = make(chan struct{})
+	default:
+	}
+	if t.IsZero() {
+		return
+	}
+	if dur := time.Until(t); dur <= 0 {
+		close(d.ch)
+	} else {
+		ch := d.ch
+		d.timer = time.AfterFunc(dur, func() {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			if d.ch == ch {
+				close(ch)
+			}
+		})
+	}
+}
+
+func (d *datagramDeadline) wait() <-chan struct{} {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.ch
+}
+
+func (d *datagramDeadline) expired() bool {
+	select {
+	case <-d.wait():
+		return true
+	default:
+		return false
+	}
+}
+
 // quicDatagramChannel implements net.PacketConn for a single datagram tunnel
 // channel identified by a full stream-derived channel ID. Datagrams sent on
 // WriteTo are prefixed with the channel ID; incoming datagrams are received on
 // recvCh after the datagramReadLoop strips the channel ID prefix and routes them
 // here.
 type quicDatagramChannel struct {
-	channelID datagramChannelID
-	provider  DatagramProvider
-	laddr     net.Addr
-	raddr     net.Addr
-	recvCh    chan []byte
-	ctx       context.Context
-	cancel    context.CancelFunc
-	once      sync.Once
-	onClose   func(*quicDatagramChannel)
+	channelID     datagramChannelID
+	provider      DatagramProvider
+	laddr         net.Addr
+	raddr         net.Addr
+	recvCh        chan []byte
+	ctx           context.Context
+	cancel        context.CancelFunc
+	once          sync.Once
+	onClose       func(*quicDatagramChannel)
+	readDeadline  *datagramDeadline
+	writeDeadline *datagramDeadline
 }
 
 func (c *quicDatagramChannel) ReadFrom(p []byte) (int, net.Addr, error) {
@@ -398,14 +461,23 @@ func (c *quicDatagramChannel) ReadFrom(p []byte) (int, net.Addr, error) {
 		return n, c.laddr, nil
 	case <-c.ctx.Done():
 		return 0, nil, net.ErrClosed
+	case <-c.readDeadline.wait():
+		return 0, nil, os.ErrDeadlineExceeded
 	}
 }
 
 func (c *quicDatagramChannel) WriteTo(p []byte, addr net.Addr) (int, error) {
+	if c.writeDeadline.expired() {
+		return 0, os.ErrDeadlineExceeded
+	}
 	buf := make([]byte, datagramChannelIDSize+len(p))
 	copy(buf[:datagramChannelIDSize], c.channelID[:])
 	copy(buf[datagramChannelIDSize:], p)
 	if err := c.provider.SendDatagram(buf); err != nil {
+		var tooLarge *quic.DatagramTooLargeError
+		if errors.As(err, &tooLarge) {
+			return 0, fmt.Errorf("%w: %d bytes (max %d)", ErrDatagramTooLarge, len(p), tooLarge.MaxDatagramPayloadSize-datagramChannelIDSize)
+		}
 		return 0, err
 	}
 	return len(p), nil
@@ -426,15 +498,19 @@ func (c *quicDatagramChannel) LocalAddr() net.Addr {
 }
 
 func (c *quicDatagramChannel) SetDeadline(t time.Time) error {
-	return errDatagramDeadlineUnsupported
+	c.readDeadline.set(t)
+	c.writeDeadline.set(t)
+	return nil
 }
 
 func (c *quicDatagramChannel) SetReadDeadline(t time.Time) error {
-	return errDatagramDeadlineUnsupported
+	c.readDeadline.set(t)
+	return nil
 }
 
 func (c *quicDatagramChannel) SetWriteDeadline(t time.Time) error {
-	return errDatagramDeadlineUnsupported
+	c.writeDeadline.set(t)
+	return nil
 }
 
 // quicDatagramListener implements PacketListener for datagram tunnels backed by
