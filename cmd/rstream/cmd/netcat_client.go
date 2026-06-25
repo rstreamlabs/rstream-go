@@ -33,6 +33,9 @@ func runNetcatClient(ctx context.Context, cfg *netcatClientConfig) error {
 	}
 	defer conn.Close()
 	cfg.Logger.Debug("netcat client connected", "target", cfg.Target, "interactive", cfg.Interactive)
+	if cfg.Exec != nil {
+		return runNetcatExecSession(ctx, conn, cfg.Exec, cfg.HalfClose, cfg.Logger)
+	}
 	doneCh := make(chan struct{})
 	defer close(doneCh)
 	go func() {

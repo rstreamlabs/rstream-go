@@ -480,6 +480,46 @@ Host ssh-server
 
 This keeps the tunnel private while SSH still performs its normal host key verification and user authentication.
 
+In client mode, `--exec`/`--sh-exec` run a local command and bridge its stdin/stdout to the connection, which provides a bidirectional path without shell pipe plumbing:
+
+```bash
+rstream nc rstrm://ssh-server -c "my-local-client"
+```
+
+### Netcat datagram mode
+
+`rstream nc --datagram` (`-u`) carries packets instead of a byte stream. Datagram mode requires `rstrm://` endpoints on both sides: `--listen rstrm://[name]` creates a private unpublished datagram tunnel, and `rstream nc -u rstrm://<id-or-name>` dials one. `--remote` is not supported in datagram mode.
+
+Since stdin/stdout are byte streams, packet boundaries on stdio are preserved with explicit framing, selected with `--framing`. The default and currently only supported framing is `rfc4571`, where each datagram is prefixed with a 2-byte big-endian length as defined by RFC 4571. One frame on stdio equals one datagram on the tunnel, so any program that reads and writes this framing exchanges packets through the tunnel without further adaptation.
+
+```bash
+# Expose a datagram producer; one child process per accepted session
+rstream nc -u -L rstrm://media -c "media-producer" --idle-timeout 60s
+
+# Dial the tunnel; stdio carries RFC 4571 frames
+rstream nc -u rstrm://media
+
+# Or run a local consumer with bidirectional framed stdio
+rstream nc -u rstrm://media -c "media-consumer" --idle-timeout 60s
+```
+
+Datagram tunnels can also bridge local UDP sockets instead of stdio, which connects UDP-native applications without any framing concern. One UDP packet equals one tunnel datagram, and `--framing` does not apply to udp endpoints.
+
+```bash
+# Bridge tunnel sessions to a local UDP service (one connected socket per session)
+rstream nc -u -L rstrm://media -R udp://127.0.0.1:5004
+
+# Bind a local UDP socket and bridge it to a tunnel (one session per local peer)
+rstream nc -u -L udp://127.0.0.1:5004 -R rstrm://media
+
+# Receive-only local apps never send first; pin the peer to open the session eagerly
+rstream nc -u -L udp://127.0.0.1:5004 -R rstrm://media --udp-peer 127.0.0.1:5006
+```
+
+When the tunnel transport is QUIC (the CLI default), tunnel-side packets ride QUIC datagrams (RFC 9221): they are congestion-controlled but never retransmitted, so delivery is not guaranteed and each datagram must fit the path MTU budget (roughly 1200 bytes is a safe payload target, for stdio frames and UDP packets alike). Oversized datagrams are dropped and logged without terminating the session. This matches the semantics expected by loss-tolerant protocols such as RTP; applications that need guaranteed delivery should stay on bytestream tunnels for now.
+
+Datagram sessions have no half-close: `--idle-timeout` closes a session after no datagram has been received for the given duration, and is recommended for `--listen --exec` producers so abandoned sessions release their child process. In datagram exec sessions the child's stderr goes to the local stderr rather than the connection, since raw stderr bytes would corrupt the framing.
+
 ### UDP/datagram tunnels
 For datagram transport, choose DTLS mode when you need encrypted UDP-style traffic.
 

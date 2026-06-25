@@ -776,13 +776,15 @@ func (c *controlChannelImpl) handleDatagramProxyConnReq(req *pb.ProxyConnReq, tu
 	raddr := &Addr{IdOrName: tunnel.tunnelID}
 	chCtx, chCancel := context.WithCancel(c.datagramCtx)
 	ch := &quicDatagramChannel{
-		channelID: channelID,
-		provider:  c.datagramProvider,
-		laddr:     laddr,
-		raddr:     raddr,
-		recvCh:    make(chan []byte, 64),
-		ctx:       chCtx,
-		cancel:    chCancel,
+		channelID:     channelID,
+		provider:      c.datagramProvider,
+		laddr:         laddr,
+		raddr:         raddr,
+		recvCh:        make(chan []byte, 64),
+		ctx:           chCtx,
+		cancel:        chCancel,
+		readDeadline:  newDatagramDeadline(),
+		writeDeadline: newDatagramDeadline(),
 		onClose: func(ch *quicDatagramChannel) {
 			c.unregisterDatagramChannel(channelID, ch)
 		},
