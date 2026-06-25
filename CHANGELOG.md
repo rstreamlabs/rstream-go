@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.23.0](https://github.com/rstreamlabs/rstream-go/compare/v1.22.1...v1.23.0) (2026-06-25)
+
+
+### Features
+
+* add Claude Code MCP setup command ([78efdb0](https://github.com/rstreamlabs/rstream-go/commit/78efdb0d7cf288d0bbc54328dbe42e42884fbb29))
+* add UDP and datagram netcat commands ([6bd6042](https://github.com/rstreamlabs/rstream-go/commit/6bd60428fce7767ccded12785e86136a98e7879b))
+
 ## [1.22.1](https://github.com/rstreamlabs/rstream-go/compare/v1.22.0...v1.22.1) (2026-06-24)
 
 
