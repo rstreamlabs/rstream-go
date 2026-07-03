@@ -6,8 +6,10 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 . "$ROOT/test/e2e/runtime_common.sh"
 PYTHON="${PYTHON:-python3}"
 RSTREAM_BIN=$(resolve_rstream_cli "$ROOT")
-API_URL="${RSTREAM_RUNTIME_API_URL:-http://localhost:3000}"
-CONTROL_TOKEN="${RSTREAM_RUNTIME_CONTROL_TOKEN:-${RSTREAM_AUTHENTICATION_TOKEN:-}}"
+require_control_plane_api_url
+require_control_plane_token
+API_URL="${RSTREAM_RUNTIME_API_URL}"
+CONTROL_TOKEN="${RSTREAM_RUNTIME_CONTROL_TOKEN}"
 TIMEOUT_SECONDS="${RSTREAM_RUNTIME_TIMEOUT:-60}"
 NAME_PREFIX="${RSTREAM_RUNTIME_NAME_PREFIX:-runtime-mtls-$$}"
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/rstream-go-mtls-runtime.XXXXXX")
@@ -45,10 +47,6 @@ pass() {
 }
 
 require_executable "$RSTREAM_BIN"
-if [ -z "$CONTROL_TOKEN" ]; then
-  printf "ERROR set RSTREAM_RUNTIME_CONTROL_TOKEN to a PAT with credential, token, and project read permissions\n" >&2
-  exit 2
-fi
 
 cat >"$TMP_DIR/api.py" <<'PY'
 import json

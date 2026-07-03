@@ -32,8 +32,8 @@ The stream and datagram suites each cover two connectivity modes:
 
 Runtime credential and permission suites also require:
 
-- A running Control plane API. The default is `http://localhost:3000`; override with `RSTREAM_RUNTIME_API_URL`.
-- A PAT in `RSTREAM_RUNTIME_CONTROL_TOKEN` with `account.projects.read-only`, `account.tokens.create`, and `account.credentials.read-write`. Use an unrestricted admin/dev PAT for the most complete runtime pass.
+- A running Control plane API passed explicitly with `RSTREAM_RUNTIME_API_URL`.
+- A PAT in `RSTREAM_RUNTIME_CONTROL_TOKEN` with `account.projects.read-only`, `account.tokens.create`, and `account.credentials.read-write`. Use an unrestricted admin/dev PAT for the most complete runtime pass. The Control plane setup scripts do not reuse the engine context token implicitly.
 - At least one Basic project for token/grant runtime checks. Set `RSTREAM_RUNTIME_BASIC_PROJECT_ENDPOINT` or `RSTREAM_RUNTIME_PROJECT_ENDPOINT` to make the selection explicit.
 - One Pro project for published tunnel mTLS checks. Set `RSTREAM_RUNTIME_PRO_PROJECT_ENDPOINT`.
 - An engine build with mTLS support enabled when running mTLS suites.
@@ -70,6 +70,11 @@ go build -o out/test/connect/client      ./test/connect/client
 
 ### Run
 
+The runtime scripts are split into two families:
+
+- Engine-only suites use the selected `RSTREAM_CONTEXT` or explicit `RSTREAM_ENGINE` and do not call the Control plane API.
+- Control-plane setup suites require `RSTREAM_RUNTIME_API_URL` and `RSTREAM_RUNTIME_CONTROL_TOKEN` because they create or verify API resources before connecting to the engine.
+
 Set `BIN` to the directory containing the built binaries and execute the protocol matrix runner from the repository root:
 
 ```sh
@@ -85,7 +90,6 @@ Run the runtime forwarding smoke suite:
 
 ```sh
 export RSTREAM_CONTEXT=<context>
-export RSTREAM_AUTHENTICATION_TOKEN='<pat or auth token valid for the selected project>'
 export BIN=out/test
 bash test/e2e/runtime-forward.sh
 ```
@@ -96,7 +100,6 @@ Run the same runtime forwarding checks over QUIC control-channel transport:
 
 ```sh
 export RSTREAM_CONTEXT=<context>
-export RSTREAM_AUTHENTICATION_TOKEN='<pat or auth token valid for the selected project>'
 export BIN=out/test
 bash test/e2e/runtime-forward.sh --quic-transport
 ```
@@ -125,7 +128,7 @@ Run the challenge mode runtime suite:
 
 ```sh
 export RSTREAM_CONTEXT=<context>
-export RSTREAM_RUNTIME_API_URL=http://localhost:3000
+export RSTREAM_RUNTIME_API_URL=<control-plane-api-url>
 export BIN=out/test
 bash test/e2e/runtime-challenge-mode.sh
 ```
@@ -135,7 +138,7 @@ The challenge suite expects the engine challenge backend to point at the same Co
 Run the token, permission, scope, and Tunnel access runtime suite:
 
 ```sh
-export RSTREAM_RUNTIME_API_URL=http://localhost:3000
+export RSTREAM_RUNTIME_API_URL=<control-plane-api-url>
 export RSTREAM_RUNTIME_CONTROL_TOKEN='<pat with account.projects.read-only account.tokens.create account.credentials.read-write>'
 export RSTREAM_RUNTIME_BASIC_PROJECT_ENDPOINT='<basic-project-endpoint>'
 
@@ -145,7 +148,7 @@ bash test/e2e/runtime-token-permissions.sh
 Run the mTLS runtime suite:
 
 ```sh
-export RSTREAM_RUNTIME_API_URL=http://localhost:3000
+export RSTREAM_RUNTIME_API_URL=<control-plane-api-url>
 export RSTREAM_RUNTIME_CONTROL_TOKEN='<pat with account.projects.read-only account.tokens.create account.credentials.read-write>'
 export RSTREAM_RUNTIME_BASIC_PROJECT_ENDPOINT='<basic-project-endpoint>'
 export RSTREAM_RUNTIME_PRO_PROJECT_ENDPOINT='<pro-project-endpoint>'
@@ -219,11 +222,10 @@ For the standard local stack, keep the public inputs explicit:
 
 ```sh
 export RSTREAM_CONTEXT=tests
-export RSTREAM_RUNTIME_API_URL=http://localhost:3000
+export RSTREAM_RUNTIME_API_URL=<control-plane-api-url>
 export RSTREAM_RUNTIME_PROJECT_ENDPOINT=<project-endpoint>
 export RSTREAM_RUNTIME_BASIC_PROJECT_ENDPOINT=<basic-project-endpoint>
 export RSTREAM_RUNTIME_PRO_PROJECT_ENDPOINT=<pro-project-endpoint>
-export RSTREAM_AUTHENTICATION_TOKEN='<pat or auth token valid for RSTREAM_CONTEXT>'
 export RSTREAM_RUNTIME_CONTROL_TOKEN='<pat with account.projects.read-only account.tokens.create account.credentials.read-write>'
 ```
 
@@ -241,12 +243,12 @@ make rstream
 make test-bins
 
 export RSTREAM_CONTEXT=<context>
-export RSTREAM_AUTHENTICATION_TOKEN='<pat or auth token valid for the selected project>'
-export RSTREAM_RUNTIME_API_URL=http://localhost:3000
 export BIN=out/test
 bash run-e2e.sh
 bash test/e2e/runtime-forward.sh
 bash test/e2e/runtime-forward.sh --quic-transport
+
+export RSTREAM_RUNTIME_API_URL=<control-plane-api-url>
 bash test/e2e/runtime-challenge-mode.sh
 
 export RSTREAM_RUNTIME_CONTROL_TOKEN='<pat with account.projects.read-only account.tokens.create account.credentials.read-write>'
