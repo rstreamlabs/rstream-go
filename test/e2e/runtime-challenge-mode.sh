@@ -9,7 +9,8 @@ RSTREAM_BIN=$(resolve_rstream_cli "$ROOT")
 PYTHON="${PYTHON:-python3}"
 TIMEOUT_SECONDS="${RSTREAM_RUNTIME_TIMEOUT:-60}"
 NAME_PREFIX="${RSTREAM_RUNTIME_NAME_PREFIX:-runtime-challenge-$$}"
-API_URL="${RSTREAM_RUNTIME_API_URL:-http://localhost:3000}"
+require_control_plane_api_url
+API_URL="${RSTREAM_RUNTIME_API_URL}"
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/rstream-go-challenge.XXXXXX")
 PASS=0
 FAIL=0
