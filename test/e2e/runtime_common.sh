@@ -40,3 +40,19 @@ require_executable() {
     exit 2
   fi
 }
+
+require_control_plane_api_url() {
+  if [ -z "${RSTREAM_RUNTIME_API_URL:-}" ]; then
+    printf "ERROR set RSTREAM_RUNTIME_API_URL to the Control plane API URL for this test\n" >&2
+    printf "This runtime suite is not engine-only; it creates or verifies Control plane resources.\n" >&2
+    exit 2
+  fi
+}
+
+require_control_plane_token() {
+  if [ -z "${RSTREAM_RUNTIME_CONTROL_TOKEN:-}" ]; then
+    printf "ERROR set RSTREAM_RUNTIME_CONTROL_TOKEN to a PAT with the permissions required by this test\n" >&2
+    printf "Do not rely on the engine context token for Control plane setup checks.\n" >&2
+    exit 2
+  fi
+}
