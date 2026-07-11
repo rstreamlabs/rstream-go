@@ -138,7 +138,10 @@ func runH1(ctx context.Context, hostPort string) error {
 		TLSClientConfig:  &tls.Config{InsecureSkipVerify: true},
 		HandshakeTimeout: 15 * time.Second,
 	}
-	conn, _, err := dialer.DialContext(ctx, "wss://"+hostPort+"/ws", http.Header{"Host": {host}})
+	conn, _, err := dialer.DialContext(ctx, "wss://"+hostPort+"/ws", http.Header{
+		"Host":   {host},
+		"Origin": {"https://" + host},
+	})
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}
@@ -167,9 +170,12 @@ func runH2(ctx context.Context, hostPort string) error {
 	}
 	pr, pw := io.Pipe()
 	req := &http.Request{
-		Method:        http.MethodConnect,
-		URL:           &url.URL{Scheme: "https", Host: hostPort, Path: "/ws"},
-		Header:        http.Header{":protocol": {"websocket"}},
+		Method: http.MethodConnect,
+		URL:    &url.URL{Scheme: "https", Host: hostPort, Path: "/ws"},
+		Header: http.Header{
+			":protocol": {"websocket"},
+			"Origin":    {"https://" + host},
+		},
 		Body:          pr,
 		ContentLength: -1,
 		Proto:         "HTTP/2.0",
@@ -243,6 +249,7 @@ func runH3(ctx context.Context, hostPort string) error {
 		Method:        http.MethodConnect,
 		URL:           &url.URL{Scheme: "https", Host: host, Path: "/ws"},
 		Proto:         "websocket",
+		Header:        http.Header{"Origin": {"https://" + host}},
 		Body:          pr,
 		ContentLength: -1,
 		Host:          host,

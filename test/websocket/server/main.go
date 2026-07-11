@@ -28,6 +28,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -178,7 +179,16 @@ func echoWSFrames(r io.Reader, w io.Writer, flush func()) {
 	}
 }
 
-var gorillaUpgrader = websocket.Upgrader{CheckOrigin: func(_ *http.Request) bool { return true }}
+func sameOrigin(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	return err == nil && strings.EqualFold(u.Host, r.Host)
+}
+
+var gorillaUpgrader = websocket.Upgrader{CheckOrigin: sameOrigin}
 
 func wsH1Handler(w http.ResponseWriter, r *http.Request) {
 	conn, err := gorillaUpgrader.Upgrade(w, r, nil)
@@ -199,6 +209,10 @@ func wsH1Handler(w http.ResponseWriter, r *http.Request) {
 
 func wsExtendedConnectHandler(isH3 bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !sameOrigin(r) {
+			http.Error(w, "origin does not match request host", http.StatusForbidden)
+			return
+		}
 		isConnect := r.Method == http.MethodConnect
 		var isWS bool
 		if isH3 {
