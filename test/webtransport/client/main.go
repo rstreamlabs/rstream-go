@@ -58,9 +58,9 @@ func buildDialer(client *rstream.Client, publish bool, token string) (sessionDia
 				return nil, fmt.Errorf("invalid published host %q: %w", host, err)
 			}
 		}
-		var dialHdr http.Header
+		dialHdr := http.Header{"Origin": {"https://" + host}}
 		if token != "" {
-			dialHdr = http.Header{"Authorization": {"Bearer " + token}}
+			dialHdr.Set("Authorization", "Bearer "+token)
 		}
 		return func(ctx context.Context, relPath string) (*webtransport.Session, error) {
 			d := webtransport.Dialer{}
@@ -85,7 +85,7 @@ func buildDialer(client *rstream.Client, publish bool, token string) (sessionDia
 			},
 		}
 		u := "https://wt-matrix" + relPath
-		_, sess, err := d.Dial(ctx, u, nil)
+		_, sess, err := d.Dial(ctx, u, http.Header{"Origin": {"https://wt-matrix"}})
 		return sess, err
 	}, nil
 }

@@ -6,17 +6,32 @@ This directory contains end-to-end tests for the rstream Go SDK. Each subdirecto
 
 | Suite | Cases | What it covers |
 |-------|-------|----------------|
-| `websocket` | 9 | All upstream × downstream HTTP version combinations (H1, H2C, H3) |
-| `webtransport` | 1 | Aggregated WebTransport client run covering bidirectional streams, unidirectional streams, datagrams, multi-stream, and close codes |
+| `websocket` | 9 | All upstream × downstream HTTP version combinations (H1, H2C, H3), including public authority and browser Origin preservation |
+| `webtransport` | 2 | Private SDK-dialer and published HTTP/3 reverse-proxy runs covering bidirectional streams, unidirectional streams, datagrams, multi-stream, close codes, and same-origin validation |
 | `http` | 3 | HTTP tunnels over H1, H2C, and H3, including GET and SSE streaming |
 | `stream` | 7 | Bytestream tunnel: plain (unpublished), TLS via SDK dialer (unpublished), TLS via engine listener (published), TLS passthrough via engine listener, TLS via engine listener with upstream TLS, and ALPN rejection checks |
 | `datagram` | 13 | Datagram tunnel: DTLS via SDK dialer (unpublished), DTLS via engine listener (published, with and without upstream DTLS), QUIC via SDK dialer (unpublished), QUIC via engine listener (published), SCTP via pion/sctp over SDK datagrams and published DTLS, and ALPN rejection checks |
-| `masque` | 2 | Published HTTP/3 datagram tunnels carrying CONNECT-UDP and CONNECT-IP Extended CONNECT sessions end-to-end |
-| `connect` | 3 | Published HTTP tunnels carrying plain authority-form CONNECT over H1, H2, and H3 downstream sessions |
+| `masque` | 2 | Published HTTP/3 datagram tunnels carrying CONNECT-UDP and CONNECT-IP Extended CONNECT sessions end-to-end, including public authority preservation |
+| `connect` | 9 | All upstream × downstream HTTP version combinations for published authority-form CONNECT (H1, H2C, H3) |
 
-The primary `run-e2e.sh` matrix executes 33 cases. The WebTransport runner case
+The primary `run-e2e.sh` matrix executes 34 cases. Each WebTransport runner case
 contains multiple protocol subcases internally. Additional runtime suites cover
-MASQUE, CONNECT, and the six bandwidth-limit cases described below.
+MASQUE, the nine-case CONNECT matrix, and the six bandwidth-limit cases described below.
+
+The HTTP upgrade and CONNECT coverage follows the versions each protocol permits:
+
+| Protocol | Downstream | Upstream | Runtime matrix |
+|----------|------------|----------|----------------|
+| WebSocket | H1, H2, H3 | H1, H2C, H3 | All 9 translations |
+| WebTransport | H3 | H3 | Private SDK dialer and published reverse proxy |
+| Plain CONNECT | H1, H2, H3 | H1, H2C, H3 | All 9 translations |
+| CONNECT-UDP | H3 | H3 | Published reverse proxy |
+| CONNECT-IP | H3 | H3 | Published reverse proxy |
+
+WebTransport, CONNECT-UDP, and CONNECT-IP have no H1 or H2 variant in this
+matrix because the supported protocols require HTTP/3. Engine unit tests cover
+rejection when those requests or their configured upstream tunnel use another
+HTTP version.
 
 The stream and datagram suites each cover two connectivity modes:
 

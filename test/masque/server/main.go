@@ -19,8 +19,10 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -115,8 +117,30 @@ func connectIPTemplate(host string) (*uritemplate.Template, error) {
 	return uritemplate.New("https://" + host + "/connect-ip")
 }
 
-func handleConnectUDP(proxy *masque.Proxy) http.HandlerFunc {
+func canonicalAuthority(raw string) (string, error) {
+	u, err := url.Parse("https://" + raw)
+	if err != nil || u.Hostname() == "" {
+		return "", fmt.Errorf("invalid authority %q", raw)
+	}
+	port := u.Port()
+	if port == "" {
+		port = "443"
+	}
+	return net.JoinHostPort(strings.ToLower(u.Hostname()), port), nil
+}
+
+func sameAuthority(left, right string) bool {
+	leftCanonical, leftErr := canonicalAuthority(left)
+	rightCanonical, rightErr := canonicalAuthority(right)
+	return leftErr == nil && rightErr == nil && leftCanonical == rightCanonical
+}
+
+func handleConnectUDP(proxy *masque.Proxy, authority string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !sameAuthority(r.Host, authority) {
+			http.Error(w, "public authority was not preserved", http.StatusBadRequest)
+			return
+		}
 		tpl, err := connectUDPTemplate(r.Host)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -133,8 +157,12 @@ func handleConnectUDP(proxy *masque.Proxy) http.HandlerFunc {
 	}
 }
 
-func handleConnectIP(proxy *connectip.Proxy) http.HandlerFunc {
+func handleConnectIP(proxy *connectip.Proxy, authority string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		if !sameAuthority(r.Host, authority) {
+			http.Error(w, "public authority was not preserved", http.StatusBadRequest)
+			return
+		}
 		tpl, err := connectIPTemplate(r.Host)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -216,6 +244,10 @@ func run(ctx context.Context, client *rstream.Client, variant, name, hostname st
 	if err != nil {
 		return fmt.Errorf("forwarding address: %w", err)
 	}
+	forwardingURL, err := url.Parse(forwardingAddr)
+	if err != nil || forwardingURL.Host == "" {
+		return fmt.Errorf("invalid forwarding address %q", forwardingAddr)
+	}
 	packetListener, ok := tunnel.(rstream.PacketListener)
 	if !ok {
 		return fmt.Errorf("tunnel does not implement PacketListener")
@@ -230,12 +262,12 @@ func run(ctx context.Context, client *rstream.Client, variant, name, hostname st
 	mux := http.NewServeMux()
 	switch strings.ToLower(strings.TrimSpace(variant)) {
 	case "connect-udp":
-		mux.HandleFunc("/.well-known/masque/udp/", handleConnectUDP(udpProxy))
+		mux.HandleFunc("/.well-known/masque/udp/", handleConnectUDP(udpProxy, forwardingURL.Host))
 	case "connect-ip":
-		mux.HandleFunc("/connect-ip", handleConnectIP(ipProxy))
+		mux.HandleFunc("/connect-ip", handleConnectIP(ipProxy, forwardingURL.Host))
 	case "all":
-		mux.HandleFunc("/.well-known/masque/udp/", handleConnectUDP(udpProxy))
-		mux.HandleFunc("/connect-ip", handleConnectIP(ipProxy))
+		mux.HandleFunc("/.well-known/masque/udp/", handleConnectUDP(udpProxy, forwardingURL.Host))
+		mux.HandleFunc("/connect-ip", handleConnectIP(ipProxy, forwardingURL.Host))
 	default:
 		return fmt.Errorf("invalid variant %q", variant)
 	}
