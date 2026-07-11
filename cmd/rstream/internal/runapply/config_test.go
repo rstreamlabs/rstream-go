@@ -328,6 +328,19 @@ func TestTunnelPropertiesFromSpecReadsMTLSAuth(t *testing.T) {
 	}
 }
 
+func TestTunnelPropertiesFromSpecMapsDatagramGuaranteedDelivery(t *testing.T) {
+	props, err := tunnelPropertiesFromSpec(&TunnelSpec{
+		Type:                       "datagram",
+		DatagramGuaranteedDelivery: rstream.BoolPtr(true),
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if props.DatagramGuaranteedDelivery == nil || !*props.DatagramGuaranteedDelivery {
+		t.Fatalf("DatagramGuaranteedDelivery = %#v, want true", props.DatagramGuaranteedDelivery)
+	}
+}
+
 func TestTunnelPropertiesFromSpecAllowsMultiplePublishedAuthMethods(t *testing.T) {
 	props, err := tunnelPropertiesFromSpec(&TunnelSpec{
 		HTTP: &HTTPSpec{Auth: &HTTPAuthSpec{Token: rstream.BoolPtr(true)}},

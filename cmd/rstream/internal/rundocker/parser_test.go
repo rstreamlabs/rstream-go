@@ -107,17 +107,18 @@ func TestParseDesiredTunnelsTLSDatagramAndAccessLabels(t *testing.T) {
 		ID:   "abc",
 		Name: "edge",
 		Labels: map[string]string{
-			"rstream.tunnel.metrics.forward":        "8443",
-			"rstream.tunnel.metrics.protocol":       "tls",
-			"rstream.tunnel.metrics.type":           "datagram",
-			"rstream.tunnel.metrics.publish":        "false",
-			"rstream.tunnel.metrics.host":           "metrics.example.com",
-			"rstream.tunnel.metrics.upstream-tls":   "true",
-			"rstream.tunnel.metrics.trusted-ips":    "10.0.0.0/8, 192.0.2.0/24",
-			"rstream.tunnel.metrics.geoip":          "FR, US",
-			"rstream.tunnel.metrics.tls.mode":       "passthrough",
-			"rstream.tunnel.metrics.tls.minVersion": "tls1.2",
-			"rstream.tunnel.metrics.tls.alpns":      "h2, http/1.1",
+			"rstream.tunnel.metrics.forward":                      "8443",
+			"rstream.tunnel.metrics.protocol":                     "tls",
+			"rstream.tunnel.metrics.type":                         "datagram",
+			"rstream.tunnel.metrics.publish":                      "false",
+			"rstream.tunnel.metrics.host":                         "metrics.example.com",
+			"rstream.tunnel.metrics.upstream-tls":                 "true",
+			"rstream.tunnel.metrics.datagram-guaranteed-delivery": "true",
+			"rstream.tunnel.metrics.trusted-ips":                  "10.0.0.0/8, 192.0.2.0/24",
+			"rstream.tunnel.metrics.geoip":                        "FR, US",
+			"rstream.tunnel.metrics.tls.mode":                     "passthrough",
+			"rstream.tunnel.metrics.tls.minVersion":               "tls1.2",
+			"rstream.tunnel.metrics.tls.alpns":                    "h2, http/1.1",
 		},
 		Networks: map[string]string{"backend": "10.0.0.8"},
 	}
@@ -140,6 +141,9 @@ func TestParseDesiredTunnelsTLSDatagramAndAccessLabels(t *testing.T) {
 	}
 	if props.Publish == nil || *props.Publish || props.UpstreamTLS == nil || !*props.UpstreamTLS {
 		t.Fatalf("publish/upstream TLS flags not parsed: %#v", props)
+	}
+	if props.DatagramGuaranteedDelivery == nil || !*props.DatagramGuaranteedDelivery {
+		t.Fatalf("DatagramGuaranteedDelivery = %#v, want true", props.DatagramGuaranteedDelivery)
 	}
 	if props.Hostname == nil || *props.Hostname != "metrics.example.com" {
 		t.Fatalf("Hostname = %#v, want metrics.example.com", props.Hostname)

@@ -3,15 +3,6 @@
 - Replace the current macOS DNS resolver source with a native implementation
   The current Darwin path relies on a third-party parser over `scutil --dns` output to discover scoped resolvers for ECH and advanced DNS options. This works, but it should be replaced with a native macOS resolver implementation backed by system APIs so the client no longer depends on shelling out or text parsing for resolver discovery.
 
-- Use QUIC datagrams on the dialer leg of datagram tunnels
-  Datagram tunnels only use QUIC datagrams on the tunnel-owner leg. The dialer side (`Client.PacketDial`) always wraps a regular stream in 4-byte length framing, and the engine converts between that framed stream and the owner's QUIC datagrams (`startQUICDatagramRelay`). As a result the dialer leg is reliable and ordered even when the dialer's transport is QUIC, which reintroduces head-of-line blocking on that leg. The StreamReq path should negotiate datagram channels over the dialer's QUIC transport session, mirroring the channel-ID-prefixed routing already used on the owner side. Requires engine support.
-
-- Propagate datagram channel close to the tunnel owner
-  In bytestream mode the tunnel owner detects a disconnected dialer through the closure of its per-stream ProxyReq connection. In QUIC datagram mode there is no per-channel stream: when the engine closes a stream (`closeStream`) the owner's datagram channel is never notified and keeps accepting writes into the void. The protocol needs an explicit channel-close control message so owner-side `net.PacketConn`s terminate deterministically. Until then, consumers of datagram channels must rely on application-level liveness (for example an idle timeout). Requires engine support.
-
-- Allow enforcing guaranteed delivery for datagram tunnels
-  Delivery semantics of datagram tunnels currently depend on the transport: over a stream transport (TLS/TCP, WebSocket) datagram channels ride framed reliable streams, while over QUIC transport they use RFC 9221 datagrams, which are congestion-controlled but never retransmitted (and the relay buffers drop on overflow). Add a tunnel-level option to enforce reliable delivery, routing channels over framed QUIC streams (one stream per channel) even when the QUIC datagram fast path is available, while preserving message boundaries. The option is an enforcement knob, not a toggle: stream transports already deliver reliably and stay unaffected. Requires engine support.
-
 - Add an explicit WebTTY termination control message
   WebTTY already supports stdin EOF through stream closure, and transport/session close tears down the server-side process. A future protocol revision should add an intentional client-to-server termination message, optionally carrying a signal where the platform supports it, so SDKs can distinguish a deliberate process termination from a network failure without inferring intent from WebSocket close.
 

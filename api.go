@@ -80,6 +80,14 @@ func (c *Client) apiDialer() Dialer {
 			TLSProxyConfig:       cloneTLSConfig(transport.TLSProxyConfig),
 			ProxyFromEnvironment: transport.ProxyFromEnvironment,
 		}
+	case *AutoTransport:
+		if transport == nil || transport.TLS == nil {
+			return &Transport{}
+		}
+		out := *transport.TLS
+		out.TLSProxyConfig = cloneTLSConfig(transport.TLS.TLSProxyConfig)
+		out.ProxyHTTPHeaders = cloneProxyHTTPHeaders(transport.TLS.ProxyHTTPHeaders)
+		return &out
 	default:
 		return &Transport{}
 	}

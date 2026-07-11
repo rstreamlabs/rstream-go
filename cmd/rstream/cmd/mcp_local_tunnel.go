@@ -21,27 +21,28 @@ import (
 )
 
 type mcpLocalTunnelSession struct {
-	ID            string    `json:"id"`
-	Name          string    `json:"name"`
-	TunnelID      string    `json:"tunnel_id"`
-	URL           string    `json:"url"`
-	Forwarded     string    `json:"forwarded"`
-	Host          string    `json:"host"`
-	Port          string    `json:"port"`
-	PID           int       `json:"pid"`
-	Publish       bool      `json:"publish"`
-	Protocol      string    `json:"protocol,omitempty"`
-	HTTPVersion   string    `json:"http_version,omitempty"`
-	TokenAuth     bool      `json:"token_auth"`
-	RstreamAuth   bool      `json:"rstream_auth"`
-	ChallengeMode bool      `json:"challenge_mode"`
-	MTLSAuth      bool      `json:"mtls_auth"`
-	UpstreamTLS   bool      `json:"upstream_tls"`
-	CleanupTool   string    `json:"cleanup_tool"`
-	CleanupID     string    `json:"cleanup_id"`
-	ConfigPath    string    `json:"config_path,omitempty"`
-	LogPath       string    `json:"log_path,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID                         string    `json:"id"`
+	Name                       string    `json:"name"`
+	TunnelID                   string    `json:"tunnel_id"`
+	URL                        string    `json:"url"`
+	Forwarded                  string    `json:"forwarded"`
+	Host                       string    `json:"host"`
+	Port                       string    `json:"port"`
+	PID                        int       `json:"pid"`
+	Publish                    bool      `json:"publish"`
+	Protocol                   string    `json:"protocol,omitempty"`
+	HTTPVersion                string    `json:"http_version,omitempty"`
+	TokenAuth                  bool      `json:"token_auth"`
+	RstreamAuth                bool      `json:"rstream_auth"`
+	ChallengeMode              bool      `json:"challenge_mode"`
+	MTLSAuth                   bool      `json:"mtls_auth"`
+	UpstreamTLS                bool      `json:"upstream_tls"`
+	DatagramGuaranteedDelivery bool      `json:"datagram_guaranteed_delivery"`
+	CleanupTool                string    `json:"cleanup_tool"`
+	CleanupID                  string    `json:"cleanup_id"`
+	ConfigPath                 string    `json:"config_path,omitempty"`
+	LogPath                    string    `json:"log_path,omitempty"`
+	CreatedAt                  time.Time `json:"created_at"`
 }
 
 type mcpLocalTunnelRegistryFile struct {
@@ -116,21 +117,22 @@ func mcpLocalTunnelExposeToolDescription() string {
 
 func mcpLocalTunnelExposeToolProperties() map[string]any {
 	return map[string]any{
-		"port":           mcpStringSchema("Local port to expose, such as 3000."),
-		"host":           mcpStringSchema("Optional local host, defaults to localhost."),
-		"name":           mcpStringSchema("Optional tunnel name."),
-		"publish":        map[string]any{"type": "boolean", "description": "Publish the tunnel. Defaults to true. Set false for a private rstrm:// target."},
-		"protocol":       mcpStringEnumSchema("Optional protocol: http, http/1.1, h2c, h3, tls, dtls, quic, tcp, bytestream, udp, or datagram. Defaults to http.", []string{"http", "http/1.1", "h2c", "h3", "tls", "dtls", "quic", "tcp", "bytestream", "udp", "datagram"}),
-		"tunnel_type":    mcpStringEnumSchema("Optional raw tunnel type override. Use bytestream for TCP-like services or datagram for UDP-like services.", []string{"bytestream", "datagram"}),
-		"stable_domain":  mcpStringSchema("Optional stable published host. Requires publish=true."),
-		"token_auth":     map[string]any{"type": "boolean", "description": "Require rstream token authentication at the HTTP edge. Requires an HTTP published tunnel."},
-		"rstream_auth":   map[string]any{"type": "boolean", "description": "Require rstream account authentication at the HTTP edge. Requires an HTTP published tunnel."},
-		"challenge_mode": map[string]any{"type": "boolean", "description": "Require an interactive browser challenge before HTTP edge access. Requires an HTTP published tunnel."},
-		"mtls":           map[string]any{"type": "boolean", "description": "Enable mTLS Tunnel access for published clients when supported by the selected project plan."},
-		"http_version":   mcpStringEnumSchema("Optional HTTP upstream/public mode when protocol is HTTP: http/1.1, h2c, or h3.", []string{"http/1.1", "h2c", "h3"}),
-		"upstream_tls":   map[string]any{"type": "boolean", "description": "Use TLS for the upstream side. For HTTP this also sets HTTP upstream TLS."},
-		"tls_mode":       mcpStringEnumSchema("Optional TLS mode for TLS tunnels: terminated or passthrough.", []string{"terminated", "passthrough"}),
-		"tls_alpns":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional TLS ALPN protocols."},
+		"port":                         mcpStringSchema("Local port to expose, such as 3000."),
+		"host":                         mcpStringSchema("Optional local host, defaults to localhost."),
+		"name":                         mcpStringSchema("Optional tunnel name."),
+		"publish":                      map[string]any{"type": "boolean", "description": "Publish the tunnel. Defaults to true. Set false for a private rstrm:// target."},
+		"protocol":                     mcpStringEnumSchema("Optional protocol: http, http/1.1, h2c, h3, tls, dtls, quic, tcp, bytestream, udp, or datagram. Defaults to http.", []string{"http", "http/1.1", "h2c", "h3", "tls", "dtls", "quic", "tcp", "bytestream", "udp", "datagram"}),
+		"tunnel_type":                  mcpStringEnumSchema("Optional raw tunnel type override. Use bytestream for TCP-like services or datagram for UDP-like services.", []string{"bytestream", "datagram"}),
+		"stable_domain":                mcpStringSchema("Optional stable published host. Requires publish=true."),
+		"token_auth":                   map[string]any{"type": "boolean", "description": "Require rstream token authentication at the HTTP edge. Requires an HTTP published tunnel."},
+		"rstream_auth":                 map[string]any{"type": "boolean", "description": "Require rstream account authentication at the HTTP edge. Requires an HTTP published tunnel."},
+		"challenge_mode":               map[string]any{"type": "boolean", "description": "Require an interactive browser challenge before HTTP edge access. Requires an HTTP published tunnel."},
+		"mtls":                         map[string]any{"type": "boolean", "description": "Enable mTLS Tunnel access for published clients when supported by the selected project plan."},
+		"http_version":                 mcpStringEnumSchema("Optional HTTP upstream/public mode when protocol is HTTP: http/1.1, h2c, or h3.", []string{"http/1.1", "h2c", "h3"}),
+		"upstream_tls":                 map[string]any{"type": "boolean", "description": "Use TLS for the upstream side. For HTTP this also sets HTTP upstream TLS."},
+		"datagram_guaranteed_delivery": map[string]any{"type": "boolean", "description": "Require reliable delivery for datagram tunnels."},
+		"tls_mode":                     mcpStringEnumSchema("Optional TLS mode for TLS tunnels: terminated or passthrough.", []string{"terminated", "passthrough"}),
+		"tls_alpns":                    map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional TLS ALPN protocols."},
 		"tls_min_version": mcpStringEnumSchema(
 			"Optional minimum TLS version.",
 			[]string{"tls1.2", "tls1.3"},
@@ -311,6 +313,10 @@ func mcpLocalTunnelApplySecurityOptions(args map[string]json.RawMessage, props *
 	if err != nil {
 		return err
 	}
+	datagramGuaranteedDelivery, err := mcpOptionalBoolPtrArg(args, "datagram_guaranteed_delivery")
+	if err != nil {
+		return err
+	}
 	tlsMode, err := mcpOptionalStringArg(args, "tls_mode", "")
 	if err != nil {
 		return err
@@ -350,6 +356,7 @@ func mcpLocalTunnelApplySecurityOptions(args map[string]json.RawMessage, props *
 	props.ChallengeMode = challengeMode
 	props.MTLSAuth = mtlsAuth
 	props.UpstreamTLS = upstreamTLS
+	props.DatagramGuaranteedDelivery = datagramGuaranteedDelivery
 	if upstreamTLS != nil && props.Protocol != nil && *props.Protocol == rstream.ProtocolHTTP {
 		props.HTTPUseTLS = upstreamTLS
 	}
@@ -370,6 +377,9 @@ func mcpLocalTunnelValidateTunnelProperties(props *rstream.TunnelProperties) err
 	}
 	if props.TLSMode != nil && (props.Protocol == nil || *props.Protocol != rstream.ProtocolTLS) {
 		return fmt.Errorf("tls_mode requires protocol=tls")
+	}
+	if boolPtrValue(props.DatagramGuaranteedDelivery) && !mcpLocalTunnelUsesDatagram(props) {
+		return fmt.Errorf("datagram_guaranteed_delivery requires a datagram tunnel")
 	}
 	return nil
 }
@@ -402,6 +412,23 @@ func mcpLocalTunnelValidateProtocolType(props *rstream.TunnelProperties) error {
 		}
 	}
 	return nil
+}
+
+func mcpLocalTunnelUsesDatagram(props *rstream.TunnelProperties) bool {
+	if props.Type != nil {
+		return *props.Type == rstream.TunnelTypeDatagram
+	}
+	if props.Protocol == nil {
+		return false
+	}
+	switch *props.Protocol {
+	case rstream.ProtocolDTLS, rstream.ProtocolQUIC:
+		return true
+	case rstream.ProtocolHTTP:
+		return props.HTTPVersion != nil && *props.HTTPVersion == rstream.HTTP3
+	default:
+		return false
+	}
 }
 
 func boolPtrValue(value *bool) bool {
@@ -498,6 +525,9 @@ func forwardArgsFromTunnelProperties(props *rstream.TunnelProperties) []string {
 	if boolPtrValue(props.UpstreamTLS) {
 		args = append(args, "--upstream-tls")
 	}
+	if boolPtrValue(props.DatagramGuaranteedDelivery) {
+		args = append(args, "--datagram-guaranteed-delivery")
+	}
 	if boolPtrValue(props.TokenAuth) {
 		args = append(args, "--token-auth")
 	}
@@ -517,16 +547,29 @@ func forwardArgsFromTunnelProperties(props *rstream.TunnelProperties) []string {
 }
 
 func privateForwardArgsFromTunnelProperties(props *rstream.TunnelProperties) []string {
+	args := []string{}
 	if props.Type != nil && *props.Type == rstream.TunnelTypeDatagram {
-		return []string{"--datagram"}
+		args = append(args, "--datagram")
+		if boolPtrValue(props.DatagramGuaranteedDelivery) {
+			args = append(args, "--datagram-guaranteed-delivery")
+		}
+		return args
 	}
 	if props.Protocol != nil {
 		switch *props.Protocol {
 		case rstream.ProtocolDTLS, rstream.ProtocolQUIC:
-			return []string{"--datagram"}
+			args = append(args, "--datagram")
+			if boolPtrValue(props.DatagramGuaranteedDelivery) {
+				args = append(args, "--datagram-guaranteed-delivery")
+			}
+			return args
 		case rstream.ProtocolHTTP:
 			if props.HTTPVersion != nil && *props.HTTPVersion == rstream.HTTP3 {
-				return []string{"--datagram"}
+				args = append(args, "--datagram")
+				if boolPtrValue(props.DatagramGuaranteedDelivery) {
+					args = append(args, "--datagram-guaranteed-delivery")
+				}
+				return args
 			}
 		}
 	}
@@ -584,7 +627,7 @@ func readMCPLocalTunnelOnlineStatus(logPath string, props *rstream.TunnelPropert
 }
 
 func mcpLocalTunnelSessionFromStatus(tunnelID string, forwarding string, forwarded string, props *rstream.TunnelProperties, host string, port string, configPath string, logPath string, pid int) *mcpLocalTunnelSession {
-	return &mcpLocalTunnelSession{ID: tunnelID, Name: statusString(props.Name), TunnelID: tunnelID, URL: forwarding, Forwarded: forwarded, Host: host, Port: port, PID: pid, Publish: props.Publish == nil || *props.Publish, Protocol: localTunnelProtocolValue(props), HTTPVersion: localTunnelHTTPVersionValue(props), TokenAuth: boolPtrValue(props.TokenAuth), RstreamAuth: boolPtrValue(props.RstreamAuth), ChallengeMode: boolPtrValue(props.ChallengeMode), MTLSAuth: boolPtrValue(props.MTLSAuth), UpstreamTLS: boolPtrValue(props.UpstreamTLS), CleanupTool: "rstream_local_tunnel_stop", CleanupID: tunnelID, ConfigPath: configPath, LogPath: logPath, CreatedAt: time.Now().UTC()}
+	return &mcpLocalTunnelSession{ID: tunnelID, Name: statusString(props.Name), TunnelID: tunnelID, URL: forwarding, Forwarded: forwarded, Host: host, Port: port, PID: pid, Publish: props.Publish == nil || *props.Publish, Protocol: localTunnelProtocolValue(props), HTTPVersion: localTunnelHTTPVersionValue(props), TokenAuth: boolPtrValue(props.TokenAuth), RstreamAuth: boolPtrValue(props.RstreamAuth), ChallengeMode: boolPtrValue(props.ChallengeMode), MTLSAuth: boolPtrValue(props.MTLSAuth), UpstreamTLS: boolPtrValue(props.UpstreamTLS), DatagramGuaranteedDelivery: boolPtrValue(props.DatagramGuaranteedDelivery), CleanupTool: "rstream_local_tunnel_stop", CleanupID: tunnelID, ConfigPath: configPath, LogPath: logPath, CreatedAt: time.Now().UTC()}
 }
 
 func localTunnelProtocolValue(props *rstream.TunnelProperties) string {

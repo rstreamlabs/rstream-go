@@ -97,6 +97,28 @@ func TestDoctorContextAndTransportHelpers(t *testing.T) {
 	if _, ok := doctorQUICTransport(nil); ok {
 		t.Fatalf("nil transport should not be QUIC")
 	}
+	auto := &rstream.AutoTransport{TLS: &rstream.Transport{ForceIPv4: rstream.BoolPtr(true)}, QUIC: &rstream.QUICTransport{LocalAddr: rstream.StringPtr("127.0.0.1")}}
+	if transport, ok := doctorQUICTransport(auto); !ok || transport.LocalAddr == nil || *transport.LocalAddr != "127.0.0.1" {
+		t.Fatalf("doctorQUICTransport(auto) = %#v, %v", transport, ok)
+	}
+	if transport, ok := doctorTLSTransport(auto); !ok || transport.ForceIPv4 == nil || !*transport.ForceIPv4 {
+		t.Fatalf("doctorTLSTransport(auto) = %#v, %v", transport, ok)
+	}
+}
+
+func TestDoctorTransportProbeStatuses(t *testing.T) {
+	tlsStatus, quicStatus := doctorTransportProbeStatuses(rstream.TunnelTransportModeAuto, true, false)
+	if tlsStatus != doctorStatusPass || quicStatus != doctorStatusWarn {
+		t.Fatalf("auto TLS fallback statuses = %s, %s", tlsStatus, quicStatus)
+	}
+	tlsStatus, quicStatus = doctorTransportProbeStatuses(rstream.TunnelTransportModeQUIC, true, false)
+	if tlsStatus != doctorStatusPass || quicStatus != doctorStatusFail {
+		t.Fatalf("strict QUIC statuses = %s, %s", tlsStatus, quicStatus)
+	}
+	tlsStatus, quicStatus = doctorTransportProbeStatuses(rstream.TunnelTransportModeTLS, false, true)
+	if tlsStatus != doctorStatusFail || quicStatus != doctorStatusPass {
+		t.Fatalf("strict TLS statuses = %s, %s", tlsStatus, quicStatus)
+	}
 }
 
 func TestRunDoctorWithoutContextStaysLocalAndReportsActionableChecks(t *testing.T) {

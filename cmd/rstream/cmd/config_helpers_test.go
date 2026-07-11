@@ -21,6 +21,7 @@ func clearRstreamTestEnv(t *testing.T) {
 		"RSTREAM_CONTEXT",
 		"RSTREAM_ENGINE",
 		"RSTREAM_QUIC_TRANSPORT",
+		"RSTREAM_TUNNEL_TRANSPORT",
 		"RSTREAM_WEBTTY_AUTH_TOKEN",
 		"RSTREAM_WEBTTY_CONFIG",
 		"RSTREAM_WEBTTY_IDENTITY",
@@ -127,6 +128,16 @@ func TestResolveRuntimeLoadsConfigTokenAndTransport(t *testing.T) {
 	if _, ok := runtime.Resolved.Transport.(*rstream.QUICTransport); !ok {
 		t.Fatalf("transport override = %T, want QUICTransport", runtime.Resolved.Transport)
 	}
+	command = runtimeFlagsCommand()
+	mustSetFlag(t, command, "tunnel-transport", "tls")
+	t.Setenv("RSTREAM_TUNNEL_TRANSPORT", "quic")
+	runtime, err = resolveRuntime(command, true, true)
+	if err != nil {
+		t.Fatalf("resolveRuntime() with transport flag error = %v", err)
+	}
+	if _, ok := runtime.Resolved.Transport.(*rstream.Transport); !ok {
+		t.Fatalf("flag transport override = %T, want Transport", runtime.Resolved.Transport)
+	}
 	client, err := newClientFromResolved(runtime.Resolved)
 	if err != nil || client == nil {
 		t.Fatalf("newClientFromResolved() = %v, %v", client, err)
@@ -210,5 +221,6 @@ func runtimeFlagsCommand() *cobra.Command {
 	command.Flags().String("config", "", "")
 	command.Flags().String("api-url", "", "")
 	command.Flags().String("context", "", "")
+	command.Flags().String("tunnel-transport", "", "")
 	return command
 }

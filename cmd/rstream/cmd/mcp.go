@@ -1045,12 +1045,11 @@ func resolveMCPRuntime(requireEngine bool, requireToken bool) (*resolvedRuntime,
 	if envAPIURL == "" && env.Context == "" && cfg.Defaults.Context == nil && len(cfg.Environments) == 1 {
 		envAPIURL = cfg.Environments[0].APIURL
 	}
-	input := config.ResolveInput{Config: cfg, EnvAPIURL: envAPIURL, EnvContext: env.Context, EnvEngine: env.Engine, EnvToken: env.Token, EnvMTLSCert: env.MTLSCert, EnvMTLSKey: env.MTLSKey, RequireEngine: requireEngine, RequireToken: requireToken, ResolveToken: true}
+	input := config.ResolveInput{Config: cfg, EnvAPIURL: envAPIURL, EnvContext: env.Context, EnvEngine: env.Engine, EnvToken: env.Token, EnvMTLSCert: env.MTLSCert, EnvMTLSKey: env.MTLSKey, EnvTunnelTransport: env.TunnelTransport, EnvUseQUIC: env.UseQUIC, RequireEngine: requireEngine, RequireToken: requireToken, ResolveToken: true}
 	resolved, err := config.Resolve(input)
 	if err != nil {
 		return nil, err
 	}
-	resolved = applyEnvTransportOverrides(resolved, env)
 	return &resolvedRuntime{ConfigPath: path, Config: cfg, Resolved: resolved}, nil
 }
 func mcpRequiredStringArg(args map[string]json.RawMessage, name string) (string, error) {

@@ -10,11 +10,13 @@ This directory contains end-to-end tests for the rstream Go SDK. Each subdirecto
 | `webtransport` | 1 | Aggregated WebTransport client run covering bidirectional streams, unidirectional streams, datagrams, multi-stream, and close codes |
 | `http` | 3 | HTTP tunnels over H1, H2C, and H3, including GET and SSE streaming |
 | `stream` | 7 | Bytestream tunnel: plain (unpublished), TLS via SDK dialer (unpublished), TLS via engine listener (published), TLS passthrough via engine listener, TLS via engine listener with upstream TLS, and ALPN rejection checks |
-| `datagram` | 12 | Datagram tunnel: DTLS via SDK dialer (unpublished), DTLS via engine listener (published, with and without upstream DTLS), QUIC via SDK dialer (unpublished), QUIC via engine listener (published), SCTP via pion/sctp over SDK datagrams and published DTLS, and ALPN rejection checks |
+| `datagram` | 13 | Datagram tunnel: DTLS via SDK dialer (unpublished), DTLS via engine listener (published, with and without upstream DTLS), QUIC via SDK dialer (unpublished), QUIC via engine listener (published), SCTP via pion/sctp over SDK datagrams and published DTLS, and ALPN rejection checks |
 | `masque` | 2 | Published HTTP/3 datagram tunnels carrying CONNECT-UDP and CONNECT-IP Extended CONNECT sessions end-to-end |
 | `connect` | 3 | Published HTTP tunnels carrying plain authority-form CONNECT over H1, H2, and H3 downstream sessions |
 
-**Total: 37 runner cases.** The WebTransport runner case contains multiple protocol subcases internally.
+The primary `run-e2e.sh` matrix executes 33 cases. The WebTransport runner case
+contains multiple protocol subcases internally. Additional runtime suites cover
+MASQUE, CONNECT, and the six bandwidth-limit cases described below.
 
 The stream and datagram suites each cover two connectivity modes:
 
@@ -51,7 +53,7 @@ Equivalent manual commands:
 
 ```sh
 make rstream
-mkdir -p out/test/{websocket,webtransport,http,stream,datagram,masque,connect}
+mkdir -p out/test/{websocket,webtransport,http,stream,datagram,masque,connect,bandwidth}
 go build -o out/test/websocket/server    ./test/websocket/server
 go build -o out/test/websocket/client    ./test/websocket/client
 go build -o out/test/webtransport/server ./test/webtransport/server
@@ -66,6 +68,8 @@ go build -o out/test/masque/server       ./test/masque/server
 go build -o out/test/masque/client       ./test/masque/client
 go build -o out/test/connect/server      ./test/connect/server
 go build -o out/test/connect/client      ./test/connect/client
+go build -o out/test/bandwidth/server    ./test/bandwidth/server
+go build -o out/test/bandwidth/client    ./test/bandwidth/client
 ```
 
 ### Run
@@ -85,6 +89,9 @@ bash run-e2e.sh
 
 The script exits with status 0 if all cases pass, non-zero otherwise.
 Before running cases, the script checks that all required binaries are executable and that either `RSTREAM_CONTEXT` or `RSTREAM_ENGINE` is set.
+Private datagram cases also assert the selected tunnel packet path: stream framing over TLS transport, QUIC datagrams over QUIC transport, and stream framing when guaranteed delivery is requested. Nested QUIC and WebTransport cases use a 1200-byte initial packet size so their packets fit the QUIC datagram tunnel budget.
+
+The baseline command pins TLS so packet-path assertions remain deterministic. Use `bash run-e2e.sh --quic` for strict QUIC and `bash run-e2e.sh --auto` to verify that automatic selection prefers QUIC on a reachable local engine.
 
 Run the runtime forwarding smoke suite:
 
@@ -103,6 +110,28 @@ export RSTREAM_CONTEXT=<context>
 export BIN=out/test
 bash test/e2e/runtime-forward.sh --quic-transport
 ```
+
+Use `--auto-transport` for the same matrix with automatic selection. The script pins TLS when neither option is provided.
+
+Run the EE bandwidth-limit matrix against an engine configured with 1 Mbps
+upstream and downstream limits for every plan used by the test context:
+
+```sh
+export RSTREAM_CONTEXT=<context>
+export BIN=out/test
+bash test/e2e/runtime-bandwidth-limit.sh
+```
+
+The matrix transfers 256 kB in each direction and checks a bounded duration.
+It covers bytestream over TLS and QUIC, framed datagrams over TLS, the QUIC
+datagram fast path with mixed and all-QUIC legs, and guaranteed datagrams over
+QUIC streams. Override `RSTREAM_BANDWIDTH_MIN_DURATION` and
+`RSTREAM_BANDWIDTH_MAX_DURATION` when intentionally testing another configured
+rate.
+
+To verify direction mapping independently, run the matrix once with only
+`upstream_mbps` set to `1`, then once with only `downstream_mbps` set to `1`.
+The default duration bounds apply to both passes.
 
 The runtime transport proxy suite exercises the agent-to-engine proxy matrix with live local servers and proxies:
 

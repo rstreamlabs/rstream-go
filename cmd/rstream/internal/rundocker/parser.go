@@ -149,6 +149,13 @@ func (l *labelSpec) apply(key, value string) error {
 		}
 		l.props.UpstreamTLS = &v
 		return nil
+	case key == "datagram-guaranteed-delivery":
+		v, err := parseBool(value)
+		if err != nil {
+			return err
+		}
+		l.props.DatagramGuaranteedDelivery = &v
+		return nil
 	case key == "trusted-ips":
 		l.props.TrustedIPs = splitCSV(value)
 		return nil

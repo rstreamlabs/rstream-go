@@ -38,6 +38,7 @@ func newTestNetcatCommand() *cobra.Command {
 	cmd.Flags().Bool("datagram", false, "")
 	cmd.Flags().String("framing", string(netcatFramingRFC4571), "")
 	cmd.Flags().Duration("idle-timeout", 0, "")
+	cmd.Flags().Bool("datagram-guaranteed-delivery", false, "")
 	cmd.Flags().String("udp-peer", "", "")
 	cmd.Flags().Int("max-connections", defaultNetcatMaxConns, "")
 	return cmd
@@ -220,6 +221,30 @@ func TestValidateNetcatFlags(t *testing.T) {
 					return err
 				}
 				return cmd.Flags().Set("sh-exec", "cat")
+			},
+			wantErr: false,
+		},
+		{
+			name: "guaranteed delivery requires datagram",
+			args: []string{"rstrm://media"},
+			config: func(cmd *cobra.Command) error {
+				return cmd.Flags().Set("datagram-guaranteed-delivery", "true")
+			},
+			wantErr: true,
+		},
+		{
+			name: "guaranteed delivery accepted for created datagram tunnel",
+			config: func(cmd *cobra.Command) error {
+				if err := cmd.Flags().Set("listen", "rstrm://media"); err != nil {
+					return err
+				}
+				if err := cmd.Flags().Set("datagram", "true"); err != nil {
+					return err
+				}
+				if err := cmd.Flags().Set("sh-exec", "cat"); err != nil {
+					return err
+				}
+				return cmd.Flags().Set("datagram-guaranteed-delivery", "true")
 			},
 			wantErr: false,
 		},

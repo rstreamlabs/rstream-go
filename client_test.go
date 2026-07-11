@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -192,6 +193,36 @@ func TestControlChannelConnectCreateTunnelAndClose(t *testing.T) {
 	}
 }
 
+func TestAutoTransportDoesNotFallbackAfterEngineProtocolError(t *testing.T) {
+	quic := newQueuedDialer(1)
+	quic.enqueue(func(conn net.Conn) error {
+		reader := bufio.NewReader(conn)
+		writer := bufio.NewWriter(conn)
+		msg, err := readPbMessage(reader)
+		if err != nil {
+			return err
+		}
+		if msg.GetOpenControlChannelReq() == nil {
+			return errUnexpectedTestMessage("OpenControlChannelReq")
+		}
+		return writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenControlChannelRsp{OpenControlChannelRsp: &pb.OpenControlChannelRsp{Payload: &pb.OpenControlChannelRsp_Error{Error: &pb.Error{Code: 401, Message: wrapperspb.String("unauthorized")}}}}})
+	})
+	tlsFallback := &autoTestDialer{}
+	delay := time.Hour
+	transport := &AutoTransport{quicDialer: quic, tlsDialer: tlsFallback, FallbackDelay: &delay}
+	engine := "engine.example.com:443"
+	token := "invalid-token"
+	client := &Client{EngineURL: &engine, Token: &token, Transport: transport, TLSClientConfig: &tls.Config{MaxVersion: tls.VersionTLS12}}
+	_, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(false)})
+	if err == nil || !strings.Contains(err.Error(), "unauthorized") {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	if transport.SelectedMode() != TunnelTransportModeQUIC || tlsFallback.callCount() != 0 {
+		t.Fatalf("protocol error changed selection: mode=%q tls calls=%d", transport.SelectedMode(), tlsFallback.callCount())
+	}
+	quic.wait(t, 1)
+}
+
 func TestControlChannelCreateTunnelReportsEngineAndMalformedResponses(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -317,7 +348,7 @@ func TestClientPacketDialFramesPackets(t *testing.T) {
 	dialer.enqueue(func(conn net.Conn) error {
 		reader := bufio.NewReader(conn)
 		writer := bufio.NewWriter(conn)
-		if err := expectStreamReq(reader, "datagrams", "token"); err != nil {
+		if _, err := expectStreamReq(reader, "datagrams", "token"); err != nil {
 			return err
 		}
 		if err := writeStreamRsp(writer, "stream-1"); err != nil {
@@ -354,6 +385,192 @@ func TestClientPacketDialFramesPackets(t *testing.T) {
 		t.Fatalf("ReadFrom() = %q from %v, want reply from datagrams", buf[:n], addr)
 	}
 	dialer.wait(t, 1)
+}
+
+func TestClientPacketDialUsesQUICDatagramChannel(t *testing.T) {
+	done := make(chan struct{})
+	dialer := newQueuedDatagramDialer(1)
+	dialer.enqueue(func(conn net.Conn) error {
+		reader := bufio.NewReader(conn)
+		writer := bufio.NewWriter(conn)
+		streamReq, err := expectStreamReq(reader, "datagrams", "token")
+		if err != nil {
+			return err
+		}
+		if !streamReq.GetDatagramChannel().GetValue() {
+			return errors.New("StreamReq datagram_channel = false, want true")
+		}
+		if err := writeStreamRsp(writer, "01020304-0000-0000-0000-000000000000"); err != nil {
+			return err
+		}
+		<-done
+		return nil
+	})
+	client := newTestClientWithDatagramDialer(dialer)
+	packetConn, err := client.PacketDial(t.Context(), Addr{IdOrName: "datagrams"})
+	if err != nil {
+		t.Fatalf("PacketDial() error = %v", err)
+	}
+	defer packetConn.Close()
+	channelID := mustDatagramChannelID(t, "01020304-0000-0000-0000-000000000000")
+	remote := Addr{IdOrName: "datagrams"}
+	if n, err := packetConn.WriteTo([]byte("packet"), &remote); err != nil || n != len("packet") {
+		t.Fatalf("WriteTo() = %d, %v; want %d, nil", n, err, len("packet"))
+	}
+	sent := dialer.sentDatagram(t)
+	if string(sent[:datagramChannelIDSize]) != string(channelID[:]) || string(sent[datagramChannelIDSize:]) != "packet" {
+		t.Fatalf("unexpected datagram frame: %#v", sent)
+	}
+	dialer.receiveDatagram(t, channelID, []byte("reply"))
+	buf := make([]byte, 16)
+	n, addr, err := packetConn.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("ReadFrom() error = %v", err)
+	}
+	if string(buf[:n]) != "reply" || addr.String() != "datagrams" {
+		t.Fatalf("ReadFrom() = %q from %v, want reply from datagrams", buf[:n], addr)
+	}
+	close(done)
+	if err := packetConn.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	dialer.wait(t, 1)
+}
+
+func TestClientPacketDialUsesDatagramsAfterAutoSelectsQUIC(t *testing.T) {
+	done := make(chan struct{})
+	quic := newQueuedDatagramDialer(1)
+	quic.enqueue(func(conn net.Conn) error {
+		reader := bufio.NewReader(conn)
+		writer := bufio.NewWriter(conn)
+		streamReq, err := expectStreamReq(reader, "datagrams", "token")
+		if err != nil {
+			return err
+		}
+		if !streamReq.GetDatagramChannel().GetValue() {
+			return errors.New("StreamReq datagram_channel = false, want true")
+		}
+		if err := writeStreamRsp(writer, "01020304-0000-0000-0000-000000000000"); err != nil {
+			return err
+		}
+		<-done
+		return nil
+	})
+	delay := time.Hour
+	auto := &AutoTransport{quicDialer: quic, tlsDialer: &autoTestDialer{}, FallbackDelay: &delay}
+	client := newTestClientWithDatagramDialer(quic)
+	client.Transport = auto
+	packetConn, err := client.PacketDial(t.Context(), Addr{IdOrName: "datagrams"})
+	if err != nil {
+		t.Fatalf("PacketDial() error = %v", err)
+	}
+	if _, ok := packetConn.(*quicDatagramChannel); !ok || auto.SelectedMode() != TunnelTransportModeQUIC {
+		t.Fatalf("PacketDial() = %T, selection=%q", packetConn, auto.SelectedMode())
+	}
+	close(done)
+	_ = packetConn.Close()
+	quic.wait(t, 1)
+}
+
+func TestClientPacketDialUsesFramingAfterAutoFallsBackToTLS(t *testing.T) {
+	tlsDialer := newQueuedDialer(2)
+	tlsDialer.enqueue(func(conn net.Conn) error {
+		buffer := make([]byte, 1)
+		_, err := conn.Read(buffer)
+		if !errors.Is(err, io.EOF) {
+			return fmt.Errorf("selection stream read error = %v, want EOF", err)
+		}
+		return nil
+	})
+	tlsDialer.enqueue(func(conn net.Conn) error {
+		reader := bufio.NewReader(conn)
+		writer := bufio.NewWriter(conn)
+		streamReq, err := expectStreamReq(reader, "datagrams", "token")
+		if err != nil {
+			return err
+		}
+		if streamReq.GetDatagramChannel().GetValue() {
+			return errors.New("framed fallback requested a QUIC datagram channel")
+		}
+		return writeStreamRsp(writer, "stream-1")
+	})
+	quic := &autoTestDialer{err: errors.New("udp blocked")}
+	delay := time.Hour
+	auto := &AutoTransport{quicDialer: quic, tlsDialer: tlsDialer, FallbackDelay: &delay}
+	engine := "engine.example.com:443"
+	token := "token"
+	client := &Client{EngineURL: &engine, Token: &token, ZeroRTT: BoolPtr(false), Transport: auto, TLSClientConfig: &tls.Config{MaxVersion: tls.VersionTLS12}}
+	conn, err := client.PacketDial(t.Context(), Addr{IdOrName: "datagrams"})
+	if err != nil {
+		t.Fatalf("PacketDial() error = %v", err)
+	}
+	if _, ok := conn.(*connWrapper); !ok || auto.SelectedMode() != TunnelTransportModeTLS {
+		t.Fatalf("PacketDial() = %T, selection=%q", conn, auto.SelectedMode())
+	}
+	_ = conn.Close()
+	tlsDialer.wait(t, 2)
+}
+
+func TestClientPacketDialFallsBackWhenQUICDatagramChannelIsUnavailable(t *testing.T) {
+	dialer := newQueuedDatagramDialer(2)
+	dialer.enqueue(func(conn net.Conn) error {
+		reader := bufio.NewReader(conn)
+		writer := bufio.NewWriter(conn)
+		streamReq, err := expectStreamReq(reader, "datagrams", "token")
+		if err != nil {
+			return err
+		}
+		if !streamReq.GetDatagramChannel().GetValue() {
+			return errors.New("StreamReq datagram_channel = false, want true")
+		}
+		return writePbMessage(writer, &pb.Message{Payload: &pb.Message_StreamRsp{StreamRsp: &pb.StreamRsp{
+			Payload: &pb.StreamRsp_Error{Error: &pb.Error{
+				Code:    pb.ErrorCode_ERROR_CODE_INVALID_REQUEST,
+				Message: wrapperspb.String("QUIC datagrams are not available for this tunnel."),
+			}},
+		}}})
+	})
+	dialer.enqueue(func(conn net.Conn) error {
+		reader := bufio.NewReader(conn)
+		writer := bufio.NewWriter(conn)
+		streamReq, err := expectStreamReq(reader, "datagrams", "token")
+		if err != nil {
+			return err
+		}
+		if streamReq.GetDatagramChannel().GetValue() {
+			return errors.New("fallback StreamReq datagram_channel = true, want false")
+		}
+		if err := writeStreamRsp(writer, "stream-1"); err != nil {
+			return err
+		}
+		payload, err := readMessage(reader)
+		if err != nil {
+			return err
+		}
+		if string(payload) != "packet" {
+			return fmt.Errorf("framed payload = %q, want packet", payload)
+		}
+		return writeMessage(writer, []byte("reply"))
+	})
+	client := newTestClientWithDatagramDialer(dialer)
+	packetConn, err := client.PacketDial(t.Context(), Addr{IdOrName: "datagrams"})
+	if err != nil {
+		t.Fatalf("PacketDial() error = %v", err)
+	}
+	defer packetConn.Close()
+	remote := Addr{IdOrName: "datagrams"}
+	if n, err := packetConn.WriteTo([]byte("packet"), &remote); err != nil || n != len("packet") {
+		t.Fatalf("WriteTo() = %d, %v; want %d, nil", n, err, len("packet"))
+	}
+	buf := make([]byte, 16)
+	n, addr, err := packetConn.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("ReadFrom() error = %v", err)
+	}
+	if string(buf[:n]) != "reply" || addr.String() != "datagrams" {
+		t.Fatalf("ReadFrom() = %q from %v, want reply from datagrams", buf[:n], addr)
+	}
+	dialer.wait(t, 2)
 }
 
 func TestControlChannelAcceptsProxyConnectionAndClosesTunnel(t *testing.T) {
@@ -555,6 +772,8 @@ type queuedDialer struct {
 
 type queuedDatagramDialer struct {
 	*queuedDialer
+	mu       sync.Mutex
+	channels map[datagramChannelID]*quicDatagramChannel
 	incoming chan []byte
 	sent     chan []byte
 }
@@ -562,8 +781,27 @@ type queuedDatagramDialer struct {
 func newQueuedDatagramDialer(size int) *queuedDatagramDialer {
 	return &queuedDatagramDialer{
 		queuedDialer: newQueuedDialer(size),
+		channels:     make(map[datagramChannelID]*quicDatagramChannel),
 		incoming:     make(chan []byte, 8),
 		sent:         make(chan []byte, 8),
+	}
+}
+
+func (d *queuedDatagramDialer) registerDatagramChannel(id datagramChannelID, ch *quicDatagramChannel) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.channels[id] != nil {
+		return false
+	}
+	d.channels[id] = ch
+	return true
+}
+
+func (d *queuedDatagramDialer) unregisterDatagramChannel(id datagramChannelID, ch *quicDatagramChannel) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.channels[id] == ch {
+		delete(d.channels, id)
 	}
 }
 
@@ -586,6 +824,17 @@ func (d *queuedDatagramDialer) receiveDatagram(t *testing.T, channelID datagramC
 	frame := make([]byte, datagramChannelIDSize+len(payload))
 	copy(frame[:datagramChannelIDSize], channelID[:])
 	copy(frame[datagramChannelIDSize:], payload)
+	d.mu.Lock()
+	ch := d.channels[channelID]
+	d.mu.Unlock()
+	if ch != nil {
+		select {
+		case ch.recvCh <- append([]byte(nil), payload...):
+		case <-time.After(time.Second):
+			t.Fatalf("timed out routing datagram")
+		}
+		return
+	}
 	select {
 	case d.incoming <- frame:
 	case <-time.After(time.Second):
@@ -976,7 +1225,7 @@ func serveProxyConnection(conn net.Conn) error {
 func serveStreamDial(conn net.Conn, wantTunnel, wantToken, wantPayload, reply string) error {
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
-	if err := expectStreamReq(reader, wantTunnel, wantToken); err != nil {
+	if _, err := expectStreamReq(reader, wantTunnel, wantToken); err != nil {
 		return err
 	}
 	if err := writeStreamRsp(writer, "stream-1"); err != nil {
@@ -991,25 +1240,25 @@ func serveStreamDial(conn net.Conn, wantTunnel, wantToken, wantPayload, reply st
 	return writer.Flush()
 }
 
-func expectStreamReq(reader *bufio.Reader, wantTunnel, wantToken string) error {
+func expectStreamReq(reader *bufio.Reader, wantTunnel, wantToken string) (*pb.StreamReq, error) {
 	msg, err := readPbMessage(reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	streamReq := msg.GetStreamReq()
 	if streamReq == nil {
-		return errUnexpectedTestMessage("StreamReq")
+		return nil, errUnexpectedTestMessage("StreamReq")
 	}
 	if streamReq.TunnelIdName != wantTunnel {
-		return fmt.Errorf("StreamReq tunnel_id_name = %q, want %q", streamReq.TunnelIdName, wantTunnel)
+		return nil, fmt.Errorf("StreamReq tunnel_id_name = %q, want %q", streamReq.TunnelIdName, wantTunnel)
 	}
 	if got := streamReq.GetClientDetails().GetToken().GetValue(); got != wantToken {
-		return fmt.Errorf("StreamReq token = %q, want %q", got, wantToken)
+		return nil, fmt.Errorf("StreamReq token = %q, want %q", got, wantToken)
 	}
 	if streamReq.GetZeroRtt().GetValue() {
-		return errors.New("StreamReq zero_rtt = true, want false")
+		return nil, errors.New("StreamReq zero_rtt = true, want false")
 	}
-	return nil
+	return streamReq, nil
 }
 
 func writeStreamRsp(writer *bufio.Writer, streamID string) error {

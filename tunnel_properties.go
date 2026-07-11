@@ -37,29 +37,30 @@ const (
 )
 
 type TunnelProperties struct {
-	ID            *string           `json:"id,omitempty"`
-	CreationDate  *time.Time        `json:"creation_date,omitempty"`
-	Name          *string           `json:"name,omitempty"`
-	Type          *TunnelType       `json:"type,omitempty"`
-	Publish       *bool             `json:"publish,omitempty"`
-	Protocol      *Protocol         `json:"protocol,omitempty"`
-	Labels        map[string]string `json:"labels,omitempty"`
-	GeoIP         []string          `json:"geo_ip,omitempty"`
-	TrustedIPs    []string          `json:"trusted_ips,omitempty"`
-	Host          *string           `json:"host,omitempty"`
-	Hostname      *string           `json:"hostname,omitempty"`
-	Port          *uint32           `json:"port,omitempty"`
-	TLSMode       *TLSMode          `json:"tls_mode,omitempty"`
-	TLSALPNs      []string          `json:"tls_alpns,omitempty"`
-	TLSMinVersion *string           `json:"tls_min_version,omitempty"`
-	TLSCiphers    []string          `json:"tls_ciphers,omitempty"`
-	MTLSAuth      *bool             `json:"mtls_auth,omitempty"`
-	HTTPVersion   *HTTPVersion      `json:"http_version,omitempty"`
-	HTTPUseTLS    *bool             `json:"http_use_tls,omitempty"`
-	UpstreamTLS   *bool             `json:"upstream_tls,omitempty"`
-	TokenAuth     *bool             `json:"token_auth,omitempty"`
-	RstreamAuth   *bool             `json:"rstream_auth,omitempty"`
-	ChallengeMode *bool             `json:"challenge_mode,omitempty"`
+	ID                         *string           `json:"id,omitempty"`
+	CreationDate               *time.Time        `json:"creation_date,omitempty"`
+	Name                       *string           `json:"name,omitempty"`
+	Type                       *TunnelType       `json:"type,omitempty"`
+	Publish                    *bool             `json:"publish,omitempty"`
+	Protocol                   *Protocol         `json:"protocol,omitempty"`
+	Labels                     map[string]string `json:"labels,omitempty"`
+	GeoIP                      []string          `json:"geo_ip,omitempty"`
+	TrustedIPs                 []string          `json:"trusted_ips,omitempty"`
+	Host                       *string           `json:"host,omitempty"`
+	Hostname                   *string           `json:"hostname,omitempty"`
+	Port                       *uint32           `json:"port,omitempty"`
+	TLSMode                    *TLSMode          `json:"tls_mode,omitempty"`
+	TLSALPNs                   []string          `json:"tls_alpns,omitempty"`
+	TLSMinVersion              *string           `json:"tls_min_version,omitempty"`
+	TLSCiphers                 []string          `json:"tls_ciphers,omitempty"`
+	MTLSAuth                   *bool             `json:"mtls_auth,omitempty"`
+	HTTPVersion                *HTTPVersion      `json:"http_version,omitempty"`
+	HTTPUseTLS                 *bool             `json:"http_use_tls,omitempty"`
+	UpstreamTLS                *bool             `json:"upstream_tls,omitempty"`
+	DatagramGuaranteedDelivery *bool             `json:"datagram_guaranteed_delivery,omitempty"`
+	TokenAuth                  *bool             `json:"token_auth,omitempty"`
+	RstreamAuth                *bool             `json:"rstream_auth,omitempty"`
+	ChallengeMode              *bool             `json:"challenge_mode,omitempty"`
 }
 
 type TunnelInventory struct {

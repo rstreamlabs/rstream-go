@@ -99,6 +99,18 @@ func TestAPIDialerMapsQUICTransportToTCPTransport(t *testing.T) {
 	}
 }
 
+func TestAPIDialerMapsAutoTransportToTCPWithoutSelectingTunnelTransport(t *testing.T) {
+	auto := &AutoTransport{TLS: &Transport{ForceIPv4: BoolPtr(true), ProxyHTTPHeaders: map[string]string{"X-Test": "value"}}, QUIC: &QUICTransport{}}
+	client := &Client{Transport: auto}
+	dialer, ok := client.apiDialer().(*Transport)
+	if !ok || dialer.ForceIPv4 == nil || !*dialer.ForceIPv4 || dialer.ProxyHTTPHeaders["X-Test"] != "value" {
+		t.Fatalf("apiDialer() = %#v, want cloned TLS child", dialer)
+	}
+	if auto.SelectedTransport() != nil {
+		t.Fatal("Engine API dialer must not select the tunnel transport")
+	}
+}
+
 func TestSetQueryJSON(t *testing.T) {
 	q := url.Values{}
 	if err := setQueryJSON(q, "params", nil); err != nil {

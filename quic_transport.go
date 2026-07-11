@@ -56,6 +56,8 @@ type QUICTransport struct {
 	proxyCloser          io.Closer
 	origin               string
 	closeGeneration      uint64
+	datagramChannels     map[datagramChannelID]*quicDatagramChannel
+	datagramReadRunning  bool
 }
 
 // Dial establishes or reuses a QUIC connection to addr, then opens and returns
@@ -149,9 +151,13 @@ func (t *QUICTransport) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 // Close closes the underlying QUIC connection and the UDP socket beneath it.
 func (t *QUICTransport) Close() error {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	t.closeGeneration++
+	channels := t.detachDatagramChannelsLocked()
 	if t.quicConn == nil {
+		t.mu.Unlock()
+		for _, ch := range channels {
+			ch.Close()
+		}
 		return nil
 	}
 	err := t.quicConn.CloseWithError(0, "transport closed")
@@ -163,7 +169,96 @@ func (t *QUICTransport) Close() error {
 	t.qtransport = nil
 	t.pconn = nil
 	t.proxyCloser = nil
+	t.mu.Unlock()
+	for _, ch := range channels {
+		ch.Close()
+	}
 	return err
+}
+
+func (t *QUICTransport) registerDatagramChannel(id datagramChannelID, ch *quicDatagramChannel) bool {
+	t.mu.Lock()
+	if t.quicConn == nil {
+		t.mu.Unlock()
+		return false
+	}
+	if t.datagramChannels == nil {
+		t.datagramChannels = make(map[datagramChannelID]*quicDatagramChannel)
+	}
+	if t.datagramChannels[id] != nil {
+		t.mu.Unlock()
+		return false
+	}
+	t.datagramChannels[id] = ch
+	conn := t.quicConn
+	start := !t.datagramReadRunning
+	if start {
+		t.datagramReadRunning = true
+	}
+	t.mu.Unlock()
+	if start {
+		go t.datagramReadLoop(conn)
+	}
+	return true
+}
+
+func (t *QUICTransport) unregisterDatagramChannel(id datagramChannelID, ch *quicDatagramChannel) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.datagramChannels != nil && t.datagramChannels[id] == ch {
+		delete(t.datagramChannels, id)
+	}
+}
+
+func (t *QUICTransport) datagramReadLoop(conn *quic.Conn) {
+	for {
+		data, err := conn.ReceiveDatagram(conn.Context())
+		if err != nil {
+			t.closeDatagramChannelsForConn(conn)
+			return
+		}
+		if len(data) < datagramChannelIDSize {
+			continue
+		}
+		var channelID datagramChannelID
+		copy(channelID[:], data[:datagramChannelIDSize])
+		payload := data[datagramChannelIDSize:]
+		t.mu.Lock()
+		ch := t.datagramChannels[channelID]
+		t.mu.Unlock()
+		if ch != nil {
+			select {
+			case ch.recvCh <- payload:
+			default:
+			}
+		}
+	}
+}
+
+func (t *QUICTransport) closeDatagramChannelsForConn(conn *quic.Conn) {
+	t.mu.Lock()
+	if t.quicConn != nil && t.quicConn != conn {
+		t.mu.Unlock()
+		return
+	}
+	if t.quicConn == conn {
+		t.datagramReadRunning = false
+	}
+	channels := t.detachDatagramChannelsLocked()
+	t.mu.Unlock()
+	for _, ch := range channels {
+		ch.Close()
+	}
+}
+
+func (t *QUICTransport) detachDatagramChannelsLocked() []*quicDatagramChannel {
+	channels := make([]*quicDatagramChannel, 0, len(t.datagramChannels))
+	for _, ch := range t.datagramChannels {
+		channels = append(channels, ch)
+	}
+	t.datagramChannels = nil
+	t.datagramReadRunning = false
+	return channels
 }
 
 func closeQUICTransportResources(qtransport *quic.Transport, pconn net.PacketConn, proxyCloser io.Closer) error {
@@ -458,7 +553,7 @@ func (c *quicDatagramChannel) ReadFrom(p []byte) (int, net.Addr, error) {
 			return 0, nil, net.ErrClosed
 		}
 		n := copy(p, data)
-		return n, c.laddr, nil
+		return n, c.raddr, nil
 	case <-c.ctx.Done():
 		return 0, nil, net.ErrClosed
 	case <-c.readDeadline.wait():
@@ -529,6 +624,9 @@ func (l *quicDatagramListener) Accept() (net.PacketConn, net.Addr, error) {
 	case conn, ok := <-l.conns:
 		if !ok {
 			return nil, nil, net.ErrClosed
+		}
+		if ch, ok := conn.(*quicDatagramChannel); ok {
+			return conn, ch.raddr, nil
 		}
 		return conn, conn.LocalAddr(), nil
 	case <-l.ctx.Done():
