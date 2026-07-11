@@ -90,10 +90,10 @@ var netcatCmd = &cobra.Command{
 	Example: `  rstream nc 127.0.0.1:1234
   rstream nc -L 127.0.0.1:1234 -c "date"
   rstream nc rstrm://ssh-server
-  rstream nc -L rstrm://ssh-server -R 127.0.0.1:22
-  rstream nc -u rstrm://media
-  rstream nc -u -L rstrm://media -c "media-producer" --idle-timeout 60s
-  rstream nc -u -L rstrm://media -R udp://127.0.0.1:5004
+	  rstream nc -L rstrm://ssh-server -R 127.0.0.1:22
+	  rstream nc -u rstrm://media
+	  rstream nc -u -L rstrm://media -c "media-producer"
+	  rstream nc -u -L rstrm://media -R udp://127.0.0.1:5004
   rstream nc -u -L udp://127.0.0.1:5004 -R rstrm://media --udp-peer 127.0.0.1:5006`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := validateNetcatFlags(cmd, args); err != nil {

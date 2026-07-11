@@ -494,7 +494,7 @@ Since stdin/stdout are byte streams, packet boundaries on stdio are preserved wi
 
 ```bash
 # Expose a datagram producer; one child process per accepted session
-rstream nc -u -L rstrm://media -c "media-producer" --idle-timeout 60s
+rstream nc -u -L rstrm://media -c "media-producer"
 
 # Dial the tunnel; stdio carries RFC 4571 frames
 rstream nc -u rstrm://media
@@ -518,7 +518,7 @@ rstream nc -u -L udp://127.0.0.1:5004 -R rstrm://media --udp-peer 127.0.0.1:5006
 
 The CLI defaults to automatic tunnel transport selection: it prefers QUIC and falls back to TLS when the UDP path is unavailable. When QUIC is selected, tunnel-side packets can ride QUIC datagrams (RFC 9221): they are congestion-controlled but never retransmitted, so delivery is not guaranteed and each datagram must fit the path MTU budget (roughly 1200 bytes is a safe payload target, for stdio frames and UDP packets alike). Oversized datagrams are dropped and logged without terminating the session. Use `--datagram-guaranteed-delivery` when packet boundaries must be preserved without loss; that mode carries packets over reliable streams even when the control channel uses QUIC.
 
-Datagram sessions have no half-close: `--idle-timeout` closes a session after no datagram has been received for the given duration, and is recommended for `--listen --exec` producers so abandoned sessions release their child process. In datagram exec sessions the child's stderr goes to the local stderr rather than the connection, since raw stderr bytes would corrupt the framing.
+Closing either side of a datagram channel closes the peer session as well. `--idle-timeout` handles a different case: it closes a session after no datagram has been received for the given duration. Use it only on a side that expects inbound packets. A send-only producer receives no traffic to refresh the deadline and must not set it. In datagram exec sessions the child's stderr goes to the local stderr rather than the connection, since raw stderr bytes would corrupt the framing.
 
 ### UDP/datagram tunnels
 For datagram transport, choose DTLS mode when you need encrypted UDP-style traffic.
