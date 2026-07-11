@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.1](https://github.com/rstreamlabs/rstream-go/compare/v1.24.0...v1.24.1) (2026-07-11)
+
+
+### Bug Fixes
+
+* clarify netcat datagram session lifecycle ([c40daff](https://github.com/rstreamlabs/rstream-go/commit/c40daff87728717ef22346f3708930803205aa88))
+
 ## [1.24.0](https://github.com/rstreamlabs/rstream-go/compare/v1.23.0...v1.24.0) (2026-07-11)
 
 
