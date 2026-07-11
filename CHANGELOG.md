@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.0](https://github.com/rstreamlabs/rstream-go/compare/v1.23.0...v1.24.0) (2026-07-11)
+
+
+### Features
+
+* add automatic transport selection and reliable datagrams ([2b6b1bd](https://github.com/rstreamlabs/rstream-go/commit/2b6b1bd8968b3bd47da796a65eaed546753572b8))
+
 ## [1.23.0](https://github.com/rstreamlabs/rstream-go/compare/v1.22.1...v1.23.0) (2026-06-25)
 
 
