@@ -18,7 +18,9 @@ type TransportConfig struct {
 	MPTCP    *bool        `yaml:"mptcp,omitempty"`
 	TLS      *TLSConfig   `yaml:"tls,omitempty"`
 	Proxy    *ProxyConfig `yaml:"proxy,omitempty"`
-	UseQUIC  *bool        `yaml:"useQuic,omitempty"`
+	Mode     string       `yaml:"mode,omitempty"`
+	// UseQUIC is the legacy transport selector. Prefer Mode.
+	UseQUIC *bool `yaml:"useQuic,omitempty"`
 }
 
 type BindConfig struct {
@@ -131,6 +133,10 @@ func MergeTransport(base, override *TransportConfig) *TransportConfig {
 	if override.MPTCP != nil {
 		out.MPTCP = override.MPTCP
 	}
+	if override.Mode != "" {
+		out.Mode = override.Mode
+		out.UseQUIC = nil
+	}
 	if override.TLS != nil {
 		if out.TLS == nil {
 			out.TLS = &TLSConfig{}
@@ -147,6 +153,9 @@ func MergeTransport(base, override *TransportConfig) *TransportConfig {
 	}
 	if override.UseQUIC != nil {
 		out.UseQUIC = override.UseQUIC
+		if override.Mode == "" {
+			out.Mode = ""
+		}
 	}
 	if override.Proxy != nil {
 		if out.Proxy == nil {
@@ -199,13 +208,42 @@ func FlattenTransport(cfg *TransportConfig) rstream.Dialer {
 }
 
 func FlattenTransportWithError(cfg *TransportConfig) (rstream.Dialer, error) {
+	mode, err := transportMode(cfg)
+	if err != nil {
+		return nil, err
+	}
 	if cfg == nil {
-		return nil, nil
+		return &rstream.AutoTransport{}, nil
+	}
+	if mode == rstream.TunnelTransportModeAuto {
+		tlsCfg := *cfg
+		tlsCfg.Mode = string(rstream.TunnelTransportModeTLS)
+		tlsCfg.UseQUIC = nil
+		tlsDialer, err := FlattenTransportWithError(&tlsCfg)
+		if err != nil {
+			return nil, err
+		}
+		quicCfg := *cfg
+		quicCfg.Mode = string(rstream.TunnelTransportModeQUIC)
+		quicCfg.UseQUIC = nil
+		quicDialer, err := FlattenTransportWithError(&quicCfg)
+		if err != nil {
+			return nil, err
+		}
+		tlsTransport, _ := tlsDialer.(*rstream.Transport)
+		if tlsTransport == nil {
+			tlsTransport = &rstream.Transport{}
+		}
+		quicTransport, _ := quicDialer.(*rstream.QUICTransport)
+		if quicTransport == nil {
+			quicTransport = &rstream.QUICTransport{}
+		}
+		return &rstream.AutoTransport{TLS: tlsTransport, QUIC: quicTransport}, nil
 	}
 	if err := validateProxyTLSConfig(cfg.Proxy); err != nil {
 		return nil, err
 	}
-	if cfg.UseQUIC != nil && *cfg.UseQUIC {
+	if mode == rstream.TunnelTransportModeQUIC {
 		var t rstream.QUICTransport
 		set := false
 		if cfg.Bind != nil {
@@ -288,7 +326,7 @@ func FlattenTransportWithError(cfg *TransportConfig) (rstream.Dialer, error) {
 		}
 		return &t, nil
 	}
-	// TLS transport (default).
+	// Explicit TLS transport.
 	var transport rstream.Transport
 	set := false
 	if cfg.Bind != nil {
@@ -371,9 +409,25 @@ func FlattenTransportWithError(cfg *TransportConfig) (rstream.Dialer, error) {
 		}
 	}
 	if !set {
-		return nil, nil
+		return &rstream.Transport{}, nil
 	}
 	return &transport, nil
+}
+
+func transportMode(cfg *TransportConfig) (rstream.TunnelTransportMode, error) {
+	if cfg == nil {
+		return rstream.TunnelTransportModeAuto, nil
+	}
+	if cfg.Mode != "" {
+		return rstream.ParseTunnelTransportMode(cfg.Mode)
+	}
+	if cfg.UseQUIC != nil {
+		if *cfg.UseQUIC {
+			return rstream.TunnelTransportModeQUIC, nil
+		}
+		return rstream.TunnelTransportModeTLS, nil
+	}
+	return rstream.TunnelTransportModeAuto, nil
 }
 
 func validateProxyTLSConfig(proxy *ProxyConfig) error {

@@ -42,6 +42,9 @@ type ResolveInput struct {
 	EnvToken             string
 	EnvMTLSCert          string
 	EnvMTLSKey           string
+	FlagTunnelTransport  string
+	EnvTunnelTransport   string
+	EnvUseQUIC           *bool
 	IgnoreDefaultContext bool
 	RequireToken         bool
 	RequireEngine        bool
@@ -164,10 +167,28 @@ func Resolve(input ResolveInput) (Resolved, error) {
 		} else {
 			transportConfig = MergeTransport(nil, ctxTransport(ctx))
 		}
-		transport, err = FlattenTransportWithError(transportConfig)
+	}
+	transportOverride := firstNonEmpty(input.FlagTunnelTransport, input.EnvTunnelTransport)
+	if transportOverride != "" {
+		mode, err := rstream.ParseTunnelTransportMode(transportOverride)
 		if err != nil {
 			return Resolved{}, err
 		}
+		if transportConfig == nil {
+			transportConfig = &TransportConfig{}
+		}
+		transportConfig.Mode = string(mode)
+		transportConfig.UseQUIC = nil
+	} else if input.EnvUseQUIC != nil {
+		if transportConfig == nil {
+			transportConfig = &TransportConfig{}
+		}
+		transportConfig.Mode = ""
+		transportConfig.UseQUIC = input.EnvUseQUIC
+	}
+	transport, err = FlattenTransportWithError(transportConfig)
+	if err != nil {
+		return Resolved{}, err
 	}
 	tlsClientConfig, err := mergeTLSClientConfig(mtlsConfig, transportConfig)
 	if err != nil {

@@ -49,6 +49,7 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/webtransport-go"
 	"github.com/rstreamlabs/rstream-go"
@@ -73,6 +74,8 @@ func generateTLSConfig() (*tls.Config, error) {
 	}
 	return &tls.Config{Certificates: []tls.Certificate{tlsCert}, NextProtos: []string{"h3"}}, nil
 }
+
+const tunneledQUICInitialPacketSize = 1200
 
 func parseN(q url.Values, def int) int {
 	if raw := q.Get("n"); raw != "" {
@@ -387,10 +390,15 @@ func run(ctx context.Context, client *rstream.Client, publish bool, publishedPro
 	}
 	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 	mux := http.NewServeMux()
+	quicConfig := &quic.Config{}
+	if !publish {
+		quicConfig.InitialPacketSize = tunneledQUICInitialPacketSize
+	}
 	server := webtransport.Server{
 		H3: &http3.Server{
 			Handler:         mux,
 			TLSConfig:       tlsCfg,
+			QUICConfig:      quicConfig,
 			EnableDatagrams: true,
 		},
 	}

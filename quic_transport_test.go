@@ -112,7 +112,7 @@ func TestQUICDatagramChannelReadAndClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadFrom() error = %v", err)
 	}
-	if string(buf[:n]) != "packet" || addr != stubNetAddr("local") {
+	if string(buf[:n]) != "packet" || addr != stubNetAddr("remote") {
 		t.Fatalf("ReadFrom() = %q from %v", buf[:n], addr)
 	}
 	if channel.LocalAddr() != stubNetAddr("local") {

@@ -261,7 +261,7 @@ func newNetcatPacketDialer(target netcatDialTarget, client *rstream.Client) netc
 	}
 }
 
-func newNetcatPacketListenerFactory(target netcatListenTarget, client *rstream.Client) netcatPacketListenerFactory {
+func newNetcatPacketListenerFactory(target netcatListenTarget, client *rstream.Client, datagramGuaranteedDelivery *bool) netcatPacketListenerFactory {
 	return func(ctx context.Context) (*netcatPacketListenerResult, error) {
 		if client == nil {
 			return nil, fmt.Errorf("rstream client is required")
@@ -272,9 +272,10 @@ func newNetcatPacketListenerFactory(target netcatListenTarget, client *rstream.C
 		}
 		tunnelType := rstream.TunnelTypeDatagram
 		props := rstream.TunnelProperties{
-			Name:    target.Name,
-			Type:    &tunnelType,
-			Publish: rstream.BoolPtr(false),
+			Name:                       target.Name,
+			Type:                       &tunnelType,
+			Publish:                    rstream.BoolPtr(false),
+			DatagramGuaranteedDelivery: datagramGuaranteedDelivery,
 		}
 		tunnel, err := ctrl.CreateTunnel(ctx, props)
 		if err != nil {

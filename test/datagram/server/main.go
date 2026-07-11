@@ -37,6 +37,7 @@ import (
 )
 
 const quicEchoALPN = "rstream-datagram-echo"
+const tunneledQUICInitialPacketSize = 1200
 
 func quicALPNs(tlsALPN string) []string {
 	if tlsALPN != "" {
@@ -219,7 +220,7 @@ func handleSCTPDTLSUpstreamConn(conn net.PacketConn, raddr net.Addr, certs []tls
 	handleSCTPConn(dtlsConn)
 }
 
-func createTunnel(ctx context.Context, client *rstream.Client, variant, name string, publish bool, hostname, tlsALPN string, upstreamTLS bool) (rstream.Tunnel, error) {
+func createTunnel(ctx context.Context, client *rstream.Client, variant, name string, publish bool, hostname, tlsALPN string, upstreamTLS, guaranteedDelivery bool) (rstream.Tunnel, error) {
 	ctrl, err := client.Connect(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
@@ -228,6 +229,9 @@ func createTunnel(ctx context.Context, client *rstream.Client, variant, name str
 		Name:    rstream.StringPtr(name),
 		Type:    rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
 		Publish: rstream.BoolPtr(publish),
+	}
+	if guaranteedDelivery {
+		props.DatagramGuaranteedDelivery = rstream.BoolPtr(true)
 	}
 	if hostname != "" {
 		props.Hostname = rstream.StringPtr(hostname)
@@ -272,8 +276,8 @@ func tunnelReady(tunnel rstream.Tunnel) (string, error) {
 	return host, nil
 }
 
-func runDTLS(ctx context.Context, client *rstream.Client, name string, publish bool, hostname, tlsALPN string, upstreamTLS bool) error {
-	tunnel, err := createTunnel(ctx, client, "dtls", name, publish, hostname, tlsALPN, upstreamTLS)
+func runDTLS(ctx context.Context, client *rstream.Client, name string, publish bool, hostname, tlsALPN string, upstreamTLS, guaranteedDelivery bool) error {
+	tunnel, err := createTunnel(ctx, client, "dtls", name, publish, hostname, tlsALPN, upstreamTLS, guaranteedDelivery)
 	if err != nil {
 		return err
 	}
@@ -308,8 +312,8 @@ func runDTLS(ctx context.Context, client *rstream.Client, name string, publish b
 	}
 }
 
-func runQUIC(ctx context.Context, client *rstream.Client, name string, publish bool, hostname, tlsALPN string) error {
-	tunnel, err := createTunnel(ctx, client, "quic", name, publish, hostname, tlsALPN, true)
+func runQUIC(ctx context.Context, client *rstream.Client, name string, publish bool, hostname, tlsALPN string, guaranteedDelivery bool) error {
+	tunnel, err := createTunnel(ctx, client, "quic", name, publish, hostname, tlsALPN, true, guaranteedDelivery)
 	if err != nil {
 		return err
 	}
@@ -328,7 +332,11 @@ func runQUIC(ctx context.Context, client *rstream.Client, name string, publish b
 	}
 	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 	transport := quic.Transport{Conn: rstream.PacketConnFromPacketListener(packetListener)}
-	listener, err := transport.Listen(tlsCfg, &quic.Config{EnableDatagrams: true})
+	quicConfig := &quic.Config{EnableDatagrams: true}
+	if !publish {
+		quicConfig.InitialPacketSize = tunneledQUICInitialPacketSize
+	}
+	listener, err := transport.Listen(tlsCfg, quicConfig)
 	if err != nil {
 		return fmt.Errorf("quic listen: %w", err)
 	}
@@ -343,8 +351,8 @@ func runQUIC(ctx context.Context, client *rstream.Client, name string, publish b
 	}
 }
 
-func runSCTP(ctx context.Context, client *rstream.Client, name string, publish bool, hostname, tlsALPN string, upstreamTLS bool) error {
-	tunnel, err := createTunnel(ctx, client, "sctp", name, publish, hostname, tlsALPN, upstreamTLS)
+func runSCTP(ctx context.Context, client *rstream.Client, name string, publish bool, hostname, tlsALPN string, upstreamTLS, guaranteedDelivery bool) error {
+	tunnel, err := createTunnel(ctx, client, "sctp", name, publish, hostname, tlsALPN, upstreamTLS, guaranteedDelivery)
 	if err != nil {
 		return err
 	}
@@ -385,6 +393,7 @@ func main() {
 	hostname := flag.String("host", "", "requested tunnel hostname")
 	tlsALPN := flag.String("tls-alpn", "", "custom ALPN for published DTLS, QUIC, or SCTP tunnels")
 	upstreamTLS := flag.Bool("upstream-tls", false, "connect from the edge to this server with upstream DTLS")
+	guaranteedDelivery := flag.Bool("datagram-guaranteed-delivery", false, "require reliable delivery through the rstream tunnel")
 	name := flag.String("name", "", "tunnel name (default: datagram-matrix-<variant>[-pub])")
 	flag.Parse()
 	if *name == "" {
@@ -407,15 +416,15 @@ func main() {
 	}()
 	switch *variant {
 	case "dtls":
-		if err := runDTLS(ctx, client, *name, *publish, *hostname, *tlsALPN, *upstreamTLS); err != nil {
+		if err := runDTLS(ctx, client, *name, *publish, *hostname, *tlsALPN, *upstreamTLS, *guaranteedDelivery); err != nil {
 			log.Fatalf("server error: %v", err)
 		}
 	case "quic":
-		if err := runQUIC(ctx, client, *name, *publish, *hostname, *tlsALPN); err != nil {
+		if err := runQUIC(ctx, client, *name, *publish, *hostname, *tlsALPN, *guaranteedDelivery); err != nil {
 			log.Fatalf("server error: %v", err)
 		}
 	case "sctp":
-		if err := runSCTP(ctx, client, *name, *publish, *hostname, *tlsALPN, *upstreamTLS); err != nil {
+		if err := runSCTP(ctx, client, *name, *publish, *hostname, *tlsALPN, *upstreamTLS, *guaranteedDelivery); err != nil {
 			log.Fatalf("server error: %v", err)
 		}
 	default:

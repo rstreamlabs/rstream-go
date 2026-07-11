@@ -24,9 +24,13 @@ func NewClient(options ClientOptions) (*Client, error) {
 		return nil, errors.New("token and mTLS authentication cannot be used together")
 	}
 	engine := options.Engine
+	transport := options.Transport
+	if isNilDialer(transport) {
+		transport = &AutoTransport{}
+	}
 	client := &Client{
 		EngineURL:       &engine,
-		Transport:       options.Transport,
+		Transport:       transport,
 		TLSClientConfig: options.TLSClientConfig,
 		ZeroRTT:         options.ZeroRTT,
 	}

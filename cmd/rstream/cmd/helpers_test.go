@@ -143,6 +143,29 @@ func TestNewTunnelPropertiesFromFlagsRejectsHTTPAuthWithoutHTTP(t *testing.T) {
 	}
 }
 
+func TestNewTunnelPropertiesFromFlagsMapsDatagramGuaranteedDelivery(t *testing.T) {
+	command := tunnelFlagsCommand()
+	mustSetFlag(t, command, "datagram", "true")
+	mustSetFlag(t, command, "datagram-guaranteed-delivery", "true")
+	props, err := newTunnelPropertiesFromFlags(command)
+	if err != nil {
+		t.Fatalf("newTunnelPropertiesFromFlags() error = %v", err)
+	}
+	if props.DatagramGuaranteedDelivery == nil || !*props.DatagramGuaranteedDelivery {
+		t.Fatalf("DatagramGuaranteedDelivery = %#v, want true", props.DatagramGuaranteedDelivery)
+	}
+}
+
+func TestNewTunnelPropertiesFromFlagsRejectsDatagramGuaranteedDeliveryForBytestream(t *testing.T) {
+	command := tunnelFlagsCommand()
+	mustSetFlag(t, command, "bytestream", "true")
+	mustSetFlag(t, command, "datagram-guaranteed-delivery", "true")
+	_, err := newTunnelPropertiesFromFlags(command)
+	if err == nil || !strings.Contains(err.Error(), "requires a datagram tunnel") {
+		t.Fatalf("expected datagram tunnel validation error, got %v", err)
+	}
+}
+
 func tunnelFlagsCommand() *cobra.Command {
 	command := &cobra.Command{Use: "test"}
 	command.Flags().String("name", "", "")
@@ -166,6 +189,7 @@ func tunnelFlagsCommand() *cobra.Command {
 	command.Flags().String("http-version", "", "")
 	command.Flags().Bool("http-use-tls", false, "")
 	command.Flags().Bool("upstream-tls", false, "")
+	command.Flags().Bool("datagram-guaranteed-delivery", false, "")
 	command.Flags().Bool("token-auth", false, "")
 	command.Flags().Bool("rstream-auth", false, "")
 	command.Flags().Bool("challenge-mode", false, "")

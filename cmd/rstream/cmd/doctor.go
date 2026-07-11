@@ -137,21 +137,25 @@ func runDoctor(cmd *cobra.Command) doctorReport {
 func resolveDoctorRuntime(cmd *cobra.Command, cfg config.Config) (config.Resolved, error) {
 	flagAPIURL, _ := cmd.Flags().GetString("api-url")
 	flagContext, _ := cmd.Flags().GetString("context")
+	flagTunnelTransport, _ := cmd.Flags().GetString("tunnel-transport")
 	env := config.ReadEnv()
 	resolved, err := config.Resolve(config.ResolveInput{
-		Config:       cfg,
-		FlagAPIURL:   flagAPIURL,
-		FlagContext:  flagContext,
-		EnvAPIURL:    env.APIURL,
-		EnvContext:   env.Context,
-		EnvEngine:    env.Engine,
-		EnvToken:     env.Token,
-		ResolveToken: true,
+		Config:              cfg,
+		FlagAPIURL:          flagAPIURL,
+		FlagContext:         flagContext,
+		EnvAPIURL:           env.APIURL,
+		EnvContext:          env.Context,
+		EnvEngine:           env.Engine,
+		EnvToken:            env.Token,
+		FlagTunnelTransport: flagTunnelTransport,
+		EnvTunnelTransport:  env.TunnelTransport,
+		EnvUseQUIC:          env.UseQUIC,
+		ResolveToken:        true,
 	})
 	if err != nil {
 		return config.Resolved{}, err
 	}
-	return applyEnvTransportOverrides(resolved, env), nil
+	return resolved, nil
 }
 
 func checkDoctorContext(report *doctorReport, resolved config.Resolved) {
@@ -266,21 +270,45 @@ func checkDoctorNetwork(ctx context.Context, report *doctorReport, resolved conf
 	} else {
 		report.add("dns", doctorStatusPass, "engine host resolves", map[string]string{"host": host, "addresses": strings.Join(ips, ",")})
 	}
-	if _, ok := doctorQUICTransport(resolved.Transport); ok {
-		checkDoctorQUIC(ctx, report, resolved, host, address)
-		report.add("tls", doctorStatusSkip, "TCP/TLS check skipped because QUIC transport is configured", nil)
-		return
+	mode := doctorConfiguredTransportMode(resolved.Transport)
+	tlsResultCh := make(chan doctorTransportProbe, 1)
+	quicResultCh := make(chan doctorTransportProbe, 1)
+	go func() { tlsResultCh <- probeDoctorTLS(ctx, resolved, host, address) }()
+	go func() { quicResultCh <- probeDoctorQUIC(ctx, resolved, host, address) }()
+	tlsResult := <-tlsResultCh
+	quicResult := <-quicResultCh
+	tlsStatus, quicStatus := doctorTransportProbeStatuses(mode, tlsResult.OK, quicResult.OK)
+	report.add("tls", tlsStatus, tlsResult.Message, tlsResult.Details)
+	report.add("quic_transport", quicStatus, quicResult.Message, quicResult.Details)
+
+	selected := "none"
+	selectionStatus := doctorStatusFail
+	selectionMessage := "no tunnel transport is reachable"
+	switch mode {
+	case rstream.TunnelTransportModeTLS:
+		selected = "tls"
+		if tlsResult.OK {
+			selectionStatus = doctorStatusPass
+			selectionMessage = "TLS tunnel transport is reachable"
+		}
+	case rstream.TunnelTransportModeQUIC:
+		selected = "quic"
+		if quicResult.OK {
+			selectionStatus = doctorStatusPass
+			selectionMessage = "QUIC tunnel transport is reachable"
+		}
+	default:
+		if quicResult.OK {
+			selected = "quic"
+			selectionStatus = doctorStatusPass
+			selectionMessage = "auto transport will prefer QUIC"
+		} else if tlsResult.OK {
+			selected = "tls"
+			selectionStatus = doctorStatusWarn
+			selectionMessage = "auto transport will fall back to TLS"
+		}
 	}
-	report.add("quic_transport", doctorStatusSkip, "QUIC transport is not configured", nil)
-	dialer := net.Dialer{Timeout: 5 * time.Second}
-	conn, err := tls.DialWithDialer(&dialer, "tcp", address, &tls.Config{ServerName: host})
-	if err != nil {
-		report.add("tls", doctorStatusFail, err.Error(), map[string]string{"address": address})
-		return
-	}
-	state := conn.ConnectionState()
-	_ = conn.Close()
-	report.add("tls", doctorStatusPass, "TLS handshake succeeded", map[string]string{"serverName": host, "version": tlsVersionName(state.Version)})
+	report.add("tunnel_transport", selectionStatus, selectionMessage, map[string]string{"configuredMode": string(mode), "selectedMode": selected})
 }
 
 func checkDoctorEngine(ctx context.Context, report *doctorReport, resolved config.Resolved) {
@@ -313,47 +341,171 @@ func checkDoctorEngine(ctx context.Context, report *doctorReport, resolved confi
 	report.add("engine_tunnels", doctorStatusPass, "engine tunnels listed", map[string]string{"total": strconv.Itoa(len(*tunnels)), "online": strconv.Itoa(countDoctorOnlineTunnels(*tunnels))})
 }
 
-func checkDoctorQUIC(ctx context.Context, report *doctorReport, resolved config.Resolved, host, address string) {
-	transport, ok := doctorQUICTransport(resolved.Transport)
+type doctorTransportProbe struct {
+	OK      bool
+	Message string
+	Details map[string]string
+}
+
+func probeDoctorTLS(ctx context.Context, resolved config.Resolved, host, address string) doctorTransportProbe {
+	transport, ok := doctorTLSTransport(resolved.Transport)
 	if !ok {
-		report.add("quic_transport", doctorStatusSkip, "QUIC transport is not configured", nil)
-		return
-	}
-	if host == "" || address == "" {
-		report.add("quic_transport", doctorStatusSkip, "engine is not configured", nil)
-		return
+		return doctorTransportProbe{Message: "TLS probe is unavailable for the configured custom transport"}
 	}
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	conn, err := transport.Dial(runCtx, address, &tls.Config{
-		ServerName: host,
-		NextProtos: []string{
-			"rstrm/1",
-		},
-	})
+	tlsCfg := doctorTLSConfig(resolved.TLSClientConfig, host)
+	conn, err := transport.Dial(runCtx, address, tlsCfg)
 	if err != nil {
-		report.add("quic_transport", doctorStatusFail, "QUIC connection failed; UDP may be blocked on this network", map[string]string{"address": address, "error": err.Error()})
-		return
+		return doctorTransportProbe{Message: "TLS connection failed", Details: map[string]string{"address": address, "error": err.Error()}}
+	}
+	tlsConn, ok := conn.(*tls.Conn)
+	if !ok {
+		_ = conn.Close()
+		return doctorTransportProbe{Message: "TLS probe returned an unexpected connection type", Details: map[string]string{"address": address, "type": fmt.Sprintf("%T", conn)}}
+	}
+	state := tlsConn.ConnectionState()
+	_ = conn.Close()
+	return doctorTransportProbe{OK: true, Message: "TLS handshake succeeded", Details: map[string]string{"address": address, "serverName": tlsCfg.ServerName, "version": tlsVersionName(state.Version)}}
+}
+
+func probeDoctorQUIC(ctx context.Context, resolved config.Resolved, host, address string) doctorTransportProbe {
+	transport, ok := doctorQUICTransport(resolved.Transport)
+	if !ok {
+		return doctorTransportProbe{Message: "QUIC probe is unavailable for the configured custom transport"}
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	tlsCfg := doctorTLSConfig(resolved.TLSClientConfig, host)
+	conn, err := transport.Dial(runCtx, address, tlsCfg)
+	if err != nil {
+		return doctorTransportProbe{Message: "QUIC connection failed; UDP may be blocked on this network", Details: map[string]string{"address": address, "error": err.Error()}}
 	}
 	_ = conn.Close()
 	_ = transport.Close()
-	report.add("quic_transport", doctorStatusPass, "QUIC connection succeeded", map[string]string{"address": address, "host": host})
+	return doctorTransportProbe{OK: true, Message: "QUIC connection succeeded", Details: map[string]string{"address": address, "host": host}}
 }
 
 func doctorQUICTransport(transport rstream.Dialer) (*rstream.QUICTransport, bool) {
+	if auto, ok := transport.(*rstream.AutoTransport); ok && auto != nil {
+		transport = auto.QUIC
+	}
 	quicTransport, ok := transport.(*rstream.QUICTransport)
-	if !ok || quicTransport == nil {
+	if !ok {
 		return nil, false
 	}
+	if quicTransport == nil {
+		quicTransport = &rstream.QUICTransport{}
+	}
 	return &rstream.QUICTransport{
-		LocalAddr:     quicTransport.LocalAddr,
-		ForceIPv4:     quicTransport.ForceIPv4,
-		ForceIPv6:     quicTransport.ForceIPv6,
-		DNSOverride:   quicTransport.DNSOverride,
-		DNSOverTLS:    quicTransport.DNSOverTLS,
-		DNSServerName: quicTransport.DNSServerName,
-		DNSSECEnabled: quicTransport.DNSSECEnabled,
+		LocalAddr:            quicTransport.LocalAddr,
+		NetworkInterface:     quicTransport.NetworkInterface,
+		ForceIPv4:            quicTransport.ForceIPv4,
+		ForceIPv6:            quicTransport.ForceIPv6,
+		DNSOverride:          quicTransport.DNSOverride,
+		DNSOverTLS:           quicTransport.DNSOverTLS,
+		DNSServerName:        quicTransport.DNSServerName,
+		DNSSECEnabled:        quicTransport.DNSSECEnabled,
+		ProxyHTTP:            quicTransport.ProxyHTTP,
+		ProxySOCKS5:          quicTransport.ProxySOCKS5,
+		ProxyUsername:        quicTransport.ProxyUsername,
+		ProxyPassword:        quicTransport.ProxyPassword,
+		ProxyHTTPHeaders:     cloneDoctorHeaders(quicTransport.ProxyHTTPHeaders),
+		TLSProxyConfig:       cloneDoctorTLSConfig(quicTransport.TLSProxyConfig),
+		ProxyFromEnvironment: quicTransport.ProxyFromEnvironment,
 	}, true
+}
+
+func doctorTLSTransport(transport rstream.Dialer) (*rstream.Transport, bool) {
+	if auto, ok := transport.(*rstream.AutoTransport); ok && auto != nil {
+		transport = auto.TLS
+	}
+	switch current := transport.(type) {
+	case nil:
+		return &rstream.Transport{}, true
+	case *rstream.Transport:
+		if current == nil {
+			return &rstream.Transport{}, true
+		}
+		out := *current
+		out.ProxyHTTPHeaders = cloneDoctorHeaders(current.ProxyHTTPHeaders)
+		out.TLSProxyConfig = cloneDoctorTLSConfig(current.TLSProxyConfig)
+		return &out, true
+	case *rstream.QUICTransport:
+		if current == nil {
+			return &rstream.Transport{}, true
+		}
+		return &rstream.Transport{LocalAddr: current.LocalAddr, NetworkInterface: current.NetworkInterface, ForceIPv4: current.ForceIPv4, ForceIPv6: current.ForceIPv6, DNSOverride: current.DNSOverride, DNSOverTLS: current.DNSOverTLS, DNSServerName: current.DNSServerName, DNSSECEnabled: current.DNSSECEnabled, ProxyHTTP: current.ProxyHTTP, ProxySOCKS5: current.ProxySOCKS5, ProxyUsername: current.ProxyUsername, ProxyPassword: current.ProxyPassword, ProxyHTTPHeaders: cloneDoctorHeaders(current.ProxyHTTPHeaders), TLSProxyConfig: cloneDoctorTLSConfig(current.TLSProxyConfig), ProxyFromEnvironment: current.ProxyFromEnvironment}, true
+	default:
+		return nil, false
+	}
+}
+
+func doctorConfiguredTransportMode(transport rstream.Dialer) rstream.TunnelTransportMode {
+	switch transport.(type) {
+	case *rstream.Transport:
+		return rstream.TunnelTransportModeTLS
+	case *rstream.QUICTransport:
+		return rstream.TunnelTransportModeQUIC
+	default:
+		return rstream.TunnelTransportModeAuto
+	}
+}
+
+func doctorTransportProbeStatuses(mode rstream.TunnelTransportMode, tlsOK, quicOK bool) (doctorStatus, doctorStatus) {
+	tlsStatus := doctorStatusPass
+	if !tlsOK {
+		tlsStatus = doctorStatusFail
+	}
+	quicStatus := doctorStatusPass
+	if !quicOK {
+		quicStatus = doctorStatusFail
+	}
+	if mode == rstream.TunnelTransportModeAuto {
+		if tlsOK && !quicOK {
+			quicStatus = doctorStatusWarn
+		}
+		if quicOK && !tlsOK {
+			tlsStatus = doctorStatusWarn
+		}
+	} else if mode == rstream.TunnelTransportModeTLS && !quicOK {
+		quicStatus = doctorStatusWarn
+	} else if mode == rstream.TunnelTransportModeQUIC && !tlsOK {
+		tlsStatus = doctorStatusWarn
+	}
+	return tlsStatus, quicStatus
+}
+
+func doctorTLSConfig(base *tls.Config, host string) *tls.Config {
+	var cfg *tls.Config
+	if base == nil {
+		cfg = &tls.Config{}
+	} else {
+		cfg = base.Clone()
+	}
+	if cfg.ServerName == "" {
+		cfg.ServerName = host
+	}
+	cfg.NextProtos = []string{"rstrm/1"}
+	return cfg
+}
+
+func cloneDoctorHeaders(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneDoctorTLSConfig(cfg *tls.Config) *tls.Config {
+	if cfg == nil {
+		return nil
+	}
+	return cfg.Clone()
 }
 
 func (r *doctorReport) add(name string, status doctorStatus, message string, details map[string]string) {

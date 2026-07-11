@@ -102,6 +102,20 @@ func echResolverOptions(transport Dialer) enginetls.ResolverOptions {
 			ForceIPv4:     boolValue(t.ForceIPv4),
 			ForceIPv6:     boolValue(t.ForceIPv6),
 		}
+	case *AutoTransport:
+		if t == nil {
+			return enginetls.ResolverOptions{}
+		}
+		if selected := t.SelectedTransport(); selected != nil {
+			return echResolverOptions(selected)
+		}
+		if t.QUIC != nil {
+			return echResolverOptions(t.QUIC)
+		}
+		if t.TLS != nil {
+			return echResolverOptions(t.TLS)
+		}
+		return enginetls.ResolverOptions{}
 	default:
 		return enginetls.ResolverOptions{}
 	}

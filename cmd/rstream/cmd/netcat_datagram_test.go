@@ -181,7 +181,7 @@ func TestNetcatPacketHelpersRequireRstreamClient(t *testing.T) {
 	if _, _, err := dialer(t.Context()); err == nil || !strings.Contains(err.Error(), "rstream client is required") {
 		t.Fatalf("expected missing client error from packet dialer, got %v", err)
 	}
-	factory := newNetcatPacketListenerFactory(netcatListenTarget{Kind: netcatEndpointRstream, Name: rstream.StringPtr("media")}, nil)
+	factory := newNetcatPacketListenerFactory(netcatListenTarget{Kind: netcatEndpointRstream, Name: rstream.StringPtr("media")}, nil, nil)
 	if _, err := factory(t.Context()); err == nil || !strings.Contains(err.Error(), "rstream client is required") {
 		t.Fatalf("expected missing client error from packet listener factory, got %v", err)
 	}

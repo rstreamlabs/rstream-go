@@ -139,6 +139,7 @@ func init() {
 	forwardCmd.Flags().String("http-version", "", "HTTP version (http/1.1, h2c, h3)")
 	forwardCmd.Flags().Bool("upstream-tls", false, "use TLS for the upstream side")
 	forwardCmd.Flags().Bool("http-use-tls", false, "use TLS for HTTP upstream (deprecated; use --upstream-tls)")
+	forwardCmd.Flags().Bool("datagram-guaranteed-delivery", false, "require reliable delivery for datagram tunnels")
 	forwardCmd.Flags().Bool("token-auth", false, "enable token-based HTTP authentication")
 	forwardCmd.Flags().Bool("rstream-auth", false, "require rstream account authentication (HTTP only)")
 	forwardCmd.Flags().Bool("challenge-mode", false, "require an interactive challenge before access (HTTP only)")

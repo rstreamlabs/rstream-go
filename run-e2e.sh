@@ -4,9 +4,11 @@
 # Usage:
 #   export RSTREAM_CONTEXT=prod   # context with tunnel creation rights
 #   export BIN=out/test           # directory containing built test binaries
-#   bash run-e2e.sh [--quic]
+#   bash run-e2e.sh [--quic|--auto]
 #
-# --quic: run the suite using QUIC tunnel transport (sets RSTREAM_QUIC_TRANSPORT=1).
+# The baseline is pinned to TLS for deterministic packet-path assertions.
+# --quic: run with strict QUIC transport.
+# --auto: exercise QUIC preference through automatic transport selection.
 set -euo pipefail
 
 BIN="${BIN:-out/test}"
@@ -27,11 +29,19 @@ REQUIRED_BINS=(
   webtransport/client
 )
 
-QUIC=0
+TUNNEL_TRANSPORT=tls
+TUNNEL_PACKET_PATH=stream
 for arg in "$@"; do
-  [ "$arg" = "--quic" ] && QUIC=1
+  if [ "$arg" = "--quic" ]; then
+    TUNNEL_TRANSPORT=quic
+    TUNNEL_PACKET_PATH=quic-datagram
+  fi
+  if [ "$arg" = "--auto" ]; then
+    TUNNEL_TRANSPORT=auto
+    TUNNEL_PACKET_PATH=quic-datagram
+  fi
 done
-[ "$QUIC" = "1" ] && export RSTREAM_QUIC_TRANSPORT=1
+export RSTREAM_TUNNEL_TRANSPORT="$TUNNEL_TRANSPORT"
 
 preflight() {
   local missing=0
@@ -172,17 +182,22 @@ fi
 
 echo "=== datagram ==="
 if start_server "datagram/dtls" datagram/server --variant dtls; then
-  run_client "datagram/dtls" datagram/client --variant dtls
+  run_client "datagram/dtls" datagram/client --variant dtls --expect-tunnel-packet-path "$TUNNEL_PACKET_PATH"
   stop_server
 fi
 
 if start_server "datagram/quic" datagram/server --variant quic; then
-  run_client "datagram/quic" datagram/client --variant quic
+  run_client "datagram/quic" datagram/client --variant quic --expect-tunnel-packet-path "$TUNNEL_PACKET_PATH"
   stop_server
 fi
 
 if start_server "datagram/sctp" datagram/server --variant sctp; then
-  run_client "datagram/sctp" datagram/client --variant sctp
+  run_client "datagram/sctp" datagram/client --variant sctp --expect-tunnel-packet-path "$TUNNEL_PACKET_PATH"
+  stop_server
+fi
+
+if start_server "datagram/dtls-guaranteed-delivery" datagram/server --variant dtls --name datagram-matrix-guaranteed-dtls --datagram-guaranteed-delivery; then
+  run_client "datagram/dtls-guaranteed-delivery" datagram/client --variant dtls --tunnel datagram-matrix-guaranteed --expect-tunnel-packet-path stream
   stop_server
 fi
 

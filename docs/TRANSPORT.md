@@ -156,30 +156,46 @@ Interface binding and address-family settings are applied to the client side of 
 
 Optional MPTCP support can be enabled where available to improve resilience when multiple network paths exist. This affects how the underlying TCP connectivity behaves; it does not change the TLS 1.3 requirement.
 
-## QUIC Transport
+## Tunnel Transport Selection
 
-By default the rstream client connects to the edge over TLS 1.3/TCP. When the edge supports it, you can switch to `QUICTransport` to use a single QUIC connection for all client activity instead.
+The default `auto` mode gives QUIC a brief head start, then starts TLS if QUIC has not connected. The first transport that connects is pinned for the lifetime of the client and its control channel. Later streams and datagram sessions do not switch transport independently. Create a new client to run selection again.
 
-### Enabling QUIC transport
+Fallback covers transport establishment only. Once QUIC has connected, an authentication or rstream protocol error is returned as-is; it does not trigger a second control channel over TLS.
 
-**Via environment variable** (CLI or SDK):
+Select a mode through the CLI flag, environment, or shared YAML configuration:
+
 ```bash
-export RSTREAM_QUIC_TRANSPORT=1
+rstream --tunnel-transport auto forward 8080
+export RSTREAM_TUNNEL_TRANSPORT=quic
 ```
 
-**Via `QUICTransport` in Go code:**
-```go
-import (
-    rstream "github.com/rstreamlabs/rstream-go"
-    "github.com/rstreamlabs/rstream-go/config"
-)
+```yaml
+transport:
+  mode: auto # auto, tls, or quic
+```
 
-opts, _ := config.NewClientEnvOptions(config.ClientEnvOptions{RequireEngine: true})
-client := &rstream.Client{
-    EngineURL: opts.EngineURL,
-    Token:     opts.Token,
+`RSTREAM_QUIC_TRANSPORT=1` and `transport.useQuic` remain supported for compatibility. New configurations should use the canonical mode setting.
+
+### Explicit transport in Go
+
+Use `AutoTransport` when constructing a client directly, or select a strict transport when fallback is not desired:
+
+```bash
+export RSTREAM_TUNNEL_TRANSPORT=quic
+```
+
+```go
+client, err := rstream.NewClient(rstream.ClientOptions{
+    Engine:    engine,
+    Token:     token,
+    Transport: &rstream.AutoTransport{},
+})
+
+strictQUIC, err := rstream.NewClient(rstream.ClientOptions{
+    Engine:    engine,
+    Token:     token,
     Transport: &rstream.QUICTransport{},
-}
+})
 ```
 
 `QUICTransport` accepts the same network options as the standard `Transport`:
@@ -194,11 +210,11 @@ client := &rstream.Client{
 
 For QUIC transport, `ProxyHTTP` must point at an HTTPS MASQUE proxy. If the URL path is empty, the SDK uses `/.well-known/masque/udp/{target_host}/{target_port}/`. A custom path must include both `{target_host}` and `{target_port}`.
 
-When QUIC transport is selected, `rstream doctor -o json` runs a `quic_transport` check against the engine. This catches the common case where TCP/TLS works but UDP is blocked by the local network, VPN, firewall, or proxy path.
+`rstream doctor -o json` probes TLS and QUIC independently. Its `tunnel_transport` result reports the configured and selected modes; in `auto`, unavailable QUIC with working TLS is a fallback warning rather than a connection failure.
 
 ### Lifecycle
 
-`QUICTransport` is stateful and is designed to be held for the lifetime of the client. Create a fresh instance when reconnecting after a connection failure.
+`AutoTransport` and `QUICTransport` are stateful and are designed to be held for the lifetime of the client. Create fresh instances when reconnecting after a connection failure.
 
 ## Published and Private Tunnels
 

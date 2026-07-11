@@ -58,26 +58,29 @@ func resolveRuntime(cmd *cobra.Command, requireEngine, requireToken bool) (*reso
 	}
 	flagAPIURL, _ := cmd.Flags().GetString("api-url")
 	flagContext, _ := cmd.Flags().GetString("context")
+	flagTunnelTransport, _ := cmd.Flags().GetString("tunnel-transport")
 	env := config.ReadEnv()
 	input := config.ResolveInput{
-		Config:        cfg,
-		FlagAPIURL:    flagAPIURL,
-		FlagContext:   flagContext,
-		EnvAPIURL:     env.APIURL,
-		EnvContext:    env.Context,
-		EnvEngine:     env.Engine,
-		EnvToken:      env.Token,
-		EnvMTLSCert:   env.MTLSCert,
-		EnvMTLSKey:    env.MTLSKey,
-		RequireEngine: requireEngine,
-		RequireToken:  requireToken,
-		ResolveToken:  true,
+		Config:              cfg,
+		FlagAPIURL:          flagAPIURL,
+		FlagContext:         flagContext,
+		EnvAPIURL:           env.APIURL,
+		EnvContext:          env.Context,
+		EnvEngine:           env.Engine,
+		EnvToken:            env.Token,
+		EnvMTLSCert:         env.MTLSCert,
+		EnvMTLSKey:          env.MTLSKey,
+		FlagTunnelTransport: flagTunnelTransport,
+		EnvTunnelTransport:  env.TunnelTransport,
+		EnvUseQUIC:          env.UseQUIC,
+		RequireEngine:       requireEngine,
+		RequireToken:        requireToken,
+		ResolveToken:        true,
 	}
 	resolved, err := config.Resolve(input)
 	if err != nil {
 		return nil, err
 	}
-	resolved = applyEnvTransportOverrides(resolved, env)
 	return &resolvedRuntime{ConfigPath: path, Config: cfg, Resolved: resolved}, nil
 }
 
@@ -109,13 +112,6 @@ func resolveControlPlane(cmd *cobra.Command, requireToken bool) (*resolvedRuntim
 
 func newClientFromResolved(resolved config.Resolved) (*rstream.Client, error) {
 	return config.NewClientFromResolved(resolved)
-}
-
-func applyEnvTransportOverrides(resolved config.Resolved, env config.EnvSettings) config.Resolved {
-	if env.UseQUIC {
-		resolved.Transport = &rstream.QUICTransport{}
-	}
-	return resolved
 }
 
 func setEnvironmentToken(env *config.Environment, token string) error {

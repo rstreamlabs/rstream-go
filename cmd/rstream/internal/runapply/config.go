@@ -28,16 +28,17 @@ type TunnelEntry struct {
 }
 
 type TunnelSpec struct {
-	Publish     *bool             `yaml:"publish,omitempty"`
-	Labels      map[string]string `yaml:"labels,omitempty"`
-	Protocol    string            `yaml:"protocol,omitempty"`
-	Type        string            `yaml:"type,omitempty"`
-	Host        string            `yaml:"host,omitempty"`
-	UpstreamTLS *bool             `yaml:"upstreamTLS,omitempty"`
-	TrustedIPs  []string          `yaml:"trustedIPs,omitempty"`
-	GeoIP       []string          `yaml:"geoip,omitempty"`
-	HTTP        *HTTPSpec         `yaml:"http,omitempty"`
-	TLS         *TLSSpec          `yaml:"tls,omitempty"`
+	Publish                    *bool             `yaml:"publish,omitempty"`
+	Labels                     map[string]string `yaml:"labels,omitempty"`
+	Protocol                   string            `yaml:"protocol,omitempty"`
+	Type                       string            `yaml:"type,omitempty"`
+	Host                       string            `yaml:"host,omitempty"`
+	UpstreamTLS                *bool             `yaml:"upstreamTLS,omitempty"`
+	DatagramGuaranteedDelivery *bool             `yaml:"datagramGuaranteedDelivery,omitempty"`
+	TrustedIPs                 []string          `yaml:"trustedIPs,omitempty"`
+	GeoIP                      []string          `yaml:"geoip,omitempty"`
+	HTTP                       *HTTPSpec         `yaml:"http,omitempty"`
+	TLS                        *TLSSpec          `yaml:"tls,omitempty"`
 }
 
 type HTTPSpec struct {
@@ -308,6 +309,9 @@ func tunnelPropertiesFromSpec(spec *TunnelSpec) (rstream.TunnelProperties, error
 		if props.Protocol == nil || *props.Protocol == rstream.ProtocolHTTP {
 			props.HTTPUseTLS = spec.UpstreamTLS
 		}
+	}
+	if spec.DatagramGuaranteedDelivery != nil {
+		props.DatagramGuaranteedDelivery = spec.DatagramGuaranteedDelivery
 	}
 	if spec.HTTP != nil {
 		if props.Protocol != nil && *props.Protocol != rstream.ProtocolHTTP {

@@ -301,7 +301,7 @@ For local MCP servers running on devices or robots, pass `mcp_path=/mcp` to `rst
 
 ## Diagnostics
 
-Run `rstream doctor -o json` after setup changes or when troubleshooting. It checks local config, selected context, token claims, Control plane API authentication, project resolution, engine address, DNS, TLS or QUIC transport, engine clients, and engine tunnels without printing token values.
+Run `rstream doctor -o json` after setup changes or when troubleshooting. It checks local config, selected context, token claims, Control plane API authentication, project resolution, engine address, DNS, TLS and QUIC reachability, automatic transport selection, engine clients, and engine tunnels without printing token values.
 
 ## Logout
 

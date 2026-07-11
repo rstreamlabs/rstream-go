@@ -26,6 +26,7 @@ type Client struct {
 	Token           *string
 	NoToken         *bool
 	ZeroRTT         *bool
+	transportMu     sync.Mutex
 }
 
 type Config struct {
@@ -165,10 +166,7 @@ func (c *Client) dialEngineWithTransport(ctx context.Context, engine *string, ne
 	}
 	transport := override
 	if isNilDialer(transport) {
-		transport = c.Transport
-	}
-	if isNilDialer(transport) {
-		transport = &Transport{} // default transport
+		transport = c.defaultTunnelTransport()
 	}
 	tlsCfg := c.TLSClientConfig
 	if tlsCfg == nil {
@@ -191,6 +189,29 @@ func (c *Client) dialEngineWithTransport(ctx context.Context, engine *string, ne
 		}
 	}
 	return dialWithECH(ctx, transport, *engine, tlsCfg)
+}
+
+func (c *Client) defaultTunnelTransport() Dialer {
+	c.transportMu.Lock()
+	defer c.transportMu.Unlock()
+	if isNilDialer(c.Transport) {
+		c.Transport = &AutoTransport{}
+	}
+	return c.Transport
+}
+
+func selectedTunnelTransport(transport Dialer) Dialer {
+	if auto, ok := transport.(*AutoTransport); ok && auto != nil {
+		return auto.SelectedTransport()
+	}
+	return transport
+}
+
+func datagramTransport(transport Dialer) (datagramChannelRegistry, DatagramProvider, bool) {
+	selected := selectedTunnelTransport(transport)
+	registry, registryOK := selected.(datagramChannelRegistry)
+	provider, providerOK := selected.(DatagramProvider)
+	return registry, provider, registryOK && providerOK
 }
 
 type dialType string
@@ -296,11 +317,111 @@ func (c *Client) Dial(ctx context.Context, raddr Addr) (net.Conn, error) {
 }
 
 func (c *Client) PacketDial(ctx context.Context, raddr Addr) (net.PacketConn, error) {
+	if conn, ok, err := c.packetDialDatagramChannel(ctx, raddr); ok || err != nil {
+		return conn, err
+	}
 	conn, err := c.Dial(ctx, raddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial stream: %w", err)
 	}
 	return PacketConnFromConn(conn, &raddr, PacketModeFramed), nil
+}
+
+func tunnelAllowsQUICDatagrams(props TunnelProperties) bool {
+	return props.DatagramGuaranteedDelivery == nil || !*props.DatagramGuaranteedDelivery
+}
+
+func (c *Client) packetDialDatagramChannel(ctx context.Context, raddr Addr) (net.PacketConn, bool, error) {
+	registry, provider, supported := datagramTransport(c.defaultTunnelTransport())
+	auto, isAuto := c.Transport.(*AutoTransport)
+	if !supported && (!isAuto || auto.SelectedTransport() != nil) {
+		return nil, false, nil
+	}
+	engine, err := c.getEngine()
+	if err != nil {
+		return nil, true, err
+	}
+	conn, err := c.dialEngine(ctx, engine, nil)
+	if err != nil {
+		return nil, true, fmt.Errorf("failed to dial engine: %w", err)
+	}
+	if !supported {
+		registry, provider, supported = datagramTransport(c.Transport)
+		if !supported {
+			_ = conn.Close()
+			return nil, false, nil
+		}
+	}
+	w := bufio.NewWriter(conn)
+	r := bufio.NewReader(conn)
+	clientDetails, err := c.getClientDetails(engine, nil)
+	if err != nil {
+		_ = conn.Close()
+		return nil, true, fmt.Errorf("failed to get client details: %w", err)
+	}
+	msg := &pb.Message{Payload: &pb.Message_StreamReq{StreamReq: &pb.StreamReq{ClientDetails: toClientDetailsPb(clientDetails), TunnelIdName: raddr.IdOrName, ZeroRtt: boolPbValueOrNil(BoolPtr(false)), DatagramChannel: boolPbValueOrNil(BoolPtr(true))}}}
+	if err := writePbMessage(w, msg); err != nil {
+		_ = conn.Close()
+		return nil, true, fmt.Errorf("failed to send StreamReq: %w", err)
+	}
+	resp, err := readPbMessage(r)
+	if err != nil {
+		_ = conn.Close()
+		return nil, true, fmt.Errorf("failed to read response: %w", err)
+	}
+	streamRsp, ok := resp.Payload.(*pb.Message_StreamRsp)
+	if !ok {
+		_ = conn.Close()
+		return nil, true, fmt.Errorf("server did not return a StreamRsp")
+	}
+	if streamRsp.StreamRsp == nil {
+		_ = conn.Close()
+		return nil, true, fmt.Errorf("server returned empty StreamRsp")
+	}
+	payload, ok := streamRsp.StreamRsp.Payload.(*pb.StreamRsp_StreamId)
+	if !ok {
+		_ = conn.Close()
+		return nil, false, nil
+	}
+	streamID := payload.StreamId
+	channelID, err := datagramChannelIDFromStreamID(streamID)
+	if err != nil {
+		_ = conn.Close()
+		return nil, true, err
+	}
+	chCtx, chCancel := context.WithCancel(context.Background())
+	laddr := &Addr{IdOrName: streamID}
+	ch := &quicDatagramChannel{channelID: channelID, provider: provider, laddr: laddr, raddr: &raddr, recvCh: make(chan []byte, 64), ctx: chCtx, cancel: chCancel, readDeadline: newDatagramDeadline(), writeDeadline: newDatagramDeadline()}
+	ch.onClose = func(ch *quicDatagramChannel) {
+		registry.unregisterDatagramChannel(channelID, ch)
+		_ = conn.Close()
+	}
+	if !registry.registerDatagramChannel(channelID, ch) {
+		_ = conn.Close()
+		ch.Close()
+		return nil, true, fmt.Errorf("datagram channel ID collision")
+	}
+	go watchDatagramChannelMessages(r, streamID, ch)
+	return ch, true, nil
+}
+
+func watchDatagramChannelMessages(r *bufio.Reader, streamID string, ch *quicDatagramChannel) {
+	for {
+		msg, err := readPbMessage(r)
+		if err != nil {
+			ch.Close()
+			return
+		}
+		closeMsg := msg.GetDatagramChannelClose()
+		if closeMsg == nil {
+			continue
+		}
+		if closeMsg.StreamId != streamID {
+			continue
+		}
+		ch.Close()
+		return
+	}
 }
 
 type pendingOpenTunnelReq struct {
@@ -416,14 +537,16 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 	}
 	if err == nil {
 		// Enable QUIC datagram mode if the transport supports it.
-		if dp, ok := c.Transport.(DatagramProvider); ok {
+		if _, dp, ok := datagramTransport(c.Transport); ok {
 			ch.datagramProvider = dp
 			ch.datagramTunnels = make(map[string]*quicDatagramListener)
 			ch.datagramChannels = make(map[datagramChannelID]*quicDatagramChannel)
 			datagramCtx, datagramCancel := context.WithCancel(context.Background())
 			ch.datagramCtx = datagramCtx
 			ch.datagramCancel = datagramCancel
-			go ch.datagramReadLoop()
+			if _, ok := dp.(datagramChannelRegistry); !ok {
+				go ch.datagramReadLoop()
+			}
 		}
 		go ch.readLoop()
 		if ch.enableHeartbeat && ch.heartbeatInterval > 0 {
@@ -501,9 +624,7 @@ func (c *controlChannelImpl) CreateTunnel(ctx context.Context, props TunnelPrope
 				c.tunnels[tunnelID] = tunnel
 				c.mu.Unlock()
 				if rProps.Type != nil && *rProps.Type == TunnelTypeDatagram {
-					if c.datagramProvider != nil {
-						// QUIC datagram mode: use a quicDatagramListener instead of
-						// wrapping the bytestream tunnel in a PacketListener.
+					if c.datagramProvider != nil && tunnelAllowsQUICDatagrams(rProps) {
 						dlCtx, dlCancel := context.WithCancel(c.datagramCtx)
 						listener := &quicDatagramListener{
 							conns:  make(chan net.PacketConn, 10),
@@ -666,11 +787,30 @@ func (c *controlChannelImpl) handleMessage(msg *pb.Message) (error, bool, <-chan
 	case *pb.Message_ProxyConnReq:
 		c.handleProxyConnReq(payload.ProxyConnReq)
 		return nil, false, nil
+	case *pb.Message_DatagramChannelClose:
+		c.handleDatagramChannelClose(payload.DatagramChannelClose)
+		return nil, false, nil
 	case *pb.Message_CloseControlChannelRsp:
 		return nil, true, nil
 	default:
 		return nil, false, nil
 	}
+}
+
+func (c *controlChannelImpl) handleDatagramChannelClose(msg *pb.DatagramChannelClose) {
+	if msg == nil {
+		return
+	}
+	channelID, err := datagramChannelIDFromStreamID(msg.StreamId)
+	if err != nil {
+		c.logger.Warn("invalid datagram channel close", "stream_id", msg.StreamId, "error", err)
+		return
+	}
+	ch := c.datagramChannels[channelID]
+	if ch == nil {
+		return
+	}
+	c.closeDatagramChannelLocked(channelID, ch)
 }
 
 func (c *controlChannelImpl) handleOpenTunnelRsp(rsp *pb.OpenTunnelRsp) <-chan struct{} {
@@ -710,8 +850,7 @@ func (c *controlChannelImpl) handleProxyConnReq(req *pb.ProxyConnReq) {
 		c.logger.Warn("unexpected ProxyConnReq", "tunnel_id", tunnelId, "stream_id", req.StreamId)
 		return
 	}
-	// QUIC datagram mode: create a quicDatagramChannel instead of dialing a new stream.
-	if c.datagramProvider != nil && tunnel.props.Type != nil && *tunnel.props.Type == TunnelTypeDatagram {
+	if c.datagramProvider != nil && tunnel.props.Type != nil && *tunnel.props.Type == TunnelTypeDatagram && tunnelAllowsQUICDatagrams(tunnel.props) {
 		go func() {
 			if !c.handleDatagramProxyConnReq(req, tunnel) {
 				return
@@ -772,8 +911,9 @@ func (c *controlChannelImpl) handleDatagramProxyConnReq(req *pb.ProxyConnReq, tu
 		c.logger.Warn("invalid datagram stream ID", "tunnelID", tunnel.tunnelID, "streamID", req.StreamId, "error", err)
 		return false
 	}
-	laddr := &Addr{IdOrName: req.StreamId, SourceIP: NetIPFromPbValue(req.SourceIp)}
-	raddr := &Addr{IdOrName: tunnel.tunnelID}
+	laddr := &Addr{IdOrName: tunnel.tunnelID}
+	raddr := &Addr{IdOrName: req.StreamId, SourceIP: NetIPFromPbValue(req.SourceIp)}
+	registry, _ := c.datagramProvider.(datagramChannelRegistry)
 	chCtx, chCancel := context.WithCancel(c.datagramCtx)
 	ch := &quicDatagramChannel{
 		channelID:     channelID,
@@ -786,6 +926,9 @@ func (c *controlChannelImpl) handleDatagramProxyConnReq(req *pb.ProxyConnReq, tu
 		readDeadline:  newDatagramDeadline(),
 		writeDeadline: newDatagramDeadline(),
 		onClose: func(ch *quicDatagramChannel) {
+			if registry != nil {
+				registry.unregisterDatagramChannel(channelID, ch)
+			}
 			c.unregisterDatagramChannel(channelID, ch)
 		},
 	}
@@ -805,6 +948,12 @@ func (c *controlChannelImpl) handleDatagramProxyConnReq(req *pb.ProxyConnReq, tu
 	c.datagramChannels[channelID] = ch
 	listener := c.datagramTunnels[tunnel.tunnelID]
 	c.mu.Unlock()
+	if registry != nil && !registry.registerDatagramChannel(channelID, ch) {
+		c.unregisterDatagramChannel(channelID, ch)
+		c.logger.Warn("datagram channel ID collision", "tunnelID", tunnel.tunnelID, "streamID", req.StreamId, "channelID", channelID)
+		ch.Close()
+		return false
+	}
 	if listener != nil {
 		select {
 		case listener.conns <- ch:
@@ -863,12 +1012,15 @@ func (c *controlChannelImpl) unregisterDatagramChannel(channelID datagramChannel
 func (c *controlChannelImpl) closeDatagramChannelLocked(channelID datagramChannelID, ch *quicDatagramChannel) {
 	delete(c.datagramChannels, channelID)
 	ch.onClose = nil
+	if registry, ok := c.datagramProvider.(datagramChannelRegistry); ok {
+		registry.unregisterDatagramChannel(channelID, ch)
+	}
 	ch.Close()
 }
 
 func (c *controlChannelImpl) closeDatagramChannelsForTunnelLocked(tunnelID string) {
 	for channelID, ch := range c.datagramChannels {
-		if ch.raddr != nil && ch.raddr.String() == tunnelID {
+		if ch.laddr != nil && ch.laddr.String() == tunnelID {
 			c.closeDatagramChannelLocked(channelID, ch)
 		}
 	}

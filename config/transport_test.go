@@ -104,6 +104,7 @@ func TestEngineTLSConfig(t *testing.T) {
 func TestFlattenTransportBuildsTCPTransport(t *testing.T) {
 	certFile, _ := writeTestClientCertificate(t)
 	cfg := &TransportConfig{
+		Mode:     "tls",
 		Bind:     &BindConfig{Mode: "interface", Interface: "lo0"},
 		IPFamily: "ipv4",
 		DNS:      &DNSConfig{Override: "1.1.1.1:853", TLS: rstream.BoolPtr(true), ServerName: "cloudflare-dns.com", DNSSEC: rstream.BoolPtr(true)},
@@ -192,6 +193,80 @@ func TestFlattenTransportBuildsQUICTransport(t *testing.T) {
 	}
 	if transport.TLSProxyConfig == nil || transport.TLSProxyConfig.ServerName != "masque.local" || transport.TLSProxyConfig.RootCAs == nil {
 		t.Fatalf("proxy TLS settings not flattened: %#v", transport.TLSProxyConfig)
+	}
+}
+
+func TestFlattenTransportDefaultsToAutoAndPreservesBothPaths(t *testing.T) {
+	dialer, err := FlattenTransportWithError(&TransportConfig{
+		Bind:     &BindConfig{Mode: "address", Address: "127.0.0.1"},
+		IPFamily: "ipv4",
+		MPTCP:    rstream.BoolPtr(true),
+	})
+	if err != nil {
+		t.Fatalf("FlattenTransportWithError() error = %v", err)
+	}
+	transport, ok := dialer.(*rstream.AutoTransport)
+	if !ok {
+		t.Fatalf("FlattenTransportWithError() returned %T, want *rstream.AutoTransport", dialer)
+	}
+	if transport.TLS == nil || transport.QUIC == nil {
+		t.Fatalf("auto transport children = %#v", transport)
+	}
+	if transport.TLS.LocalAddr == nil || *transport.TLS.LocalAddr != "127.0.0.1" || transport.QUIC.LocalAddr == nil || *transport.QUIC.LocalAddr != "127.0.0.1" {
+		t.Fatalf("bind settings not preserved on both paths: TLS=%#v QUIC=%#v", transport.TLS, transport.QUIC)
+	}
+	if transport.TLS.MPTCPEnabled == nil || !*transport.TLS.MPTCPEnabled {
+		t.Fatal("MPTCP should be retained on the TLS fallback")
+	}
+}
+
+func TestFlattenTransportModeAndLegacySelection(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		cfg  *TransportConfig
+		want any
+	}{
+		{name: "default", cfg: nil, want: &rstream.AutoTransport{}},
+		{name: "auto", cfg: &TransportConfig{Mode: "auto"}, want: &rstream.AutoTransport{}},
+		{name: "tls", cfg: &TransportConfig{Mode: "tls"}, want: &rstream.Transport{}},
+		{name: "quic", cfg: &TransportConfig{Mode: "quic"}, want: &rstream.QUICTransport{}},
+		{name: "legacy tls", cfg: &TransportConfig{UseQUIC: rstream.BoolPtr(false)}, want: &rstream.Transport{}},
+		{name: "legacy quic", cfg: &TransportConfig{UseQUIC: rstream.BoolPtr(true)}, want: &rstream.QUICTransport{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := FlattenTransportWithError(test.cfg)
+			if err != nil {
+				t.Fatalf("FlattenTransportWithError() error = %v", err)
+			}
+			switch test.want.(type) {
+			case *rstream.AutoTransport:
+				if _, ok := got.(*rstream.AutoTransport); !ok {
+					t.Fatalf("transport = %T, want AutoTransport", got)
+				}
+			case *rstream.Transport:
+				if _, ok := got.(*rstream.Transport); !ok {
+					t.Fatalf("transport = %T, want Transport", got)
+				}
+			case *rstream.QUICTransport:
+				if _, ok := got.(*rstream.QUICTransport); !ok {
+					t.Fatalf("transport = %T, want QUICTransport", got)
+				}
+			}
+		})
+	}
+	if _, err := FlattenTransportWithError(&TransportConfig{Mode: "udp"}); err == nil {
+		t.Fatal("expected invalid mode error")
+	}
+}
+
+func TestMergeTransportContextSelectorOverridesEnvironmentSelector(t *testing.T) {
+	merged := MergeTransport(&TransportConfig{Mode: "auto"}, &TransportConfig{UseQUIC: rstream.BoolPtr(false)})
+	if merged.Mode != "" || merged.UseQUIC == nil || *merged.UseQUIC {
+		t.Fatalf("legacy context selector did not override environment mode: %#v", merged)
+	}
+	merged = MergeTransport(&TransportConfig{UseQUIC: rstream.BoolPtr(true)}, &TransportConfig{Mode: "tls"})
+	if merged.Mode != "tls" || merged.UseQUIC != nil {
+		t.Fatalf("context mode did not override legacy environment selector: %#v", merged)
 	}
 }
 
