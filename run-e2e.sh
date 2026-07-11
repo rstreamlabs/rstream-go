@@ -279,6 +279,11 @@ if start_server "webtransport/all" webtransport/server; then
   stop_server
 fi
 
+if start_server "webtransport/published-http" webtransport/server --publish --published-protocol http; then
+  run_client "webtransport/published-http" webtransport/client --publish --case all
+  stop_server
+fi
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 [ "$FAIL" -eq 0 ]

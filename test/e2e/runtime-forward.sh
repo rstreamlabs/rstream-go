@@ -382,31 +382,19 @@ case_plain_connect() {
   local downstream=$2
   local target server_pid server_log forwarding
   local rc=0
-  start_upstream "connect-$upstream-target" tcp
+  start_upstream "connect-$upstream-$downstream-target" tcp
   target=$UPSTREAM_ADDR
-  server_log="$TMP_DIR/connect-$upstream-server.log"
+  server_log="$TMP_DIR/connect-$upstream-$downstream-server.log"
   "$BIN/connect/server" --upstream "$upstream" \
-    --name "$NAME_PREFIX-connect-$upstream" >"$server_log" 2>&1 &
+    --name "$NAME_PREFIX-connect-$upstream-$downstream" >"$server_log" 2>&1 &
   server_pid=$!
   PIDS+=("$server_pid")
-  forwarding=$(wait_ready "$server_pid" "$server_log" "connect-$upstream")
+  forwarding=$(wait_ready "$server_pid" "$server_log" "connect-$upstream-$downstream")
   "$BIN/connect/client" --downstream "$downstream" \
     --addr "$forwarding" \
     --target "$target" || rc=$?
   stop_pid "$server_pid"
   return "$rc"
-}
-
-case_plain_connect_h1() {
-  case_plain_connect h1 h1
-}
-
-case_plain_connect_h2() {
-  case_plain_connect h2c h2
-}
-
-case_plain_connect_h3() {
-  case_plain_connect h3 h3
 }
 
 make_cert
@@ -419,9 +407,11 @@ run_case "forward/http h2 reused connection" case_http_h2_reused_connection_rout
 run_case "forward/http h2 subpath" case_http_h2_subpath_preserves_request_path
 run_case "forward/http h3 subpath" case_http_h3_subpath_preserves_request_path
 run_case "forward/http h3 reused connection" case_http_h3_reused_connection_routes
-run_case "forward/http connect h1" case_plain_connect_h1
-run_case "forward/http connect h2" case_plain_connect_h2
-run_case "forward/http connect h3" case_plain_connect_h3
+for upstream in h1 h2c h3; do
+  for downstream in h1 h2 h3; do
+    run_case "forward/http connect $upstream->$downstream" case_plain_connect "$upstream" "$downstream"
+  done
+done
 run_case "forward/dtls" case_dtls
 run_case "forward/quic" case_quic
 run_case "forward/connect udp" case_connect_udp
