@@ -32,6 +32,7 @@ import (
 )
 
 const quicEchoALPN = "rstream-datagram-echo"
+const tunneledQUICInitialPacketSize = 1200
 
 func quicALPNs(tlsALPN string) []string {
 	if tlsALPN != "" {
@@ -67,13 +68,34 @@ func hostPortFromAddr(addr, defaultPort string) string {
 
 // ── DTLS ──────────────────────────────────────────────────────────────────────
 
-func runDTLSUnpublished(ctx context.Context, client *rstream.Client, tunnelName string) error {
+func checkTunnelPacketPath(conn net.PacketConn, expected string) error {
+	if expected == "" {
+		return nil
+	}
+	localNetwork := ""
+	if addr := conn.LocalAddr(); addr != nil {
+		localNetwork = addr.Network()
+	}
+	actual := "stream"
+	if localNetwork == "rstrm" {
+		actual = "quic-datagram"
+	}
+	if actual != expected {
+		return fmt.Errorf("tunnel packet path = %s (local network %q), want %s", actual, localNetwork, expected)
+	}
+	return nil
+}
+
+func runDTLSUnpublished(ctx context.Context, client *rstream.Client, tunnelName, expectedPath string) error {
 	raddr := rstream.Addr{IdOrName: tunnelName}
 	packetConn, err := client.PacketDial(ctx, raddr)
 	if err != nil {
 		return fmt.Errorf("PacketDial: %w", err)
 	}
 	defer packetConn.Close()
+	if err := checkTunnelPacketPath(packetConn, expectedPath); err != nil {
+		return err
+	}
 	return dtlsEcho(packetConn, &raddr)
 }
 
@@ -126,18 +148,21 @@ func dtlsEcho(pc net.PacketConn, raddr net.Addr) error {
 
 // ── QUIC ──────────────────────────────────────────────────────────────────────
 
-func runQUICUnpublished(ctx context.Context, client *rstream.Client, tunnelName string) error {
+func runQUICUnpublished(ctx context.Context, client *rstream.Client, tunnelName, expectedPath string) error {
 	raddr := rstream.Addr{IdOrName: tunnelName}
 	packetConn, err := client.PacketDial(ctx, raddr)
 	if err != nil {
 		return fmt.Errorf("PacketDial: %w", err)
 	}
 	defer packetConn.Close()
+	if err := checkTunnelPacketPath(packetConn, expectedPath); err != nil {
+		return err
+	}
 	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 	transport := quic.Transport{Conn: packetConn}
 	conn, err := transport.Dial(ctx, &raddr,
 		&tls.Config{InsecureSkipVerify: true, NextProtos: quicALPNs("")},
-		&quic.Config{EnableDatagrams: true})
+		&quic.Config{EnableDatagrams: true, InitialPacketSize: tunneledQUICInitialPacketSize})
 	if err != nil {
 		return fmt.Errorf("quic dial: %w", err)
 	}
@@ -197,11 +222,15 @@ func quicEcho(ctx context.Context, conn *quic.Conn) error {
 
 // ── SCTP ──────────────────────────────────────────────────────────────────────
 
-func runSCTPUnpublished(ctx context.Context, client *rstream.Client, tunnelName string) error {
+func runSCTPUnpublished(ctx context.Context, client *rstream.Client, tunnelName, expectedPath string) error {
 	raddr := rstream.Addr{IdOrName: tunnelName}
 	packetConn, err := client.PacketDial(ctx, raddr)
 	if err != nil {
 		return fmt.Errorf("PacketDial: %w", err)
+	}
+	if err := checkTunnelPacketPath(packetConn, expectedPath); err != nil {
+		packetConn.Close()
+		return err
 	}
 	return sctpEcho(rstream.ConnFromPacketConn(packetConn, &raddr))
 }
@@ -271,6 +300,7 @@ func main() {
 	addr := flag.String("addr", "", "forwarding address for direct (published) connection")
 	tlsALPN := flag.String("tls-alpn", "", "custom ALPN for published DTLS, QUIC, or SCTP tunnels")
 	tunnelPrefix := flag.String("tunnel", "datagram-matrix", "tunnel name prefix for SDK dialer")
+	expectedTunnelPacketPath := flag.String("expect-tunnel-packet-path", "", "expected private tunnel packet path: stream or quic-datagram")
 	timeout := flag.Duration("timeout", 30*time.Second, "per-case timeout")
 	flag.Parse()
 	client, err := config.NewClientFromEnv()
@@ -298,19 +328,19 @@ func main() {
 		if *addr != "" {
 			runErr = runDTLSPublished(tctx, *addr, *tlsALPN)
 		} else {
-			runErr = runDTLSUnpublished(tctx, client, *tunnelPrefix+"-dtls")
+			runErr = runDTLSUnpublished(tctx, client, *tunnelPrefix+"-dtls", *expectedTunnelPacketPath)
 		}
 	case "quic":
 		if *addr != "" {
 			runErr = runQUICPublished(tctx, *addr, *tlsALPN)
 		} else {
-			runErr = runQUICUnpublished(tctx, client, *tunnelPrefix+"-quic")
+			runErr = runQUICUnpublished(tctx, client, *tunnelPrefix+"-quic", *expectedTunnelPacketPath)
 		}
 	case "sctp":
 		if *addr != "" {
 			runErr = runSCTPPublished(tctx, *addr, *tlsALPN)
 		} else {
-			runErr = runSCTPUnpublished(tctx, client, *tunnelPrefix+"-sctp")
+			runErr = runSCTPUnpublished(tctx, client, *tunnelPrefix+"-sctp", *expectedTunnelPacketPath)
 		}
 	default:
 		log.Fatalf("unknown variant %q: must be dtls, quic, or sctp", *variant)

@@ -20,3 +20,8 @@ type DatagramProvider interface {
 	SendDatagram(data []byte) error
 	ReceiveDatagram(ctx context.Context) ([]byte, error)
 }
+
+type datagramChannelRegistry interface {
+	registerDatagramChannel(id datagramChannelID, ch *quicDatagramChannel) bool
+	unregisterDatagramChannel(id datagramChannelID, ch *quicDatagramChannel)
+}

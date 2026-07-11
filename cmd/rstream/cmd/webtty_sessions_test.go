@@ -99,7 +99,7 @@ func TestWebTTYSessionsHelpSeparatesPrimaryAndAdvancedCommands(t *testing.T) {
 	if strings.Index(text, "Session Commands:") > strings.Index(text, "Advanced Commands:") {
 		t.Fatalf("primary commands should be shown before advanced commands: %s", text)
 	}
-	if strings.Contains(text, "Aliases:") || strings.Contains(text, "ls") {
+	if strings.Contains(text, "Aliases:") || strings.Contains(text, "\n  ls ") {
 		t.Fatalf("sessions help should not expose command aliases: %s", text)
 	}
 }

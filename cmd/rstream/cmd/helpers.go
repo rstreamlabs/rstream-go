@@ -172,6 +172,17 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 	}
 	httpUseTLSPtr := getBoolPtr(cmd, "http-use-tls")
 	upstreamTLSPtr := getBoolPtr(cmd, "upstream-tls")
+	datagramGuaranteedDeliveryPtr := getBoolPtr(cmd, "datagram-guaranteed-delivery")
+	if datagramGuaranteedDeliveryPtr != nil {
+		usesDatagram := typePtr != nil && *typePtr == rstream.TunnelTypeDatagram
+		if typePtr == nil && protocol != nil {
+			usesDatagram = *protocol == rstream.ProtocolDTLS || *protocol == rstream.ProtocolQUIC ||
+				(*protocol == rstream.ProtocolHTTP && httpVersionPtr != nil && *httpVersionPtr == rstream.HTTP3)
+		}
+		if !usesDatagram {
+			return nil, fmt.Errorf("--datagram-guaranteed-delivery requires a datagram tunnel")
+		}
+	}
 	if upstreamTLSPtr == nil {
 		upstreamTLSPtr = httpUseTLSPtr
 	}
@@ -187,25 +198,26 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 		}
 	}
 	tunnelProperties := &rstream.TunnelProperties{
-		Name:          namePtr,
-		Type:          typePtr,
-		Publish:       publishFinalPtr,
-		Protocol:      protocol,
-		Labels:        labels,
-		GeoIP:         geoipSlice,
-		TrustedIPs:    trustedIPsSlice,
-		Hostname:      hostnamePtr,
-		TLSMode:       tlsModePtr,
-		TLSALPNs:      tlsALPNSlice,
-		TLSMinVersion: tlsMinVersionPtr,
-		TLSCiphers:    tlsCipherIDs,
-		MTLSAuth:      mtlsPtr,
-		HTTPVersion:   httpVersionPtr,
-		HTTPUseTLS:    httpUseTLSPtr,
-		UpstreamTLS:   upstreamTLSPtr,
-		TokenAuth:     tokenAuthPtr,
-		RstreamAuth:   rstreamAuthPtr,
-		ChallengeMode: challengeModePtr,
+		Name:                       namePtr,
+		Type:                       typePtr,
+		Publish:                    publishFinalPtr,
+		Protocol:                   protocol,
+		Labels:                     labels,
+		GeoIP:                      geoipSlice,
+		TrustedIPs:                 trustedIPsSlice,
+		Hostname:                   hostnamePtr,
+		TLSMode:                    tlsModePtr,
+		TLSALPNs:                   tlsALPNSlice,
+		TLSMinVersion:              tlsMinVersionPtr,
+		TLSCiphers:                 tlsCipherIDs,
+		MTLSAuth:                   mtlsPtr,
+		HTTPVersion:                httpVersionPtr,
+		HTTPUseTLS:                 httpUseTLSPtr,
+		UpstreamTLS:                upstreamTLSPtr,
+		DatagramGuaranteedDelivery: datagramGuaranteedDeliveryPtr,
+		TokenAuth:                  tokenAuthPtr,
+		RstreamAuth:                rstreamAuthPtr,
+		ChallengeMode:              challengeModePtr,
 	}
 	return tunnelProperties, nil
 }

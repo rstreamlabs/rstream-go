@@ -28,10 +28,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ "${1:-}" = "--quic-transport" ]; then
-  export RSTREAM_QUIC_TRANSPORT=1
-  shift
-fi
+case "${1:-}" in
+  --quic-transport)
+    export RSTREAM_TUNNEL_TRANSPORT=quic
+    shift
+    ;;
+  --auto-transport)
+    export RSTREAM_TUNNEL_TRANSPORT=auto
+    shift
+    ;;
+  *)
+    export RSTREAM_TUNNEL_TRANSPORT=tls
+    ;;
+esac
 
 require_executable "$RSTREAM_BIN"
 require_executable "$BIN/stream/client"

@@ -34,6 +34,14 @@ func TestDNSResolverConfigFromTransports(t *testing.T) {
 	}
 }
 
+func TestECHResolverOptionsFromAutoTransport(t *testing.T) {
+	auto := &AutoTransport{QUIC: &QUICTransport{DNSOverride: StringPtr("1.1.1.1:853"), ForceIPv4: BoolPtr(true)}}
+	opts := echResolverOptions(auto)
+	if opts.DNSOverride != "1.1.1.1:853" || !opts.ForceIPv4 {
+		t.Fatalf("echResolverOptions(auto) = %#v", opts)
+	}
+}
+
 func TestResolveDialAddressUsesConfiguredResolver(t *testing.T) {
 	resolverAddr := startDNSResolutionTestServer(t, dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
 		resp := new(dns.Msg)

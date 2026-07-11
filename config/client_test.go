@@ -120,4 +120,29 @@ func TestNewClientFromEnvUsesDefaultEnvironmentResolution(t *testing.T) {
 	if client.NoToken == nil || !*client.NoToken {
 		t.Fatalf("NoToken = %#v, want true", client.NoToken)
 	}
+	if _, ok := client.Transport.(*rstream.AutoTransport); !ok {
+		t.Fatalf("Transport = %T, want default AutoTransport", client.Transport)
+	}
+}
+
+func TestTunnelTransportEnvironmentPrecedence(t *testing.T) {
+	clearRstreamEnv(t)
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := WriteAtomic(path, Config{Defaults: Defaults{Context: &DefaultContext{Name: "dev"}}, Contexts: []Context{{Name: "dev", Engine: "engine.example.com:443", Transport: &TransportConfig{Mode: "quic"}}}}); err != nil {
+		t.Fatalf("WriteAtomic() error = %v", err)
+	}
+	t.Setenv("RSTREAM_CONFIG", path)
+	t.Setenv("RSTREAM_QUIC_TRANSPORT", "1")
+	t.Setenv("RSTREAM_TUNNEL_TRANSPORT", "tls")
+	client, err := NewClientFromEnvOptions(ClientEnvOptions{RequireEngine: true})
+	if err != nil {
+		t.Fatalf("NewClientFromEnvOptions() error = %v", err)
+	}
+	if _, ok := client.Transport.(*rstream.Transport); !ok {
+		t.Fatalf("Transport = %T, want canonical TLS override", client.Transport)
+	}
+	_, err = NewClientFromEnvOptions(ClientEnvOptions{RequireEngine: true, TunnelTransport: "invalid"})
+	if err == nil {
+		t.Fatal("expected invalid explicit tunnel transport error")
+	}
 }

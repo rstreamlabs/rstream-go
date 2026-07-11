@@ -142,6 +142,7 @@ func init() {
 	netcatCmd.Flags().BoolP("datagram", "u", false, "use datagram mode (rstream endpoints only)")
 	netcatCmd.Flags().String("framing", string(netcatFramingRFC4571), "stdio framing for datagram mode (rfc4571)")
 	netcatCmd.Flags().Duration("idle-timeout", 0, "close a datagram session after no datagram is received for this duration (0 disables)")
+	netcatCmd.Flags().Bool("datagram-guaranteed-delivery", false, "require reliable delivery for created datagram tunnels")
 	netcatCmd.Flags().String("udp-peer", "", "eagerly open a tunnel session for this local udp peer (requires --listen udp://)")
 	netcatCmd.Flags().Int("max-connections", defaultNetcatMaxConns, "maximum concurrent server-mode connections")
 	netcatCmd.MarkFlagsMutuallyExclusive("interactive", "no-interactive")
@@ -236,7 +237,13 @@ func validateNetcatDatagramFlags(cmd *cobra.Command, serverMode bool) error {
 		if cmd.Flags().Changed("udp-peer") {
 			return fmt.Errorf("--udp-peer requires --datagram")
 		}
+		if cmd.Flags().Changed("datagram-guaranteed-delivery") {
+			return fmt.Errorf("--datagram-guaranteed-delivery requires --datagram")
+		}
 		return nil
+	}
+	if cmd.Flags().Changed("datagram-guaranteed-delivery") && (!serverMode || listenKind != netcatEndpointRstream) {
+		return fmt.Errorf("--datagram-guaranteed-delivery applies only when creating a datagram tunnel with --listen rstrm://[name]")
 	}
 	framing, _ := cmd.Flags().GetString("framing")
 	if netcatFraming(framing) != netcatFramingRFC4571 {
@@ -329,6 +336,7 @@ func newNetcatServerConfig(cmd *cobra.Command, logger *slog.Logger) (*netcatServ
 		return nil, err
 	}
 	datagram, _ := cmd.Flags().GetBool("datagram")
+	datagramGuaranteedDeliveryPtr := getBoolPtr(cmd, "datagram-guaranteed-delivery")
 	if datagram && listenTarget.Kind == netcatEndpointTCP {
 		return nil, fmt.Errorf("datagram mode requires an rstream or udp listen endpoint (rstrm://[name] or udp://host:port)")
 	}
@@ -370,7 +378,7 @@ func newNetcatServerConfig(cmd *cobra.Command, logger *slog.Logger) (*netcatServ
 			if remoteTarget.Kind != netcatEndpointUDP {
 				return nil, fmt.Errorf("datagram server mode requires a udp --remote (udp://host:port) or --exec/--sh-exec")
 			}
-			cfg.PacketListen = newNetcatPacketListenerFactory(listenTarget, rstreamClient)
+			cfg.PacketListen = newNetcatPacketListenerFactory(listenTarget, rstreamClient, datagramGuaranteedDeliveryPtr)
 			cfg.UpstreamUDP = remoteTarget.Address
 		default:
 			if remoteTarget.Kind == netcatEndpointUDP {
@@ -409,7 +417,7 @@ func newNetcatServerConfig(cmd *cobra.Command, logger *slog.Logger) (*netcatServ
 		Logger:              logger,
 	}
 	if datagram {
-		cfg.PacketListen = newNetcatPacketListenerFactory(listenTarget, rstreamClient)
+		cfg.PacketListen = newNetcatPacketListenerFactory(listenTarget, rstreamClient, datagramGuaranteedDeliveryPtr)
 	} else {
 		cfg.Listen = newNetcatListenerFactory(listenTarget, rstreamClient)
 	}

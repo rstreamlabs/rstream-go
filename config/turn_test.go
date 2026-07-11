@@ -34,6 +34,7 @@ func clearRstreamEnv(t *testing.T) {
 		"RSTREAM_CONTEXT",
 		"RSTREAM_ENGINE",
 		"RSTREAM_QUIC_TRANSPORT",
+		"RSTREAM_TUNNEL_TRANSPORT",
 	} {
 		t.Setenv(key, "")
 	}

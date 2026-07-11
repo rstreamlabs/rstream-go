@@ -37,6 +37,8 @@ import (
 // host) so every case can reuse the same per-session plumbing.
 type sessionDialer func(ctx context.Context, relPath string) (*webtransport.Session, error)
 
+const tunneledQUICInitialPacketSize = 1200
+
 // buildDialer returns a sessionDialer for either the published host (when
 // -publish) or the rstream tunnel dialer (non-publish). Both produce fully
 // set up *webtransport.Session instances; callers are responsible for close.
@@ -77,7 +79,9 @@ func buildDialer(client *rstream.Client, publish bool, token string) (sessionDia
 				if err != nil {
 					return nil, err
 				}
-				return quic.DialEarly(ctx, pc, &raddr, tlsCfg, cfg)
+				tunneledConfig := cfg.Clone()
+				tunneledConfig.InitialPacketSize = tunneledQUICInitialPacketSize
+				return quic.DialEarly(ctx, pc, &raddr, tlsCfg, tunneledConfig)
 			},
 		}
 		u := "https://wt-matrix" + relPath
