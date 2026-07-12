@@ -50,6 +50,25 @@ func TestRunNetcatExecSessionReturnsWhenChildExits(t *testing.T) {
 	}
 }
 
+func TestRunNetcatExecSessionStopsChildWhenPeerCloses(t *testing.T) {
+	server, client := net.Pipe()
+	doneCh := make(chan error, 1)
+	go func() {
+		doneCh <- runNetcatExecSession(context.Background(), client, &netcatExecConfig{Shell: true, Command: "sleep 30"}, false, slog.Default())
+	}()
+	if err := server.Close(); err != nil {
+		t.Fatalf("failed to close peer: %v", err)
+	}
+	select {
+	case err := <-doneCh:
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("exec session did not stop child after peer close")
+	}
+}
+
 func TestRunNetcatServerExecTCPRoundTrip(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -58,6 +77,7 @@ func TestRunNetcatServerExecTCPRoundTrip(t *testing.T) {
 	defer listener.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	transportClosed := false
 	doneCh := make(chan error, 1)
 	go func() {
 		doneCh <- runNetcatServer(ctx, &netcatServerConfig{
@@ -65,9 +85,13 @@ func TestRunNetcatServerExecTCPRoundTrip(t *testing.T) {
 				return &netcatListenerResult{Listener: listener, Display: listener.Addr().String()}, nil
 			},
 			DownstreamHalfClose: true,
-			Exec:                &netcatExecConfig{Shell: true, Command: "cat"},
-			OpenTimeout:         time.Second,
-			Logger:              slog.Default(),
+			CloseTransport: func() error {
+				transportClosed = true
+				return nil
+			},
+			Exec:        &netcatExecConfig{Shell: true, Command: "cat"},
+			OpenTimeout: time.Second,
+			Logger:      slog.Default(),
 		})
 	}()
 	conn, err := net.Dial("tcp", listener.Addr().String())
@@ -112,5 +136,8 @@ func TestRunNetcatServerExecTCPRoundTrip(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatalf("server did not stop after cancellation")
+	}
+	if !transportClosed {
+		t.Fatalf("transport was not closed")
 	}
 }

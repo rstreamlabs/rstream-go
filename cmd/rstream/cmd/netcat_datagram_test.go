@@ -161,6 +161,50 @@ func TestNetcatDatagramSendLoopRejectsTruncatedFrame(t *testing.T) {
 	}
 }
 
+func TestRunNetcatDatagramClientClosesTransport(t *testing.T) {
+	closed := false
+	cfg := &netcatClientConfig{
+		Target: "rstrm://media",
+		PacketDial: func(context.Context) (net.PacketConn, net.Addr, error) {
+			return &netcatFakePacketConn{}, netcatTestAddr("remote"), nil
+		},
+		CloseTransport: func() error {
+			closed = true
+			return nil
+		},
+		Logger: slog.Default(),
+	}
+	if err := runNetcatDatagramClient(t.Context(), cfg); err != nil {
+		t.Fatalf("runNetcatDatagramClient() error = %v", err)
+	}
+	if !closed {
+		t.Fatalf("transport was not closed")
+	}
+}
+
+func TestRunNetcatDatagramServerClosesTransport(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	closed := false
+	cfg := &netcatServerConfig{
+		UDPListen: "127.0.0.1:0",
+		PacketDial: func(context.Context) (net.PacketConn, net.Addr, error) {
+			return nil, nil, errors.New("unexpected dial")
+		},
+		CloseTransport: func() error {
+			closed = true
+			return nil
+		},
+		Logger: slog.Default(),
+	}
+	if err := runNetcatDatagramServer(ctx, cfg); err != nil {
+		t.Fatalf("runNetcatDatagramServer() error = %v", err)
+	}
+	if !closed {
+		t.Fatalf("transport was not closed")
+	}
+}
+
 func TestNewNetcatConfigsRejectDatagramTCPEndpoints(t *testing.T) {
 	command := newTestNetcatCommand()
 	mustSetFlag(t, command, "datagram", "true")

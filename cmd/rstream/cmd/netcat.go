@@ -42,18 +42,19 @@ type netcatPacketListenerResult struct {
 type netcatPacketListenerFactory func(context.Context) (*netcatPacketListenerResult, error)
 
 type netcatClientConfig struct {
-	Target      string
-	Interactive bool
-	HalfClose   bool
-	Datagram    bool
-	IdleTimeout time.Duration
-	Dial        netcatDialer
-	PacketDial  netcatPacketDialer
-	Exec        *netcatExecConfig
-	Stdin       io.Reader
-	Stdout      io.Writer
-	Stderr      io.Writer
-	Logger      *slog.Logger
+	Target         string
+	Interactive    bool
+	HalfClose      bool
+	Datagram       bool
+	IdleTimeout    time.Duration
+	Dial           netcatDialer
+	PacketDial     netcatPacketDialer
+	CloseTransport func() error
+	Exec           *netcatExecConfig
+	Stdin          io.Reader
+	Stdout         io.Writer
+	Stderr         io.Writer
+	Logger         *slog.Logger
 }
 
 type netcatExecConfig struct {
@@ -64,6 +65,7 @@ type netcatExecConfig struct {
 type netcatServerConfig struct {
 	Listen              netcatListenerFactory
 	PacketListen        netcatPacketListenerFactory
+	CloseTransport      func() error
 	Datagram            bool
 	IdleTimeout         time.Duration
 	DownstreamHalfClose bool
@@ -326,6 +328,7 @@ func newNetcatClientConfig(cmd *cobra.Command, logger *slog.Logger, rawTarget st
 	} else {
 		cfg.Dial = newNetcatDialer(target, rstreamClient)
 	}
+	cfg.CloseTransport = newNetcatTransportCloser(rstreamClient)
 	return cfg, nil
 }
 
@@ -389,6 +392,7 @@ func newNetcatServerConfig(cmd *cobra.Command, logger *slog.Logger) (*netcatServ
 			cfg.UpstreamHalfClose = remoteTarget.Kind == netcatEndpointTCP
 			cfg.Upstream = newNetcatDialer(remoteTarget, rstreamClient)
 		}
+		cfg.CloseTransport = newNetcatTransportCloser(rstreamClient)
 		return cfg, nil
 	}
 	if listenTarget.Kind == netcatEndpointUDP {
@@ -421,7 +425,30 @@ func newNetcatServerConfig(cmd *cobra.Command, logger *slog.Logger) (*netcatServ
 	} else {
 		cfg.Listen = newNetcatListenerFactory(listenTarget, rstreamClient)
 	}
+	cfg.CloseTransport = newNetcatTransportCloser(rstreamClient)
 	return cfg, nil
+}
+
+func newNetcatTransportCloser(client *rstream.Client) func() error {
+	if client == nil {
+		return nil
+	}
+	return func() error {
+		closer, ok := client.Transport.(io.Closer)
+		if !ok {
+			return nil
+		}
+		return closer.Close()
+	}
+}
+
+func closeNetcatTransport(closeTransport func() error, logger *slog.Logger) {
+	if closeTransport == nil {
+		return
+	}
+	if err := closeTransport(); err != nil {
+		logger.Debug("failed to close netcat transport", "error", err)
+	}
 }
 
 func newNetcatRstreamClient(cmd *cobra.Command, required bool) (*rstream.Client, error) {
