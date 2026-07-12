@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.2](https://github.com/rstreamlabs/rstream-go/compare/v1.24.1...v1.24.2) (2026-07-12)
+
+
+### Bug Fixes
+
+* close netcat sessions on peer shutdown ([e1088ca](https://github.com/rstreamlabs/rstream-go/commit/e1088ca070a7a61b2e7e9b0d449032b909bd2de1))
+
 ## [1.24.1](https://github.com/rstreamlabs/rstream-go/compare/v1.24.0...v1.24.1) (2026-07-11)
 
 
