@@ -242,6 +242,7 @@ func runNetcatDatagramClient(ctx context.Context, cfg *netcatClientConfig) error
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	defer closeNetcatTransport(cfg.CloseTransport, cfg.Logger)
 	conn, raddr, err := cfg.PacketDial(ctx)
 	if err != nil {
 		return err
@@ -275,6 +276,7 @@ func runNetcatDatagramServer(ctx context.Context, cfg *netcatServerConfig) error
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	defer closeNetcatTransport(cfg.CloseTransport, cfg.Logger)
 	if cfg.OpenTimeout <= 0 {
 		cfg.OpenTimeout = defaultNetcatOpenTimeout
 	}

@@ -27,6 +27,7 @@ func runNetcatClient(ctx context.Context, cfg *netcatClientConfig) error {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	defer closeNetcatTransport(cfg.CloseTransport, cfg.Logger)
 	conn, err := cfg.Dial(ctx)
 	if err != nil {
 		return err
