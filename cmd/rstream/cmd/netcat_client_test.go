@@ -69,6 +69,42 @@ func TestRunNetcatClientInteractiveCopiesInputAndOutput(t *testing.T) {
 	}
 }
 
+func TestRunNetcatClientClosesTransport(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	closed := make(chan struct{}, 1)
+	cfg := &netcatClientConfig{
+		Target: "pipe",
+		Dial: func(context.Context) (net.Conn, error) {
+			return clientConn, nil
+		},
+		CloseTransport: func() error {
+			closed <- struct{}{}
+			return nil
+		},
+		Logger: slog.Default(),
+	}
+	doneCh := make(chan error, 1)
+	go func() {
+		doneCh <- runNetcatClient(t.Context(), cfg)
+	}()
+	if err := serverConn.Close(); err != nil {
+		t.Fatalf("server Close() error = %v", err)
+	}
+	select {
+	case err := <-doneCh:
+		if err != nil {
+			t.Fatalf("runNetcatClient() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("runNetcatClient() timed out")
+	}
+	select {
+	case <-closed:
+	default:
+		t.Fatalf("transport was not closed")
+	}
+}
+
 func TestCopyNetcatInputHalfClosesDestination(t *testing.T) {
 	dst := &halfCloseRecorderConn{Reader: strings.NewReader(""), Writer: io.Discard}
 	if err := copyNetcatInput(dst, strings.NewReader("payload"), true); err != nil {

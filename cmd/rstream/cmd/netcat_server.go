@@ -72,6 +72,7 @@ func runNetcatServer(ctx context.Context, cfg *netcatServerConfig) error {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	defer closeNetcatTransport(cfg.CloseTransport, cfg.Logger)
 	result, err := cfg.Listen(ctx)
 	if err != nil {
 		return err
@@ -278,7 +279,7 @@ func runNetcatExecSession(ctx context.Context, downstream net.Conn, execCfg *net
 		case err := <-stdinErrCh:
 			stdinDone = true
 			stdinErr = err
-			if err != nil {
+			if err != nil || !downstreamHalfClose {
 				closeDownstream()
 				closeStdin()
 				killNetcatProcess(cmd)
