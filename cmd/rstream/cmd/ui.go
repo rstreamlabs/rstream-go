@@ -43,11 +43,13 @@ var uiCmd = &cobra.Command{
 		store := newUIStore(transport)
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()
-		go store.run(ctx, client)
-		ui, err := newUIApp(ctx, cancel, client, store, runtime, uiConnectionInfo{
+		resolver := newUIRuntimeResolver(runtime.ConfigPath, uiRuntimeOptionsFromCommand(cmd))
+		isDefault := runtime.Config.Defaults.Context != nil && runtime.Config.Defaults.Context.Name == runtime.Resolved.ContextName
+		ui, err := newUIApp(ctx, cancel, client, store, runtime, resolver, uiConnectionInfo{
 			ContextName: runtime.Resolved.ContextName,
 			APIURL:      runtime.Resolved.APIURL,
 			Engine:      runtime.Resolved.Engine,
+			SessionOnly: !isDefault,
 		})
 		if err != nil {
 			return err

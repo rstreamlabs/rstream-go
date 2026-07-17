@@ -78,7 +78,7 @@ var projectListCmd = &cobra.Command{
 
 var projectUseCmd = &cobra.Command{
 	Use:          "use <project-endpoint>",
-	Short:        "Set the active project",
+	Short:        "Set the default context from a project",
 	SilenceUsage: true,
 	Args:         cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -98,57 +98,15 @@ var projectUseCmd = &cobra.Command{
 			return mapControlPlaneError(err)
 		}
 		apiURL := runtime.Resolved.APIURL
-		cfg := runtime.Config
-		cfg.EnsureEnvironment(apiURL)
 		nameFlag, _ := cmd.Flags().GetString("name")
-		var ctx *config.Context
-		if nameFlag != "" {
-			existing, _, err := cfg.FindContextByName(nameFlag)
-			if err != nil {
-				return err
-			}
-			if existing != nil {
-				if existing.APIURL != "" && existing.APIURL != apiURL {
-					return fmt.Errorf("context %q already exists for API URL %q", nameFlag, existing.APIURL)
-				}
-				if existing.APIURL == "" {
-					return fmt.Errorf("context %q already exists (unlinked)", nameFlag)
-				}
-				ctx = existing
-			} else {
-				newCtx := config.Context{Name: nameFlag, APIURL: apiURL}
-				cfg.Contexts = append(cfg.Contexts, newCtx)
-				ctx = &cfg.Contexts[len(cfg.Contexts)-1]
-			}
-		} else if existing := findContextByProjectEndpoint(&cfg, apiURL, project.Endpoint); existing != nil {
-			ctx = existing
-		} else {
-			baseName := slugifyName(project.Name)
-			if baseName == "" {
-				baseName = slugifyName(endpointPrefix(project.Endpoint))
-			}
-			if baseName == "" {
-				baseName = "project"
-			}
-			uniqueName := uniqueContextName(baseName, &cfg)
-			newCtx := config.Context{Name: uniqueName, APIURL: apiURL}
-			cfg.Contexts = append(cfg.Contexts, newCtx)
-			ctx = &cfg.Contexts[len(cfg.Contexts)-1]
-		}
-		ctx.APIURL = apiURL
-		ctx.ProjectEndpoint = project.Endpoint
-		ctx.Engine = project.EngineAddress()
-		ctx.TURNDomain = project.Domain
-		ctx.TURNPort = project.TurnPort
-		ctx.TURNSPort = project.TurnsPort
-		cfg.Defaults.Context = &config.DefaultContext{Name: ctx.Name}
-		if err := config.WriteAtomic(runtime.ConfigPath, cfg); err != nil {
+		ctx, err := persistProjectContext(runtime.ConfigPath, apiURL, project, nameFlag, true)
+		if err != nil {
 			return err
 		}
 		output, _ := cmd.Flags().GetString("output")
 		return writeOptionalStructuredOutput(output, map[string]any{
 			"project": project,
-			"context": redactContext(*ctx),
+			"context": redactContext(ctx),
 			"default": true,
 		})
 	},
@@ -269,11 +227,87 @@ func mapControlPlaneError(err error) error {
 func findContextByProjectEndpoint(cfg *config.Config, apiURL, endpoint string) *config.Context {
 	for i := range cfg.Contexts {
 		ctx := &cfg.Contexts[i]
-		if ctx.APIURL == apiURL && ctx.ProjectEndpoint == endpoint {
+		if config.NormalizeAPIURL(ctx.APIURL) == config.NormalizeAPIURL(apiURL) && ctx.ProjectEndpoint == endpoint {
 			return ctx
 		}
 	}
 	return nil
+}
+
+func persistProjectContext(path, apiURL string, project controlplane.Project, name string, setDefault bool) (config.Context, error) {
+	var persisted config.Context
+	err := config.UpdateAtomic(path, func(cfg *config.Config) error {
+		ctx, err := upsertProjectContext(cfg, apiURL, project, name, setDefault)
+		if err != nil {
+			return err
+		}
+		persisted = *ctx
+		return nil
+	})
+	return persisted, err
+}
+
+func upsertProjectContext(cfg *config.Config, apiURL string, project controlplane.Project, name string, setDefault bool) (*config.Context, error) {
+	if cfg == nil {
+		return nil, errors.New("config is nil")
+	}
+	apiURL = config.NormalizeAPIURL(apiURL)
+	if apiURL == "" {
+		return nil, errors.New("project context requires a Control Plane API URL")
+	}
+	engine := project.EngineAddress()
+	if engine == "" {
+		return nil, fmt.Errorf("project %q does not expose an engine address", project.Name)
+	}
+	cfg.EnsureEnvironment(apiURL)
+	ctx, err := selectProjectContextForUpsert(cfg, apiURL, project, name)
+	if err != nil {
+		return nil, err
+	}
+	ctx.APIURL = apiURL
+	ctx.ProjectEndpoint = project.Endpoint
+	ctx.Engine = engine
+	ctx.TURNDomain = project.Domain
+	ctx.TURNPort = project.TurnPort
+	ctx.TURNSPort = project.TurnsPort
+	if setDefault {
+		cfg.Defaults.Context = &config.DefaultContext{Name: ctx.Name}
+	}
+	return ctx, nil
+}
+
+func selectProjectContextForUpsert(cfg *config.Config, apiURL string, project controlplane.Project, name string) (*config.Context, error) {
+	name = strings.TrimSpace(name)
+	if name != "" {
+		existing, _, err := cfg.FindContextByName(name)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil {
+			if config.NormalizeAPIURL(existing.APIURL) != apiURL {
+				if strings.TrimSpace(existing.APIURL) == "" {
+					return nil, fmt.Errorf("context %q already exists (unlinked)", name)
+				}
+				return nil, fmt.Errorf("context %q already exists for API URL %q", name, existing.APIURL)
+			}
+			return existing, nil
+		}
+		cfg.Contexts = append(cfg.Contexts, config.Context{Name: name, APIURL: apiURL})
+		return &cfg.Contexts[len(cfg.Contexts)-1], nil
+	}
+	if existing := findContextByProjectEndpoint(cfg, apiURL, project.Endpoint); existing != nil {
+		return existing, nil
+	}
+	baseName := slugifyName(project.Name)
+	if baseName == "" {
+		baseName = slugifyName(endpointPrefix(project.Endpoint))
+	}
+	if baseName == "" {
+		baseName = "project"
+	}
+	uniqueName := uniqueContextName(baseName, cfg)
+	cfg.Contexts = append(cfg.Contexts, config.Context{Name: uniqueName, APIURL: apiURL})
+	return &cfg.Contexts[len(cfg.Contexts)-1], nil
 }
 
 func uniqueContextName(base string, cfg *config.Config) string {

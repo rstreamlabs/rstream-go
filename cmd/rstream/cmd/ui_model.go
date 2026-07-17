@@ -73,8 +73,19 @@ func newUIStore(transport string) *uiStore {
 
 func (s *uiStore) Changes() <-chan struct{} { return s.updates }
 
-func (s *uiStore) run(ctx context.Context, client *rstream.Client) {
+func (s *uiStore) run(ctx context.Context, client *rstream.Client, ready chan<- error) {
 	backoff := time.Second
+	readyPending := ready != nil
+	signalReady := func(err error) {
+		if !readyPending {
+			return
+		}
+		readyPending = false
+		select {
+		case ready <- err:
+		default:
+		}
+	}
 	for {
 		if ctx.Err() != nil {
 			return
@@ -87,9 +98,17 @@ func (s *uiStore) run(ctx context.Context, client *rstream.Client) {
 			}
 			connectedOnce = true
 			s.setConnectionState(true, "")
+			signalReady(nil)
 			return nil
 		})
 		if ctx.Err() != nil {
+			return
+		}
+		if readyPending {
+			if err == nil {
+				err = fmt.Errorf("inventory watch closed before the initial snapshot")
+			}
+			signalReady(err)
 			return
 		}
 		if err != nil && err != context.Canceled {

@@ -104,6 +104,35 @@ func TestProjectContextHelpers(t *testing.T) {
 	}
 }
 
+func TestUpsertProjectContextReusesAndRefreshesContext(t *testing.T) {
+	apiURL := "https://api.example.com"
+	cfg := &config.Config{Contexts: []config.Context{{Name: "existing", APIURL: apiURL + "/", ProjectEndpoint: "project", Engine: "old.example:443"}}}
+	project := controlplane.Project{Name: "Project", Endpoint: "project", Domain: "new.example", EnginePort: 8443, TurnPort: 3478, TurnsPort: 5349}
+	contextValue, err := upsertProjectContext(cfg, apiURL, project, "", true)
+	if err != nil {
+		t.Fatalf("upsertProjectContext() error = %v", err)
+	}
+	if len(cfg.Contexts) != 1 || contextValue.Name != "existing" || contextValue.Engine != "project.new.example:8443" {
+		t.Fatalf("upserted context = %#v config=%#v", contextValue, cfg)
+	}
+	if cfg.Defaults.Context == nil || cfg.Defaults.Context.Name != "existing" {
+		t.Fatalf("default context = %#v, want existing", cfg.Defaults.Context)
+	}
+}
+
+func TestUpsertProjectContextValidatesInputs(t *testing.T) {
+	project := controlplane.Project{Name: "Project", Endpoint: "project"}
+	if _, err := upsertProjectContext(nil, "https://api.example", project, "", true); err == nil {
+		t.Fatal("upsertProjectContext() accepted nil config")
+	}
+	if _, err := upsertProjectContext(&config.Config{}, "", project, "", true); err == nil {
+		t.Fatal("upsertProjectContext() accepted empty API URL")
+	}
+	if _, err := upsertProjectContext(&config.Config{}, "https://api.example", project, "", true); err == nil {
+		t.Fatal("upsertProjectContext() accepted project without engine address")
+	}
+}
+
 func TestWriteProjectsTableIncludesWorkspaceID(t *testing.T) {
 	var out bytes.Buffer
 	err := writeProjectsTable(&out, []controlplane.Project{{
@@ -125,6 +154,12 @@ func TestWriteProjectsTableIncludesWorkspaceID(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("project table missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestProjectUseHelpDescribesDefaultContext(t *testing.T) {
+	if projectUseCmd.Short != "Set the default context from a project" {
+		t.Fatalf("project use help = %q", projectUseCmd.Short)
 	}
 }
 
