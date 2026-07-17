@@ -29,12 +29,15 @@ import (
 	"sync"
 	"syscall"
 
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	rstream "github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 )
+
+const tunneledQUICInitialPacketSize = 1200
 
 func generateTLSConfig() (*tls.Config, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
@@ -215,6 +218,9 @@ func runH3(ctx context.Context, tunnel rstream.DatagramTunnel) error {
 	srv := &http3.Server{
 		TLSConfig: tlsCfg,
 		Handler:   newProxyHandler(),
+		QUICConfig: &quic.Config{
+			InitialPacketSize: tunneledQUICInitialPacketSize,
+		},
 	}
 	errCh := make(chan error, 1)
 	go func() {
