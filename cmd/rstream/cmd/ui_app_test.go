@@ -276,6 +276,50 @@ func TestUIInventoryActionsTextUsesStableDetailLabel(t *testing.T) {
 	if !strings.Contains(summary, "Summary/JSON") {
 		t.Fatalf("inventoryActionsText() = %q, want stable Summary/JSON label", summary)
 	}
+	app.switchingTo = "prod"
+	if switching := app.inventoryActionsText(); switching != summary {
+		t.Fatalf("switching changed inventory actions:\nnormal=%q\nswitching=%q", summary, switching)
+	}
+}
+
+func TestUIInventoryPlaceholderResetsAndDisablesSelection(t *testing.T) {
+	t.Parallel()
+	app := &uiApp{
+		app:   tview.NewApplication(),
+		state: uiState{View: uiViewClients, Detail: uiDetailModeSummary},
+	}
+	app.buildInventoryPage()
+	app.table.Select(42, 0)
+
+	app.renderInventory()
+
+	row, column := app.table.GetSelection()
+	if row != 0 || column != 0 {
+		t.Fatalf("empty inventory selection = (%d, %d), want (0, 0)", row, column)
+	}
+	rowsSelectable, columnsSelectable := app.table.GetSelectable()
+	if rowsSelectable || columnsSelectable {
+		t.Fatalf("empty inventory selectable = (%v, %v), want disabled", rowsSelectable, columnsSelectable)
+	}
+	assertUITableNavigationReturns(t, app.table)
+}
+
+func assertUITableNavigationReturns(t *testing.T, table *tview.Table) {
+	t.Helper()
+	handler := table.InputHandler()
+	if handler == nil {
+		t.Fatal("table has no input handler")
+	}
+	done := make(chan struct{})
+	go func() {
+		handler(tcell.NewEventKey(tcell.KeyDown, 0, tcell.ModNone), func(tview.Primitive) {})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("table navigation did not return")
+	}
 }
 
 func TestUIInventoryMetaTextIncludesContextAndEngine(t *testing.T) {

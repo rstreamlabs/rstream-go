@@ -168,6 +168,22 @@ rstream webtty exec --url rstrm://prod-shell -- whoami
 rstream ui
 ```
 
+In `rstream ui`, press `c` from the inventory to select another configured
+context or a project discovered through the active Control Plane API. The
+picker separates contexts (`1`) from projects (`2`); `Tab` toggles the views,
+and the `CURRENT` and `DEFAULT` columns make both states explicit. `Enter` uses
+the target only for the current UI process; `d` also saves it as the default
+context. The WebTTY inventory and all subsequent session security resolution
+use the newly selected runtime, including workspace-managed device proofs and
+E2E key resolution. Close an open terminal with `Ctrl+g q` before switching
+context.
+
+The context picker remains usable when Control plane discovery is unavailable.
+Unlinked contexts and project-scoped contexts can therefore switch Engine
+inventory and open directly resolvable WebTTY servers without a Control plane.
+Only workspace-managed trust paths that inherently require Control plane access
+will fail, with the original context and inventory left active.
+
 If the workspace requires E2E and the CLI is not trusted, the client fails before
 opening the terminal and prints the enrollment command to run.
 
@@ -492,15 +508,17 @@ bash test/e2e/webtty-cli-workflows.sh
 ```
 
 The `rstream ui` WebTTY path is covered by `cmd/rstream/cmd` tests. The runtime
-tests cover known-server client identity selection, missing-known-server
-fail-closed behavior, post-ACK identity persistence, and workspace-managed
-resolution. The workspace runtime test starts a real encrypted WebTTY server,
-signs a workspace device proof, resolves the workspace-managed server key
-through a control-plane test double, opens the session through the same
-configuration path used by `rstream ui`, and verifies decrypted terminal output:
+tests cover context and project discovery without mandatory Control plane
+access, temporary and persistent switching, Engine readiness and failure,
+known-server client identity selection, missing-known-server fail-closed
+behavior, post-ACK identity persistence, and workspace-managed resolution. The
+workspace runtime test starts a real encrypted WebTTY server, signs a workspace
+device proof, resolves the workspace-managed server key through a control-plane
+test double, opens the session through the same configuration path used by
+`rstream ui`, and verifies decrypted terminal output:
 
 ```bash
-go test ./cmd/rstream/cmd -run 'TestUIWebTTYSessionConfigRequiresKnownServerForLightweightExplicitKey|TestUIWebTTYSessionConfigRequestsIdentitySelectionWhenKnownServerHasNoClientIdentity|TestUIWebTTYSessionConfigSelectedIdentityCanBeRememberedAfterAck|TestUIWebTTYSessionOpensWorkspaceManagedE2ERuntime$'
+go test ./cmd/rstream/cmd -run 'TestUIRuntime|TestUITarget|TestUIWebTTYSessionConfigRequiresKnownServerForLightweightExplicitKey|TestUIWebTTYSessionConfigRequestsIdentitySelectionWhenKnownServerHasNoClientIdentity|TestUIWebTTYSessionConfigSelectedIdentityCanBeRememberedAfterAck|TestUIWebTTYSessionOpensWorkspaceManagedE2ERuntime$'
 ```
 
 The local MCP `rstream_webtty_exec` path builds the same WebTTY client config as
