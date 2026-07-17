@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -23,6 +24,7 @@ const (
 	uiPageSession        = "session"
 	uiPageHelp           = "help"
 	uiPageIdentityPicker = "identity-picker"
+	uiPageTargetPicker   = "target-picker"
 )
 
 var (
@@ -46,6 +48,7 @@ type uiApp struct {
 	client        *rstream.Client
 	store         *uiStore
 	runtime       *resolvedRuntime
+	resolver      *uiRuntimeResolver
 	connection    uiConnectionInfo
 	app           *tview.Application
 	screen        tcell.Screen
@@ -67,12 +70,21 @@ type uiApp struct {
 	helpVisible   bool
 	activePage    string
 	sessionLeader bool
+	runtimeCancel context.CancelFunc
+	runtimeGen    uint64
+	switchCancel  context.CancelFunc
+	switchGen     uint64
+	switchingTo   string
+	targetPicker  *uiTargetPicker
+	readyTimeout  time.Duration
 }
 
 type uiConnectionInfo struct {
 	ContextName string
+	ProjectName string
 	APIURL      string
 	Engine      string
+	SessionOnly bool
 }
 
 type uiSessionHandle struct {
@@ -100,24 +112,29 @@ type uiWebTTYIdentitySelection struct {
 	identities      []map[string]any
 }
 
-func newUIApp(ctx context.Context, cancel context.CancelFunc, client *rstream.Client, store *uiStore, runtime *resolvedRuntime, connection uiConnectionInfo) (*uiApp, error) {
+func newUIApp(ctx context.Context, cancel context.CancelFunc, client *rstream.Client, store *uiStore, runtime *resolvedRuntime, resolver *uiRuntimeResolver, connection uiConnectionInfo) (*uiApp, error) {
 	initUIBorders()
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return nil, err
 	}
 	app := &uiApp{
-		ctx:        ctx,
-		cancel:     cancel,
-		client:     client,
-		store:      store,
-		runtime:    runtime,
-		connection: connection,
-		app:        tview.NewApplication(),
-		screen:     screen,
-		pages:      tview.NewPages(),
-		state:      uiState{Detail: uiDetailModeSummary},
-		activePage: uiPageInventory,
+		ctx:          ctx,
+		cancel:       cancel,
+		client:       client,
+		store:        store,
+		runtime:      runtime,
+		resolver:     resolver,
+		connection:   connection,
+		app:          tview.NewApplication(),
+		screen:       screen,
+		pages:        tview.NewPages(),
+		state:        uiState{Detail: uiDetailModeSummary},
+		activePage:   uiPageInventory,
+		readyTimeout: 20 * time.Second,
+	}
+	if app.resolver == nil {
+		app.resolver = newUIRuntimeResolver(runtime.ConfigPath, uiRuntimeOptions{})
 	}
 	app.buildInventoryPage()
 	app.buildHelpPage()
@@ -131,7 +148,11 @@ func newUIApp(ctx context.Context, cancel context.CancelFunc, client *rstream.Cl
 	app.app.SetFocus(app.table)
 	app.app.SetInputCapture(app.captureInput)
 	app.refreshSnapshot(store.snapshot())
-	go app.watchStore()
+	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
+	app.runtimeCancel = runtimeCancel
+	app.runtimeGen = 1
+	go store.run(runtimeCtx, client, nil)
+	go app.watchStore(runtimeCtx, app.runtimeGen, store)
 	return app, nil
 }
 
@@ -147,8 +168,21 @@ func initUIBorders() {
 }
 
 func (u *uiApp) Run() error {
-	defer u.closeSession("")
+	defer u.shutdown()
 	return u.app.Run()
+}
+
+func (u *uiApp) shutdown() {
+	u.closeSession("")
+	if u.switchCancel != nil {
+		u.switchCancel()
+		u.switchCancel = nil
+	}
+	if u.runtimeCancel != nil {
+		u.runtimeCancel()
+		u.runtimeCancel = nil
+	}
+	u.closeTargetPicker()
 }
 
 func (u *uiApp) buildInventoryPage() {
@@ -230,14 +264,17 @@ func (u *uiApp) buildSessionPage(handle *uiSessionHandle) tview.Primitive {
 	return root
 }
 
-func (u *uiApp) watchStore() {
+func (u *uiApp) watchStore(ctx context.Context, generation uint64, store *uiStore) {
 	for {
 		select {
-		case <-u.ctx.Done():
+		case <-ctx.Done():
 			return
-		case <-u.store.Changes():
-			snapshot := u.store.snapshot()
+		case <-store.Changes():
+			snapshot := store.snapshot()
 			u.app.QueueUpdateDraw(func() {
+				if u.runtimeGen != generation || u.store != store {
+					return
+				}
 				u.refreshSnapshot(snapshot)
 			})
 		}
@@ -291,6 +328,13 @@ func (u *uiApp) refreshChrome() {
 }
 
 func (u *uiApp) inventoryMetaText() string {
+	if target := strings.TrimSpace(u.switchingTo); target != "" {
+		return strings.Join([]string{
+			"[white::b]rstream ui[-:-:-]",
+			"[#b0bac5]https://rstream.io/[-]",
+			"[#b0bac5]switching to " + uiSafe(target) + "[-]",
+		}, " [#b0bac5]-[-] ")
+	}
 	status := "[#9ca3af]connecting[-]"
 	if u.snapshot.Connected {
 		status = "[white]connected[-]"
@@ -304,7 +348,14 @@ func (u *uiApp) inventoryMetaText() string {
 		status,
 	}
 	if contextName := strings.TrimSpace(u.connection.ContextName); contextName != "" {
-		parts = append(parts, fmt.Sprintf("[#b0bac5]ctx %s[-]", uiSafe(contextName)))
+		label := fmt.Sprintf("ctx %s", uiSafe(contextName))
+		if u.connection.SessionOnly {
+			label += " (session)"
+		}
+		parts = append(parts, "[#b0bac5]"+label+"[-]")
+	}
+	if projectName := strings.TrimSpace(u.connection.ProjectName); projectName != "" {
+		parts = append(parts, fmt.Sprintf("[#b0bac5]project %s[-]", uiSafe(projectName)))
 	}
 	if engine := strings.TrimSpace(u.connection.Engine); engine != "" {
 		parts = append(parts, fmt.Sprintf("[#b0bac5]engine %s[-]", uiSafe(engine)))
@@ -338,6 +389,7 @@ func (u *uiApp) inventoryActionsText() string {
 		uiKeyLabel("2", "Tunnels"),
 		uiKeyLabel("3", "Clients"),
 		uiKeyLabel("Tab", "Next"),
+		uiKeyLabel("c", "Context/Project"),
 		uiKeyLabel("v", "Summary/JSON"),
 		uiKeyLabel("?", "Help"),
 		uiKeyLabel("q", "Quit"),
@@ -360,6 +412,10 @@ func (u *uiApp) tabLabel(view uiView, key, label string) string {
 }
 
 func (u *uiApp) renderInventory() {
+	if strings.TrimSpace(u.switchingTo) != "" {
+		u.renderSwitchingInventory()
+		return
+	}
 	switch u.state.View {
 	case uiViewClients:
 		u.renderClients()
@@ -371,11 +427,35 @@ func (u *uiApp) renderInventory() {
 	u.syncDetails()
 }
 
+func (u *uiApp) renderSwitchingInventory() {
+	u.clientRows = nil
+	u.tunnelRows = nil
+	u.webttyRows = nil
+	u.prepareInventoryTable(u.state.View)
+	addPlaceholderRow(u.table, "Switching to "+u.switchingTo+"...")
+	u.detail.SetText(" ")
+}
+
+func (u *uiApp) prepareInventoryTable(view uiView) {
+	title := " WebTTY Servers "
+	headers := []string{"TARGET", "STATUS", "SECURITY", "HOSTNAME", "SYSTEM", "DOMAIN/HOST"}
+	switch view {
+	case uiViewClients:
+		title = " Clients "
+		headers = []string{"ID", "STATUS", "AGENT", "VERSION", "SYSTEM"}
+	case uiViewTunnels:
+		title = " Tunnels "
+		headers = []string{"TARGET", "STATUS", "TYPE", "PROTOCOL", "DOMAIN/HOST", "CLIENT"}
+	}
+	u.table.SetTitle(title)
+	u.table.Clear()
+	u.table.SetSelectable(false, false).Select(0, 0).SetOffset(0, 0)
+	addHeaderRow(u.table, headers)
+}
+
 func (u *uiApp) renderClients() {
 	u.clientRows = append([]rstream.ClientProperties(nil), u.snapshot.Clients...)
-	u.table.SetTitle(" Clients ")
-	u.table.Clear()
-	addHeaderRow(u.table, []string{"ID", "STATUS", "AGENT", "VERSION", "SYSTEM"})
+	u.prepareInventoryTable(uiViewClients)
 	if len(u.clientRows) == 0 {
 		addPlaceholderRow(u.table, "No clients in this project")
 		return
@@ -395,7 +475,7 @@ func (u *uiApp) renderClients() {
 			selectedRow = row
 		}
 	}
-	u.table.Select(selectedRow, 0)
+	u.table.SetSelectable(true, false).Select(selectedRow, 0)
 	if strings.TrimSpace(u.state.ClientID) == "" && len(u.clientRows) > 0 {
 		u.state.ClientID = u.clientRows[0].ID
 	}
@@ -403,9 +483,7 @@ func (u *uiApp) renderClients() {
 
 func (u *uiApp) renderTunnels() {
 	u.tunnelRows = append([]rstream.TunnelInventory(nil), u.snapshot.Tunnels...)
-	u.table.SetTitle(" Tunnels ")
-	u.table.Clear()
-	addHeaderRow(u.table, []string{"TARGET", "STATUS", "TYPE", "PROTOCOL", "DOMAIN/HOST", "CLIENT"})
+	u.prepareInventoryTable(uiViewTunnels)
 	if len(u.tunnelRows) == 0 {
 		addPlaceholderRow(u.table, "No tunnels in this project")
 		return
@@ -434,7 +512,7 @@ func (u *uiApp) renderTunnels() {
 			selectedRow = row
 		}
 	}
-	u.table.Select(selectedRow, 0)
+	u.table.SetSelectable(true, false).Select(selectedRow, 0)
 	if strings.TrimSpace(u.state.TunnelID) == "" && len(u.tunnelRows) > 0 {
 		u.state.TunnelID = trimOptionalString(u.tunnelRows[0].ID)
 	}
@@ -442,9 +520,7 @@ func (u *uiApp) renderTunnels() {
 
 func (u *uiApp) renderWebTTY() {
 	u.webttyRows = append([]webtty.ServerInfo(nil), u.snapshot.WebTTY...)
-	u.table.SetTitle(" WebTTY Servers ")
-	u.table.Clear()
-	addHeaderRow(u.table, []string{"TARGET", "STATUS", "SECURITY", "HOSTNAME", "SYSTEM", "DOMAIN/HOST"})
+	u.prepareInventoryTable(uiViewWebTTY)
 	if len(u.webttyRows) == 0 {
 		addPlaceholderRow(u.table, "No WebTTY servers are currently available")
 		return
@@ -469,7 +545,7 @@ func (u *uiApp) renderWebTTY() {
 			selectedRow = row
 		}
 	}
-	u.table.Select(selectedRow, 0)
+	u.table.SetSelectable(true, false).Select(selectedRow, 0)
 	if strings.TrimSpace(u.state.TunnelID) == "" && len(u.webttyRows) > 0 {
 		u.state.TunnelID = u.webttyRows[0].TunnelID
 	}
@@ -977,6 +1053,9 @@ func (u *uiApp) captureInput(event *tcell.EventKey) *tcell.EventKey {
 		}
 		return event
 	}
+	if u.activePage == uiPageTargetPicker {
+		return u.captureTargetPickerInput(event)
+	}
 	switch event.Key() {
 	case tcell.KeyCtrlC:
 		u.cancel()
@@ -1014,6 +1093,9 @@ func (u *uiApp) captureInput(event *tcell.EventKey) *tcell.EventKey {
 			return nil
 		case 'v':
 			u.toggleDetailMode()
+			return nil
+		case 'c':
+			u.showTargetPicker()
 			return nil
 		case '?':
 			u.showHelp()
@@ -1096,6 +1178,7 @@ func (u *uiApp) helpText() string {
   Tab        Move to the next view
   arrows     Move in the list
   Enter      Connect to the selected WebTTY server
+  c          Select a context or project
   v          Toggle between summary and JSON details
   F1 / ?     Open or close help
   q          Quit rstream ui

@@ -56,6 +56,32 @@ func WriteAtomic(path string, cfg Config) error {
 		return err
 	}
 	defer lock.Unlock()
+	return writeAtomicUnlocked(path, cfg)
+}
+
+func UpdateAtomic(path string, update func(*Config) error) error {
+	if update == nil {
+		return errors.New("config update function is nil")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	lock, err := LockFile(path + ".lock")
+	if err != nil {
+		return err
+	}
+	defer lock.Unlock()
+	cfg, err := Load(path)
+	if err != nil {
+		return err
+	}
+	if err := update(&cfg); err != nil {
+		return err
+	}
+	return writeAtomicUnlocked(path, cfg)
+}
+
+func writeAtomicUnlocked(path string, cfg Config) error {
 	cfg.Normalize()
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)

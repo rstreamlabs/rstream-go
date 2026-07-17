@@ -301,6 +301,23 @@ rstream mcp publish --name codex-rstream-mcp --label role=codex
 rstream ui
 ```
 
+Inside `rstream ui`, press `c` to open the context and project picker. Configured
+local contexts are available immediately, including unlinked contexts that have
+no Control plane API. Projects for the active Control plane API are loaded in
+the background when the selected credentials permit project discovery. Use `1`
+and `2` (or `Tab`) to move between the separate context and project views. Each
+view shows explicit `CURRENT` and `DEFAULT` columns and a detail panel for the
+selected row. Press `Enter` to switch only for the current UI process, or `d` to
+switch and save the selection as the default context in the active rstream
+config file. The picker also supports `/` to search and `r` to refresh remote
+projects.
+
+Project discovery failures never hide or disable local contexts. An explicit
+`--api-url` or `RSTREAM_API_URL` scopes linked contexts and remote projects to
+that API, while unlinked contexts remain selectable. `RSTREAM_ENGINE` remains a
+hard override: the UI rejects a switch to a context that targets a different
+engine. Close an active WebTTY session with `Ctrl+g q` before changing context.
+
 Login execution mode is passwordless. On Unix-like systems, switching to a
 different configured or client-requested OS user applies the target uid, primary
 gid, and supplementary groups, and requires the WebTTY server process to have

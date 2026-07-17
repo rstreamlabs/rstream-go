@@ -3,10 +3,13 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -94,5 +97,106 @@ func TestWriteAtomicPersistsNormalizedConfig(t *testing.T) {
 	}
 	if len(loaded.Contexts) != 1 || loaded.Contexts[0].Name != "dev" {
 		t.Fatalf("Contexts = %#v, want dev context", loaded.Contexts)
+	}
+}
+
+func TestUpdateAtomicPreservesLatestConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "config.yaml")
+	initial := Config{Version: 1, Contexts: []Context{{Name: "first", Engine: "first.example:443"}}}
+	if err := WriteAtomic(path, initial); err != nil {
+		t.Fatalf("WriteAtomic() error = %v", err)
+	}
+	if err := UpdateAtomic(path, func(cfg *Config) error {
+		cfg.Contexts = append(cfg.Contexts, Context{Name: "second", Engine: "second.example:443"})
+		cfg.Defaults.Context = &DefaultContext{Name: "second"}
+		return nil
+	}); err != nil {
+		t.Fatalf("UpdateAtomic() error = %v", err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(loaded.Contexts) != 2 || loaded.Contexts[0].Name != "first" || loaded.Contexts[1].Name != "second" {
+		t.Fatalf("UpdateAtomic() lost config values: %#v", loaded.Contexts)
+	}
+	if loaded.Defaults.Context == nil || loaded.Defaults.Context.Name != "second" {
+		t.Fatalf("UpdateAtomic() default = %#v, want second", loaded.Defaults.Context)
+	}
+}
+
+func TestUpdateAtomicRejectsNilAndKeepsConfigOnError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	initial := Config{Version: 1, Contexts: []Context{{Name: "first", Engine: "first.example:443"}}}
+	if err := WriteAtomic(path, initial); err != nil {
+		t.Fatalf("WriteAtomic() error = %v", err)
+	}
+	if err := UpdateAtomic(path, nil); err == nil {
+		t.Fatal("UpdateAtomic() accepted a nil update")
+	}
+	wantErr := errors.New("stop")
+	if err := UpdateAtomic(path, func(cfg *Config) error {
+		cfg.Contexts = nil
+		return wantErr
+	}); !errors.Is(err, wantErr) {
+		t.Fatalf("UpdateAtomic() error = %v, want %v", err, wantErr)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(loaded.Contexts) != 1 || loaded.Contexts[0].Name != "first" {
+		t.Fatalf("failed UpdateAtomic() changed config: %#v", loaded.Contexts)
+	}
+}
+
+func TestWriteAtomicCanReplaceInvalidConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("contexts: ["), 0o600); err != nil {
+		t.Fatalf("write invalid config: %v", err)
+	}
+	if err := WriteAtomic(path, Config{Contexts: []Context{{Name: "recovered", Engine: "engine.example:443"}}}); err != nil {
+		t.Fatalf("WriteAtomic() could not replace invalid config: %v", err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(loaded.Contexts) != 1 || loaded.Contexts[0].Name != "recovered" {
+		t.Fatalf("WriteAtomic() config = %#v, want recovered context", loaded.Contexts)
+	}
+}
+
+func TestUpdateAtomicSerializesConcurrentUpdates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := WriteAtomic(path, Config{}); err != nil {
+		t.Fatalf("WriteAtomic() error = %v", err)
+	}
+	const updates = 8
+	errors := make(chan error, updates)
+	var wait sync.WaitGroup
+	for index := 0; index < updates; index++ {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			errors <- UpdateAtomic(path, func(cfg *Config) error {
+				cfg.Contexts = append(cfg.Contexts, Context{Name: fmt.Sprintf("context-%d", index)})
+				return nil
+			})
+		}(index)
+	}
+	wait.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatalf("UpdateAtomic() error = %v", err)
+		}
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(loaded.Contexts) != updates {
+		t.Fatalf("concurrent updates persisted %d contexts, want %d", len(loaded.Contexts), updates)
 	}
 }
