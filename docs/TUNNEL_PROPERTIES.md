@@ -26,13 +26,13 @@ A private tunnel has no public entrypoint. It is reachable only via an rstream c
 
 ## Transport model: protocol and type
 
-`protocol` describes what the edge accepts for a **published** tunnel. It is one of `http`, `tls`, `dtls`, `quic`, or `webtty`.
+`protocol` describes what the edge accepts for a **published** tunnel. It is one of `http`, `tls`, `tcp`, `dtls`, `quic`, or `webtty`.
 
 For **private** tunnels, `protocol` is optional. When omitted, the tunnel remains a raw private byte stream. When set, it selects private protocol dispatch: `http` lets the engine parse private HTTP and apply HTTP upstream options, `webtty` lets managed WebTTY decode the WebTTY envelope, and `tls` keeps the downstream private stream raw while allowing upstream TLS options. Private `dtls` and `quic` protocol dispatch are intentionally not supported at this stage.
 
 `type` describes transport semantics: `bytestream` (reliable, ordered; TCP-like) or `datagram` (message-oriented; UDP-like). You may set it explicitly, or omit it and let the server select a coherent default.
 
-The edge enforces compatibility between these fields. Conceptually: TLS is always a bytestream; DTLS and QUIC are always datagrams; HTTP is a bytestream for HTTP/1.1 and HTTP/2, and a datagram for HTTP/3. Managed WebTTY is a bytestream protocol where the engine decodes the WebTTY envelope when the deployment enables that capability. Product-managed WebTTY servers should reach this protocol through registered server enrollment; tunnel WebTTY servers remain HTTP/WebSocket tunnels with WebTTY labels. For raw private tunnels, `type` defaults to `bytestream`, but selecting `datagram` is valid when your private use case is UDP-like.
+The edge enforces compatibility between these fields. Conceptually: TLS and TCP are always bytestreams; DTLS and QUIC are always datagrams; HTTP is a bytestream for HTTP/1.1 and HTTP/2, and a datagram for HTTP/3. Managed WebTTY is a bytestream protocol where the engine decodes the WebTTY envelope when the deployment enables that capability. Product-managed WebTTY servers should reach this protocol through registered server enrollment; tunnel WebTTY servers remain HTTP/WebSocket tunnels with WebTTY labels. For raw private tunnels, `type` defaults to `bytestream`, but selecting `datagram` is valid when your private use case is UDP-like.
 
 ### Managed WebTTY payload crypto
 
@@ -60,13 +60,27 @@ Payload keys must be random key material. Do not derive them from passwords or a
 
 ## Forwarding hostname
 
-For published tunnels, the server returns the public forwarding hostname in `hostname` and the public forwarding port in `port`. `port` is server-managed and read-only.
+For published tunnels, the server returns the public forwarding hostname in `hostname` and the public forwarding port in `port`. Clients normally leave `port` unset. For `protocol=tcp`, a client may set it to a port already reserved by the authenticated project; all other protocols treat it as read-only.
 
 Clients may set `hostname` to request a stable domain when it matches the engine-owned pattern `<slug>-<project-endpoint>.t.<cluster-domain>`. The server validates the hostname, verifies that the embedded project endpoint matches the authenticated project, and rejects hostnames already used by another active tunnel.
 
 When no hostname is provided, the CLI generates a stable domain for reconnecting commands when it can infer the project endpoint from the configured engine. If generation is not possible, the server falls back to an allocated hostname.
 
 `host` is deprecated and read-only. It remains populated as a compatibility authority string for older clients, but new clients should read `hostname` and `port`.
+
+## Published TCP tunnels
+
+`protocol=tcp` creates a published raw TCP bytestream. Leave `port` unset for an ephemeral address, or set it to a reserved project port:
+
+```go
+tunnel, err := control.CreateTunnel(ctx, rstream.TunnelProperties{
+	Publish:  rstream.BoolPtr(true),
+	Protocol: rstream.ProtocolPtr(rstream.ProtocolTCP),
+	Port:     rstream.Uint32Ptr(10042),
+})
+```
+
+TCP tunnels do not accept `hostname`, HTTP, TLS, or edge authentication options. The engine does not encrypt or authenticate the downstream TCP connection. Use a protocol such as SSH that provides its own security, or use a TLS tunnel when the edge should terminate or pass through TLS.
 
 ## HTTP tunnels
 

@@ -9,7 +9,7 @@ This directory contains end-to-end tests for the rstream Go SDK. Each subdirecto
 | `websocket` | 9 | All upstream × downstream HTTP version combinations (H1, H2C, H3), including public authority and browser Origin preservation |
 | `webtransport` | 2 | Private SDK-dialer and published HTTP/3 reverse-proxy runs covering bidirectional streams, unidirectional streams, datagrams, multi-stream, close codes, and same-origin validation |
 | `http` | 3 | HTTP tunnels over H1, H2C, and H3, including GET and SSE streaming |
-| `stream` | 7 | Bytestream tunnel: plain (unpublished), TLS via SDK dialer (unpublished), TLS via engine listener (published), TLS passthrough via engine listener, TLS via engine listener with upstream TLS, and ALPN rejection checks |
+| `stream` | 8 | Bytestream tunnel: plain (unpublished), raw TCP and TLS via engine listeners (published), TLS via SDK dialer (unpublished), TLS passthrough, TLS with upstream TLS, and ALPN rejection checks |
 | `datagram` | 13 | Datagram tunnel: DTLS via SDK dialer (unpublished), DTLS via engine listener (published, with and without upstream DTLS), QUIC via SDK dialer (unpublished), QUIC via engine listener (published), SCTP via pion/sctp over SDK datagrams and published DTLS, and ALPN rejection checks |
 | `masque` | 2 | Published HTTP/3 datagram tunnels carrying CONNECT-UDP and CONNECT-IP Extended CONNECT sessions end-to-end, including public authority preservation |
 | `connect` | 9 | All upstream × downstream HTTP version combinations for published authority-form CONNECT (H1, H2C, H3) |
@@ -116,7 +116,7 @@ export BIN=out/test
 bash test/e2e/runtime-forward.sh
 ```
 
-The forwarding suite covers private bytestreams, published TLS, HTTP, DTLS, QUIC, CONNECT-UDP, and CONNECT-IP tunnels. It also validates published HTTP sub-path forwarding over HTTP/2 and HTTP/3, and verifies that reused HTTP/2 and HTTP/3 connections route each request by its current authority.
+The forwarding suite covers private bytestreams, published TCP, TLS, HTTP, DTLS, QUIC, CONNECT-UDP, and CONNECT-IP tunnels. Published TCP is exercised both as a raw byte round trip and with a real SSH client and server, including rejected password and host-key checks. The suite also validates published HTTP sub-path forwarding over HTTP/2 and HTTP/3, and verifies that reused HTTP/2 and HTTP/3 connections route each request by its current authority. Published TCP requires an eligible project with its explicit security policy enabled on an engine configured with an ephemeral TCP port range.
 
 Run the same runtime forwarding checks over QUIC control-channel transport:
 
@@ -127,6 +127,40 @@ bash test/e2e/runtime-forward.sh --quic-transport
 ```
 
 Use `--auto-transport` for the same matrix with automatic selection. The script pins TLS when neither option is provided.
+
+Run the reserved TCP address lifecycle against a Control plane and its local engine:
+
+```sh
+export RSTREAM_CONTEXT=<context>
+export RSTREAM_RUNTIME_API_URL=<control-plane-api-url>
+export RSTREAM_RUNTIME_CONTROL_TOKEN='<token allowed to manage the project>'
+export RSTREAM_RUNTIME_PROJECT_ID=<pro-or-enterprise-project-id>
+export BIN=out/test
+bash test/e2e/runtime-published-tcp-reservation.sh
+```
+
+The suite first issues two concurrent reservations and verifies that PostgreSQL serialization returns distinct addresses. It then reserves an address through the Control plane, opens a tunnel on its port, performs a raw TCP round trip, closes the tunnel, and releases the address into quarantine.
+
+Use `--release-active` to release the address while its tunnel is online and
+verify that the engine revokes the tunnel after its bounded authorization
+lease:
+
+```sh
+bash test/e2e/runtime-published-tcp-reservation.sh --release-active
+```
+
+Run the published TCP policy and invalid-address checks with the same
+environment:
+
+```sh
+bash test/e2e/runtime-published-tcp-policy.sh
+```
+
+This suite restores the original project settings after checking explicit
+opt-in, forbidden and authentication-required public access policies, invalid
+ports, and a port that is not reserved by the project. Set
+`RSTREAM_RUNTIME_UNRESERVED_TCP_PORT` when the cluster reserved range does not
+include port `10000`.
 
 Run the EE bandwidth-limit matrix against an engine configured with 1 Mbps
 upstream and downstream limits for every plan used by the test context:

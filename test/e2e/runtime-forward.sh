@@ -48,6 +48,8 @@ require_executable "$BIN/http/client"
 require_executable "$BIN/datagram/client"
 require_executable "$BIN/masque/client"
 require_executable "$BIN/connect/client"
+require_executable "$ROOT/out/examples/tcp-ssh-client"
+require_executable "$ROOT/out/examples/tcp-ssh-server"
 
 make_cert() {
   openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
@@ -72,6 +74,25 @@ wait_ready() {
     sleep 0.2
   done
   printf "FAIL %-42s upstream did not become ready\n" "$label" >&2
+  tail -20 "$log" >&2 || true
+  return 1
+}
+
+wait_ssh_ready() {
+  local pid=$1 log=$2
+  local deadline=$((SECONDS + TIMEOUT_SECONDS))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if grep -q "^SSH address: " "$log" 2>/dev/null && grep -q "^SSH host key fingerprint: " "$log" 2>/dev/null; then
+      return 0
+    fi
+    if ! kill -0 "$pid" 2>/dev/null; then
+      printf "FAIL %-42s server exited early\n" "forward/published tcp ssh" >&2
+      tail -20 "$log" >&2 || true
+      return 1
+    fi
+    sleep 0.2
+  done
+  printf "FAIL %-42s server did not become ready\n" "forward/published tcp ssh" >&2
   tail -20 "$log" >&2 || true
   return 1
 }
@@ -219,6 +240,52 @@ case_tls_passthrough() {
     --name "$NAME_PREFIX-tls-passthrough"
   "$BIN/stream/client" --variant tls --addr "$FORWARDING" || rc=$?
   stop_pid "$FORWARD_PID"
+  return "$rc"
+}
+
+case_published_tcp() {
+  local rc=0
+  start_upstream "published-tcp" tcp
+  start_forward "published-tcp" "$UPSTREAM_ADDR" 1 \
+    --tcp --name "$NAME_PREFIX-published-tcp"
+  "$BIN/stream/client" --variant plain --addr "$FORWARDING" || rc=$?
+  stop_pid "$FORWARD_PID"
+  return "$rc"
+}
+
+case_published_tcp_ssh() {
+  local server_pid server_log address fingerprint output
+  local password="runtime-tcp-ssh-password"
+  local rc=0
+  server_log="$TMP_DIR/published-tcp-ssh-server.log"
+  RSTREAM_SSH_PASSWORD="$password" "$ROOT/out/examples/tcp-ssh-server" \
+    -name "$NAME_PREFIX-published-tcp-ssh" >"$server_log" 2>&1 &
+  server_pid=$!
+  PIDS+=("$server_pid")
+  if ! wait_ssh_ready "$server_pid" "$server_log"; then
+    stop_pid "$server_pid"
+    return 1
+  fi
+  address=$(awk -F': ' '/^SSH address: / {print $2; exit}' "$server_log")
+  fingerprint=$(awk -F': ' '/^SSH host key fingerprint: / {print $2; exit}' "$server_log")
+  if RSTREAM_SSH_PASSWORD="wrong-password" "$ROOT/out/examples/tcp-ssh-client" \
+    -address "$address" -fingerprint "$fingerprint" >"$TMP_DIR/published-tcp-ssh-wrong-password.log" 2>&1; then
+    printf "SSH client accepted an invalid password\n" >&2
+    rc=1
+  fi
+  if RSTREAM_SSH_PASSWORD="$password" "$ROOT/out/examples/tcp-ssh-client" \
+    -address "$address" -fingerprint "SHA256:invalid" >"$TMP_DIR/published-tcp-ssh-wrong-key.log" 2>&1; then
+    printf "SSH client accepted an invalid host key fingerprint\n" >&2
+    rc=1
+  fi
+  if ! output=$(RSTREAM_SSH_PASSWORD="$password" "$ROOT/out/examples/tcp-ssh-client" \
+    -address "$address" -fingerprint "$fingerprint"); then
+    rc=1
+  elif [ "$output" != "SSH over an rstream TCP tunnel" ]; then
+    printf "Unexpected SSH response: %s\n" "$output" >&2
+    rc=1
+  fi
+  stop_pid "$server_pid"
   return "$rc"
 }
 
@@ -402,6 +469,8 @@ run_case "forward/private bytestream plain" case_private_plain
 run_case "forward/tls terminated" case_tls_terminated
 run_case "forward/tls upstream tls" case_tls_upstream_tls
 run_case "forward/tls passthrough" case_tls_passthrough
+run_case "forward/published tcp" case_published_tcp
+run_case "forward/published tcp ssh" case_published_tcp_ssh
 run_case "forward/http h1" case_http_h1
 run_case "forward/http h2 reused connection" case_http_h2_reused_connection_routes
 run_case "forward/http h2 subpath" case_http_h2_subpath_preserves_request_path

@@ -54,6 +54,8 @@ const (
 	ErrorCode_ERROR_CODE_FEATURE_NOT_AVAILABLE ErrorCode = 5000
 	// 6000-6999: Service dependency unavailable
 	ErrorCode_ERROR_CODE_SERVICE_UNAVAILABLE ErrorCode = 6000
+	// 7000-7999: Runtime capacity exhausted
+	ErrorCode_ERROR_CODE_CAPACITY_EXHAUSTED ErrorCode = 7000
 	// 9000-9999: Internal errors
 	ErrorCode_ERROR_CODE_INTERNAL ErrorCode = 9000
 )
@@ -71,6 +73,7 @@ var (
 		4000: "ERROR_CODE_INVALID_STREAM",
 		5000: "ERROR_CODE_FEATURE_NOT_AVAILABLE",
 		6000: "ERROR_CODE_SERVICE_UNAVAILABLE",
+		7000: "ERROR_CODE_CAPACITY_EXHAUSTED",
 		9000: "ERROR_CODE_INTERNAL",
 	}
 	ErrorCode_value = map[string]int32{
@@ -84,6 +87,7 @@ var (
 		"ERROR_CODE_INVALID_STREAM":                4000,
 		"ERROR_CODE_FEATURE_NOT_AVAILABLE":         5000,
 		"ERROR_CODE_SERVICE_UNAVAILABLE":           6000,
+		"ERROR_CODE_CAPACITY_EXHAUSTED":            7000,
 		"ERROR_CODE_INTERNAL":                      9000,
 	}
 )
@@ -2042,7 +2046,7 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\x04plan\x18\x04 \x01(\v2\x1c.google.protobuf.StringValueR\x04plan\x128\n" +
 	"\bprovider\x18\x05 \x01(\v2\x1c.google.protobuf.StringValueR\bprovider\x124\n" +
 	"\x06region\x18\x06 \x01(\v2\x1c.google.protobuf.StringValueR\x06region\x124\n" +
-	"\x06update\x18\a \x01(\v2\x1c.google.protobuf.StringValueR\x06update\"\xdd\x0e\n" +
+	"\x06update\x18\a \x01(\v2\x1c.google.protobuf.StringValueR\x06update\"\xde\x0e\n" +
 	"\x10TunnelProperties\x12;\n" +
 	"\x02id\x18\x01 \x01(\v2\x1c.google.protobuf.StringValueB\r\x92\x82\x19\tread-onlyR\x02id\x12N\n" +
 	"\rcreation_date\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampB\r\x92\x82\x19\tread-onlyR\fcreationDate\x12@\n" +
@@ -2089,8 +2093,9 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\x0echallenge_mode\x18\x15 \x01(\v2\x1a.google.protobuf.BoolValueB\x0e\x92\x82\x19\n" +
 	"read-writeR\rchallengeMode\x12H\n" +
 	"\bhostname\x18\x16 \x01(\v2\x1c.google.protobuf.StringValueB\x0e\x92\x82\x19\n" +
-	"read-writeR\bhostname\x12?\n" +
-	"\x04port\x18\x17 \x01(\v2\x1c.google.protobuf.UInt32ValueB\r\x92\x82\x19\tread-onlyR\x04port\x12M\n" +
+	"read-writeR\bhostname\x12@\n" +
+	"\x04port\x18\x17 \x01(\v2\x1c.google.protobuf.UInt32ValueB\x0e\x92\x82\x19\n" +
+	"read-writeR\x04port\x12M\n" +
 	"\fupstream_tls\x18\x18 \x01(\v2\x1a.google.protobuf.BoolValueB\x0e\x92\x82\x19\n" +
 	"read-writeR\vupstreamTls\x12l\n" +
 	"\x1cdatagram_guaranteed_delivery\x18\x19 \x01(\v2\x1a.google.protobuf.BoolValueB\x0e\x92\x82\x19\n" +
@@ -2173,7 +2178,7 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\theartbeat\x18\x0f \x01(\v2$.rstream.io_rstrm.protobuf.HeartbeatH\x00R\theartbeat\x12Q\n" +
 	"\x0eserver_message\x18\x10 \x01(\v2(.rstream.io_rstrm.protobuf.ServerMessageH\x00R\rserverMessage\x12g\n" +
 	"\x16datagram_channel_close\x18\x11 \x01(\v2/.rstream.io_rstrm.protobuf.DatagramChannelCloseH\x00R\x14datagramChannelCloseB\t\n" +
-	"\apayload*\x91\x03\n" +
+	"\apayload*\xb5\x03\n" +
 	"\tErrorCode\x12\x1a\n" +
 	"\x16ERROR_CODE_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x17ERROR_CODE_UNAUTHORIZED\x10\xe8\a\x12\x1f\n" +
@@ -2184,10 +2189,11 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\x1bERROR_CODE_TUNNEL_NOT_FOUND\x10\xb8\x17\x12\x1e\n" +
 	"\x19ERROR_CODE_INVALID_STREAM\x10\xa0\x1f\x12%\n" +
 	" ERROR_CODE_FEATURE_NOT_AVAILABLE\x10\x88'\x12#\n" +
-	"\x1eERROR_CODE_SERVICE_UNAVAILABLE\x10\xf0.\x12\x18\n" +
+	"\x1eERROR_CODE_SERVICE_UNAVAILABLE\x10\xf0.\x12\"\n" +
+	"\x1dERROR_CODE_CAPACITY_EXHAUSTED\x10\xd86\x12\x18\n" +
 	"\x13ERROR_CODE_INTERNAL\x10\xa8F:I\n" +
 	"\x10protocol_version\x12\x1c.google.protobuf.FileOptions\x18\xb8\x8e\x03 \x01(\tR\x0fprotocolVersion:7\n" +
-	"\x06access\x12\x1d.google.protobuf.FieldOptions\x18\xa2\x90\x03 \x01(\tR\x06accessB\x0f\xc2\xf3\x18\x051.4.2Z\x04./pbb\x06proto3"
+	"\x06access\x12\x1d.google.protobuf.FieldOptions\x18\xa2\x90\x03 \x01(\tR\x06accessB\x0f\xc2\xf3\x18\x051.4.3Z\x04./pbb\x06proto3"
 
 var (
 	file_pb_rstream_proto_rawDescOnce sync.Once

@@ -37,6 +37,15 @@ func getInt64Ptr(cmd *cobra.Command, name string) *int64 {
 	return nil
 }
 
+func getUint32Ptr(cmd *cobra.Command, name string) *uint32 {
+	f := cmd.Flags().Lookup(name)
+	if f != nil && f.Changed {
+		val, _ := cmd.Flags().GetUint32(name)
+		return &val
+	}
+	return nil
+}
+
 func getStringArrayMap(cmd *cobra.Command, name string) map[string]string {
 	f := cmd.Flags().Lookup(name)
 	if f != nil && f.Changed {
@@ -118,12 +127,16 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 	default:
 	}
 	tlsPtr := getBoolPtr(cmd, "tls")
+	tcpPtr := getBoolPtr(cmd, "tcp")
 	dtlsPtr := getBoolPtr(cmd, "dtls")
 	quicPtr := getBoolPtr(cmd, "quic")
 	httpPtr := getBoolPtr(cmd, "http")
 	var protocol *rstream.Protocol
 	if tlsPtr != nil && *tlsPtr {
 		p := rstream.ProtocolTLS
+		protocol = &p
+	} else if tcpPtr != nil && *tcpPtr {
+		p := rstream.ProtocolTCP
 		protocol = &p
 	} else if dtlsPtr != nil && *dtlsPtr {
 		p := rstream.ProtocolDTLS
@@ -139,6 +152,24 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 	geoipSlice := getStringSlice(cmd, "geoip")
 	trustedIPsSlice := getStringSlice(cmd, "trusted-ips")
 	hostnamePtr := getStringPtr(cmd, "host")
+	tcpPortPtr := getUint32Ptr(cmd, "tcp-port")
+	if tcpPortPtr != nil && (protocol == nil || *protocol != rstream.ProtocolTCP) {
+		return nil, fmt.Errorf("--tcp-port requires --tcp")
+	}
+	if tcpPortPtr != nil && *tcpPortPtr == 0 {
+		return nil, fmt.Errorf("--tcp-port must be between 1 and 65535")
+	}
+	if protocol != nil && *protocol == rstream.ProtocolTCP {
+		if typePtr != nil && *typePtr != rstream.TunnelTypeBytestream {
+			return nil, fmt.Errorf("--tcp requires a bytestream tunnel")
+		}
+		if noPublishPtr != nil && *noPublishPtr {
+			return nil, fmt.Errorf("--tcp cannot be used with --no-publish")
+		}
+		t := rstream.TunnelTypeBytestream
+		typePtr = &t
+		publishFinalPtr = rstream.BoolPtr(true)
+	}
 	var tlsModePtr *rstream.TLSMode
 	if cmd.Flags().Lookup("tls-mode").Changed {
 		val, _ := cmd.Flags().GetString("tls-mode")
@@ -197,6 +228,13 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 			return nil, fmt.Errorf("--token-auth, --rstream-auth and --challenge-mode require --http")
 		}
 	}
+	if protocol != nil && *protocol == rstream.ProtocolTCP {
+		for _, name := range []string{"host", "tls-mode", "tls-alpn", "tls-min-version", "tls-ciphers", "mtls", "http-version", "http-use-tls", "upstream-tls", "datagram-guaranteed-delivery"} {
+			if flag := cmd.Flags().Lookup(name); flag != nil && flag.Changed {
+				return nil, fmt.Errorf("--%s cannot be used with --tcp", name)
+			}
+		}
+	}
 	tunnelProperties := &rstream.TunnelProperties{
 		Name:                       namePtr,
 		Type:                       typePtr,
@@ -206,6 +244,7 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 		GeoIP:                      geoipSlice,
 		TrustedIPs:                 trustedIPsSlice,
 		Hostname:                   hostnamePtr,
+		Port:                       tcpPortPtr,
 		TLSMode:                    tlsModePtr,
 		TLSALPNs:                   tlsALPNSlice,
 		TLSMinVersion:              tlsMinVersionPtr,

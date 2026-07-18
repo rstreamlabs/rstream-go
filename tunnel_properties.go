@@ -2,7 +2,10 @@
 
 package rstream
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 type TunnelType string
 
@@ -15,6 +18,7 @@ type Protocol string
 
 const (
 	ProtocolTLS    Protocol = "tls"    // bytestream
+	ProtocolTCP    Protocol = "tcp"    // bytestream
 	ProtocolDTLS   Protocol = "dtls"   // datagram
 	ProtocolQUIC   Protocol = "quic"   // datagram
 	ProtocolHTTP   Protocol = "http"   // bytestream (HTTP/1.1, HTTP/2) or datagram (HTTP/3)
@@ -91,3 +95,27 @@ type ListTunnelsParams struct {
 }
 
 type ListTunnelsResponse = []TunnelInventory
+
+func normalizeCreateTunnelProperties(props TunnelProperties) (TunnelProperties, error) {
+	if props.Port != nil && (props.Protocol == nil || *props.Protocol != ProtocolTCP) {
+		return props, errors.New("a published port requires protocol tcp")
+	}
+	if props.Protocol == nil || *props.Protocol != ProtocolTCP {
+		return props, nil
+	}
+	if props.Port != nil && (*props.Port == 0 || *props.Port > 65535) {
+		return props, errors.New("published TCP port must be between 1 and 65535")
+	}
+	if props.Type != nil && *props.Type != TunnelTypeBytestream {
+		return props, errors.New("published TCP tunnels require a bytestream tunnel")
+	}
+	if props.Publish != nil && !*props.Publish {
+		return props, errors.New("published TCP tunnels cannot be unpublished")
+	}
+	if props.Hostname != nil || props.TLSMode != nil || len(props.TLSALPNs) > 0 || props.TLSMinVersion != nil || len(props.TLSCiphers) > 0 || props.MTLSAuth != nil || props.HTTPVersion != nil || props.HTTPUseTLS != nil || props.UpstreamTLS != nil || props.DatagramGuaranteedDelivery != nil || props.TokenAuth != nil || props.RstreamAuth != nil || props.ChallengeMode != nil {
+		return props, errors.New("published TCP tunnels do not accept hostname, HTTP, TLS, edge authentication, or datagram delivery options")
+	}
+	props.Type = TunnelTypePtr(TunnelTypeBytestream)
+	props.Publish = BoolPtr(true)
+	return props, nil
+}

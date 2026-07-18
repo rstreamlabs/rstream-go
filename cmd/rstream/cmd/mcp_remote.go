@@ -48,6 +48,7 @@ type remoteExposeArgs struct {
 	RstreamAuth  bool
 	RstreamCmd   string
 	StableDomain string
+	TCPPort      *int
 	Timeout      int
 	TokenAuth    bool
 	URL          string
@@ -232,6 +233,21 @@ func mcpRemoteExposeArgs(args map[string]json.RawMessage) (remoteExposeArgs, err
 	if !publish && stableDomain != "" {
 		return remoteExposeArgs{}, fmt.Errorf("stable_domain requires publish=true")
 	}
+	tcpPort, err := mcpOptionalIntArg(args, "tcp_port")
+	if err != nil {
+		return remoteExposeArgs{}, err
+	}
+	if tcpPort != nil {
+		if *tcpPort < 1 || *tcpPort > 65535 {
+			return remoteExposeArgs{}, fmt.Errorf("tcp_port must be between 1 and 65535")
+		}
+		if !publish || !strings.EqualFold(strings.TrimSpace(protocol), "tcp") {
+			return remoteExposeArgs{}, fmt.Errorf("tcp_port requires protocol=tcp and publish=true")
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(protocol), "tcp") && (stableDomain != "" || tokenAuth || rstreamAuth || mcpPath != "") {
+		return remoteExposeArgs{}, fmt.Errorf("protocol=tcp does not accept stable_domain, HTTP, or edge authentication options")
+	}
 	if !publish {
 		tokenAuth = false
 		rstreamAuth = false
@@ -267,7 +283,7 @@ func mcpRemoteExposeArgs(args map[string]json.RawMessage) (remoteExposeArgs, err
 	if name == "" {
 		name = id
 	}
-	return remoteExposeArgs{Env: envVars, ExecPath: execPath, ID: id, Host: host, Labels: remoteExposeLabels(labels, port, mcpPath), MCPPath: mcpPath, Name: name, Port: port, Protocol: protocol, Publish: publish, RstreamAuth: rstreamAuth, RstreamCmd: rstreamCmd, StableDomain: stableDomain, Timeout: boundedRemoteExposeTimeout(timeout), TokenAuth: tokenAuth, URL: rawURL, User: username, Workdir: workdir}, nil
+	return remoteExposeArgs{Env: envVars, ExecPath: execPath, ID: id, Host: host, Labels: remoteExposeLabels(labels, port, mcpPath), MCPPath: mcpPath, Name: name, Port: port, Protocol: protocol, Publish: publish, RstreamAuth: rstreamAuth, RstreamCmd: rstreamCmd, StableDomain: stableDomain, TCPPort: tcpPort, Timeout: boundedRemoteExposeTimeout(timeout), TokenAuth: tokenAuth, URL: rawURL, User: username, Workdir: workdir}, nil
 }
 
 func remoteExposeLabels(labels map[string]string, port string, mcpPath string) map[string]string {
@@ -307,6 +323,9 @@ func remoteExposeForwardArgs(expose remoteExposeArgs) ([]string, error) {
 	if expose.StableDomain != "" {
 		args = append(args, "--host", expose.StableDomain)
 	}
+	if expose.TCPPort != nil {
+		args = append(args, "--tcp-port", strconv.Itoa(*expose.TCPPort))
+	}
 	if expose.TokenAuth && expose.Publish {
 		args = append(args, "--token-auth")
 	}
@@ -329,8 +348,10 @@ func remoteExposeProtocolArgs(protocol string) ([]string, error) {
 		return []string{"--http", "--http-version", string(rstream.HTTP3)}, nil
 	case "tls":
 		return []string{"--tls"}, nil
-	case "bytestream", "tcp":
+	case "bytestream":
 		return []string{"--bytestream"}, nil
+	case "tcp":
+		return []string{"--tcp"}, nil
 	case "datagram", "udp":
 		return []string{"--datagram"}, nil
 	case "dtls":

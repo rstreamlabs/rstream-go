@@ -73,6 +73,18 @@ func TestMCPLocalTunnelForwardArgsCoversAdvancedHTTPOptions(t *testing.T) {
 	}
 }
 
+func TestMCPLocalTunnelForwardArgsSupportsReservedPublishedTCP(t *testing.T) {
+	input := map[string]json.RawMessage{"protocol": json.RawMessage(`"tcp"`), "tcp_port": json.RawMessage(`10042`)}
+	props, err := mcpLocalTunnelProperties(input, "codex-local-tcp", "", "22", true)
+	if err != nil {
+		t.Fatalf("mcpLocalTunnelProperties returned error: %v", err)
+	}
+	args := strings.Join(mcpLocalTunnelForwardArgs("127.0.0.1", "22", props), "\n")
+	if !strings.Contains(args, "--tcp\n--tcp-port\n10042") || props.Port == nil || *props.Port != 10042 {
+		t.Fatalf("unexpected published TCP args: %s", args)
+	}
+}
+
 func TestMCPLocalTunnelForwardArgsUsesPrivateRawTunnel(t *testing.T) {
 	input := map[string]json.RawMessage{"protocol": json.RawMessage(`"h3"`)}
 	props, err := mcpLocalTunnelProperties(input, "codex-local-tunnel", "", "3000", false)
@@ -100,9 +112,13 @@ func TestMCPLocalTunnelArgsRejectsIncompatibleOptions(t *testing.T) {
 	}{
 		{name: "rstream auth on tls", args: map[string]json.RawMessage{"port": json.RawMessage(`"3000"`), "protocol": json.RawMessage(`"tls"`), "rstream_auth": json.RawMessage(`true`)}, want: "HTTP options require protocol=http"},
 		{name: "stable domain private", args: map[string]json.RawMessage{"port": json.RawMessage(`"3000"`), "publish": json.RawMessage(`false`), "stable_domain": json.RawMessage(`"local-tunnel.example.com"`)}, want: "stable_domain requires publish=true"},
-		{name: "token auth on raw bytestream", args: map[string]json.RawMessage{"port": json.RawMessage(`"3000"`), "protocol": json.RawMessage(`"tcp"`), "token_auth": json.RawMessage(`true`)}, want: "HTTP options require protocol=http"},
+		{name: "token auth on published TCP", args: map[string]json.RawMessage{"port": json.RawMessage(`"3000"`), "protocol": json.RawMessage(`"tcp"`), "token_auth": json.RawMessage(`true`)}, want: "protocol=tcp does not accept"},
+		{name: "stable domain on published TCP", args: map[string]json.RawMessage{"port": json.RawMessage(`"3000"`), "protocol": json.RawMessage(`"tcp"`), "stable_domain": json.RawMessage(`"ssh.example.com"`)}, want: "protocol=tcp does not accept"},
 		{name: "tls mode on http", args: map[string]json.RawMessage{"port": json.RawMessage(`"3000"`), "tls_mode": json.RawMessage(`"passthrough"`)}, want: "tls_mode requires protocol=tls"},
 		{name: "h3 bytestream", args: map[string]json.RawMessage{"port": json.RawMessage(`"3000"`), "protocol": json.RawMessage(`"h3"`), "tunnel_type": json.RawMessage(`"bytestream"`)}, want: "http_version=h3 requires tunnel_type=datagram"},
+		{name: "tcp port on http", args: map[string]json.RawMessage{"port": json.RawMessage(`"3000"`), "tcp_port": json.RawMessage(`10042`)}, want: "tcp_port requires protocol=tcp"},
+		{name: "invalid tcp port", args: map[string]json.RawMessage{"port": json.RawMessage(`"3000"`), "protocol": json.RawMessage(`"tcp"`), "tcp_port": json.RawMessage(`65536`)}, want: "tcp_port must be between 1 and 65535"},
+		{name: "private published tcp", args: map[string]json.RawMessage{"port": json.RawMessage(`"3000"`), "protocol": json.RawMessage(`"tcp"`), "publish": json.RawMessage(`false`)}, want: "protocol=tcp requires publish=true"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

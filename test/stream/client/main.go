@@ -71,6 +71,16 @@ func runPlain(ctx context.Context, client *rstream.Client, tunnelName string) er
 	return echoCheck(conn)
 }
 
+func runPlainPublished(ctx context.Context, addr string) error {
+	dialer := &net.Dialer{}
+	conn, err := dialer.DialContext(ctx, "tcp", hostPortFromAddr(addr))
+	if err != nil {
+		return fmt.Errorf("tcp dial %s: %w", addr, err)
+	}
+	defer conn.Close()
+	return echoCheck(conn)
+}
+
 func tlsNextProtos(tlsALPN string) []string {
 	if tlsALPN != "" {
 		return []string{tlsALPN}
@@ -131,11 +141,20 @@ func main() {
 	var tc testCase
 	switch *variant {
 	case "plain":
-		tc = testCase{
-			name: "plain",
-			run: func(ctx context.Context) error {
-				return runPlain(ctx, client, *tunnelPrefix+"-plain")
-			},
+		if *addr != "" {
+			tc = testCase{
+				name: "tcp-published",
+				run: func(ctx context.Context) error {
+					return runPlainPublished(ctx, *addr)
+				},
+			}
+		} else {
+			tc = testCase{
+				name: "plain",
+				run: func(ctx context.Context) error {
+					return runPlain(ctx, client, *tunnelPrefix+"-plain")
+				},
+			}
 		}
 	case "tls":
 		if *addr != "" {

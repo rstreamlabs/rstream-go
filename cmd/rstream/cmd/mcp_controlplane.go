@@ -502,7 +502,7 @@ func mcpProjectDomainCreate(ctx context.Context, args map[string]json.RawMessage
 }
 
 func mcpProjectDomainGet(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, projectID, domainID, err := mcpProjectDomainClientAndIDs(args)
+	client, projectID, domainID, err := mcpProjectDomainClientAndID(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -514,7 +514,7 @@ func mcpProjectDomainGet(ctx context.Context, args map[string]json.RawMessage) (
 }
 
 func mcpProjectDomainDelete(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, projectID, domainID, err := mcpProjectDomainClientAndIDs(args)
+	client, projectID, domainID, err := mcpProjectDomainClientAndID(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -526,7 +526,7 @@ func mcpProjectDomainDelete(ctx context.Context, args map[string]json.RawMessage
 }
 
 func mcpProjectDomainVerify(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, projectID, domainID, err := mcpProjectDomainClientAndIDs(args)
+	client, projectID, domainID, err := mcpProjectDomainClientAndID(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -538,7 +538,7 @@ func mcpProjectDomainVerify(ctx context.Context, args map[string]json.RawMessage
 }
 
 func mcpProjectDomainConnect(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, projectID, domainID, err := mcpProjectDomainClientAndIDs(args)
+	client, projectID, domainID, err := mcpProjectDomainClientAndID(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -547,6 +547,62 @@ func mcpProjectDomainConnect(ctx context.Context, args map[string]json.RawMessag
 		return nil, mapControlPlaneError(err)
 	}
 	return mcpJSONResult(response, false)
+}
+
+func mcpProjectTCPAddressesList(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
+	client, _, err := mcpControlPlaneClient()
+	if err != nil {
+		return nil, err
+	}
+	projectID, err := mcpRequiredStringArg(args, "project_id")
+	if err != nil {
+		return nil, err
+	}
+	addresses, err := client.ListProjectTCPAddresses(ctx, projectID)
+	if err != nil {
+		return nil, mapControlPlaneError(err)
+	}
+	return mcpJSONResult(addresses, false)
+}
+
+func mcpProjectTCPAddressReserve(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
+	client, _, err := mcpControlPlaneClient()
+	if err != nil {
+		return nil, err
+	}
+	projectID, err := mcpRequiredStringArg(args, "project_id")
+	if err != nil {
+		return nil, err
+	}
+	address, err := client.ReserveProjectTCPAddress(ctx, projectID)
+	if err != nil {
+		return nil, mapControlPlaneError(err)
+	}
+	return mcpJSONResult(address, false)
+}
+
+func mcpProjectTCPAddressRelease(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
+	client, _, err := mcpControlPlaneClient()
+	if err != nil {
+		return nil, err
+	}
+	projectID, err := mcpRequiredStringArg(args, "project_id")
+	if err != nil {
+		return nil, err
+	}
+	port, err := mcpOptionalIntArg(args, "port")
+	if err != nil || port == nil || *port < 1 || *port > 65535 {
+		return nil, fmt.Errorf("argument %q must be a TCP port", "port")
+	}
+	addressID, err := resolveProjectTCPAddressID(ctx, client, projectID, uint32(*port))
+	if err != nil {
+		return nil, mapControlPlaneError(err)
+	}
+	address, err := client.ReleaseProjectTCPAddress(ctx, projectID, addressID)
+	if err != nil {
+		return nil, mapControlPlaneError(err)
+	}
+	return mcpJSONResult(address, false)
 }
 
 func mcpProjectSettingsGet(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
@@ -948,7 +1004,7 @@ func mcpProjectSettingsPatchArg(args map[string]json.RawMessage) (controlplane.P
 	return settings, nil
 }
 
-func mcpProjectDomainClientAndIDs(args map[string]json.RawMessage) (*controlplane.Client, string, string, error) {
+func mcpProjectDomainClientAndID(ctx context.Context, args map[string]json.RawMessage) (*controlplane.Client, string, string, error) {
 	client, _, err := mcpControlPlaneClient()
 	if err != nil {
 		return nil, "", "", err
@@ -957,9 +1013,13 @@ func mcpProjectDomainClientAndIDs(args map[string]json.RawMessage) (*controlplan
 	if err != nil {
 		return nil, "", "", err
 	}
-	domainID, err := mcpRequiredStringArg(args, "domain_id")
+	hostname, err := mcpRequiredStringArg(args, "hostname")
 	if err != nil {
 		return nil, "", "", err
+	}
+	domainID, err := resolveProjectDomainID(ctx, client, projectID, hostname)
+	if err != nil {
+		return nil, "", "", mapControlPlaneError(err)
 	}
 	return client, projectID, domainID, nil
 }

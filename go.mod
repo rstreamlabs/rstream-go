@@ -22,6 +22,7 @@ require (
 	github.com/rivo/tview v0.42.0
 	github.com/spf13/cobra v1.9.1
 	github.com/yosida95/uritemplate/v3 v3.0.2
+	golang.org/x/crypto v0.50.0
 	golang.org/x/net v0.53.0
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/yaml.v3 v3.0.1
@@ -70,7 +71,6 @@ require (
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.uber.org/mock v0.6.0 // indirect
-	golang.org/x/crypto v0.50.0 // indirect
 	golang.org/x/mod v0.34.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/tools v0.43.0 // indirect

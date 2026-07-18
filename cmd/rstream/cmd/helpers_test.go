@@ -174,9 +174,11 @@ func tunnelFlagsCommand() *cobra.Command {
 	command.Flags().Bool("publish", false, "")
 	command.Flags().Bool("no-publish", false, "")
 	command.Flags().Bool("tls", false, "")
+	command.Flags().Bool("tcp", false, "")
 	command.Flags().Bool("dtls", false, "")
 	command.Flags().Bool("quic", false, "")
 	command.Flags().Bool("http", false, "")
+	command.Flags().Uint32("tcp-port", 0, "")
 	command.Flags().StringArray("label", nil, "")
 	command.Flags().StringSlice("geoip", nil, "")
 	command.Flags().StringSlice("trusted-ips", nil, "")
@@ -194,6 +196,50 @@ func tunnelFlagsCommand() *cobra.Command {
 	command.Flags().Bool("rstream-auth", false, "")
 	command.Flags().Bool("challenge-mode", false, "")
 	return command
+}
+
+func TestNewTunnelPropertiesFromFlagsPublishedTCP(t *testing.T) {
+	command := tunnelFlagsCommand()
+	mustSetFlag(t, command, "tcp", "true")
+	mustSetFlag(t, command, "tcp-port", "10042")
+	props, err := newTunnelPropertiesFromFlags(command)
+	if err != nil {
+		t.Fatalf("newTunnelPropertiesFromFlags() error = %v", err)
+	}
+	if props.Protocol == nil || *props.Protocol != rstream.ProtocolTCP || props.Type == nil || *props.Type != rstream.TunnelTypeBytestream {
+		t.Fatalf("unexpected TCP properties: %#v", props)
+	}
+	if props.Publish == nil || !*props.Publish || props.Port == nil || *props.Port != 10042 {
+		t.Fatalf("unexpected TCP publication properties: %#v", props)
+	}
+}
+
+func TestNewTunnelPropertiesFromFlagsRejectsInvalidPublishedTCP(t *testing.T) {
+	tests := []struct {
+		name    string
+		flags   [][2]string
+		wantErr string
+	}{
+		{name: "port without protocol", flags: [][2]string{{"tcp-port", "10042"}}, wantErr: "requires --tcp"},
+		{name: "zero port", flags: [][2]string{{"tcp", "true"}, {"tcp-port", "0"}}, wantErr: "between 1 and 65535"},
+		{name: "datagram", flags: [][2]string{{"tcp", "true"}, {"datagram", "true"}}, wantErr: "requires a bytestream"},
+		{name: "private", flags: [][2]string{{"tcp", "true"}, {"no-publish", "true"}}, wantErr: "cannot be used with --no-publish"},
+		{name: "hostname", flags: [][2]string{{"tcp", "true"}, {"host", "ssh.example.com"}}, wantErr: "--host cannot be used with --tcp"},
+		{name: "TLS option", flags: [][2]string{{"tcp", "true"}, {"upstream-tls", "true"}}, wantErr: "--upstream-tls cannot be used with --tcp"},
+		{name: "edge authentication", flags: [][2]string{{"tcp", "true"}, {"mtls", "true"}}, wantErr: "--mtls cannot be used with --tcp"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			command := tunnelFlagsCommand()
+			for _, flag := range tt.flags {
+				mustSetFlag(t, command, flag[0], flag[1])
+			}
+			_, err := newTunnelPropertiesFromFlags(command)
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("expected %q error, got %v", tt.wantErr, err)
+			}
+		})
+	}
 }
 
 func mustSetFlag(t *testing.T, command *cobra.Command, name, value string) {

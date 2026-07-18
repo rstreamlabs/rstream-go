@@ -570,6 +570,12 @@ func (c *controlChannelImpl) CreateTunnel(ctx context.Context, props TunnelPrope
 		c.mu.Unlock()
 		return nil, errors.New("control channel is closing")
 	}
+	var err error
+	props, err = normalizeCreateTunnelProperties(props)
+	if err != nil {
+		c.mu.Unlock()
+		return nil, err
+	}
 	requestID := uuid.New().String()
 	pending := &pendingOpenTunnelReq{
 		respCh:  make(chan *pb.OpenTunnelRsp, 1),

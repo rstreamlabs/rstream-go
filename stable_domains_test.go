@@ -70,6 +70,15 @@ func TestMaybeSetGeneratedStableDomain(t *testing.T) {
 			t.Fatalf("Hostname = %#v, want nil for unpublished tunnel", props.Hostname)
 		}
 	})
+	t.Run("skips published TCP tunnels", func(t *testing.T) {
+		props := TunnelProperties{Publish: BoolPtr(true), Protocol: ProtocolPtr(ProtocolTCP)}
+		if err := MaybeSetGeneratedStableDomain(&props, "project.edge.example.com:443"); err != nil {
+			t.Fatalf("MaybeSetGeneratedStableDomain() error = %v", err)
+		}
+		if props.Hostname != nil {
+			t.Fatalf("Hostname = %#v, want nil for published TCP tunnel", props.Hostname)
+		}
+	})
 	t.Run("generates for published tunnel", func(t *testing.T) {
 		props := TunnelProperties{Publish: BoolPtr(true)}
 		if err := MaybeSetGeneratedStableDomain(&props, "project.edge.example.com:443"); err != nil {

@@ -29,6 +29,7 @@ Run an example:
 
 Useful protocol-focused examples:
 
+- `tcp-ssh-server` / `tcp-ssh-client`: SSH over a published raw TCP tunnel, with password authentication and explicit host key verification.
 - `http-sse-server` / `http-sse-client`: Server-Sent Events over an HTTP tunnel.
 - `sctp-echo-server` / `sctp-echo-client`: SCTP streams with `pion/sctp` over datagram tunnels, and over the published DTLS edge.
 - `masque-server` / `masque-client`: CONNECT-UDP and CONNECT-IP over HTTP/3 datagram tunnels, using internal rstream dialing by default and published HTTP/3 endpoints with `--publish`.
@@ -46,6 +47,22 @@ Run the same shape through a published HTTP/3 endpoint:
 go run ./examples/masque-server --variant connect-udp --publish
 go run ./examples/masque-client --variant connect-udp --publish --target 127.0.0.1:9000
 ```
+
+Run the SSH server through an ephemeral published TCP address:
+
+```bash
+RSTREAM_SSH_PASSWORD='<password>' go run ./examples/tcp-ssh-server
+```
+
+Use the address and host key fingerprint printed by the server:
+
+```bash
+RSTREAM_SSH_PASSWORD='<password>' go run ./examples/tcp-ssh-client \
+  -address '<hostname>:<port>' \
+  -fingerprint 'SHA256:<fingerprint>'
+```
+
+The downstream TCP connection is not secured by rstream. SSH provides encryption, server identity, and client authentication in this example.
 
 Generate managed TURN credentials from the active config context:
 

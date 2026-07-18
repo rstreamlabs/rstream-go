@@ -14,7 +14,7 @@ extend google.protobuf.FieldOptions {
   string access = 51234;
 }
 
-option (protocol_version) = "1.4.2";
+option (protocol_version) = "1.4.3";
 
 package rstream.io_rstrm.protobuf;
 
@@ -61,6 +61,9 @@ enum ErrorCode {
 
   // 6000-6999: Service dependency unavailable
   ERROR_CODE_SERVICE_UNAVAILABLE = 6000;
+
+  // 7000-7999: Runtime capacity exhausted
+  ERROR_CODE_CAPACITY_EXHAUSTED = 7000;
 
   // 9000-9999: Internal errors
   ERROR_CODE_INTERNAL = 9000;
@@ -122,7 +125,7 @@ message TunnelProperties {
   google.protobuf.BoolValue rstream_auth = 20 [(access) = "read-write"];
   google.protobuf.BoolValue challenge_mode = 21 [(access) = "read-write"];
   google.protobuf.StringValue hostname = 22 [(access) = "read-write"];
-  google.protobuf.UInt32Value port = 23 [(access) = "read-only"];
+  google.protobuf.UInt32Value port = 23 [(access) = "read-write"];
   google.protobuf.BoolValue upstream_tls = 24 [(access) = "read-write"];
   google.protobuf.BoolValue datagram_guaranteed_delivery = 25 [(access) = "read-write"];
 }
