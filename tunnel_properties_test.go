@@ -25,6 +25,7 @@ func TestNormalizeCreateTunnelPropertiesRejectsInvalidTCPOptions(t *testing.T) {
 	}{
 		{name: "port without tcp", props: TunnelProperties{Port: Uint32Ptr(10042)}, wantErr: "requires protocol tcp"},
 		{name: "zero port", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolTCP), Port: Uint32Ptr(0)}, wantErr: "between 1 and 65535"},
+		{name: "port above maximum", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolTCP), Port: Uint32Ptr(65536)}, wantErr: "between 1 and 65535"},
 		{name: "unpublished", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolTCP), Publish: BoolPtr(false)}, wantErr: "cannot be unpublished"},
 		{name: "hostname", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolTCP), Hostname: StringPtr("ssh.example.test")}, wantErr: "do not accept"},
 	}
