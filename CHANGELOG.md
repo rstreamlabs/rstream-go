@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.25.0](https://github.com/rstreamlabs/rstream-go/compare/v1.24.2...v1.25.0) (2026-07-18)
+
+
+### Features
+
+* add interactive context and project switching ([3c1ee1e](https://github.com/rstreamlabs/rstream-go/commit/3c1ee1e5486f07ae9af56c1475f81b47b96d7da6))
+* add published TCP tunnels ([47f8c8a](https://github.com/rstreamlabs/rstream-go/commit/47f8c8acdc43016f7feee2cf1df45a5a2c10baf6))
+
+
+### Bug Fixes
+
+* reconnect after closed QUIC transport ([4648d86](https://github.com/rstreamlabs/rstream-go/commit/4648d8604e381d61fcb1a095f893a62bd84f1559))
+
 ## [1.24.2](https://github.com/rstreamlabs/rstream-go/compare/v1.24.1...v1.24.2) (2026-07-12)
 
 
