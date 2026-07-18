@@ -121,7 +121,7 @@ expect_rejected "forbidden public access policy" "Project public access policy f
 set_settings '{"publishedTcpEnabled":true,"publicAccessPolicy":"auth-required"}'
 expect_rejected "auth-required incompatibility" "Project public access policy requires edge authentication and is incompatible with published TCP tunnels."
 set_settings '{"publishedTcpEnabled":true,"publicAccessPolicy":"allowed"}'
-expect_rejected "invalid reserved TCP port" "Published TCP port must be between 1 and 65535." --tcp-port 65536
+expect_rejected "invalid reserved TCP port" "published TCP port must be between 1 and 65535" --tcp-port 65536
 expect_rejected "unreserved TCP port" "Reserved TCP address is not available for this project." --tcp-port "$UNRESERVED_PORT"
 
 printf "\nResults: %d passed, %d failed\n" "$PASS" "$FAIL"
