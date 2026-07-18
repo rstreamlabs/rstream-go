@@ -179,6 +179,39 @@ func TestQUICTransportCloseInvalidatesInFlightConnectGeneration(t *testing.T) {
 	}
 }
 
+func TestQUICTransportReconnectsAfterConnectionLoss(t *testing.T) {
+	server := newTestQUICEchoServer(t)
+	transport := &QUICTransport{}
+	defer transport.Close()
+	tlsConfig := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{testQUICALPN}}
+	conn, err := transport.Dial(t.Context(), server.addr, tlsConfig)
+	if err != nil {
+		t.Fatalf("first Dial() error = %v", err)
+	}
+	assertQUICEchoConn(t, conn)
+	if err := conn.Close(); err != nil {
+		t.Fatalf("first connection Close() error = %v", err)
+	}
+	underlying := transport.quicConn
+	select {
+	case <-underlying.Context().Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("QUIC connection did not observe the server close")
+	}
+	addr := server.addr
+	server.close()
+	replacement := newTestQUICEchoServerAt(t, addr)
+	defer replacement.close()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	conn, err = transport.Dial(ctx, replacement.addr, tlsConfig)
+	if err != nil {
+		t.Fatalf("Dial() after connection loss error = %v", err)
+	}
+	defer conn.Close()
+	assertQUICEchoConn(t, conn)
+}
+
 func TestQUICTransportOriginBindsAddrAndTLSIdentity(t *testing.T) {
 	origin, err := quicTransportOrigin("Example.COM:443", &tls.Config{
 		ServerName: "Tunnel.Example.COM",
@@ -561,8 +594,16 @@ type testQUICEchoServer struct {
 }
 
 func newTestQUICEchoServer(t *testing.T) testQUICEchoServer {
+	return newTestQUICEchoServerAt(t, "127.0.0.1:0")
+}
+
+func newTestQUICEchoServerAt(t *testing.T, addr string) testQUICEchoServer {
 	t.Helper()
-	udpConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	udpAddr, err := net.ResolveUDPAddr("udp4", addr)
+	if err != nil {
+		t.Fatalf("resolve QUIC UDP address: %v", err)
+	}
+	udpConn, err := net.ListenUDP("udp4", udpAddr)
 	if err != nil {
 		t.Fatalf("listen QUIC UDP: %v", err)
 	}

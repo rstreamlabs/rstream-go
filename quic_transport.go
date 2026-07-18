@@ -67,15 +67,22 @@ func (t *QUICTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Confi
 	if err != nil {
 		return nil, err
 	}
-	conn, err := t.connection(ctx, addr, tlsCfg, origin)
-	if err != nil {
-		return nil, err
+	var openErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		conn, err := t.connection(ctx, addr, tlsCfg, origin)
+		if err != nil {
+			return nil, err
+		}
+		stream, err := conn.OpenStreamSync(ctx)
+		if err == nil {
+			return &quicStreamConn{stream: stream, conn: conn, transport: t}, nil
+		}
+		openErr = err
+		if ctx.Err() != nil || conn.Context().Err() == nil || !t.invalidateConnection(conn) {
+			return nil, fmt.Errorf("failed to open QUIC stream: %w", err)
+		}
 	}
-	stream, err := conn.OpenStreamSync(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open QUIC stream: %w", err)
-	}
-	return &quicStreamConn{stream: stream, conn: conn}, nil
+	return nil, fmt.Errorf("failed to open QUIC stream: %w", openErr)
 }
 
 func (t *QUICTransport) connection(ctx context.Context, addr string, tlsCfg *tls.Config, origin string) (*quic.Conn, error) {
@@ -133,7 +140,9 @@ func (t *QUICTransport) SendDatagram(data []byte) error {
 	if conn == nil {
 		return errors.New("QUIC connection not established")
 	}
-	return conn.SendDatagram(data)
+	err := conn.SendDatagram(data)
+	t.invalidateConnectionOnError(conn, err)
+	return err
 }
 
 // ReceiveDatagram receives a datagram from the underlying QUIC connection.
@@ -145,7 +154,9 @@ func (t *QUICTransport) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 	if conn == nil {
 		return nil, errors.New("QUIC connection not established")
 	}
-	return conn.ReceiveDatagram(ctx)
+	data, err := conn.ReceiveDatagram(ctx)
+	t.invalidateConnectionOnError(conn, err)
+	return data, err
 }
 
 // Close closes the underlying QUIC connection and the UDP socket beneath it.
@@ -174,6 +185,37 @@ func (t *QUICTransport) Close() error {
 		ch.Close()
 	}
 	return err
+}
+
+func (t *QUICTransport) invalidateConnection(conn *quic.Conn) bool {
+	t.mu.Lock()
+	if t.quicConn != conn {
+		t.mu.Unlock()
+		return false
+	}
+	t.closeGeneration++
+	channels := t.detachDatagramChannelsLocked()
+	qtransport := t.qtransport
+	pconn := t.pconn
+	proxyCloser := t.proxyCloser
+	t.quicConn = nil
+	t.qtransport = nil
+	t.pconn = nil
+	t.proxyCloser = nil
+	t.origin = ""
+	t.mu.Unlock()
+	_ = conn.CloseWithError(0, "transport connection unavailable")
+	_ = closeQUICTransportResources(qtransport, pconn, proxyCloser)
+	for _, ch := range channels {
+		ch.Close()
+	}
+	return true
+}
+
+func (t *QUICTransport) invalidateConnectionOnError(conn *quic.Conn, err error) {
+	if err != nil && conn.Context().Err() != nil {
+		t.invalidateConnection(conn)
+	}
 }
 
 func (t *QUICTransport) registerDatagramChannel(id datagramChannelID, ch *quicDatagramChannel) bool {
@@ -214,7 +256,9 @@ func (t *QUICTransport) datagramReadLoop(conn *quic.Conn) {
 	for {
 		data, err := conn.ReceiveDatagram(conn.Context())
 		if err != nil {
-			t.closeDatagramChannelsForConn(conn)
+			if !t.invalidateConnection(conn) {
+				t.closeDatagramChannelsForConn(conn)
+			}
 			return
 		}
 		if len(data) < datagramChannelIDSize {
@@ -389,16 +433,21 @@ func (t *QUICTransport) connect(ctx context.Context, addr string, tlsCfg *tls.Co
 // quicStreamConn wraps a quic.Stream as a net.Conn, delegating LocalAddr and
 // RemoteAddr to the underlying quic.Conn.
 type quicStreamConn struct {
-	stream *quic.Stream
-	conn   *quic.Conn
+	stream    *quic.Stream
+	conn      *quic.Conn
+	transport *QUICTransport
 }
 
 func (c *quicStreamConn) Read(p []byte) (int, error) {
-	return c.stream.Read(p)
+	n, err := c.stream.Read(p)
+	c.transport.invalidateConnectionOnError(c.conn, err)
+	return n, err
 }
 
 func (c *quicStreamConn) Write(p []byte) (int, error) {
-	return c.stream.Write(p)
+	n, err := c.stream.Write(p)
+	c.transport.invalidateConnectionOnError(c.conn, err)
+	return n, err
 }
 
 func (c *quicStreamConn) Close() error {
