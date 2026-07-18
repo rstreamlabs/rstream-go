@@ -5,6 +5,7 @@ package rundocker
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/rstreamlabs/rstream-go"
@@ -80,6 +81,9 @@ func ParseDesiredTunnels(info ContainerInfo, network string, ctx runmodel.Resolv
 		if err := validateHTTPSettings(props); err != nil {
 			return nil, fmt.Errorf("tunnel %q: %w", name, err)
 		}
+		if err := normalizePublishedTCP(&props); err != nil {
+			return nil, fmt.Errorf("tunnel %q: %w", name, err)
+		}
 		forward, err := resolveForward(spec.forward, info, network)
 		if err != nil {
 			return nil, fmt.Errorf("tunnel %q forward: %w", name, err)
@@ -138,6 +142,13 @@ func (l *labelSpec) apply(key, value string) error {
 		if v != "" {
 			l.props.Hostname = &v
 		}
+		return nil
+	case key == "port":
+		port, err := parsePort(value)
+		if err != nil {
+			return err
+		}
+		l.props.Port = &port
 		return nil
 	case key == "upstream-tls":
 		v, err := parseBool(value)
@@ -378,6 +389,8 @@ func parseProtocol(val string) (rstream.Protocol, error) {
 		return rstream.ProtocolHTTP, nil
 	case string(rstream.ProtocolTLS):
 		return rstream.ProtocolTLS, nil
+	case string(rstream.ProtocolTCP):
+		return rstream.ProtocolTCP, nil
 	case string(rstream.ProtocolDTLS):
 		return rstream.ProtocolDTLS, nil
 	case string(rstream.ProtocolQUIC):
@@ -387,6 +400,39 @@ func parseProtocol(val string) (rstream.Protocol, error) {
 	default:
 		return "", fmt.Errorf("invalid protocol %q", val)
 	}
+}
+
+func parsePort(value string) (uint32, error) {
+	port, err := strconv.ParseUint(strings.TrimSpace(value), 10, 16)
+	if err != nil || port == 0 {
+		return 0, fmt.Errorf("invalid TCP port %q", value)
+	}
+	return uint32(port), nil
+}
+
+func normalizePublishedTCP(props *rstream.TunnelProperties) error {
+	if props.Protocol == nil || *props.Protocol != rstream.ProtocolTCP {
+		if props.Port != nil {
+			return fmt.Errorf("port requires protocol %q", rstream.ProtocolTCP)
+		}
+		return nil
+	}
+	if props.Type != nil && *props.Type != rstream.TunnelTypeBytestream {
+		return fmt.Errorf("protocol %q requires a bytestream tunnel", rstream.ProtocolTCP)
+	}
+	if props.Publish != nil && !*props.Publish {
+		return fmt.Errorf("protocol %q requires a published tunnel", rstream.ProtocolTCP)
+	}
+	if props.Hostname != nil {
+		return fmt.Errorf("protocol %q does not accept host", rstream.ProtocolTCP)
+	}
+	if props.TLSMode != nil || len(props.TLSALPNs) > 0 || props.TLSMinVersion != nil || len(props.TLSCiphers) > 0 || props.MTLSAuth != nil || props.HTTPVersion != nil || props.HTTPUseTLS != nil || props.UpstreamTLS != nil || props.TokenAuth != nil || props.RstreamAuth != nil || props.ChallengeMode != nil || props.DatagramGuaranteedDelivery != nil {
+		return fmt.Errorf("protocol %q does not accept HTTP, TLS, edge authentication, or datagram delivery options", rstream.ProtocolTCP)
+	}
+	tunnelType := rstream.TunnelTypeBytestream
+	props.Type = &tunnelType
+	props.Publish = rstream.BoolPtr(true)
+	return nil
 }
 
 func parseTunnelType(val string) (rstream.TunnelType, error) {

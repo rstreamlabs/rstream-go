@@ -33,6 +33,7 @@ type TunnelSpec struct {
 	Protocol                   string            `yaml:"protocol,omitempty"`
 	Type                       string            `yaml:"type,omitempty"`
 	Host                       string            `yaml:"host,omitempty"`
+	Port                       *uint32           `yaml:"port,omitempty"`
 	UpstreamTLS                *bool             `yaml:"upstreamTLS,omitempty"`
 	DatagramGuaranteedDelivery *bool             `yaml:"datagramGuaranteedDelivery,omitempty"`
 	TrustedIPs                 []string          `yaml:"trustedIPs,omitempty"`
@@ -304,6 +305,9 @@ func tunnelPropertiesFromSpec(spec *TunnelSpec) (rstream.TunnelProperties, error
 		host := strings.TrimSpace(spec.Host)
 		props.Hostname = &host
 	}
+	if spec.Port != nil {
+		props.Port = spec.Port
+	}
 	if spec.UpstreamTLS != nil {
 		props.UpstreamTLS = spec.UpstreamTLS
 		if props.Protocol == nil || *props.Protocol == rstream.ProtocolHTTP {
@@ -365,7 +369,38 @@ func tunnelPropertiesFromSpec(spec *TunnelSpec) (rstream.TunnelProperties, error
 			props.MTLSAuth = spec.TLS.MTLS
 		}
 	}
+	if err := normalizePublishedTCP(&props); err != nil {
+		return props, err
+	}
 	return props, nil
+}
+
+func normalizePublishedTCP(props *rstream.TunnelProperties) error {
+	if props.Protocol == nil || *props.Protocol != rstream.ProtocolTCP {
+		if props.Port != nil {
+			return fmt.Errorf("port requires protocol %q", rstream.ProtocolTCP)
+		}
+		return nil
+	}
+	if props.Type != nil && *props.Type != rstream.TunnelTypeBytestream {
+		return fmt.Errorf("protocol %q requires a bytestream tunnel", rstream.ProtocolTCP)
+	}
+	if props.Port != nil && (*props.Port == 0 || *props.Port > 65535) {
+		return fmt.Errorf("port must be between 1 and 65535")
+	}
+	if props.Publish != nil && !*props.Publish {
+		return fmt.Errorf("protocol %q requires a published tunnel", rstream.ProtocolTCP)
+	}
+	if props.Hostname != nil {
+		return fmt.Errorf("protocol %q does not accept host", rstream.ProtocolTCP)
+	}
+	if props.TLSMode != nil || len(props.TLSALPNs) > 0 || props.TLSMinVersion != nil || len(props.TLSCiphers) > 0 || props.MTLSAuth != nil || props.HTTPVersion != nil || props.HTTPUseTLS != nil || props.UpstreamTLS != nil || props.TokenAuth != nil || props.RstreamAuth != nil || props.ChallengeMode != nil || props.DatagramGuaranteedDelivery != nil {
+		return fmt.Errorf("protocol %q does not accept HTTP, TLS, edge authentication, or datagram delivery options", rstream.ProtocolTCP)
+	}
+	tunnelType := rstream.TunnelTypeBytestream
+	props.Type = &tunnelType
+	props.Publish = rstream.BoolPtr(true)
+	return nil
 }
 
 func parseTunnelType(val string) (rstream.TunnelType, error) {
@@ -385,6 +420,8 @@ func parseProtocol(val string) (rstream.Protocol, error) {
 		return rstream.ProtocolHTTP, nil
 	case string(rstream.ProtocolTLS):
 		return rstream.ProtocolTLS, nil
+	case string(rstream.ProtocolTCP):
+		return rstream.ProtocolTCP, nil
 	case string(rstream.ProtocolDTLS):
 		return rstream.ProtocolDTLS, nil
 	case string(rstream.ProtocolQUIC):

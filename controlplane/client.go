@@ -371,6 +371,27 @@ func (c *Client) GetProjectDomainConnect(ctx context.Context, projectID string, 
 	return out, err
 }
 
+func (c *Client) ListProjectTCPAddresses(ctx context.Context, projectID string) (ListProjectTCPAddressesResponse, error) {
+	var out ListProjectTCPAddressesResponse
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/addresses"
+	_, err := c.doJSON(ctx, http.MethodGet, path, nil, &out)
+	return out, err
+}
+
+func (c *Client) ReserveProjectTCPAddress(ctx context.Context, projectID string) (ProjectTCPAddress, error) {
+	var out ProjectTCPAddress
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/addresses"
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, struct{}{}, &out)
+	return out, err
+}
+
+func (c *Client) ReleaseProjectTCPAddress(ctx context.Context, projectID string, addressID string) (ReleaseProjectTCPAddressResponse, error) {
+	var out ReleaseProjectTCPAddressResponse
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID) + "/addresses/" + url.PathEscape(addressID)
+	_, err := c.doJSON(ctx, http.MethodDelete, path, nil, &out)
+	return out, err
+}
+
 func (c *Client) ListProjectLogs(ctx context.Context, projectID string, params ProjectLogsParams) (ProjectLogsResponse, error) {
 	var out ProjectLogsResponse
 	query := url.Values{}

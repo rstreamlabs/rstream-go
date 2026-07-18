@@ -60,6 +60,27 @@ func TestMCPRemoteExposeSupportsPrivateDatagram(t *testing.T) {
 	}
 }
 
+func TestMCPRemoteExposeSupportsReservedPublishedTCP(t *testing.T) {
+	expose, err := mcpRemoteExposeArgs(map[string]json.RawMessage{"webtty_url": json.RawMessage(`"rstrm://robot"`), "port": json.RawMessage(`"22"`), "protocol": json.RawMessage(`"tcp"`), "tcp_port": json.RawMessage(`10042`)})
+	if err != nil {
+		t.Fatalf("mcpRemoteExposeArgs returned error: %v", err)
+	}
+	args, err := remoteExposeForwardArgs(expose)
+	if err != nil {
+		t.Fatalf("remoteExposeForwardArgs returned error: %v", err)
+	}
+	joined := strings.Join(args, "\n")
+	if !strings.Contains(joined, "--tcp\n--tcp-port\n10042") {
+		t.Fatalf("unexpected published TCP args: %#v", args)
+	}
+	if _, err := mcpRemoteExposeArgs(map[string]json.RawMessage{"webtty_url": json.RawMessage(`"rstrm://robot"`), "port": json.RawMessage(`"22"`), "tcp_port": json.RawMessage(`10042`)}); err == nil || !strings.Contains(err.Error(), "tcp_port requires protocol=tcp") {
+		t.Fatalf("expected protocol validation error, got %v", err)
+	}
+	if _, err := mcpRemoteExposeArgs(map[string]json.RawMessage{"webtty_url": json.RawMessage(`"rstrm://robot"`), "port": json.RawMessage(`"22"`), "protocol": json.RawMessage(`"tcp"`), "stable_domain": json.RawMessage(`"ssh.example.com"`)}); err == nil || !strings.Contains(err.Error(), "protocol=tcp does not accept") {
+		t.Fatalf("expected published TCP option validation error, got %v", err)
+	}
+}
+
 func TestMCPRemoteExposePrivateMCPDoesNotUsePublicAuthOptions(t *testing.T) {
 	expose, err := mcpRemoteExposeArgs(map[string]json.RawMessage{"webtty_url": json.RawMessage(`"rstrm://robot"`), "port": json.RawMessage(`"8765"`), "publish": json.RawMessage(`false`), "mcp_path": json.RawMessage(`"/mcp"`), "token_auth": json.RawMessage(`true`)})
 	if err != nil {

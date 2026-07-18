@@ -124,6 +124,7 @@ func mcpLocalTunnelExposeToolProperties() map[string]any {
 		"protocol":                     mcpStringEnumSchema("Optional protocol: http, http/1.1, h2c, h3, tls, dtls, quic, tcp, bytestream, udp, or datagram. Defaults to http.", []string{"http", "http/1.1", "h2c", "h3", "tls", "dtls", "quic", "tcp", "bytestream", "udp", "datagram"}),
 		"tunnel_type":                  mcpStringEnumSchema("Optional raw tunnel type override. Use bytestream for TCP-like services or datagram for UDP-like services.", []string{"bytestream", "datagram"}),
 		"stable_domain":                mcpStringSchema("Optional stable published host. Requires publish=true."),
+		"tcp_port":                     map[string]any{"type": "number", "description": "Optional reserved public TCP port. Requires protocol=tcp and publish=true."},
 		"token_auth":                   map[string]any{"type": "boolean", "description": "Require rstream token authentication at the HTTP edge. Requires an HTTP published tunnel."},
 		"rstream_auth":                 map[string]any{"type": "boolean", "description": "Require rstream account authentication at the HTTP edge. Requires an HTTP published tunnel."},
 		"challenge_mode":               map[string]any{"type": "boolean", "description": "Require an interactive browser challenge before HTTP edge access. Requires an HTTP published tunnel."},
@@ -197,6 +198,9 @@ func mcpLocalTunnelProperties(args map[string]json.RawMessage, name string, stab
 	if err := mcpLocalTunnelApplyProtocol(args, props); err != nil {
 		return nil, err
 	}
+	if err := mcpLocalTunnelApplyTCPPort(args, props); err != nil {
+		return nil, err
+	}
 	if err := mcpLocalTunnelApplySecurityOptions(args, props); err != nil {
 		return nil, err
 	}
@@ -204,6 +208,25 @@ func mcpLocalTunnelProperties(args map[string]json.RawMessage, name string, stab
 		return nil, err
 	}
 	return props, nil
+}
+
+func mcpLocalTunnelApplyTCPPort(args map[string]json.RawMessage, props *rstream.TunnelProperties) error {
+	port, err := mcpOptionalIntArg(args, "tcp_port")
+	if err != nil {
+		return err
+	}
+	if port == nil {
+		return nil
+	}
+	if *port < 1 || *port > 65535 {
+		return fmt.Errorf("tcp_port must be between 1 and 65535")
+	}
+	if props.Protocol == nil || *props.Protocol != rstream.ProtocolTCP || props.Publish == nil || !*props.Publish {
+		return fmt.Errorf("tcp_port requires protocol=tcp and publish=true")
+	}
+	value := uint32(*port)
+	props.Port = &value
+	return nil
 }
 
 func mcpLocalTunnelLabels(args map[string]json.RawMessage, port string) (map[string]string, error) {
@@ -271,7 +294,10 @@ func mcpLocalTunnelApplyProtocolValue(props *rstream.TunnelProperties, value str
 		props.Protocol = rstream.ProtocolPtr(rstream.ProtocolDTLS)
 	case "quic":
 		props.Protocol = rstream.ProtocolPtr(rstream.ProtocolQUIC)
-	case "tcp", "bytestream":
+	case "tcp":
+		props.Protocol = rstream.ProtocolPtr(rstream.ProtocolTCP)
+		props.Type = rstream.TunnelTypePtr(rstream.TunnelTypeBytestream)
+	case "bytestream":
 		props.Type = rstream.TunnelTypePtr(rstream.TunnelTypeBytestream)
 	case "udp", "datagram":
 		props.Type = rstream.TunnelTypePtr(rstream.TunnelTypeDatagram)
@@ -364,6 +390,14 @@ func mcpLocalTunnelApplySecurityOptions(args map[string]json.RawMessage, props *
 }
 
 func mcpLocalTunnelValidateTunnelProperties(props *rstream.TunnelProperties) error {
+	if props.Protocol != nil && *props.Protocol == rstream.ProtocolTCP {
+		if props.Publish == nil || !*props.Publish {
+			return fmt.Errorf("protocol=tcp requires publish=true")
+		}
+		if props.Hostname != nil || props.TLSMode != nil || len(props.TLSALPNs) > 0 || props.TLSMinVersion != nil || len(props.TLSCiphers) > 0 || props.MTLSAuth != nil || props.HTTPVersion != nil || props.HTTPUseTLS != nil || props.UpstreamTLS != nil || props.TokenAuth != nil || props.RstreamAuth != nil || props.ChallengeMode != nil || props.DatagramGuaranteedDelivery != nil {
+			return fmt.Errorf("protocol=tcp does not accept stable_domain, HTTP, TLS, edge authentication, or datagram delivery options")
+		}
+	}
 	if props.Publish != nil && !*props.Publish {
 		if props.Hostname != nil && strings.TrimSpace(*props.Hostname) != "" {
 			return fmt.Errorf("stable_domain requires publish=true")
@@ -490,6 +524,11 @@ func forwardArgsFromTunnelProperties(props *rstream.TunnelProperties) []string {
 	switch {
 	case props.Protocol != nil && *props.Protocol == rstream.ProtocolTLS:
 		args = append(args, "--tls")
+	case props.Protocol != nil && *props.Protocol == rstream.ProtocolTCP:
+		args = append(args, "--tcp")
+		if props.Port != nil {
+			args = append(args, "--tcp-port", strconv.FormatUint(uint64(*props.Port), 10))
+		}
 	case props.Protocol != nil && *props.Protocol == rstream.ProtocolDTLS:
 		args = append(args, "--dtls")
 	case props.Protocol != nil && *props.Protocol == rstream.ProtocolQUIC:

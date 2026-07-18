@@ -171,6 +171,93 @@ tunnels:
 	}
 }
 
+func TestDesiredTunnelsPublishedTCP(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := `version: 1
+tunnels:
+  - name: ssh
+    forward: "22"
+    tunnel:
+      protocol: tcp
+      port: 10042
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	desired, err := DesiredTunnels(path, runmodel.ResolvedContext{Engine: "engine", Token: "token"}, nil)
+	if err != nil {
+		t.Fatalf("DesiredTunnels() error = %v", err)
+	}
+	props := desired[0].Props
+	if props.Protocol == nil || *props.Protocol != rstream.ProtocolTCP || props.Type == nil || *props.Type != rstream.TunnelTypeBytestream {
+		t.Fatalf("unexpected TCP properties: %#v", props)
+	}
+	if props.Publish == nil || !*props.Publish || props.Port == nil || *props.Port != 10042 {
+		t.Fatalf("unexpected TCP publication properties: %#v", props)
+	}
+}
+
+func TestDesiredTunnelsRejectsZeroPublishedTCPPort(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := `version: 1
+tunnels:
+  - name: ssh
+    forward: "22"
+    tunnel:
+      protocol: tcp
+      port: 0
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	_, err := DesiredTunnels(path, runmodel.ResolvedContext{Engine: "engine", Token: "token"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "between 1 and 65535") {
+		t.Fatalf("expected TCP port validation error, got %v", err)
+	}
+}
+
+func TestDesiredTunnelsRejectsPortWithoutTCP(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := `version: 1
+tunnels:
+  - name: web
+    forward: "8080"
+    tunnel:
+      protocol: http
+      port: 10042
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	_, err := DesiredTunnels(path, runmodel.ResolvedContext{Engine: "engine", Token: "token"}, nil)
+	if err == nil || !strings.Contains(err.Error(), `port requires protocol "tcp"`) {
+		t.Fatalf("expected TCP port validation error, got %v", err)
+	}
+}
+
+func TestDesiredTunnelsRejectsPublishedTCPProtocolOptions(t *testing.T) {
+	t.Parallel()
+	for name, option := range map[string]string{
+		"hostname":     "host: ssh.example.com",
+		"upstream TLS": "upstreamTLS: true",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			yaml := "version: 1\ntunnels:\n  - name: ssh\n    forward: \"22\"\n    tunnel:\n      protocol: tcp\n      " + option + "\n"
+			if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+				t.Fatalf("write temp file: %v", err)
+			}
+			_, err := DesiredTunnels(path, runmodel.ResolvedContext{Engine: "engine", Token: "token"}, nil)
+			if err == nil || !strings.Contains(err.Error(), `protocol "tcp" does not accept`) {
+				t.Fatalf("expected published TCP option validation error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestContextResolutionOrder(t *testing.T) {
 	cases := []struct {
 		name     string

@@ -47,6 +47,11 @@ func TestFormatForwardingAddrVariants(t *testing.T) {
 			want:  "tls.example.com:443 (tls)",
 		},
 		{
+			name:  "published tcp includes port",
+			props: TunnelProperties{Hostname: StringPtr("tcp.example.com"), Port: Uint32Ptr(10042), Protocol: ProtocolPtr(ProtocolTCP)},
+			want:  "tcp.example.com:10042 (tcp)",
+		},
+		{
 			name:  "published non default port",
 			props: TunnelProperties{Hostname: StringPtr("app.example.com"), Port: Uint32Ptr(8443), Protocol: ProtocolPtr(ProtocolHTTP)},
 			want:  "https://app.example.com:8443",
@@ -109,6 +114,7 @@ func TestFormatForwardedHostPortVariants(t *testing.T) {
 		{name: "h3 forces https marker", host: "127.0.0.1", port: "443", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolHTTP), HTTPVersion: HTTPVersionPtr(HTTP3)}, want: "https://127.0.0.1 (h3)"},
 		{name: "http upstream tls hides 443", host: "127.0.0.1", port: "443", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolHTTP), HTTPUseTLS: BoolPtr(true), HTTPVersion: HTTPVersionPtr(HTTP1_1)}, want: "https://127.0.0.1"},
 		{name: "tls terminated reports tcp", host: "127.0.0.1", port: "9000", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolTLS), TLSMode: TLSModePtr(TLSModeTerminated)}, want: "127.0.0.1:9000 (tcp)"},
+		{name: "tcp", host: "127.0.0.1", port: "9000", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolTCP)}, want: "127.0.0.1:9000 (tcp)"},
 		{name: "dtls without upstream tls reports udp", host: "127.0.0.1", port: "9000", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolDTLS), UpstreamTLS: BoolPtr(false)}, want: "127.0.0.1:9000 (udp)"},
 		{name: "quic marker", host: "127.0.0.1", port: "4433", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolQUIC)}, want: "127.0.0.1:4433 (quic)"},
 		{name: "webtty marker", host: "127.0.0.1", port: "7681", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolWebTTY)}, want: "127.0.0.1:7681 (webtty)"},

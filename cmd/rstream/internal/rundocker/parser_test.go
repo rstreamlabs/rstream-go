@@ -175,6 +175,54 @@ func TestParseDesiredTunnelsIgnoresUnrelatedAndMalformedLabels(t *testing.T) {
 	}
 }
 
+func TestParseDesiredTunnelsPublishedTCP(t *testing.T) {
+	info := ContainerInfo{
+		ID:   "abc",
+		Name: "ssh",
+		Labels: map[string]string{
+			"rstream.tunnel.ssh.forward":  "22",
+			"rstream.tunnel.ssh.protocol": "tcp",
+			"rstream.tunnel.ssh.port":     "10042",
+		},
+		Networks: map[string]string{"backend": "10.0.0.8"},
+	}
+	desired, err := ParseDesiredTunnels(info, "backend", runmodel.ResolvedContext{Engine: "engine", Token: "token"})
+	if err != nil {
+		t.Fatalf("ParseDesiredTunnels() error = %v", err)
+	}
+	props := desired[0].Props
+	if props.Protocol == nil || *props.Protocol != rstream.ProtocolTCP || props.Type == nil || *props.Type != rstream.TunnelTypeBytestream {
+		t.Fatalf("unexpected TCP properties: %#v", props)
+	}
+	if props.Publish == nil || !*props.Publish || props.Port == nil || *props.Port != 10042 {
+		t.Fatalf("unexpected TCP publication properties: %#v", props)
+	}
+}
+
+func TestParseDesiredTunnelsRejectsPublishedTCPProtocolOptions(t *testing.T) {
+	t.Parallel()
+	for name, option := range map[string]map[string]string{
+		"hostname": {"rstream.tunnel.ssh.host": "ssh.example.com"},
+		"upstream TLS": {
+			"rstream.tunnel.ssh.upstream-tls": "true",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			labels := map[string]string{
+				"rstream.tunnel.ssh.forward":  "22",
+				"rstream.tunnel.ssh.protocol": "tcp",
+			}
+			for key, value := range option {
+				labels[key] = value
+			}
+			_, err := ParseDesiredTunnels(ContainerInfo{Labels: labels}, "", runmodel.ResolvedContext{})
+			if err == nil || !strings.Contains(err.Error(), `protocol "tcp" does not accept`) {
+				t.Fatalf("expected published TCP option validation error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestParseDesiredTunnelsRejectsInvalidSecurityLabels(t *testing.T) {
 	tests := []struct {
 		name      string
