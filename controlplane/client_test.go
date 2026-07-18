@@ -574,9 +574,11 @@ func TestResolveWebTTYServerClient(t *testing.T) {
 func TestProjectOperationsAndWorkspaceMembersEndpoints(t *testing.T) {
 	projectID := "workspace/project id"
 	domainID := "domain/with space"
+	addressID := "address/with space"
 	workspaceID := "workspace/with space"
 	projectPrefix := "/api/projects/tunnels/" + url.PathEscape(projectID)
 	domainPath := projectPrefix + "/domains/" + url.PathEscape(domainID)
+	addressPath := projectPrefix + "/addresses/" + url.PathEscape(addressID)
 	workspaceMembersPath := "/api/workspaces/" + url.PathEscape(workspaceID) + "/members"
 	seen := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -634,6 +636,18 @@ func TestProjectOperationsAndWorkspaceMembersEndpoints(t *testing.T) {
 			seen["domain_connect"] = true
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(DomainConnectResponse{"supported": true, "applyUrl": "https://dns.example/apply"})
+		case r.Method == http.MethodGet && r.URL.EscapedPath() == projectPrefix+"/addresses":
+			seen["addresses_list"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ListProjectTCPAddressesResponse{Addresses: []ProjectTCPAddress{{ID: addressID, ProjectID: projectID, Hostname: "tcp.example.com", Port: 10042, Address: "tcp.example.com:10042"}}, ReservationEnabled: true, PublishedTCPEnabled: true, Limit: 50, QuarantineSeconds: 86400})
+		case r.Method == http.MethodPost && r.URL.EscapedPath() == projectPrefix+"/addresses":
+			seen["address_reserve"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ProjectTCPAddress{ID: addressID, ProjectID: projectID, Hostname: "tcp.example.com", Port: 10042, Address: "tcp.example.com:10042"})
+		case r.Method == http.MethodDelete && r.URL.EscapedPath() == addressPath:
+			seen["address_release"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ReleaseProjectTCPAddressResponse{ID: addressID, ReusableAt: "2026-07-18T12:00:00Z"})
 		case r.Method == http.MethodGet && r.URL.EscapedPath() == projectPrefix+"/settings":
 			seen["settings_get"] = true
 			w.Header().Set("Content-Type", "application/json")
@@ -694,6 +708,19 @@ func TestProjectOperationsAndWorkspaceMembersEndpoints(t *testing.T) {
 	if _, err := client.GetProjectDomainConnect(context.Background(), projectID, domainID); err != nil {
 		t.Fatalf("GetProjectDomainConnect returned error: %v", err)
 	}
+	addresses, err := client.ListProjectTCPAddresses(context.Background(), projectID)
+	if err != nil {
+		t.Fatalf("ListProjectTCPAddresses returned error: %v", err)
+	}
+	if !addresses.PublishedTCPEnabled {
+		t.Fatal("ListProjectTCPAddresses did not decode the published TCP policy")
+	}
+	if _, err := client.ReserveProjectTCPAddress(context.Background(), projectID); err != nil {
+		t.Fatalf("ReserveProjectTCPAddress returned error: %v", err)
+	}
+	if _, err := client.ReleaseProjectTCPAddress(context.Background(), projectID, addressID); err != nil {
+		t.Fatalf("ReleaseProjectTCPAddress returned error: %v", err)
+	}
 	if _, err := client.GetProjectSettings(context.Background(), projectID); err != nil {
 		t.Fatalf("GetProjectSettings returned error: %v", err)
 	}
@@ -706,7 +733,7 @@ func TestProjectOperationsAndWorkspaceMembersEndpoints(t *testing.T) {
 	if _, err := client.ListWorkspaceMembers(context.Background(), workspaceID, WorkspaceMembersParams{Query: "admin", PageSize: &memberPageSize}); err != nil {
 		t.Fatalf("ListWorkspaceMembers returned error: %v", err)
 	}
-	for _, key := range []string{"logs", "usage", "turn_usage", "domains_list", "domain_create", "domain_get", "domain_delete", "domain_verify", "domain_connect", "settings_get", "settings_patch", "settings_reset", "members"} {
+	for _, key := range []string{"logs", "usage", "turn_usage", "domains_list", "domain_create", "domain_get", "domain_delete", "domain_verify", "domain_connect", "addresses_list", "address_reserve", "address_release", "settings_get", "settings_patch", "settings_reset", "members"} {
 		if !seen[key] {
 			t.Fatalf("endpoint %q was not called", key)
 		}

@@ -20,6 +20,9 @@ func MaybeSetGeneratedStableDomain(props *TunnelProperties, engine string) error
 	if props.Publish != nil && !*props.Publish {
 		return nil
 	}
+	if props.Protocol != nil && *props.Protocol == ProtocolTCP {
+		return nil
+	}
 	hostname, ok, err := GenerateStableDomain(engine)
 	if err != nil || !ok {
 		return err

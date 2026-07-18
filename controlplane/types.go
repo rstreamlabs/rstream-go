@@ -641,6 +641,31 @@ type CreateProjectDomainRequest struct {
 
 type DomainConnectResponse map[string]any
 
+type ProjectTCPAddress struct {
+	ID        string `json:"id"`
+	ProjectID string `json:"projectId"`
+	ClusterID string `json:"clusterId"`
+	Hostname  string `json:"hostname"`
+	Port      uint32 `json:"port"`
+	Address   string `json:"address"`
+	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt"`
+}
+
+type ListProjectTCPAddressesResponse struct {
+	Addresses           []ProjectTCPAddress `json:"addresses"`
+	ReservationEnabled  bool                `json:"reservationEnabled"`
+	PublishedTCPEnabled bool                `json:"publishedTcpEnabled"`
+	Hostname            *string             `json:"hostname"`
+	Limit               int                 `json:"limit"`
+	QuarantineSeconds   int                 `json:"quarantineSeconds"`
+}
+
+type ReleaseProjectTCPAddressResponse struct {
+	ID         string `json:"id"`
+	ReusableAt string `json:"reusableAt"`
+}
+
 type WorkspaceMembersParams struct {
 	Query    string
 	Page     *int

@@ -441,7 +441,7 @@ TEST_COMMON_SOURCES := $(shell find . -maxdepth 1 -name '*.go' ! -name '*.pb.go'
 
 .PHONY: test-bins
 
-test-bins: $(foreach r,$(TEST_ROLES),$(TEST_OUT)/$(r))
+test-bins: $(foreach r,$(TEST_ROLES),$(TEST_OUT)/$(r)) $(call base_dir_examples)/tcp-ssh-client $(call base_dir_examples)/tcp-ssh-server
 
 define template_test_bin
 $(TEST_OUT)/$1: $$(shell find test/$1 -name '*.go' 2>/dev/null) $(TEST_COMMON_SOURCES)
@@ -678,6 +678,7 @@ $(foreach bin,$(EXAMPLES),$(eval $(bin): $(call base_dir_examples)/$(bin)))
 
 define template_target_build_examples
 $(call base_dir_examples)/$1: $(call sources,examples,$1)
+	@mkdir -p $(call base_dir_examples)
 	@$(call build,examples,$1,$(CURRENT_OS),$(CURRENT_ARCH))
 endef
 
