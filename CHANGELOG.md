@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.25.1](https://github.com/rstreamlabs/rstream-go/compare/v1.25.0...v1.25.1) (2026-07-18)
+
+
+### Bug Fixes
+
+* request write access for CLI project management ([4e7c0c9](https://github.com/rstreamlabs/rstream-go/commit/4e7c0c9b859e817ad95bdc93a85d2eb730ca7673))
+
 ## [1.25.0](https://github.com/rstreamlabs/rstream-go/compare/v1.24.2...v1.25.0) (2026-07-18)
 
 
