@@ -54,7 +54,7 @@ func TestStoreTokenValidatesAndPersistsEnvironmentToken(t *testing.T) {
 func TestRstreamLoginPermissionsMatchCliWorkflows(t *testing.T) {
 	want := []string{
 		"account.plan.read-only",
-		"account.projects.read-only",
+		"account.projects.read-write",
 		"account.tokens.create",
 		"account.workspaces.read-only",
 		"account.workspace-protection.read-write",
