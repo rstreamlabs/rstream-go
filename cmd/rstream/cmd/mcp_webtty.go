@@ -19,7 +19,7 @@ func mcpWebTTYControlPlaneProject(ctx context.Context, args map[string]json.RawM
 	if err != nil {
 		return nil, nil, controlplane.Project{}, err
 	}
-	client := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+	client := newRuntimeControlPlaneClient(runtime.Resolved)
 	project, err := mcpResolveRuntimeProject(ctx, client, runtime.Config, args)
 	if err != nil {
 		return nil, nil, controlplane.Project{}, err

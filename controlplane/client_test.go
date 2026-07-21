@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -23,14 +24,44 @@ func TestNewClientOptionsAndRequireToken(t *testing.T) {
 	if client.apiURL != "https://api.example.com" || client.token != "token" {
 		t.Fatalf("client fields not normalized: apiURL=%q token=%q", client.apiURL, client.token)
 	}
-	if client.httpClient != httpClient || client.logger != logger {
+	if client.httpClient == httpClient || client.httpClient.Timeout != httpClient.Timeout || client.logger != logger {
 		t.Fatalf("client options not applied")
+	}
+	if client.httpClient.CheckRedirect == nil {
+		t.Fatal("control plane client must reject redirects")
 	}
 	if err := client.RequireToken(); err != nil {
 		t.Fatalf("RequireToken() error = %v", err)
 	}
 	if err := NewClient("https://api.example.com", " ").RequireToken(); err == nil {
 		t.Fatalf("expected missing token error")
+	}
+}
+
+func TestControlPlaneHeadersAndRedirectIsolation(t *testing.T) {
+	var redirected atomic.Int32
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirected.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer redirectTarget.Close()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Deployment-Bypass"); got != "secret" {
+			http.Error(w, "missing deployment header", http.StatusBadRequest)
+			return
+		}
+		http.Redirect(w, r, redirectTarget.URL, http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "token", WithHeaders(map[string]string{"x-deployment-bypass": "secret"}))
+	if _, err := client.Whoami(context.Background()); err == nil || !strings.Contains(err.Error(), "307") {
+		t.Fatalf("Whoami() error = %v, want redirect response", err)
+	}
+	if redirected.Load() != 0 {
+		t.Fatalf("redirect target received %d requests", redirected.Load())
+	}
+	if _, err := NewClient(server.URL, "token", WithHeaders(map[string]string{"Authorization": "secret"})).Whoami(context.Background()); err == nil || !strings.Contains(err.Error(), "reserved control plane header") {
+		t.Fatalf("Whoami() error = %v, want reserved header error", err)
 	}
 }
 
@@ -157,7 +188,7 @@ func TestWorkspaceProjectCreationEndpoints(t *testing.T) {
 	if _, err := client.GetProjectPlan(context.Background(), "p1"); err != nil {
 		t.Fatalf("GetProjectPlan returned error: %v", err)
 	}
-	request := CreateProjectRequest{Name: "Created", Provider: "aws", Region: "eu-west-3", Plan: "basic", CreationFingerprint: "abc", IdempotencyKey: "idem"}
+	request := CreateProjectRequest{Name: "Created", Placement: "regional", Provider: "aws", Region: "eu-west-3", Plan: "basic", CreationFingerprint: "abc", IdempotencyKey: "idem"}
 	if _, err := client.CreateProject(context.Background(), workspaceID, request); err != nil {
 		t.Fatalf("CreateProject returned error: %v", err)
 	}

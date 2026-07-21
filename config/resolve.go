@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/controlplane"
 )
 
 const defaultAPIURL = "https://rstream.io"
@@ -29,37 +30,42 @@ const (
 )
 
 type ResolveInput struct {
-	Config               Config
-	FlagAPIURL           string
-	FlagContext          string
-	FlagEngine           string
-	FlagToken            string
-	FlagMTLSCert         string
-	FlagMTLSKey          string
-	EnvAPIURL            string
-	EnvContext           string
-	EnvEngine            string
-	EnvToken             string
-	EnvMTLSCert          string
-	EnvMTLSKey           string
-	FlagTunnelTransport  string
-	EnvTunnelTransport   string
-	EnvUseQUIC           *bool
-	IgnoreDefaultContext bool
-	RequireToken         bool
-	RequireEngine        bool
-	ResolveToken         bool
+	Config                 Config
+	FlagAPIURL             string
+	FlagContext            string
+	FlagEngine             string
+	FlagToken              string
+	FlagMTLSCert           string
+	FlagMTLSKey            string
+	FlagRegion             string
+	EnvAPIURL              string
+	EnvContext             string
+	EnvEngine              string
+	EnvToken               string
+	EnvMTLSCert            string
+	EnvMTLSKey             string
+	EnvRegion              string
+	FlagTunnelTransport    string
+	EnvTunnelTransport     string
+	EnvUseQUIC             *bool
+	EnvControlPlaneHeaders string
+	IgnoreDefaultContext   bool
+	RequireToken           bool
+	RequireEngine          bool
+	ResolveToken           bool
 }
 
 type Resolved struct {
-	APIURL          string
-	ContextName     string
-	Environment     *Environment
-	Context         *Context
-	Engine          string
-	Token           string
-	Transport       rstream.Dialer
-	TLSClientConfig *tls.Config
+	APIURL              string
+	ContextName         string
+	Environment         *Environment
+	Context             *Context
+	Engine              string
+	Region              string
+	Token               string
+	Transport           rstream.Dialer
+	TLSClientConfig     *tls.Config
+	ControlPlaneHeaders map[string]string
 }
 
 func Resolve(input ResolveInput) (Resolved, error) {
@@ -112,10 +118,28 @@ func Resolve(input ResolveInput) (Resolved, error) {
 	if ctx != nil && NormalizeAPIURL(ctx.APIURL) == "" {
 		env = nil
 	}
+	controlPlaneHeaders, err := ResolveControlPlaneHeaders(env, input.EnvControlPlaneHeaders)
+	if err != nil {
+		return Resolved{}, err
+	}
 	engineOverride := firstNonEmpty(input.FlagEngine, input.EnvEngine)
 	engine := engineOverride
 	if engine == "" && ctx != nil {
 		engine = ctx.Engine
+	}
+	contextRegion := ""
+	if ctx != nil {
+		contextRegion = ctx.Region
+	}
+	region, err := controlplane.NormalizeRegion(firstNonEmpty(input.FlagRegion, input.EnvRegion, contextRegion))
+	if err != nil {
+		return Resolved{}, err
+	}
+	if region != "" && engineOverride != "" {
+		return Resolved{}, errors.New("region selection cannot be combined with an explicit engine override")
+	}
+	if region != "" && (ctx == nil || strings.TrimSpace(ctx.ProjectEndpoint) == "") {
+		return Resolved{}, errors.New("managed project endpoint is required for region selection")
 	}
 	token := ""
 	explicitToken := input.FlagToken != "" || input.EnvToken != ""
@@ -153,7 +177,7 @@ func Resolve(input ResolveInput) (Resolved, error) {
 			return Resolved{}, errors.New("token has expired (run rstream login or set RSTREAM_AUTHENTICATION_TOKEN)")
 		}
 	}
-	if input.RequireEngine && engine == "" {
+	if input.RequireEngine && engine == "" && region == "" {
 		return Resolved{}, errors.New("engine is required but not configured (set --engine or RSTREAM_ENGINE, or select a context via --context, RSTREAM_CONTEXT, or `rstream context use`)")
 	}
 	if input.RequireToken && token == "" && mtlsConfig == nil {
@@ -195,15 +219,44 @@ func Resolve(input ResolveInput) (Resolved, error) {
 		return Resolved{}, err
 	}
 	return Resolved{
-		APIURL:          apiURL,
-		ContextName:     contextName,
-		Environment:     env,
-		Context:         ctx,
-		Engine:          engine,
-		Token:           token,
-		Transport:       transport,
-		TLSClientConfig: tlsClientConfig,
+		APIURL:              apiURL,
+		ContextName:         contextName,
+		Environment:         env,
+		Context:             ctx,
+		Engine:              engine,
+		Region:              region,
+		Token:               token,
+		Transport:           transport,
+		TLSClientConfig:     tlsClientConfig,
+		ControlPlaneHeaders: controlPlaneHeaders,
 	}, nil
+}
+
+func ResolveControlPlaneHeaders(env *Environment, raw string) (map[string]string, error) {
+	headers := map[string]string{}
+	if env != nil {
+		configured, err := controlplane.NormalizeHeaders(env.Headers)
+		if err != nil {
+			return nil, err
+		}
+		for name, value := range configured {
+			headers[name] = value
+		}
+	}
+	if strings.TrimSpace(raw) != "" {
+		var runtimeHeaders map[string]string
+		if err := json.Unmarshal([]byte(raw), &runtimeHeaders); err != nil {
+			return nil, fmt.Errorf("invalid RSTREAM_CONTROL_PLANE_HEADERS JSON: %w", err)
+		}
+		normalized, err := controlplane.NormalizeHeaders(runtimeHeaders)
+		if err != nil {
+			return nil, err
+		}
+		for name, value := range normalized {
+			headers[name] = value
+		}
+	}
+	return headers, nil
 }
 
 func mergeTLSClientConfig(mtlsConfig *tls.Config, transportConfig *TransportConfig) (*tls.Config, error) {

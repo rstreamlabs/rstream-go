@@ -78,6 +78,9 @@ func TestCreateTURNCredentialsExplicitAPIAcceptsOpaqueToken(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer opaque-token" {
 			t.Fatalf("authorization = %q", got)
 		}
+		if got := r.Header.Get("X-Deployment-Bypass"); got != "secret" {
+			t.Fatalf("control plane header = %q", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"username":"u","credential":"c","urls":["turn:example.com:3478?transport=udp"],"ttl":86400}`))
 	}))
@@ -87,6 +90,9 @@ func TestCreateTURNCredentialsExplicitAPIAcceptsOpaqueToken(t *testing.T) {
 		Token:           "opaque-token",
 		ProjectEndpoint: "abc12345",
 		Mode:            modePtr(TURNCredentialModeAPI),
+		ControlPlaneHeaders: map[string]string{
+			"X-Deployment-Bypass": "secret",
+		},
 	})
 	if err != nil {
 		t.Fatalf("create failed: %v", err)

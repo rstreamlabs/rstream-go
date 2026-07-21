@@ -13,7 +13,7 @@ import (
 )
 
 func TestValidateToken(t *testing.T) {
-	if err := validateToken(t.Context(), "https://api.example.com", " "); err == nil || !strings.Contains(err.Error(), "token is required") {
+	if err := validateToken(t.Context(), "https://api.example.com", " ", nil); err == nil || !strings.Contains(err.Error(), "token is required") {
 		t.Fatalf("expected missing token error, got %v", err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -29,10 +29,10 @@ func TestValidateToken(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(controlplane.Whoami{ID: "user", Role: "admin"})
 	}))
 	defer server.Close()
-	if err := validateToken(t.Context(), server.URL, "bad-token"); err == nil || !strings.Contains(err.Error(), "not authenticated") {
+	if err := validateToken(t.Context(), server.URL, "bad-token", nil); err == nil || !strings.Contains(err.Error(), "not authenticated") {
 		t.Fatalf("expected unauthorized validation error, got %v", err)
 	}
-	if err := validateToken(t.Context(), server.URL, "good-token"); err != nil {
+	if err := validateToken(t.Context(), server.URL, "good-token", nil); err != nil {
 		t.Fatalf("validateToken(good-token) error = %v", err)
 	}
 }

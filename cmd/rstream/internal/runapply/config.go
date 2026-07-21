@@ -34,6 +34,7 @@ type TunnelSpec struct {
 	Type                       string            `yaml:"type,omitempty"`
 	Host                       string            `yaml:"host,omitempty"`
 	Port                       *uint32           `yaml:"port,omitempty"`
+	AllowCrossRegionRouting    *bool             `yaml:"allowCrossRegionRouting,omitempty"`
 	UpstreamTLS                *bool             `yaml:"upstreamTLS,omitempty"`
 	DatagramGuaranteedDelivery *bool             `yaml:"datagramGuaranteedDelivery,omitempty"`
 	TrustedIPs                 []string          `yaml:"trustedIPs,omitempty"`
@@ -308,6 +309,9 @@ func tunnelPropertiesFromSpec(spec *TunnelSpec) (rstream.TunnelProperties, error
 	if spec.Port != nil {
 		props.Port = spec.Port
 	}
+	if spec.AllowCrossRegionRouting != nil {
+		props.AllowCrossRegionRouting = spec.AllowCrossRegionRouting
+	}
 	if spec.UpstreamTLS != nil {
 		props.UpstreamTLS = spec.UpstreamTLS
 		if props.Protocol == nil || *props.Protocol == rstream.ProtocolHTTP {
@@ -379,6 +383,9 @@ func normalizePublishedTCP(props *rstream.TunnelProperties) error {
 	if props.Protocol == nil || *props.Protocol != rstream.ProtocolTCP {
 		if props.Port != nil {
 			return fmt.Errorf("port requires protocol %q", rstream.ProtocolTCP)
+		}
+		if props.AllowCrossRegionRouting != nil {
+			return fmt.Errorf("allowCrossRegionRouting requires protocol %q", rstream.ProtocolTCP)
 		}
 		return nil
 	}

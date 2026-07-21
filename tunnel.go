@@ -3,6 +3,7 @@
 package rstream
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -31,6 +32,8 @@ type bytestreamTunnelImpl struct {
 	closed   bool
 	err      error
 	conns    chan net.Conn
+	ctx      context.Context
+	cancel   context.CancelFunc
 }
 
 func (t *bytestreamTunnelImpl) ForwardingAddress() (string, error) {
@@ -110,6 +113,9 @@ func (t *bytestreamTunnelImpl) onError(err error) {
 	}
 	t.closed = true
 	t.err = err
+	if t.cancel != nil {
+		t.cancel()
+	}
 	t.closeCh <- err
 	close(t.closeCh)
 }
@@ -129,6 +135,13 @@ func (bc *bytestreamConn) Write(p []byte) (int, error) {
 }
 
 func (bc *bytestreamConn) Close() error {
+	return bc.conn.Close()
+}
+
+func (bc *bytestreamConn) CloseWrite() error {
+	if conn, ok := bc.conn.(interface{ CloseWrite() error }); ok {
+		return conn.CloseWrite()
+	}
 	return bc.conn.Close()
 }
 

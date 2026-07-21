@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/streamrelay"
 )
 
 type Runner struct {
@@ -101,6 +101,10 @@ func (r *Runner) run(ctx context.Context, desired runmodel.DesiredTunnel) {
 			logger.Info("Tunnel stopped")
 			return
 		}
+		if !retryableTunnelError(err) {
+			logger.Error("Tunnel stopped", "error", err)
+			return
+		}
 		retry := backoff.Next()
 		logger.Warn("Retrying in", "error", err, "retry_in", retry)
 		select {
@@ -110,6 +114,17 @@ func (r *Runner) run(ctx context.Context, desired runmodel.DesiredTunnel) {
 			return
 		}
 	}
+}
+
+func retryableTunnelError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var engineErr *rstream.EngineError
+	if errors.As(err, &engineErr) {
+		return engineErr.Retryable()
+	}
+	return true
 }
 
 func (r *Runner) runOnce(ctx context.Context, desired runmodel.DesiredTunnel, logger *slog.Logger) error {
@@ -192,10 +207,7 @@ func (r *Runner) proxyTCP(inbound net.Conn, target runmodel.ForwardTarget, logge
 		return
 	}
 	defer outbound.Close()
-	done := make(chan struct{}, 2)
-	go func() { _, _ = io.Copy(outbound, inbound); done <- struct{}{} }()
-	go func() { _, _ = io.Copy(inbound, outbound); done <- struct{}{} }()
-	<-done
+	streamrelay.Bidirectional(inbound, outbound)
 }
 
 func (r *Runner) serveUDP(l rstream.PacketListener, target runmodel.ForwardTarget, logger *slog.Logger) error {

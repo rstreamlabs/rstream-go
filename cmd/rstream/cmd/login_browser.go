@@ -57,20 +57,25 @@ func storeTokenFromFlags(cmd *cobra.Command, path string, cfg config.Config, api
 }
 
 func storeTokenWithStorage(ctx context.Context, path string, cfg config.Config, apiURL, token string, storage config.TokenStorage) error {
-	if err := validateToken(ctx, apiURL, token); err != nil {
+	env, _ := cfg.FindEnvironment(apiURL)
+	headers, err := config.ResolveControlPlaneHeaders(env, config.ReadEnv().ControlPlaneHeaders)
+	if err != nil {
 		return err
 	}
-	env := cfg.EnsureEnvironment(apiURL)
+	if err := validateToken(ctx, apiURL, token, headers); err != nil {
+		return err
+	}
+	environment := cfg.EnsureEnvironment(apiURL)
 	switch storage.Kind {
 	case config.TokenStorageInline:
-		if err := setEnvironmentToken(env, token); err != nil {
+		if err := setEnvironmentToken(environment, token); err != nil {
 			return err
 		}
 	case config.TokenStorageKeychain:
 		if err := config.StoreToken(storage, token); err != nil {
 			return err
 		}
-		setEnvironmentTokenStorage(env, storage)
+		setEnvironmentTokenStorage(environment, storage)
 	default:
 		return fmt.Errorf("token storage kind %q is not supported", storage.Kind)
 	}
@@ -94,7 +99,12 @@ func tokenStorageFromFlags(cmd *cobra.Command, apiURL string) (config.TokenStora
 
 func runLegacyDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL string) error {
 	ctx := cmd.Context()
-	client := controlplane.NewClient(apiURL, "")
+	env, _ := cfg.FindEnvironment(apiURL)
+	headers, err := config.ResolveControlPlaneHeaders(env, config.ReadEnv().ControlPlaneHeaders)
+	if err != nil {
+		return err
+	}
+	client := controlplane.NewClient(apiURL, "", controlplane.WithHeaders(headers))
 	req := controlplane.RstreamLoginRequest{Permissions: rstreamLoginPermissions, Source: resolveRstreamLoginSource()}
 	res, err := client.CreateRstreamLogin(ctx, req)
 	if err != nil {
@@ -119,7 +129,12 @@ func runLegacyDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, ap
 
 func runOAuthDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL string) error {
 	ctx := cmd.Context()
-	client := controlplane.NewClient(apiURL, "")
+	env, _ := cfg.FindEnvironment(apiURL)
+	headers, err := config.ResolveControlPlaneHeaders(env, config.ReadEnv().ControlPlaneHeaders)
+	if err != nil {
+		return err
+	}
+	client := controlplane.NewClient(apiURL, "", controlplane.WithHeaders(headers))
 	metadata, err := client.OAuthAuthorizationServerMetadata(ctx)
 	if err != nil {
 		return rstreamLoginCommandError(err)

@@ -1434,7 +1434,7 @@ func webTTYSessionAttachWorkspaceCredential(ctx context.Context, runtime *resolv
 		proofs = append(proofs, item.proof)
 		localDevices = append(localDevices, item.device)
 	}
-	controlClient := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+	controlClient := newRuntimeControlPlaneClient(runtime.Resolved)
 	resolved, err := controlClient.ResolveWebTTYServerClient(ctx, projectID, serverID, controlplane.ResolveWebTTYServerClientRequest{
 		DeviceProofs: proofs,
 	})

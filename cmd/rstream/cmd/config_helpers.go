@@ -3,11 +3,13 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/controlplane"
 	"github.com/spf13/cobra"
 )
 
@@ -58,30 +60,75 @@ func resolveRuntime(cmd *cobra.Command, requireEngine, requireToken bool) (*reso
 	}
 	flagAPIURL, _ := cmd.Flags().GetString("api-url")
 	flagContext, _ := cmd.Flags().GetString("context")
+	flagRegion, _ := cmd.Flags().GetString("region")
 	flagTunnelTransport, _ := cmd.Flags().GetString("tunnel-transport")
 	env := config.ReadEnv()
 	input := config.ResolveInput{
-		Config:              cfg,
-		FlagAPIURL:          flagAPIURL,
-		FlagContext:         flagContext,
-		EnvAPIURL:           env.APIURL,
-		EnvContext:          env.Context,
-		EnvEngine:           env.Engine,
-		EnvToken:            env.Token,
-		EnvMTLSCert:         env.MTLSCert,
-		EnvMTLSKey:          env.MTLSKey,
-		FlagTunnelTransport: flagTunnelTransport,
-		EnvTunnelTransport:  env.TunnelTransport,
-		EnvUseQUIC:          env.UseQUIC,
-		RequireEngine:       requireEngine,
-		RequireToken:        requireToken,
-		ResolveToken:        true,
+		Config:                 cfg,
+		FlagAPIURL:             flagAPIURL,
+		FlagContext:            flagContext,
+		FlagRegion:             flagRegion,
+		EnvAPIURL:              env.APIURL,
+		EnvContext:             env.Context,
+		EnvEngine:              env.Engine,
+		EnvToken:               env.Token,
+		EnvMTLSCert:            env.MTLSCert,
+		EnvMTLSKey:             env.MTLSKey,
+		EnvRegion:              env.Region,
+		FlagTunnelTransport:    flagTunnelTransport,
+		EnvTunnelTransport:     env.TunnelTransport,
+		EnvUseQUIC:             env.UseQUIC,
+		EnvControlPlaneHeaders: env.ControlPlaneHeaders,
+		RequireEngine:          requireEngine,
+		RequireToken:           requireToken,
+		ResolveToken:           true,
 	}
 	resolved, err := config.Resolve(input)
 	if err != nil {
 		return nil, err
 	}
+	if requireEngine && resolved.Region != "" {
+		if err := resolveRuntimeRegion(cmd, cfg, &resolved); err != nil {
+			return nil, err
+		}
+	}
 	return &resolvedRuntime{ConfigPath: path, Config: cfg, Resolved: resolved}, nil
+}
+
+func resolveRuntimeRegion(cmd *cobra.Command, cfg config.Config, resolved *config.Resolved) error {
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return resolveRuntimeRegionContext(ctx, cfg, resolved)
+}
+
+func resolveRuntimeRegionContext(ctx context.Context, cfg config.Config, resolved *config.Resolved) error {
+	if resolved.Context == nil || resolved.Context.ProjectEndpoint == "" {
+		return errors.New("managed project endpoint is required for region selection")
+	}
+	token := resolved.Token
+	if token == "" {
+		var err error
+		token, err = resolveControlPlaneToken(cfg, resolved.APIURL)
+		if err != nil {
+			return err
+		}
+	}
+	client := controlplane.NewClient(resolved.APIURL, token, controlplane.WithHeaders(resolved.ControlPlaneHeaders))
+	if err := client.RequireToken(); err != nil {
+		return err
+	}
+	project, err := client.ResolveProjectByEndpoint(ctx, resolved.Context.ProjectEndpoint)
+	if err != nil {
+		return mapControlPlaneError(err)
+	}
+	engine, err := project.EngineAddressForRegion(resolved.Region)
+	if err != nil {
+		return err
+	}
+	resolved.Engine = engine
+	return nil
 }
 
 func resolveControlPlane(cmd *cobra.Command, requireToken bool) (*resolvedRuntime, error) {
@@ -93,15 +140,16 @@ func resolveControlPlane(cmd *cobra.Command, requireToken bool) (*resolvedRuntim
 	flagContext, _ := cmd.Flags().GetString("context")
 	env := config.ReadEnv()
 	input := config.ResolveInput{
-		Config:               cfg,
-		FlagAPIURL:           flagAPIURL,
-		FlagContext:          flagContext,
-		EnvAPIURL:            env.APIURL,
-		EnvContext:           env.Context,
-		EnvToken:             env.Token,
-		IgnoreDefaultContext: true,
-		RequireToken:         requireToken,
-		ResolveToken:         true,
+		Config:                 cfg,
+		FlagAPIURL:             flagAPIURL,
+		FlagContext:            flagContext,
+		EnvAPIURL:              env.APIURL,
+		EnvContext:             env.Context,
+		EnvToken:               env.Token,
+		EnvControlPlaneHeaders: env.ControlPlaneHeaders,
+		IgnoreDefaultContext:   true,
+		RequireToken:           requireToken,
+		ResolveToken:           true,
 	}
 	resolved, err := config.Resolve(input)
 	if err != nil {

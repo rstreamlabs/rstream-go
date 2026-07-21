@@ -4,7 +4,9 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -84,6 +86,29 @@ func TestForwardStatusFormattingHelpers(t *testing.T) {
 	wrapped := statusReportedError{err: err}
 	if wrapped.Error() != "reported" || !errors.Is(wrapped, err) {
 		t.Fatalf("statusReportedError did not wrap correctly")
+	}
+}
+
+func TestForwardRetryableError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "network error", err: errors.New("connection reset"), want: true},
+		{name: "wrapped service unavailable", err: fmt.Errorf("connect: %w", &rstream.EngineError{Code: rstream.EngineErrorCodeServiceUnavailable}), want: true},
+		{name: "capacity exhausted", err: &rstream.EngineError{Code: rstream.EngineErrorCodeCapacityExhausted}, want: true},
+		{name: "feature unavailable", err: statusReportedError{err: &rstream.EngineError{Code: rstream.EngineErrorCodeFeatureNotAvailable}}},
+		{name: "invalid request", err: &rstream.EngineError{Code: rstream.EngineErrorCodeInvalidRequest}},
+		{name: "context canceled", err: context.Canceled},
+		{name: "nil"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := forwardRetryableError(tt.err); got != tt.want {
+				t.Fatalf("forwardRetryableError(%v) = %t, want %t", tt.err, got, tt.want)
+			}
+		})
 	}
 }
 

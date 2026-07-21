@@ -467,6 +467,7 @@ type TunnelProperties struct {
 	Port                       *wrapperspb.UInt32Value `protobuf:"bytes,23,opt,name=port,proto3" json:"port,omitempty"`
 	UpstreamTls                *wrapperspb.BoolValue   `protobuf:"bytes,24,opt,name=upstream_tls,json=upstreamTls,proto3" json:"upstream_tls,omitempty"`
 	DatagramGuaranteedDelivery *wrapperspb.BoolValue   `protobuf:"bytes,25,opt,name=datagram_guaranteed_delivery,json=datagramGuaranteedDelivery,proto3" json:"datagram_guaranteed_delivery,omitempty"`
+	AllowCrossRegionRouting    *wrapperspb.BoolValue   `protobuf:"bytes,26,opt,name=allow_cross_region_routing,json=allowCrossRegionRouting,proto3" json:"allow_cross_region_routing,omitempty"`
 	unknownFields              protoimpl.UnknownFields
 	sizeCache                  protoimpl.SizeCache
 }
@@ -675,6 +676,13 @@ func (x *TunnelProperties) GetUpstreamTls() *wrapperspb.BoolValue {
 func (x *TunnelProperties) GetDatagramGuaranteedDelivery() *wrapperspb.BoolValue {
 	if x != nil {
 		return x.DatagramGuaranteedDelivery
+	}
+	return nil
+}
+
+func (x *TunnelProperties) GetAllowCrossRegionRouting() *wrapperspb.BoolValue {
+	if x != nil {
+		return x.AllowCrossRegionRouting
 	}
 	return nil
 }
@@ -1113,6 +1121,7 @@ type ProxyConnReq struct {
 	StreamId      string                  `protobuf:"bytes,2,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
 	Secret        *wrapperspb.StringValue `protobuf:"bytes,3,opt,name=secret,proto3" json:"secret,omitempty"`
 	SourceIp      *IpAddress              `protobuf:"bytes,4,opt,name=source_ip,json=sourceIp,proto3" json:"source_ip,omitempty"`
+	ProxyEndpoint *wrapperspb.StringValue `protobuf:"bytes,5,opt,name=proxy_endpoint,json=proxyEndpoint,proto3" json:"proxy_endpoint,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1171,6 +1180,13 @@ func (x *ProxyConnReq) GetSecret() *wrapperspb.StringValue {
 func (x *ProxyConnReq) GetSourceIp() *IpAddress {
 	if x != nil {
 		return x.SourceIp
+	}
+	return nil
+}
+
+func (x *ProxyConnReq) GetProxyEndpoint() *wrapperspb.StringValue {
+	if x != nil {
+		return x.ProxyEndpoint
 	}
 	return nil
 }
@@ -2046,7 +2062,7 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\x04plan\x18\x04 \x01(\v2\x1c.google.protobuf.StringValueR\x04plan\x128\n" +
 	"\bprovider\x18\x05 \x01(\v2\x1c.google.protobuf.StringValueR\bprovider\x124\n" +
 	"\x06region\x18\x06 \x01(\v2\x1c.google.protobuf.StringValueR\x06region\x124\n" +
-	"\x06update\x18\a \x01(\v2\x1c.google.protobuf.StringValueR\x06update\"\xde\x0e\n" +
+	"\x06update\x18\a \x01(\v2\x1c.google.protobuf.StringValueR\x06update\"\xc7\x0f\n" +
 	"\x10TunnelProperties\x12;\n" +
 	"\x02id\x18\x01 \x01(\v2\x1c.google.protobuf.StringValueB\r\x92\x82\x19\tread-onlyR\x02id\x12N\n" +
 	"\rcreation_date\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampB\r\x92\x82\x19\tread-onlyR\fcreationDate\x12@\n" +
@@ -2099,7 +2115,9 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\fupstream_tls\x18\x18 \x01(\v2\x1a.google.protobuf.BoolValueB\x0e\x92\x82\x19\n" +
 	"read-writeR\vupstreamTls\x12l\n" +
 	"\x1cdatagram_guaranteed_delivery\x18\x19 \x01(\v2\x1a.google.protobuf.BoolValueB\x0e\x92\x82\x19\n" +
-	"read-writeR\x1adatagramGuaranteedDelivery\x1a9\n" +
+	"read-writeR\x1adatagramGuaranteedDelivery\x12g\n" +
+	"\x1aallow_cross_region_routing\x18\x1a \x01(\v2\x1a.google.protobuf.BoolValueB\x0e\x92\x82\x19\n" +
+	"read-writeR\x17allowCrossRegionRouting\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"h\n" +
@@ -2127,12 +2145,13 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\x0eCloseTunnelReq\x12\x1b\n" +
 	"\ttunnel_id\x18\x01 \x01(\tR\btunnelId\"-\n" +
 	"\x0eCloseTunnelRsp\x12\x1b\n" +
-	"\ttunnel_id\x18\x01 \x01(\tR\btunnelId\"\xc1\x01\n" +
+	"\ttunnel_id\x18\x01 \x01(\tR\btunnelId\"\x86\x02\n" +
 	"\fProxyConnReq\x12\x1b\n" +
 	"\ttunnel_id\x18\x01 \x01(\tR\btunnelId\x12\x1b\n" +
 	"\tstream_id\x18\x02 \x01(\tR\bstreamId\x124\n" +
 	"\x06secret\x18\x03 \x01(\v2\x1c.google.protobuf.StringValueR\x06secret\x12A\n" +
-	"\tsource_ip\x18\x04 \x01(\v2$.rstream.io_rstrm.protobuf.IpAddressR\bsourceIp\"c\n" +
+	"\tsource_ip\x18\x04 \x01(\v2$.rstream.io_rstrm.protobuf.IpAddressR\bsourceIp\x12C\n" +
+	"\x0eproxy_endpoint\x18\x05 \x01(\v2\x1c.google.protobuf.StringValueR\rproxyEndpoint\"c\n" +
 	"\fProxyConnRsp\x12\x1b\n" +
 	"\tstream_id\x18\x01 \x01(\tR\bstreamId\x126\n" +
 	"\x05error\x18\x02 \x01(\v2 .rstream.io_rstrm.protobuf.ErrorR\x05error\"\xaf\x01\n" +
@@ -2193,7 +2212,7 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\x1dERROR_CODE_CAPACITY_EXHAUSTED\x10\xd86\x12\x18\n" +
 	"\x13ERROR_CODE_INTERNAL\x10\xa8F:I\n" +
 	"\x10protocol_version\x12\x1c.google.protobuf.FileOptions\x18\xb8\x8e\x03 \x01(\tR\x0fprotocolVersion:7\n" +
-	"\x06access\x12\x1d.google.protobuf.FieldOptions\x18\xa2\x90\x03 \x01(\tR\x06accessB\x0f\xc2\xf3\x18\x051.4.3Z\x04./pbb\x06proto3"
+	"\x06access\x12\x1d.google.protobuf.FieldOptions\x18\xa2\x90\x03 \x01(\tR\x06accessB\x0f\xc2\xf3\x18\x051.4.4Z\x04./pbb\x06proto3"
 
 var (
 	file_pb_rstream_proto_rawDescOnce sync.Once
@@ -2281,48 +2300,50 @@ var file_pb_rstream_proto_depIdxs = []int32{
 	29, // 34: rstream.io_rstrm.protobuf.TunnelProperties.port:type_name -> google.protobuf.UInt32Value
 	28, // 35: rstream.io_rstrm.protobuf.TunnelProperties.upstream_tls:type_name -> google.protobuf.BoolValue
 	28, // 36: rstream.io_rstrm.protobuf.TunnelProperties.datagram_guaranteed_delivery:type_name -> google.protobuf.BoolValue
-	3,  // 37: rstream.io_rstrm.protobuf.OpenControlChannelReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
-	25, // 38: rstream.io_rstrm.protobuf.OpenControlChannelRsp.ok:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok
-	2,  // 39: rstream.io_rstrm.protobuf.OpenControlChannelRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
-	5,  // 40: rstream.io_rstrm.protobuf.OpenTunnelReq.tunnel_properties:type_name -> rstream.io_rstrm.protobuf.TunnelProperties
-	5,  // 41: rstream.io_rstrm.protobuf.OpenTunnelRsp.tunnel_properties:type_name -> rstream.io_rstrm.protobuf.TunnelProperties
-	2,  // 42: rstream.io_rstrm.protobuf.OpenTunnelRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
-	26, // 43: rstream.io_rstrm.protobuf.ProxyConnReq.secret:type_name -> google.protobuf.StringValue
-	1,  // 44: rstream.io_rstrm.protobuf.ProxyConnReq.source_ip:type_name -> rstream.io_rstrm.protobuf.IpAddress
-	2,  // 45: rstream.io_rstrm.protobuf.ProxyConnRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
-	3,  // 46: rstream.io_rstrm.protobuf.ProxyReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
-	28, // 47: rstream.io_rstrm.protobuf.ProxyReq.zero_rtt:type_name -> google.protobuf.BoolValue
-	2,  // 48: rstream.io_rstrm.protobuf.ProxyRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
-	3,  // 49: rstream.io_rstrm.protobuf.StreamReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
-	28, // 50: rstream.io_rstrm.protobuf.StreamReq.zero_rtt:type_name -> google.protobuf.BoolValue
-	28, // 51: rstream.io_rstrm.protobuf.StreamReq.datagram_channel:type_name -> google.protobuf.BoolValue
-	2,  // 52: rstream.io_rstrm.protobuf.StreamRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
-	2,  // 53: rstream.io_rstrm.protobuf.DatagramChannelClose.error:type_name -> rstream.io_rstrm.protobuf.Error
-	6,  // 54: rstream.io_rstrm.protobuf.Message.open_control_channel_req:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelReq
-	7,  // 55: rstream.io_rstrm.protobuf.Message.open_control_channel_rsp:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelRsp
-	8,  // 56: rstream.io_rstrm.protobuf.Message.close_control_channel_req:type_name -> rstream.io_rstrm.protobuf.CloseControlChannelReq
-	9,  // 57: rstream.io_rstrm.protobuf.Message.close_control_channel_rsp:type_name -> rstream.io_rstrm.protobuf.CloseControlChannelRsp
-	10, // 58: rstream.io_rstrm.protobuf.Message.open_tunnel_req:type_name -> rstream.io_rstrm.protobuf.OpenTunnelReq
-	11, // 59: rstream.io_rstrm.protobuf.Message.open_tunnel_rsp:type_name -> rstream.io_rstrm.protobuf.OpenTunnelRsp
-	12, // 60: rstream.io_rstrm.protobuf.Message.close_tunnel_req:type_name -> rstream.io_rstrm.protobuf.CloseTunnelReq
-	13, // 61: rstream.io_rstrm.protobuf.Message.close_tunnel_rsp:type_name -> rstream.io_rstrm.protobuf.CloseTunnelRsp
-	14, // 62: rstream.io_rstrm.protobuf.Message.proxy_conn_req:type_name -> rstream.io_rstrm.protobuf.ProxyConnReq
-	15, // 63: rstream.io_rstrm.protobuf.Message.proxy_conn_rsp:type_name -> rstream.io_rstrm.protobuf.ProxyConnRsp
-	16, // 64: rstream.io_rstrm.protobuf.Message.proxy_req:type_name -> rstream.io_rstrm.protobuf.ProxyReq
-	17, // 65: rstream.io_rstrm.protobuf.Message.proxy_rsp:type_name -> rstream.io_rstrm.protobuf.ProxyRsp
-	18, // 66: rstream.io_rstrm.protobuf.Message.stream_req:type_name -> rstream.io_rstrm.protobuf.StreamReq
-	19, // 67: rstream.io_rstrm.protobuf.Message.stream_rsp:type_name -> rstream.io_rstrm.protobuf.StreamRsp
-	21, // 68: rstream.io_rstrm.protobuf.Message.heartbeat:type_name -> rstream.io_rstrm.protobuf.Heartbeat
-	22, // 69: rstream.io_rstrm.protobuf.Message.server_message:type_name -> rstream.io_rstrm.protobuf.ServerMessage
-	20, // 70: rstream.io_rstrm.protobuf.Message.datagram_channel_close:type_name -> rstream.io_rstrm.protobuf.DatagramChannelClose
-	4,  // 71: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.server_details:type_name -> rstream.io_rstrm.protobuf.ServerDetails
-	30, // 72: rstream.io_rstrm.protobuf.protocol_version:extendee -> google.protobuf.FileOptions
-	31, // 73: rstream.io_rstrm.protobuf.access:extendee -> google.protobuf.FieldOptions
-	74, // [74:74] is the sub-list for method output_type
-	74, // [74:74] is the sub-list for method input_type
-	74, // [74:74] is the sub-list for extension type_name
-	72, // [72:74] is the sub-list for extension extendee
-	0,  // [0:72] is the sub-list for field type_name
+	28, // 37: rstream.io_rstrm.protobuf.TunnelProperties.allow_cross_region_routing:type_name -> google.protobuf.BoolValue
+	3,  // 38: rstream.io_rstrm.protobuf.OpenControlChannelReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
+	25, // 39: rstream.io_rstrm.protobuf.OpenControlChannelRsp.ok:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok
+	2,  // 40: rstream.io_rstrm.protobuf.OpenControlChannelRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
+	5,  // 41: rstream.io_rstrm.protobuf.OpenTunnelReq.tunnel_properties:type_name -> rstream.io_rstrm.protobuf.TunnelProperties
+	5,  // 42: rstream.io_rstrm.protobuf.OpenTunnelRsp.tunnel_properties:type_name -> rstream.io_rstrm.protobuf.TunnelProperties
+	2,  // 43: rstream.io_rstrm.protobuf.OpenTunnelRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
+	26, // 44: rstream.io_rstrm.protobuf.ProxyConnReq.secret:type_name -> google.protobuf.StringValue
+	1,  // 45: rstream.io_rstrm.protobuf.ProxyConnReq.source_ip:type_name -> rstream.io_rstrm.protobuf.IpAddress
+	26, // 46: rstream.io_rstrm.protobuf.ProxyConnReq.proxy_endpoint:type_name -> google.protobuf.StringValue
+	2,  // 47: rstream.io_rstrm.protobuf.ProxyConnRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
+	3,  // 48: rstream.io_rstrm.protobuf.ProxyReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
+	28, // 49: rstream.io_rstrm.protobuf.ProxyReq.zero_rtt:type_name -> google.protobuf.BoolValue
+	2,  // 50: rstream.io_rstrm.protobuf.ProxyRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
+	3,  // 51: rstream.io_rstrm.protobuf.StreamReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
+	28, // 52: rstream.io_rstrm.protobuf.StreamReq.zero_rtt:type_name -> google.protobuf.BoolValue
+	28, // 53: rstream.io_rstrm.protobuf.StreamReq.datagram_channel:type_name -> google.protobuf.BoolValue
+	2,  // 54: rstream.io_rstrm.protobuf.StreamRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
+	2,  // 55: rstream.io_rstrm.protobuf.DatagramChannelClose.error:type_name -> rstream.io_rstrm.protobuf.Error
+	6,  // 56: rstream.io_rstrm.protobuf.Message.open_control_channel_req:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelReq
+	7,  // 57: rstream.io_rstrm.protobuf.Message.open_control_channel_rsp:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelRsp
+	8,  // 58: rstream.io_rstrm.protobuf.Message.close_control_channel_req:type_name -> rstream.io_rstrm.protobuf.CloseControlChannelReq
+	9,  // 59: rstream.io_rstrm.protobuf.Message.close_control_channel_rsp:type_name -> rstream.io_rstrm.protobuf.CloseControlChannelRsp
+	10, // 60: rstream.io_rstrm.protobuf.Message.open_tunnel_req:type_name -> rstream.io_rstrm.protobuf.OpenTunnelReq
+	11, // 61: rstream.io_rstrm.protobuf.Message.open_tunnel_rsp:type_name -> rstream.io_rstrm.protobuf.OpenTunnelRsp
+	12, // 62: rstream.io_rstrm.protobuf.Message.close_tunnel_req:type_name -> rstream.io_rstrm.protobuf.CloseTunnelReq
+	13, // 63: rstream.io_rstrm.protobuf.Message.close_tunnel_rsp:type_name -> rstream.io_rstrm.protobuf.CloseTunnelRsp
+	14, // 64: rstream.io_rstrm.protobuf.Message.proxy_conn_req:type_name -> rstream.io_rstrm.protobuf.ProxyConnReq
+	15, // 65: rstream.io_rstrm.protobuf.Message.proxy_conn_rsp:type_name -> rstream.io_rstrm.protobuf.ProxyConnRsp
+	16, // 66: rstream.io_rstrm.protobuf.Message.proxy_req:type_name -> rstream.io_rstrm.protobuf.ProxyReq
+	17, // 67: rstream.io_rstrm.protobuf.Message.proxy_rsp:type_name -> rstream.io_rstrm.protobuf.ProxyRsp
+	18, // 68: rstream.io_rstrm.protobuf.Message.stream_req:type_name -> rstream.io_rstrm.protobuf.StreamReq
+	19, // 69: rstream.io_rstrm.protobuf.Message.stream_rsp:type_name -> rstream.io_rstrm.protobuf.StreamRsp
+	21, // 70: rstream.io_rstrm.protobuf.Message.heartbeat:type_name -> rstream.io_rstrm.protobuf.Heartbeat
+	22, // 71: rstream.io_rstrm.protobuf.Message.server_message:type_name -> rstream.io_rstrm.protobuf.ServerMessage
+	20, // 72: rstream.io_rstrm.protobuf.Message.datagram_channel_close:type_name -> rstream.io_rstrm.protobuf.DatagramChannelClose
+	4,  // 73: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.server_details:type_name -> rstream.io_rstrm.protobuf.ServerDetails
+	30, // 74: rstream.io_rstrm.protobuf.protocol_version:extendee -> google.protobuf.FileOptions
+	31, // 75: rstream.io_rstrm.protobuf.access:extendee -> google.protobuf.FieldOptions
+	76, // [76:76] is the sub-list for method output_type
+	76, // [76:76] is the sub-list for method input_type
+	76, // [76:76] is the sub-list for extension type_name
+	74, // [74:76] is the sub-list for extension extendee
+	0,  // [0:74] is the sub-list for field type_name
 }
 
 func init() { file_pb_rstream_proto_init() }

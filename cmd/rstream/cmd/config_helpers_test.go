@@ -3,12 +3,16 @@
 package cmd
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/controlplane"
 	"github.com/spf13/cobra"
 )
 
@@ -21,6 +25,7 @@ func clearRstreamTestEnv(t *testing.T) {
 		"RSTREAM_CONTEXT",
 		"RSTREAM_ENGINE",
 		"RSTREAM_QUIC_TRANSPORT",
+		"RSTREAM_REGION",
 		"RSTREAM_TUNNEL_TRANSPORT",
 		"RSTREAM_WEBTTY_AUTH_TOKEN",
 		"RSTREAM_WEBTTY_CONFIG",
@@ -144,6 +149,99 @@ func TestResolveRuntimeLoadsConfigTokenAndTransport(t *testing.T) {
 	}
 }
 
+func TestResolveRuntimeSelectsAuthorizedRegion(t *testing.T) {
+	clearRstreamTestEnv(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != "/api/projects/tunnels/resolve/project" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer control-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(controlplane.Project{
+			Endpoint: "project",
+			RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{
+				{Provider: "aws", Region: "eu-west-3", Domain: "eu.example.test", EnginePort: 8443},
+				{Provider: "aws", Region: "us-east-1", Domain: "us.example.test", EnginePort: 443},
+			},
+		})
+	}))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	cfg := config.Config{
+		Defaults: config.Defaults{Context: &config.DefaultContext{Name: "global"}},
+		Environments: []config.Environment{{APIURL: server.URL, Auth: &config.Auth{Token: &config.Token{Storage: &config.TokenStorage{
+			Kind:  config.TokenStorageInline,
+			Value: "control-token",
+		}}}}},
+		Contexts: []config.Context{{Name: "global", APIURL: server.URL, Engine: "project.global.example.test:443", ProjectEndpoint: "project"}},
+	}
+	if err := config.WriteAtomic(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	command := runtimeFlagsCommand()
+	mustSetFlag(t, command, "region", "US-EAST-1")
+	t.Setenv("RSTREAM_CONFIG", path)
+	runtime, err := resolveRuntime(command, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.Resolved.Engine != "project.us.example.test:443" || runtime.Resolved.Region != "us-east-1" {
+		t.Fatalf("unexpected regional runtime: %#v", runtime.Resolved)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want 1", requests)
+	}
+}
+
+func TestResolveRuntimeSelectsAuthorizedRegionWithContextToken(t *testing.T) {
+	clearRstreamTestEnv(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer context-token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(controlplane.Project{
+			Endpoint: "project",
+			RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{
+				{Provider: "aws", Region: "us-east-1", Domain: "us.example.test", EnginePort: 443},
+			},
+		})
+	}))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	cfg := config.Config{
+		Defaults: config.Defaults{Context: &config.DefaultContext{Name: "global"}},
+		Contexts: []config.Context{{
+			Name:            "global",
+			APIURL:          server.URL,
+			Engine:          "project.global.example.test:443",
+			ProjectEndpoint: "project",
+			Auth: &config.Auth{Token: &config.Token{Storage: &config.TokenStorage{
+				Kind:  config.TokenStorageInline,
+				Value: "context-token",
+			}}},
+		}},
+	}
+	if err := config.WriteAtomic(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	command := runtimeFlagsCommand()
+	mustSetFlag(t, command, "region", "us-east-1")
+	t.Setenv("RSTREAM_CONFIG", path)
+	runtime, err := resolveRuntime(command, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.Resolved.Engine != "project.us.example.test:443" {
+		t.Fatalf("engine = %q, want regional engine", runtime.Resolved.Engine)
+	}
+}
+
 func TestResolveControlPlaneIgnoresDefaultContext(t *testing.T) {
 	clearRstreamTestEnv(t)
 	path := filepath.Join(t.TempDir(), "config.yaml")
@@ -221,6 +319,7 @@ func runtimeFlagsCommand() *cobra.Command {
 	command.Flags().String("config", "", "")
 	command.Flags().String("api-url", "", "")
 	command.Flags().String("context", "", "")
+	command.Flags().String("region", "", "")
 	command.Flags().String("tunnel-transport", "", "")
 	return command
 }
