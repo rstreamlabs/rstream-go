@@ -210,7 +210,7 @@ func projectResourceClient(cmd *cobra.Command) (*controlplane.Client, string, er
 	if err != nil {
 		return nil, "", err
 	}
-	client := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+	client := newRuntimeControlPlaneClient(runtime.Resolved)
 	if err := client.RequireToken(); err != nil {
 		return nil, "", err
 	}

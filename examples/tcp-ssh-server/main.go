@@ -116,7 +116,7 @@ func handleSSHConnection(conn net.Conn, serverConfig *ssh.ServerConfig) {
 	}
 }
 
-func run(ctx context.Context, client *rstream.Client, name, username, password string, reservedPort uint32) error {
+func run(ctx context.Context, client *rstream.Client, name, username, password string, reservedPort uint32, allowCrossRegionRouting bool) error {
 	serverConfig, publicKey, err := newSSHServerConfig(username, password)
 	if err != nil {
 		return err
@@ -129,6 +129,9 @@ func run(ctx context.Context, client *rstream.Client, name, username, password s
 	properties := rstream.TunnelProperties{Name: rstream.StringPtr(name), Protocol: rstream.ProtocolPtr(rstream.ProtocolTCP)}
 	if reservedPort != 0 {
 		properties.Port = rstream.Uint32Ptr(reservedPort)
+	}
+	if allowCrossRegionRouting {
+		properties.AllowCrossRegionRouting = rstream.BoolPtr(true)
 	}
 	tunnel, err := control.CreateTunnel(ctx, properties)
 	if err != nil {
@@ -167,6 +170,7 @@ func main() {
 	name := flag.String("name", "tcp-ssh", "tunnel name")
 	username := flag.String("user", "rstream", "SSH username")
 	reservedPort := flag.Uint("tcp-port", 0, "reserved published TCP port")
+	allowCrossRegionRouting := flag.Bool("allow-cross-region-routing", false, "allow cross-region routing when ingress and owner are in different regions")
 	flag.Parse()
 	if *reservedPort > 65535 {
 		log.Fatal("TCP port must be between 1 and 65535")
@@ -181,7 +185,7 @@ func main() {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	if err := run(ctx, client, *name, *username, password, uint32(*reservedPort)); err != nil {
+	if err := run(ctx, client, *name, *username, password, uint32(*reservedPort), *allowCrossRegionRouting); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }

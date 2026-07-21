@@ -12,12 +12,17 @@ import (
 	"github.com/rstreamlabs/rstream-go/controlplane"
 )
 
-func validateToken(ctx context.Context, apiURL, token string) error {
+func newRuntimeControlPlaneClient(resolved config.Resolved, opts ...controlplane.Option) *controlplane.Client {
+	opts = append(opts, controlplane.WithHeaders(resolved.ControlPlaneHeaders))
+	return controlplane.NewClient(resolved.APIURL, resolved.Token, opts...)
+}
+
+func validateToken(ctx context.Context, apiURL, token string, headers map[string]string) error {
 	logger := slog.With("component", "control_plane_api.validate-token")
 	if strings.TrimSpace(token) == "" {
 		return errors.New("token is required")
 	}
-	client := controlplane.NewClient(apiURL, token, controlplane.WithLogger(logger))
+	client := controlplane.NewClient(apiURL, token, controlplane.WithHeaders(headers), controlplane.WithLogger(logger))
 	whoami, err := client.Whoami(ctx)
 	if err != nil {
 		if errors.Is(err, controlplane.ErrUnauthorized) {

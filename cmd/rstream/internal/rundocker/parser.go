@@ -150,6 +150,13 @@ func (l *labelSpec) apply(key, value string) error {
 		}
 		l.props.Port = &port
 		return nil
+	case key == "allow-cross-region-routing":
+		v, err := parseBool(value)
+		if err != nil {
+			return err
+		}
+		l.props.AllowCrossRegionRouting = &v
+		return nil
 	case key == "upstream-tls":
 		v, err := parseBool(value)
 		if err != nil {
@@ -414,6 +421,9 @@ func normalizePublishedTCP(props *rstream.TunnelProperties) error {
 	if props.Protocol == nil || *props.Protocol != rstream.ProtocolTCP {
 		if props.Port != nil {
 			return fmt.Errorf("port requires protocol %q", rstream.ProtocolTCP)
+		}
+		if props.AllowCrossRegionRouting != nil {
+			return fmt.Errorf("allow-cross-region-routing requires protocol %q", rstream.ProtocolTCP)
 		}
 		return nil
 	}

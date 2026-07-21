@@ -63,6 +63,71 @@ func TestResolvePrecedence(t *testing.T) {
 	}
 }
 
+func TestResolveRegionPrecedence(t *testing.T) {
+	cfg := Config{
+		Defaults: Defaults{Context: &DefaultContext{Name: "global"}},
+		Contexts: []Context{{
+			Name:            "global",
+			Engine:          "project.global.example.test:443",
+			ProjectEndpoint: "project",
+			Region:          "eu-west-3",
+		}},
+	}
+	resolved, err := Resolve(ResolveInput{Config: cfg, EnvRegion: "us-east-1", FlagRegion: "EU-CENTRAL-1", RequireEngine: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Region != "eu-central-1" {
+		t.Fatalf("region = %q, want eu-central-1", resolved.Region)
+	}
+	resolved, err = Resolve(ResolveInput{Config: cfg, RequireEngine: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Region != "eu-west-3" {
+		t.Fatalf("region = %q, want eu-west-3", resolved.Region)
+	}
+}
+
+func TestResolveRegionRejectsUnsafeConfigurations(t *testing.T) {
+	cfg := Config{
+		Defaults: Defaults{Context: &DefaultContext{Name: "global"}},
+		Contexts: []Context{{Name: "global", ProjectEndpoint: "project"}},
+	}
+	_, err := Resolve(ResolveInput{Config: cfg, FlagEngine: "direct.example.test:443", FlagRegion: "eu-west-3"})
+	if err == nil || !strings.Contains(err.Error(), "explicit engine override") {
+		t.Fatalf("expected engine conflict, got %v", err)
+	}
+	_, err = Resolve(ResolveInput{Config: Config{}, FlagRegion: "eu-west-3"})
+	if err == nil || !strings.Contains(err.Error(), "managed project endpoint") {
+		t.Fatalf("expected managed endpoint error, got %v", err)
+	}
+	_, err = Resolve(ResolveInput{Config: cfg, FlagRegion: "eu west 3"})
+	if err == nil || !strings.Contains(err.Error(), "can only contain") {
+		t.Fatalf("expected invalid region error, got %v", err)
+	}
+}
+
+func TestResolveControlPlaneHeaders(t *testing.T) {
+	cfg := Config{Environments: []Environment{{APIURL: "https://rstream.io", Headers: map[string]string{"X-Environment": "stored", "X-Override": "stored"}}}}
+	resolved, err := Resolve(ResolveInput{Config: cfg, EnvControlPlaneHeaders: `{"x-override":"runtime"}`})
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if len(resolved.ControlPlaneHeaders) != 2 || resolved.ControlPlaneHeaders["X-Environment"] != "stored" || resolved.ControlPlaneHeaders["X-Override"] != "runtime" {
+		t.Fatalf("headers = %#v", resolved.ControlPlaneHeaders)
+	}
+	if _, err := Resolve(ResolveInput{Config: cfg, EnvControlPlaneHeaders: `{`}); err == nil || !strings.Contains(err.Error(), "invalid RSTREAM_CONTROL_PLANE_HEADERS JSON") {
+		t.Fatalf("Resolve() error = %v, want JSON error", err)
+	}
+	if _, err := Resolve(ResolveInput{Config: Config{Environments: []Environment{{APIURL: "https://rstream.io", Headers: map[string]string{"Authorization": "bad"}}}}}); err == nil || !strings.Contains(err.Error(), "reserved control plane header") {
+		t.Fatalf("Resolve() error = %v, want reserved header error", err)
+	}
+	if _, err := Resolve(ResolveInput{Config: Config{}, EnvControlPlaneHeaders: `{"X-Test":"first","x-test":"second"}`}); err == nil || !strings.Contains(err.Error(), "duplicate control plane header") {
+		t.Fatalf("Resolve() error = %v, want duplicate header error", err)
+	}
+}
+
 func TestResolveUnlinkedContextDoesNotInheritEnvToken(t *testing.T) {
 	cfg := Config{
 		Defaults: Defaults{

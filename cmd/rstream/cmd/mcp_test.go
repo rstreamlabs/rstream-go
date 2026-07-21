@@ -677,11 +677,19 @@ func TestMCPCreateProjectArgsRequiresExplicitBillingInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mcpCreateProjectArgs returned error: %v", err)
 	}
-	if workspaceID != "ws1" || request.Name != "Codex Demo" || request.Provider != "aws" || request.Region != "eu-west-3" || request.Plan != "basic" || request.CreationFingerprint != "fingerprint" {
+	if workspaceID != "ws1" || request.Name != "Codex Demo" || request.Placement != "regional" || request.Provider != "aws" || request.Region != "eu-west-3" || request.Plan != "basic" || request.CreationFingerprint != "fingerprint" {
 		t.Fatalf("unexpected request: workspace=%q request=%#v", workspaceID, request)
 	}
 	if !strings.HasPrefix(request.IdempotencyKey, "mcp:") {
 		t.Fatalf("missing generated idempotency key: %q", request.IdempotencyKey)
+	}
+	globalArgs := map[string]json.RawMessage{"workspace_id": json.RawMessage(`"ws1"`), "name": json.RawMessage(`"Global"`), "placement": json.RawMessage(`"global"`), "plan": json.RawMessage(`"pro"`), "creation_fingerprint": json.RawMessage(`"fingerprint"`)}
+	_, globalRequest, err := mcpCreateProjectArgs(globalArgs)
+	if err != nil {
+		t.Fatalf("mcpCreateProjectArgs(global) returned error: %v", err)
+	}
+	if globalRequest.Placement != "global" || globalRequest.Provider != "" || globalRequest.Region != "" {
+		t.Fatalf("unexpected global request: %#v", globalRequest)
 	}
 	delete(args, "creation_fingerprint")
 	if _, _, err := mcpCreateProjectArgs(args); err == nil {

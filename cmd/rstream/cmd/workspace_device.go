@@ -179,7 +179,7 @@ func runWorkspaceDeviceEnroll(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	client := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+	client := newRuntimeControlPlaneClient(runtime.Resolved)
 	workspace, err := workspaceDeviceWorkspace(cmd, runtime, client)
 	if err != nil {
 		return err
@@ -229,7 +229,7 @@ func runWorkspaceDeviceRotate(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	client := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+	client := newRuntimeControlPlaneClient(runtime.Resolved)
 	workspace, err := workspaceDeviceWorkspace(cmd, runtime, client)
 	if err != nil {
 		return err
@@ -276,7 +276,7 @@ func runWorkspaceDeviceStatus(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	client := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+	client := newRuntimeControlPlaneClient(runtime.Resolved)
 	workspace, err := workspaceDeviceWorkspace(cmd, runtime, client)
 	if err != nil {
 		return err

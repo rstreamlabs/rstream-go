@@ -21,17 +21,26 @@ type Project struct {
 	Name        string `json:"name"`
 	Endpoint    string `json:"endpoint"`
 	// Deprecated: use 'Domain' and 'EnginePort'.
-	URL        string `json:"url"`
-	Domain     string `json:"domain,omitempty"`
-	EnginePort int    `json:"enginePort,omitempty"`
-	Status     string `json:"status"`
+	URL               string                    `json:"url"`
+	Domain            string                    `json:"domain,omitempty"`
+	EnginePort        int                       `json:"enginePort,omitempty"`
+	Status            string                    `json:"status"`
+	Placement         string                    `json:"placement,omitempty"`
+	RegionalEndpoints []ProjectRegionalEndpoint `json:"regionalEndpoints,omitempty"`
+	Provider          string                    `json:"provider"`
+	Region            string                    `json:"region,omitempty"`
+	Plan              string                    `json:"plan"`
+	Deployment        string                    `json:"deployment"`
+	TurnDomain        string                    `json:"turnDomain,omitempty"`
+	TurnPort          int                       `json:"turnPort,omitempty"`
+	TurnsPort         int                       `json:"turnsPort,omitempty"`
+}
+
+type ProjectRegionalEndpoint struct {
 	Provider   string `json:"provider"`
-	Region     string `json:"region,omitempty"`
-	Plan       string `json:"plan"`
-	Deployment string `json:"deployment"`
-	TurnDomain string `json:"turnDomain,omitempty"`
-	TurnPort   int    `json:"turnPort,omitempty"`
-	TurnsPort  int    `json:"turnsPort,omitempty"`
+	Region     string `json:"region"`
+	Domain     string `json:"domain"`
+	EnginePort int    `json:"enginePort"`
 }
 
 type Workspace struct {
@@ -104,14 +113,16 @@ type ProjectCreationOption struct {
 	UnavailableReason     string                       `json:"unavailableReason,omitempty"`
 	BillingImpact         ProjectCreationBillingImpact `json:"billingImpact"`
 	BillingAction         ProjectCreationBillingAction `json:"billingAction"`
+	Placements            []string                     `json:"placements"`
 	Providers             []ProjectCreationProvider    `json:"providers"`
 	CreationFingerprint   string                       `json:"creationFingerprint"`
 }
 
 type RecommendedProjectCreationOption struct {
-	Plan     string `json:"plan"`
-	Provider string `json:"provider"`
-	Region   string `json:"region"`
+	Placement string `json:"placement"`
+	Plan      string `json:"plan"`
+	Provider  string `json:"provider,omitempty"`
+	Region    string `json:"region,omitempty"`
 }
 
 type ProjectCreationOptionsResponse struct {
@@ -123,8 +134,9 @@ type ProjectPlan map[string]any
 
 type CreateProjectRequest struct {
 	Name                string `json:"name"`
-	Provider            string `json:"provider"`
-	Region              string `json:"region"`
+	Placement           string `json:"placement,omitempty"`
+	Provider            string `json:"provider,omitempty"`
+	Region              string `json:"region,omitempty"`
 	Plan                string `json:"plan"`
 	CreationFingerprint string `json:"creationFingerprint"`
 	IdempotencyKey      string `json:"idempotencyKey"`

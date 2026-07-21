@@ -80,15 +80,16 @@ func CreateTURNCredentialsFromEnv(
 		resolvedMode = &apiMode
 	}
 	return rstream.CreateTURNCredentials(ctx, rstream.CreateTURNCredentialsOptions{
-		APIURL:          resolution.Resolved.APIURL,
-		Token:           resolution.Resolved.Token,
-		ProjectID:       strings.TrimSpace(resolvedOpts.ProjectID),
-		ProjectEndpoint: projectEndpoint,
-		ClusterDomain:   clusterDomain,
-		TURNPort:        turnPort,
-		TURNSPort:       turnsPort,
-		TTL:             resolvedOpts.TTL,
-		Mode:            resolvedMode,
+		APIURL:              resolution.Resolved.APIURL,
+		Token:               resolution.Resolved.Token,
+		ProjectID:           strings.TrimSpace(resolvedOpts.ProjectID),
+		ProjectEndpoint:     projectEndpoint,
+		ClusterDomain:       clusterDomain,
+		TURNPort:            turnPort,
+		TURNSPort:           turnsPort,
+		TTL:                 resolvedOpts.TTL,
+		Mode:                resolvedMode,
+		ControlPlaneHeaders: resolution.Resolved.ControlPlaneHeaders,
 	})
 }
 

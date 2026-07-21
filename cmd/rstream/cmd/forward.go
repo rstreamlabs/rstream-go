@@ -16,6 +16,7 @@ import (
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/cmd/logging"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/streamrelay"
 	"github.com/spf13/cobra"
 )
 
@@ -129,6 +130,7 @@ func init() {
 	forwardCmd.Flags().Bool("http", false, "use HTTP protocol")
 	forwardCmd.MarkFlagsMutuallyExclusive("tls", "tcp", "dtls", "quic", "http")
 	forwardCmd.Flags().Uint32("tcp-port", 0, "use a reserved published TCP port")
+	forwardCmd.Flags().Bool("allow-cross-region-routing", false, "allow cross-region routing for a published TCP tunnel")
 	forwardCmd.Flags().StringArray("label", nil, "set tunnel labels (key=value, might be specified multiple times)")
 	forwardCmd.Flags().String("geoip", "", "comma-separated allowed countries (ISO 3166-1 alpha-2)")
 	forwardCmd.Flags().String("trusted-ips", "", "comma-separated allowed IP/CIDR ranges")
@@ -274,6 +276,9 @@ func (s *forwardCtx) run(ctx context.Context) error {
 		if err == nil {
 			return nil
 		}
+		if !forwardRetryableError(err) {
+			return err
+		}
 		if s.AutoReconnect != nil && !*s.AutoReconnect {
 			return err
 		}
@@ -286,6 +291,17 @@ func (s *forwardCtx) run(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+}
+
+func forwardRetryableError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var engineErr *rstream.EngineError
+	if errors.As(err, &engineErr) {
+		return engineErr.Retryable()
+	}
+	return true
 }
 
 func (s *forwardCtx) runOnce(ctx context.Context) error {
@@ -398,10 +414,7 @@ func (s *forwardCtx) proxyTCP(inbound net.Conn) {
 			s.Logger.Error("Dial error", slog.String("host", s.Host), slog.String("port", s.Port), slog.String("error", err.Error()))
 		} else {
 			defer outbound.Close()
-			done := make(chan struct{}, 2)
-			go func() { _, _ = io.Copy(outbound, inbound); done <- struct{}{} }()
-			go func() { _, _ = io.Copy(inbound, outbound); done <- struct{}{} }()
-			<-done
+			streamrelay.Bidirectional(inbound, outbound)
 		}
 	})
 }

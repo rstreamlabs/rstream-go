@@ -153,8 +153,12 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 	trustedIPsSlice := getStringSlice(cmd, "trusted-ips")
 	hostnamePtr := getStringPtr(cmd, "host")
 	tcpPortPtr := getUint32Ptr(cmd, "tcp-port")
+	allowCrossRegionRoutingPtr := getBoolPtr(cmd, "allow-cross-region-routing")
 	if tcpPortPtr != nil && (protocol == nil || *protocol != rstream.ProtocolTCP) {
 		return nil, fmt.Errorf("--tcp-port requires --tcp")
+	}
+	if allowCrossRegionRoutingPtr != nil && (protocol == nil || *protocol != rstream.ProtocolTCP) {
+		return nil, fmt.Errorf("--allow-cross-region-routing requires --tcp")
 	}
 	if tcpPortPtr != nil && *tcpPortPtr == 0 {
 		return nil, fmt.Errorf("--tcp-port must be between 1 and 65535")
@@ -245,6 +249,7 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 		TrustedIPs:                 trustedIPsSlice,
 		Hostname:                   hostnamePtr,
 		Port:                       tcpPortPtr,
+		AllowCrossRegionRouting:    allowCrossRegionRoutingPtr,
 		TLSMode:                    tlsModePtr,
 		TLSALPNs:                   tlsALPNSlice,
 		TLSMinVersion:              tlsMinVersionPtr,

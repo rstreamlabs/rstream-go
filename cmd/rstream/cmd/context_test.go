@@ -3,10 +3,16 @@
 package cmd
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/controlplane"
 	"github.com/spf13/cobra"
 )
 
@@ -170,6 +176,51 @@ func TestSetAndRedactContextToken(t *testing.T) {
 	}
 	if ctx.Auth == nil || ctx.Auth.Token == nil {
 		t.Fatalf("redactContext should not mutate original context auth")
+	}
+}
+
+func TestContextCreateUsesSuppliedTokenForProjectLookup(t *testing.T) {
+	clearRstreamTestEnv(t)
+	const token = "context-token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/projects/tunnels/resolve/1234abcd" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer "+token {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(controlplane.Project{Endpoint: "1234abcd", Domain: "global.example.test", EnginePort: 443, RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{Provider: "aws", Region: "us-east-1", Domain: "us.example.test", EnginePort: 8443}}})
+	}))
+	defer server.Close()
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config.yaml")
+	tokenPath := filepath.Join(directory, "token")
+	if err := os.WriteFile(tokenPath, []byte(token), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := newRootCmd()
+	rootCmd.RemoveCommand(contextCmd)
+	root.AddCommand(contextCmd)
+	t.Cleanup(func() {
+		root.RemoveCommand(contextCmd)
+		rootCmd.AddCommand(contextCmd)
+	})
+	root.SetArgs([]string{"context", "create", "edge-us", "--config", configPath, "--api-url", server.URL, "--project-endpoint", "1234abcd", "--token-file", tokenPath, "--region", "us-east-1", "--default"})
+	if err := root.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("context create error = %v", err)
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, _, err := cfg.FindContextByName("edge-us")
+	if err != nil || created == nil {
+		t.Fatalf("created context = %#v, %v", created, err)
+	}
+	if created.Engine != "1234abcd.global.example.test:443" || created.Region != "us-east-1" || created.Auth == nil || created.Auth.Token == nil || created.Auth.Token.Storage == nil || created.Auth.Token.Storage.Value != token {
+		t.Fatalf("created context = %#v", redactContext(*created))
 	}
 }
 

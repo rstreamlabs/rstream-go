@@ -82,7 +82,7 @@ func mcpPrepareRuntimeConfig(ctx context.Context, args map[string]json.RawMessag
 	if err != nil {
 		return nil, err
 	}
-	client := controlplane.NewClient(controlRuntime.Resolved.APIURL, controlRuntime.Resolved.Token)
+	client := newRuntimeControlPlaneClient(controlRuntime.Resolved)
 	project, err := mcpResolveRuntimeProject(ctx, client, controlRuntime.Config, args)
 	if err != nil {
 		return nil, err

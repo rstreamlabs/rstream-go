@@ -233,6 +233,10 @@ func webTTYServerRetryableError(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
+	var engineErr *rstream.EngineError
+	if errors.As(err, &engineErr) {
+		return engineErr.Retryable()
+	}
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
 		return true
 	}
@@ -1526,7 +1530,7 @@ func webTTYClientRuntimeE2EContextFromServerInfo(ctx context.Context, runtime *r
 	if runtime == nil || runtime.Resolved.Context == nil || strings.TrimSpace(runtime.Resolved.Context.ProjectEndpoint) == "" {
 		return nil, nil
 	}
-	controlClient := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+	controlClient := newRuntimeControlPlaneClient(runtime.Resolved)
 	project, ok := webTTYProjectFromRuntimeServerInfo(runtime, &server)
 	if !ok {
 		var err error
@@ -2386,7 +2390,7 @@ func resolveWebTTYClientRstream(ctx context.Context, runtime *resolvedRuntime, r
 	if runtime == nil || runtime.Resolved.Context == nil || strings.TrimSpace(runtime.Resolved.Context.ProjectEndpoint) == "" {
 		return webTTYClientRstreamResolution{URL: urlValue, Scope: scope}, nil
 	}
-	controlClient := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+	controlClient := newRuntimeControlPlaneClient(runtime.Resolved)
 	project, ok := webTTYProjectFromRuntimeServerInfo(runtime, serverInfo)
 	if !ok {
 		var err error
