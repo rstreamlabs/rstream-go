@@ -39,7 +39,7 @@ func mcpControlPlaneClient() (*controlplane.Client, *resolvedRuntime, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token), runtime, nil
+	return newRuntimeControlPlaneClient(runtime.Resolved), runtime, nil
 }
 
 func mcpContextList(args map[string]json.RawMessage) (map[string]any, error) {
@@ -1033,11 +1033,23 @@ func mcpCreateProjectArgs(args map[string]json.RawMessage) (string, controlplane
 	if request.Name, err = mcpRequiredStringArg(args, "name"); err != nil {
 		return "", request, err
 	}
-	if request.Provider, err = mcpRequiredStringArg(args, "provider"); err != nil {
+	if request.Placement, err = mcpOptionalStringArg(args, "placement", "regional"); err != nil {
 		return "", request, err
 	}
-	if request.Region, err = mcpRequiredStringArg(args, "region"); err != nil {
+	if request.Provider, err = mcpOptionalStringArg(args, "provider", ""); err != nil {
 		return "", request, err
+	}
+	if request.Region, err = mcpOptionalStringArg(args, "region", ""); err != nil {
+		return "", request, err
+	}
+	if request.Placement != "regional" && request.Placement != "global" {
+		return "", request, fmt.Errorf("placement must be global or regional")
+	}
+	if request.Placement == "regional" && (request.Provider == "" || request.Region == "") {
+		return "", request, fmt.Errorf("provider and region are required for regional placement")
+	}
+	if request.Placement == "global" && (request.Provider != "" || request.Region != "") {
+		return "", request, fmt.Errorf("provider and region must be omitted for global placement")
 	}
 	if request.Plan, err = mcpRequiredStringArg(args, "plan"); err != nil {
 		return "", request, err

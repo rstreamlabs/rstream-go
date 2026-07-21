@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/big"
 	"net"
@@ -411,6 +412,16 @@ func TestWebTTYServerRetryableError(t *testing.T) {
 			name: "closed network listener",
 			err:  net.ErrClosed,
 			want: true,
+		},
+		{
+			name: "engine service unavailable",
+			err:  fmt.Errorf("create tunnel: %w", &rstream.EngineError{Code: rstream.EngineErrorCodeServiceUnavailable}),
+			want: true,
+		},
+		{
+			name: "engine feature unavailable",
+			err:  &rstream.EngineError{Code: rstream.EngineErrorCodeFeatureNotAvailable},
+			want: false,
 		},
 		{
 			name: "context canceled",

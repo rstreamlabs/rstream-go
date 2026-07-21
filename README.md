@@ -153,8 +153,16 @@ These variables are shared across CLI and SDK configuration resolution. Prefer c
 - `RSTREAM_MTLS_CERT_FILE`: Client certificate file for mTLS agent authentication.
 - `RSTREAM_MTLS_KEY_FILE`: Client private key file for mTLS agent authentication.
 - `RSTREAM_API_URL`: Override the Control plane API URL.
+- `RSTREAM_REGION`: Select an authorized region for a managed project.
+- `RSTREAM_CONTROL_PLANE_HEADERS`: Add Control plane request headers as a JSON object.
 
 Resolution behavior follows the same model used by `config.NewClientFromEnv()`: explicit SDK options are evaluated first, then environment overrides, then context/environment values from the config file. `RSTREAM_CONFIG` selects the config file path before fallback to the default config location. Token authentication and mTLS agent authentication are mutually exclusive for the control-channel connection. When the mTLS certificate and key variables are set, config-derived tokens are not used for that connection; setting mTLS variables together with `RSTREAM_AUTHENTICATION_TOKEN` is an error. Engine HTTP API requests use token authentication.
+
+Region selection requires a managed project endpoint and cannot be combined
+with an explicit engine override. Control plane headers are intended for an
+additional deployment access layer. Authentication, forwarding, and hop-by-hop
+headers are reserved; malformed values and case-insensitive duplicates are
+rejected before network I/O.
 
 ## Usage
 

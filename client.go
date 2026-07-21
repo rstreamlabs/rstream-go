@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/rstreamlabs/rstream-go/pb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 type Client struct {
@@ -157,6 +158,10 @@ func (c *Client) DialEngineHTTP1(ctx context.Context, addr string) (net.Conn, er
 }
 
 func (c *Client) dialEngineWithTransport(ctx context.Context, engine *string, nextProtos *[]string, override Dialer) (net.Conn, error) {
+	return c.dialEngineWithTransportConfig(ctx, engine, nextProtos, override, c.TLSClientConfig)
+}
+
+func (c *Client) dialEngineWithTransportConfig(ctx context.Context, engine *string, nextProtos *[]string, override Dialer, clientTLSConfig *tls.Config) (net.Conn, error) {
 	var err error
 	if engine == nil {
 		engine, err = c.getEngine()
@@ -168,7 +173,7 @@ func (c *Client) dialEngineWithTransport(ctx context.Context, engine *string, ne
 	if isNilDialer(transport) {
 		transport = c.defaultTunnelTransport()
 	}
-	tlsCfg := c.TLSClientConfig
+	tlsCfg := clientTLSConfig
 	if tlsCfg == nil {
 		tlsCfg = &tls.Config{}
 	} else {
@@ -217,16 +222,30 @@ func datagramTransport(transport Dialer) (datagramChannelRegistry, DatagramProvi
 type dialType string
 
 const (
-	dialTypeProxyReq  dialType = "proxy_req"
-	dialTypeStreamReq dialType = "stream_req"
+	dialTypeProxyReq               dialType = "proxy_req"
+	dialTypeStreamReq              dialType = "stream_req"
+	proxyConnectionDeliveryTimeout          = 5 * time.Second
 )
 
 func (c *Client) dial(ctx context.Context, dialType dialType, raddr Addr, token *string) (net.Conn, error) {
-	engine, err := c.getEngine()
+	return c.dialEndpoint(ctx, dialType, nil, raddr, token, nil)
+}
+
+func (c *Client) dialEndpoint(ctx context.Context, dialType dialType, endpoint *string, raddr Addr, token *string, transport Dialer) (net.Conn, error) {
+	engine := endpoint
+	var err error
+	if engine == nil {
+		engine, err = c.getEngine()
+	}
 	if err != nil {
 		return nil, err
 	}
-	conn, err := c.dialEngine(ctx, engine, nil)
+	clientTLSConfig := c.TLSClientConfig
+	if endpoint != nil && clientTLSConfig != nil {
+		clientTLSConfig = clientTLSConfig.Clone()
+		clientTLSConfig.ServerName = ""
+	}
+	conn, err := c.dialEngineWithTransportConfig(ctx, engine, nil, transport, clientTLSConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial engine: %w", err)
 	}
@@ -286,7 +305,7 @@ func (c *Client) dial(ctx context.Context, dialType dialType, raddr Addr, token 
 					err = fmt.Errorf("server did not return a ProxyRsp")
 				} else {
 					if proxyRsp.ProxyRsp.Error != nil {
-						err = fmt.Errorf("engine error %d: %s", proxyRsp.ProxyRsp.Error.Code, proxyRsp.ProxyRsp.Error.Message.GetValue())
+						err = newEngineError(proxyRsp.ProxyRsp.Error)
 					}
 				}
 			} else {
@@ -296,7 +315,7 @@ func (c *Client) dial(ctx context.Context, dialType dialType, raddr Addr, token 
 				} else {
 					switch rspPayload := streamRsp.StreamRsp.Payload.(type) {
 					case *pb.StreamRsp_Error:
-						err = fmt.Errorf("engine error %d: %s", rspPayload.Error.Code, rspPayload.Error.Message.GetValue())
+						err = newEngineError(rspPayload.Error)
 					case *pb.StreamRsp_StreamId:
 					default:
 						err = fmt.Errorf("unexpected StreamRsp payload")
@@ -447,6 +466,7 @@ type controlChannelImpl struct {
 	doneCh            chan error
 	pendingTunnels    map[string]*pendingOpenTunnelReq
 	tunnels           map[string]*bytestreamTunnelImpl
+	proxyTransports   map[string]Dialer
 	closing           bool
 	closed            bool
 	mu                sync.Mutex
@@ -456,8 +476,8 @@ type controlChannelImpl struct {
 	datagramProvider DatagramProvider
 	datagramTunnels  map[string]*quicDatagramListener           // tunnelID -> listener
 	datagramChannels map[datagramChannelID]*quicDatagramChannel // channelID -> active channel
-	datagramCtx      context.Context
-	datagramCancel   context.CancelFunc
+	lifecycleCtx     context.Context
+	lifecycleCancel  context.CancelFunc
 }
 
 func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, error) {
@@ -498,6 +518,7 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 			doneCh:            make(chan error, 1),
 			pendingTunnels:    make(map[string]*pendingOpenTunnelReq),
 			tunnels:           make(map[string]*bytestreamTunnelImpl),
+			proxyTransports:   make(map[string]Dialer),
 		}
 		msg := &pb.Message{
 			Payload: &pb.Message_OpenControlChannelReq{
@@ -521,7 +542,7 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 			} else {
 				switch rspPayload := openControlChannelRsp.OpenControlChannelRsp.Payload.(type) {
 				case *pb.OpenControlChannelRsp_Error:
-					err = fmt.Errorf("engine error %d: %s", rspPayload.Error.Code, rspPayload.Error.Message.GetValue())
+					err = newEngineError(rspPayload.Error)
 				case *pb.OpenControlChannelRsp_Ok_:
 					if rspPayload.Ok == nil {
 						err = errors.New("server returned empty OpenControlChannelRsp payload")
@@ -536,14 +557,12 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 		}
 	}
 	if err == nil {
+		ch.lifecycleCtx, ch.lifecycleCancel = context.WithCancel(context.Background())
 		// Enable QUIC datagram mode if the transport supports it.
 		if _, dp, ok := datagramTransport(c.Transport); ok {
 			ch.datagramProvider = dp
 			ch.datagramTunnels = make(map[string]*quicDatagramListener)
 			ch.datagramChannels = make(map[datagramChannelID]*quicDatagramChannel)
-			datagramCtx, datagramCancel := context.WithCancel(context.Background())
-			ch.datagramCtx = datagramCtx
-			ch.datagramCancel = datagramCancel
 			if _, ok := dp.(datagramChannelRegistry); !ok {
 				go ch.datagramReadLoop()
 			}
@@ -612,26 +631,29 @@ func (c *controlChannelImpl) CreateTunnel(ctx context.Context, props TunnelPrope
 		}
 		switch payload := openTunnelRsp.Payload.(type) {
 		case *pb.OpenTunnelRsp_Error:
-			return nil, fmt.Errorf("engine error %d: %s", payload.Error.Code, payload.Error.Message.GetValue())
+			return nil, newEngineError(payload.Error)
 		case *pb.OpenTunnelRsp_TunnelProperties:
 			rProps := toTunnelProperties(payload.TunnelProperties)
 			if rProps.ID == nil {
 				return nil, errors.New("engine did not return a tunnel ID")
 			} else {
 				tunnelID := *rProps.ID
+				tunnelCtx, tunnelCancel := context.WithCancel(c.lifecycleCtx)
 				tunnel := &bytestreamTunnelImpl{
 					props:    rProps,
 					ctrl:     c,
 					tunnelID: tunnelID,
 					closeCh:  make(chan error, 1),
 					conns:    make(chan net.Conn, 10),
+					ctx:      tunnelCtx,
+					cancel:   tunnelCancel,
 				}
 				c.mu.Lock()
 				c.tunnels[tunnelID] = tunnel
 				c.mu.Unlock()
 				if rProps.Type != nil && *rProps.Type == TunnelTypeDatagram {
 					if c.datagramProvider != nil && tunnelAllowsQUICDatagrams(rProps) {
-						dlCtx, dlCancel := context.WithCancel(c.datagramCtx)
+						dlCtx, dlCancel := context.WithCancel(tunnelCtx)
 						listener := &quicDatagramListener{
 							conns:  make(chan net.PacketConn, 10),
 							ctx:    dlCtx,
@@ -856,49 +878,97 @@ func (c *controlChannelImpl) handleProxyConnReq(req *pb.ProxyConnReq) {
 		c.logger.Warn("unexpected ProxyConnReq", "tunnel_id", tunnelId, "stream_id", req.StreamId)
 		return
 	}
-	if c.datagramProvider != nil && tunnel.props.Type != nil && *tunnel.props.Type == TunnelTypeDatagram && tunnelAllowsQUICDatagrams(tunnel.props) {
+	proxyEndpoint := stringPtrFromPbValue(req.ProxyEndpoint)
+	proxySecret := stringPtrFromPbValue(req.Secret)
+	if proxyEndpoint != nil && (strings.TrimSpace(*proxyEndpoint) == "" || proxySecret == nil || strings.TrimSpace(*proxySecret) == "") {
+		go c.sendProxyConnRsp(req.StreamId, errors.New("redirected proxy connection requires a non-empty endpoint and stream credential"))
+		return
+	}
+	if proxyEndpoint == nil && c.datagramProvider != nil && tunnel.props.Type != nil && *tunnel.props.Type == TunnelTypeDatagram && tunnelAllowsQUICDatagrams(tunnel.props) {
 		go func() {
 			if !c.handleDatagramProxyConnReq(req, tunnel) {
 				return
 			}
-			c.sendProxyConnRsp(req.StreamId)
+			c.sendProxyConnRsp(req.StreamId, nil)
 		}()
 		return
 	}
-	// Existing stream-based flow.
+	proxyTransport := c.proxyTransportLocked(proxyEndpoint)
+	proxyCtx := tunnel.ctx
+	if proxyCtx == nil {
+		proxyCtx = c.lifecycleCtx
+	}
+	if proxyCtx == nil {
+		proxyCtx = context.Background()
+	}
 	go func() {
 		laddr := Addr{IdOrName: req.StreamId, SourceIP: NetIPFromPbValue(req.SourceIp)}
 		raddr := Addr{IdOrName: tunnelId}
-		conn, err := c.client.dial(context.Background(), dialTypeProxyReq, laddr, stringPtrFromPbValue(req.Secret))
+		conn, err := c.client.dialEndpoint(proxyCtx, dialTypeProxyReq, proxyEndpoint, laddr, proxySecret, proxyTransport)
 		if err != nil {
 			c.logger.Error("failed to dial proxy connection", "error", err)
-		} else {
-			c.mu.Lock()
-			defer c.mu.Unlock()
-			if tunnel.closing || tunnel.closed {
-				c.logger.Error("tunnel is closing or closed, closing proxy connection", "tunnelID", tunnelId)
-				conn.Close()
-			} else {
-				select {
-				case tunnel.conns <- &bytestreamConn{conn: conn, laddr: laddr, raddr: raddr}:
-					return
-				default:
-					c.logger.Warn("tunnel conns channel is full, closing proxy connection", "tunnelID", tunnelId)
-					conn.Close()
-				}
-			}
+			c.sendProxyConnRsp(req.StreamId, err)
+			return
 		}
-	}()
-	go func() {
-		c.sendProxyConnRsp(req.StreamId)
+		if err := c.deliverProxyConnection(proxyCtx, tunnel, &bytestreamConn{conn: conn, laddr: laddr, raddr: raddr}); err != nil {
+			_ = conn.Close()
+			c.sendProxyConnRsp(req.StreamId, err)
+			return
+		}
+		c.sendProxyConnRsp(req.StreamId, nil)
 	}()
 }
 
-func (c *controlChannelImpl) sendProxyConnRsp(streamID string) {
+func (c *controlChannelImpl) deliverProxyConnection(ctx context.Context, tunnel *bytestreamTunnelImpl, conn net.Conn) error {
+	c.mu.Lock()
+	if tunnel.closing || tunnel.closed {
+		c.mu.Unlock()
+		return errors.New("tunnel is closing or closed")
+	}
+	c.mu.Unlock()
+	timer := time.NewTimer(proxyConnectionDeliveryTimeout)
+	defer timer.Stop()
+	select {
+	case tunnel.conns <- conn:
+		return nil
+	case <-ctx.Done():
+		return errors.New("tunnel is closing or closed")
+	case <-timer.C:
+		return errors.New("tunnel connection queue remained full")
+	}
+}
+
+func (c *controlChannelImpl) proxyTransportLocked(endpoint *string) Dialer {
+	if endpoint == nil {
+		return nil
+	}
+	key := strings.TrimSpace(*endpoint)
+	if transport := c.proxyTransports[key]; transport != nil {
+		return transport
+	}
+	selected := selectedTunnelTransport(c.client.defaultTunnelTransport())
+	quicTransport, ok := selected.(*QUICTransport)
+	if !ok || quicTransport == nil {
+		return selected
+	}
+	if c.proxyTransports == nil {
+		c.proxyTransports = make(map[string]Dialer)
+	}
+	transport := cloneQUICTransport(quicTransport)
+	c.proxyTransports[key] = transport
+	return transport
+}
+
+func (c *controlChannelImpl) sendProxyConnRsp(streamID string, responseErr error) {
+	var response *pb.Error
+	if responseErr != nil {
+		response = &pb.Error{Code: pb.ErrorCode_ERROR_CODE_SERVICE_UNAVAILABLE, Message: wrapperspb.String(responseErr.Error())}
+	}
 	msg := &pb.Message{
 		Payload: &pb.Message_ProxyConnRsp{
 			ProxyConnRsp: &pb.ProxyConnRsp{
 				StreamId: streamID,
+				Error:    response,
 			},
 		},
 	}
@@ -920,7 +990,7 @@ func (c *controlChannelImpl) handleDatagramProxyConnReq(req *pb.ProxyConnReq, tu
 	laddr := &Addr{IdOrName: tunnel.tunnelID}
 	raddr := &Addr{IdOrName: req.StreamId, SourceIP: NetIPFromPbValue(req.SourceIp)}
 	registry, _ := c.datagramProvider.(datagramChannelRegistry)
-	chCtx, chCancel := context.WithCancel(c.datagramCtx)
+	chCtx, chCancel := context.WithCancel(c.lifecycleCtx)
 	ch := &quicDatagramChannel{
 		channelID:     channelID,
 		provider:      c.datagramProvider,
@@ -979,9 +1049,9 @@ func (c *controlChannelImpl) handleDatagramProxyConnReq(req *pb.ProxyConnReq, tu
 // prefix, and routes the payload to the appropriate quicDatagramChannel.
 func (c *controlChannelImpl) datagramReadLoop() {
 	for {
-		data, err := c.datagramProvider.ReceiveDatagram(c.datagramCtx)
+		data, err := c.datagramProvider.ReceiveDatagram(c.lifecycleCtx)
 		if err != nil {
-			if c.datagramCtx.Err() == nil {
+			if c.lifecycleCtx.Err() == nil {
 				c.logger.Error("datagram read loop terminated unexpectedly", "error", err)
 			}
 			return
@@ -1058,9 +1128,8 @@ func (c *controlChannelImpl) onError(err error) {
 		t.onError(fmt.Errorf("control channel closed: %w", err))
 	}
 	c.pendingTunnels = nil
-	// Clean up QUIC datagram resources.
-	if c.datagramCancel != nil {
-		c.datagramCancel()
+	if c.lifecycleCancel != nil {
+		c.lifecycleCancel()
 	}
 	for _, l := range c.datagramTunnels {
 		l.Close()
@@ -1070,6 +1139,10 @@ func (c *controlChannelImpl) onError(err error) {
 		c.closeDatagramChannelLocked(channelID, ch)
 	}
 	c.datagramChannels = nil
+	for _, transport := range c.proxyTransports {
+		_ = closeAutoTransport(transport)
+	}
+	c.proxyTransports = nil
 	c.conn.Close()
 	c.err = err
 	c.doneCh <- err

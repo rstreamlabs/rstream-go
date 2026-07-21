@@ -34,8 +34,10 @@ type oauthErrorResponse struct {
 type Client struct {
 	apiURL     string
 	token      string
+	headers    map[string]string
 	httpClient *http.Client
 	logger     *slog.Logger
+	configErr  error
 }
 
 type Option func(*Client)
@@ -56,6 +58,12 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
+func WithHeaders(headers map[string]string) Option {
+	return func(c *Client) {
+		c.headers, c.configErr = NormalizeHeaders(headers)
+	}
+}
+
 func NewClient(apiURL, token string, opts ...Option) *Client {
 	client := &Client{
 		apiURL:     strings.TrimRight(strings.TrimSpace(apiURL), "/"),
@@ -66,6 +74,9 @@ func NewClient(apiURL, token string, opts ...Option) *Client {
 	for _, opt := range opts {
 		opt(client)
 	}
+	configuredHTTPClient := *client.httpClient
+	configuredHTTPClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	client.httpClient = &configuredHTTPClient
 	return client
 }
 
@@ -697,6 +708,9 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 }
 
 func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.Values, body any, out any) (int, error) {
+	if c.configErr != nil {
+		return 0, c.configErr
+	}
 	fullURL, err := c.requestURL(path, query)
 	if err != nil {
 		return 0, err
@@ -721,6 +735,9 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	for name, value := range c.headers {
+		req.Header.Set(name, value)
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -751,6 +768,9 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 }
 
 func (c *Client) doForm(ctx context.Context, method, path string, form url.Values, out any) (int, error) {
+	if c.configErr != nil {
+		return 0, c.configErr
+	}
 	fullURL, err := c.requestURL(path, nil)
 	if err != nil {
 		return 0, err
@@ -762,6 +782,9 @@ func (c *Client) doForm(ctx context.Context, method, path string, form url.Value
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for name, value := range c.headers {
+		req.Header.Set(name, value)
+	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return 0, err

@@ -19,7 +19,6 @@ import (
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
-	"github.com/rstreamlabs/rstream-go/controlplane"
 	"github.com/spf13/cobra"
 )
 
@@ -137,23 +136,32 @@ func runDoctor(cmd *cobra.Command) doctorReport {
 func resolveDoctorRuntime(cmd *cobra.Command, cfg config.Config) (config.Resolved, error) {
 	flagAPIURL, _ := cmd.Flags().GetString("api-url")
 	flagContext, _ := cmd.Flags().GetString("context")
+	flagRegion, _ := cmd.Flags().GetString("region")
 	flagTunnelTransport, _ := cmd.Flags().GetString("tunnel-transport")
 	env := config.ReadEnv()
 	resolved, err := config.Resolve(config.ResolveInput{
-		Config:              cfg,
-		FlagAPIURL:          flagAPIURL,
-		FlagContext:         flagContext,
-		EnvAPIURL:           env.APIURL,
-		EnvContext:          env.Context,
-		EnvEngine:           env.Engine,
-		EnvToken:            env.Token,
-		FlagTunnelTransport: flagTunnelTransport,
-		EnvTunnelTransport:  env.TunnelTransport,
-		EnvUseQUIC:          env.UseQUIC,
-		ResolveToken:        true,
+		Config:                 cfg,
+		FlagAPIURL:             flagAPIURL,
+		FlagContext:            flagContext,
+		FlagRegion:             flagRegion,
+		EnvAPIURL:              env.APIURL,
+		EnvContext:             env.Context,
+		EnvEngine:              env.Engine,
+		EnvToken:               env.Token,
+		EnvRegion:              env.Region,
+		EnvControlPlaneHeaders: env.ControlPlaneHeaders,
+		FlagTunnelTransport:    flagTunnelTransport,
+		EnvTunnelTransport:     env.TunnelTransport,
+		EnvUseQUIC:             env.UseQUIC,
+		ResolveToken:           true,
 	})
 	if err != nil {
 		return config.Resolved{}, err
+	}
+	if resolved.Region != "" {
+		if err := resolveRuntimeRegion(cmd, cfg, &resolved); err != nil {
+			return config.Resolved{}, err
+		}
 	}
 	return resolved, nil
 }
@@ -214,7 +222,7 @@ func checkDoctorControlPlane(ctx context.Context, report *doctorReport, resolved
 	}
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	client := controlplane.NewClient(resolved.APIURL, resolved.Token)
+	client := newRuntimeControlPlaneClient(resolved)
 	whoami, err := client.Whoami(runCtx)
 	if err != nil {
 		report.add("control_plane_auth", doctorStatusFail, mapControlPlaneError(err).Error(), nil)
@@ -238,7 +246,7 @@ func checkDoctorProject(ctx context.Context, report *doctorReport, resolved conf
 	}
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	client := controlplane.NewClient(resolved.APIURL, resolved.Token)
+	client := newRuntimeControlPlaneClient(resolved)
 	project, err := client.ResolveProjectByEndpoint(runCtx, resolved.Context.ProjectEndpoint)
 	if err != nil {
 		report.add("project", doctorStatusFail, mapControlPlaneError(err).Error(), map[string]string{"projectEndpoint": resolved.Context.ProjectEndpoint})
@@ -280,7 +288,6 @@ func checkDoctorNetwork(ctx context.Context, report *doctorReport, resolved conf
 	tlsStatus, quicStatus := doctorTransportProbeStatuses(mode, tlsResult.OK, quicResult.OK)
 	report.add("tls", tlsStatus, tlsResult.Message, tlsResult.Details)
 	report.add("quic_transport", quicStatus, quicResult.Message, quicResult.Details)
-
 	selected := "none"
 	selectionStatus := doctorStatusFail
 	selectionMessage := "no tunnel transport is reachable"

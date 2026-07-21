@@ -87,6 +87,9 @@ func TestCreateTURNCredentialsFromEnvFallsBackToAPIWithoutTURNContext(t *testing
 		if got := r.Header.Get("Authorization"); !strings.HasPrefix(got, "Bearer ") {
 			t.Fatalf("missing authorization: %q", got)
 		}
+		if got := r.Header.Get("X-Deployment-Bypass"); got != "secret" {
+			t.Fatalf("control plane header = %q", got)
+		}
 		var payload struct {
 			TTLSeconds *int `json:"ttlSeconds,omitempty"`
 		}
@@ -113,7 +116,8 @@ func TestCreateTURNCredentialsFromEnvFallsBackToAPIWithoutTURNContext(t *testing
 			Context: &DefaultContext{Name: "prod"},
 		},
 		Environments: []Environment{{
-			APIURL: server.URL,
+			APIURL:  server.URL,
+			Headers: map[string]string{"X-Deployment-Bypass": "secret"},
 			Auth: &Auth{Token: &Token{Storage: &TokenStorage{
 				Kind:  TokenStorageInline,
 				Value: "eyJhbGciOiJIUzI1NiJ9.eyJ0eXBlIjoicGF0IiwidG9rZW5fZW5kcG9pbnQiOiJiOTVmYWY3ZiJ9.sig",

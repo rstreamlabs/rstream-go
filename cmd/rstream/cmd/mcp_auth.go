@@ -75,7 +75,12 @@ func mcpCreateAuthSession(ctx context.Context, args map[string]json.RawMessage) 
 	if err != nil {
 		return nil, err
 	}
-	client := controlplane.NewClient(apiURL, "")
+	environment, _ := cfg.FindEnvironment(apiURL)
+	headers, err := config.ResolveControlPlaneHeaders(environment, config.ReadEnv().ControlPlaneHeaders)
+	if err != nil {
+		return nil, err
+	}
+	client := controlplane.NewClient(apiURL, "", controlplane.WithHeaders(headers))
 	metadata, err := client.OAuthAuthorizationServerMetadata(ctx)
 	if err != nil {
 		return nil, rstreamLoginCommandError(err)
@@ -173,15 +178,20 @@ func mcpAuthExchangeRaw(ctx context.Context, session mcpAuthSession) (map[string
 		_ = mcpAuthRemoveSession(mcpAuthRegistryPath(session.ConfigPath), session.ID)
 		return nil, true, errors.New("login expired")
 	}
-	client := controlplane.NewClient(session.APIURL, "")
+	_, cfg, err := mcpLoadConfig()
+	if err != nil {
+		return nil, true, err
+	}
+	environment, _ := cfg.FindEnvironment(session.APIURL)
+	headers, err := config.ResolveControlPlaneHeaders(environment, config.ReadEnv().ControlPlaneHeaders)
+	if err != nil {
+		return nil, true, err
+	}
+	client := controlplane.NewClient(session.APIURL, "", controlplane.WithHeaders(headers))
 	response, err := client.ExchangeOAuthDeviceToken(ctx, session.TokenEndpoint, controlplane.OAuthDeviceTokenRequest{ClientID: rstreamOAuthClientID, DeviceCode: session.DeviceCode})
 	if err == nil {
 		if response.AccessToken == "" {
 			return nil, true, errors.New("login token is empty")
-		}
-		_, cfg, err := mcpLoadConfig()
-		if err != nil {
-			return nil, true, err
 		}
 		if err := storeToken(ctx, session.ConfigPath, cfg, session.APIURL, response.AccessToken); err != nil {
 			return nil, true, err

@@ -181,6 +181,7 @@ tunnels:
     tunnel:
       protocol: tcp
       port: 10042
+      allowCrossRegionRouting: true
 `
 	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
 		t.Fatalf("write temp file: %v", err)
@@ -195,6 +196,9 @@ tunnels:
 	}
 	if props.Publish == nil || !*props.Publish || props.Port == nil || *props.Port != 10042 {
 		t.Fatalf("unexpected TCP publication properties: %#v", props)
+	}
+	if props.AllowCrossRegionRouting == nil || !*props.AllowCrossRegionRouting {
+		t.Fatalf("AllowCrossRegionRouting = %#v, want true", props.AllowCrossRegionRouting)
 	}
 }
 
@@ -235,6 +239,25 @@ tunnels:
 	_, err := DesiredTunnels(path, runmodel.ResolvedContext{Engine: "engine", Token: "token"}, nil)
 	if err == nil || !strings.Contains(err.Error(), `port requires protocol "tcp"`) {
 		t.Fatalf("expected TCP port validation error, got %v", err)
+	}
+}
+
+func TestDesiredTunnelsRejectsCrossRegionRoutingWithoutTCP(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	yaml := `version: 1
+tunnels:
+  - name: web
+    forward: "8080"
+    tunnel:
+      protocol: http
+      allowCrossRegionRouting: false
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	_, err := DesiredTunnels(path, runmodel.ResolvedContext{Engine: "engine", Token: "token"}, nil)
+	if err == nil || !strings.Contains(err.Error(), `allowCrossRegionRouting requires protocol "tcp"`) {
+		t.Fatalf("expected routing policy validation error, got %v", err)
 	}
 }
 

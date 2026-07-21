@@ -24,6 +24,7 @@ const (
 type uiRuntimeOptions struct {
 	apiURLScope     string
 	contextOverride string
+	region          string
 	tunnelTransport string
 	environment     config.EnvSettings
 }
@@ -53,10 +54,12 @@ func uiRuntimeOptionsFromCommand(cmd *cobra.Command) uiRuntimeOptions {
 	env := config.ReadEnv()
 	flagAPIURL, _ := cmd.Flags().GetString("api-url")
 	flagContext, _ := cmd.Flags().GetString("context")
+	flagRegion, _ := cmd.Flags().GetString("region")
 	flagTunnelTransport, _ := cmd.Flags().GetString("tunnel-transport")
 	return uiRuntimeOptions{
 		apiURLScope:     config.NormalizeAPIURL(uiFirstNonEmpty(flagAPIURL, env.APIURL)),
 		contextOverride: uiFirstNonEmpty(flagContext, env.Context),
+		region:          uiFirstNonEmpty(flagRegion, env.Region),
 		tunnelTransport: strings.TrimSpace(flagTunnelTransport),
 		environment:     env,
 	}
@@ -85,7 +88,13 @@ func (r *uiRuntimeResolver) discoverTargets(ctx context.Context, runtime *resolv
 		discovery.ProjectError = err
 		return discovery
 	}
-	client := controlplane.NewClient(apiURL, token)
+	environment, _ := cfg.FindEnvironment(apiURL)
+	headers, err := config.ResolveControlPlaneHeaders(environment, r.options.environment.ControlPlaneHeaders)
+	if err != nil {
+		discovery.ProjectError = err
+		return discovery
+	}
+	client := controlplane.NewClient(apiURL, token, controlplane.WithHeaders(headers))
 	workspaces, workspaceErr := client.ListWorkspaces(ctx)
 	if workspaceErr != nil {
 		discovery.WorkspaceWarning = fmt.Errorf("workspace names unavailable: %w", mapControlPlaneError(workspaceErr))
@@ -222,23 +231,30 @@ func (r *uiRuntimeResolver) resolveContext(cfg config.Config, contextValue confi
 		selectedAPIURL = r.options.apiURLScope
 	}
 	input := config.ResolveInput{
-		Config:              isolated,
-		FlagAPIURL:          selectedAPIURL,
-		FlagContext:         contextValue.Name,
-		EnvEngine:           env.Engine,
-		EnvToken:            env.Token,
-		EnvMTLSCert:         env.MTLSCert,
-		EnvMTLSKey:          env.MTLSKey,
-		FlagTunnelTransport: r.options.tunnelTransport,
-		EnvTunnelTransport:  env.TunnelTransport,
-		EnvUseQUIC:          env.UseQUIC,
-		RequireEngine:       true,
-		RequireToken:        true,
-		ResolveToken:        true,
+		Config:                 isolated,
+		FlagAPIURL:             selectedAPIURL,
+		FlagContext:            contextValue.Name,
+		EnvEngine:              env.Engine,
+		EnvToken:               env.Token,
+		EnvMTLSCert:            env.MTLSCert,
+		EnvMTLSKey:             env.MTLSKey,
+		FlagRegion:             r.options.region,
+		EnvControlPlaneHeaders: env.ControlPlaneHeaders,
+		FlagTunnelTransport:    r.options.tunnelTransport,
+		EnvTunnelTransport:     env.TunnelTransport,
+		EnvUseQUIC:             env.UseQUIC,
+		RequireEngine:          true,
+		RequireToken:           true,
+		ResolveToken:           true,
 	}
 	resolved, err := config.Resolve(input)
 	if err != nil {
 		return nil, fmt.Errorf("resolve context %q: %w", contextValue.Name, err)
+	}
+	if resolved.Region != "" {
+		if err := resolveRuntimeRegionContext(context.Background(), cfg, &resolved); err != nil {
+			return nil, fmt.Errorf("resolve context %q region: %w", contextValue.Name, err)
+		}
 	}
 	return &resolvedRuntime{ConfigPath: r.configPath, Config: cfg, Resolved: resolved}, nil
 }

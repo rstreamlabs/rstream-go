@@ -60,6 +60,29 @@ type QUICTransport struct {
 	datagramReadRunning  bool
 }
 
+func cloneQUICTransport(transport *QUICTransport) *QUICTransport {
+	if transport == nil {
+		return &QUICTransport{}
+	}
+	return &QUICTransport{
+		LocalAddr:            transport.LocalAddr,
+		NetworkInterface:     transport.NetworkInterface,
+		ForceIPv4:            transport.ForceIPv4,
+		ForceIPv6:            transport.ForceIPv6,
+		DNSOverride:          transport.DNSOverride,
+		DNSOverTLS:           transport.DNSOverTLS,
+		DNSServerName:        transport.DNSServerName,
+		DNSSECEnabled:        transport.DNSSECEnabled,
+		ProxyHTTP:            transport.ProxyHTTP,
+		ProxySOCKS5:          transport.ProxySOCKS5,
+		ProxyUsername:        transport.ProxyUsername,
+		ProxyPassword:        transport.ProxyPassword,
+		ProxyHTTPHeaders:     cloneProxyHTTPHeaders(transport.ProxyHTTPHeaders),
+		TLSProxyConfig:       cloneTLSConfig(transport.TLSProxyConfig),
+		ProxyFromEnvironment: transport.ProxyFromEnvironment,
+	}
+}
+
 // Dial establishes or reuses a QUIC connection to addr, then opens and returns
 // a new QUIC stream wrapped as a net.Conn.
 func (t *QUICTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (net.Conn, error) {
@@ -78,9 +101,10 @@ func (t *QUICTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Confi
 			return &quicStreamConn{stream: stream, conn: conn, transport: t}, nil
 		}
 		openErr = err
-		if ctx.Err() != nil || conn.Context().Err() == nil || !t.invalidateConnection(conn) {
+		if ctx.Err() != nil {
 			return nil, fmt.Errorf("failed to open QUIC stream: %w", err)
 		}
+		t.invalidateConnection(conn)
 	}
 	return nil, fmt.Errorf("failed to open QUIC stream: %w", openErr)
 }

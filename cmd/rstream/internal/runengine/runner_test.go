@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -253,6 +254,29 @@ func TestBackoffAndStringHelpers(t *testing.T) {
 	value := "id"
 	if str(nil) != "" || str(&value) != "id" {
 		t.Fatalf("str helper returned unexpected values")
+	}
+}
+
+func TestRetryableTunnelError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "network error", err: errors.New("connection reset"), want: true},
+		{name: "service unavailable", err: fmt.Errorf("create tunnel: %w", &rstream.EngineError{Code: rstream.EngineErrorCodeServiceUnavailable}), want: true},
+		{name: "internal", err: &rstream.EngineError{Code: rstream.EngineErrorCodeInternal}, want: true},
+		{name: "feature unavailable", err: &rstream.EngineError{Code: rstream.EngineErrorCodeFeatureNotAvailable}},
+		{name: "unauthorized", err: &rstream.EngineError{Code: rstream.EngineErrorCodeUnauthorized}},
+		{name: "context deadline", err: context.DeadlineExceeded},
+		{name: "nil"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := retryableTunnelError(tt.err); got != tt.want {
+				t.Fatalf("retryableTunnelError(%v) = %t, want %t", tt.err, got, tt.want)
+			}
+		})
 	}
 }
 

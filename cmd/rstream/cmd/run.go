@@ -157,17 +157,30 @@ func loadRuntimeContext(cmd *cobra.Command) (config.Resolved, config.Config, con
 
 func resolveNamedContext(cfg config.Config, env config.EnvSettings, cmd *cobra.Command, name string) (config.Resolved, error) {
 	flagAPIURL, _ := cmd.Flags().GetString("api-url")
+	flagRegion, _ := cmd.Flags().GetString("region")
 	input := config.ResolveInput{
-		Config:        cfg,
-		FlagAPIURL:    flagAPIURL,
-		FlagContext:   name,
-		EnvAPIURL:     env.APIURL,
-		EnvContext:    env.Context,
-		EnvEngine:     env.Engine,
-		EnvToken:      env.Token,
-		RequireEngine: true,
-		RequireToken:  true,
-		ResolveToken:  true,
+		Config:                 cfg,
+		FlagAPIURL:             flagAPIURL,
+		FlagContext:            name,
+		FlagRegion:             flagRegion,
+		EnvAPIURL:              env.APIURL,
+		EnvContext:             env.Context,
+		EnvEngine:              env.Engine,
+		EnvToken:               env.Token,
+		EnvRegion:              env.Region,
+		EnvControlPlaneHeaders: env.ControlPlaneHeaders,
+		RequireEngine:          true,
+		RequireToken:           true,
+		ResolveToken:           true,
 	}
-	return config.Resolve(input)
+	resolved, err := config.Resolve(input)
+	if err != nil {
+		return config.Resolved{}, err
+	}
+	if resolved.Region != "" {
+		if err := resolveRuntimeRegion(cmd, cfg, &resolved); err != nil {
+			return config.Resolved{}, err
+		}
+	}
+	return resolved, nil
 }

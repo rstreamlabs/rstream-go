@@ -50,7 +50,7 @@ var contextListCmd = &cobra.Command{
 		switch output {
 		case "table":
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			_, _ = fmt.Fprintln(w, "DEFAULT\tNAME\tAPI URL\tENGINE\tPROJECT ENDPOINT")
+			_, _ = fmt.Fprintln(w, "DEFAULT\tNAME\tAPI URL\tENGINE\tPROJECT ENDPOINT\tREGION")
 			for _, ctx := range contexts {
 				engine := ctx.Engine
 				project := ctx.ProjectEndpoint
@@ -62,7 +62,11 @@ var contextListCmd = &cobra.Command{
 				if defaultCtx != nil && defaultCtx.Name == ctx.Name {
 					isDefault = "*"
 				}
-				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", isDefault, ctx.Name, apiURL, engine, project)
+				region := ctx.Region
+				if region == "" {
+					region = "auto"
+				}
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", isDefault, ctx.Name, apiURL, engine, project, region)
 			}
 			return w.Flush()
 		case "json", "yaml":
@@ -184,11 +188,27 @@ var contextCreateCmd = &cobra.Command{
 		}
 		engine, _ := cmd.Flags().GetString("engine")
 		projectEndpoint, _ := cmd.Flags().GetString("project-endpoint")
+		regionValue, _ := cmd.Flags().GetString("region")
+		region, err := controlplane.NormalizeRegion(regionValue)
+		if err != nil {
+			return err
+		}
+		if engine != "" && region != "" {
+			return errors.New("region selection cannot be combined with an explicit engine override")
+		}
+		token, tokenProvided, err := readTokenFromFlags(cmd)
+		if err != nil {
+			return err
+		}
+		if tokenProvided && strings.TrimSpace(token) == "" {
+			return errors.New("token is empty")
+		}
 		newCtx := config.Context{
 			Name:            args[0],
 			APIURL:          apiURL,
 			Engine:          engine,
 			ProjectEndpoint: projectEndpoint,
+			Region:          region,
 		}
 		if engine == "" {
 			if projectEndpoint == "" {
@@ -197,17 +217,28 @@ var contextCreateCmd = &cobra.Command{
 			if selection.unlinked || apiURL == "" {
 				return errors.New("project endpoint lookup requires --api-url and authentication")
 			}
-			token, err := resolveControlPlaneToken(cfg, apiURL)
+			lookupToken := token
+			if !tokenProvided {
+				lookupToken, err = resolveControlPlaneToken(cfg, apiURL)
+				if err != nil {
+					return err
+				}
+			}
+			environment, _ := cfg.FindEnvironment(apiURL)
+			headers, err := config.ResolveControlPlaneHeaders(environment, config.ReadEnv().ControlPlaneHeaders)
 			if err != nil {
 				return err
 			}
-			client := controlplane.NewClient(apiURL, token)
+			client := controlplane.NewClient(apiURL, lookupToken, controlplane.WithHeaders(headers))
 			if err := client.RequireToken(); err != nil {
 				return err
 			}
 			project, err := client.ResolveProjectByEndpoint(cmd.Context(), projectEndpoint)
 			if err != nil {
 				return mapControlPlaneError(err)
+			}
+			if _, err := project.EngineAddressForRegion(region); err != nil {
+				return err
 			}
 			newCtx.ProjectEndpoint = project.Endpoint
 			newCtx.Engine = project.EngineAddress()
@@ -222,14 +253,7 @@ var contextCreateCmd = &cobra.Command{
 		if transport != nil {
 			newCtx.Transport = transport
 		}
-		token, ok, err := readTokenFromFlags(cmd)
-		if err != nil {
-			return err
-		}
-		if ok {
-			if strings.TrimSpace(token) == "" {
-				return errors.New("token is empty")
-			}
+		if tokenProvided {
 			if err := setContextTokenFromFlags(cmd, &newCtx, token, newCtx.APIURL); err != nil {
 				return err
 			}
@@ -304,13 +328,26 @@ var contextUpdateCmd = &cobra.Command{
 			}
 		}
 		_ = idx
+		regionChanged := cmd.Flags().Changed("region")
+		if regionChanged {
+			value, _ := cmd.Flags().GetString("region")
+			region, err := controlplane.NormalizeRegion(value)
+			if err != nil {
+				return err
+			}
+			ctx.Region = region
+		}
 		if cmd.Flags().Changed("engine") {
 			engine, _ := cmd.Flags().GetString("engine")
+			if engine != "" && ctx.Region != "" {
+				return errors.New("region selection cannot be combined with an explicit engine override")
+			}
 			if engine != "" {
 				ctx.Engine = engine
 			}
 		}
-		if cmd.Flags().Changed("project-endpoint") {
+		projectEndpointChanged := cmd.Flags().Changed("project-endpoint")
+		if projectEndpointChanged {
 			endpoint, _ := cmd.Flags().GetString("project-endpoint")
 			if endpoint != "" {
 				ctx.ProjectEndpoint = endpoint
@@ -341,6 +378,11 @@ var contextUpdateCmd = &cobra.Command{
 		} else if applyAPIURL {
 			ctx.APIURL = apiURLValue
 		}
+		if regionChanged || projectEndpointChanged {
+			if err := refreshContextProject(cmd, cfg, ctx); err != nil {
+				return err
+			}
+		}
 		transport, err := transportFromFlags(cmd)
 		if err != nil {
 			return err
@@ -357,6 +399,45 @@ var contextUpdateCmd = &cobra.Command{
 			"default": cfg.Defaults.Context != nil && cfg.Defaults.Context.Name == ctx.Name,
 		})
 	},
+}
+
+func refreshContextProject(cmd *cobra.Command, cfg config.Config, ctx *config.Context) error {
+	if ctx.ProjectEndpoint == "" {
+		if ctx.Region != "" {
+			return errors.New("managed project endpoint is required for region selection")
+		}
+		return nil
+	}
+	apiURL := config.NormalizeAPIURL(ctx.APIURL)
+	if apiURL == "" {
+		return errors.New("project endpoint lookup requires an API URL")
+	}
+	token, err := resolveControlPlaneToken(cfg, apiURL)
+	if err != nil {
+		return err
+	}
+	environment, _ := cfg.FindEnvironment(apiURL)
+	headers, err := config.ResolveControlPlaneHeaders(environment, config.ReadEnv().ControlPlaneHeaders)
+	if err != nil {
+		return err
+	}
+	client := controlplane.NewClient(apiURL, token, controlplane.WithHeaders(headers))
+	if err := client.RequireToken(); err != nil {
+		return err
+	}
+	project, err := client.ResolveProjectByEndpoint(cmd.Context(), ctx.ProjectEndpoint)
+	if err != nil {
+		return mapControlPlaneError(err)
+	}
+	if _, err := project.EngineAddressForRegion(ctx.Region); err != nil {
+		return err
+	}
+	ctx.ProjectEndpoint = project.Endpoint
+	ctx.Engine = project.EngineAddress()
+	ctx.TURNDomain = project.Domain
+	ctx.TURNPort = project.TurnPort
+	ctx.TURNSPort = project.TurnsPort
+	return nil
 }
 
 func init() {
