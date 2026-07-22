@@ -137,6 +137,13 @@ func (c *Client) ResolveProjectByEndpoint(ctx context.Context, endpoint string) 
 	return out, err
 }
 
+func (c *Client) ResolveProjectByID(ctx context.Context, projectID string) (Project, error) {
+	var out Project
+	escaped := url.PathEscape(projectID)
+	_, err := c.doJSON(ctx, http.MethodGet, "/api/projects/tunnels/"+escaped, nil, &out)
+	return out, err
+}
+
 func (c *Client) ListWorkspaceProjects(ctx context.Context, workspaceID string, params ListProjectsParams) (ListProjectsResponse, error) {
 	var out ListProjectsResponse
 	query := url.Values{}

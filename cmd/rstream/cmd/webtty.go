@@ -404,7 +404,7 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 			if stableHostname != nil && *stableHostname != nil {
 				props.Hostname = *stableHostname
 			} else {
-				if err := rstream.MaybeSetGeneratedStableDomain(&props, runtime.Resolved.Engine); err != nil {
+				if err := rstream.MaybeSetGeneratedStableDomain(&props, runtime.Resolved.StableDomainEndpoint()); err != nil {
 					return fmt.Errorf("failed to generate stable domain: %w", err)
 				}
 				if stableHostname != nil {

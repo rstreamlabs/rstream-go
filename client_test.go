@@ -887,6 +887,54 @@ func TestControlChannelDatagramProxyRoutesPacketsAndClosesChannels(t *testing.T)
 	dialer.wait(t, 1)
 }
 
+func TestControlChannelRedirectedDatagramProxyUsesFramedStream(t *testing.T) {
+	dialer := newQueuedDatagramDialer(2)
+	dialer.enqueue(func(conn net.Conn) error {
+		return serveControlChannelWithDatagramProxyConnectionAt(conn, wrapperspb.String("ingress.example.com:443"))
+	})
+	dialer.enqueue(serveRedirectedDatagramProxyConnection)
+	client := newTestClientWithDatagramDialer(dialer)
+	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(false)})
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	tunnel, err := channel.CreateTunnel(t.Context(), TunnelProperties{Name: StringPtr("dns"), Type: TunnelTypePtr(TunnelTypeDatagram)})
+	if err != nil {
+		t.Fatalf("CreateTunnel() error = %v", err)
+	}
+	listener, ok := tunnel.(DatagramTunnel)
+	if !ok {
+		t.Fatalf("CreateTunnel() returned %T, want DatagramTunnel", tunnel)
+	}
+	packetConn, addr := acceptDatagram(t, listener)
+	defer packetConn.Close()
+	if addr.String() != "01020304-0000-0000-0000-000000000000" {
+		t.Fatalf("redirected datagram address = %q", addr)
+	}
+	buf := make([]byte, 32)
+	n, readAddr, err := packetConn.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("ReadFrom() error = %v", err)
+	}
+	if string(buf[:n]) != "from-ingress" || readAddr.String() != addr.String() {
+		t.Fatalf("ReadFrom() = %q from %v", buf[:n], readAddr)
+	}
+	if n, err := packetConn.WriteTo([]byte("to-ingress"), addr); err != nil || n != len("to-ingress") {
+		t.Fatalf("WriteTo() = %d, %v; want %d, nil", n, err, len("to-ingress"))
+	}
+	if err := tunnel.Close(); err != nil {
+		t.Fatalf("tunnel Close() error = %v", err)
+	}
+	if err := channel.Close(); err != nil {
+		t.Fatalf("channel Close() error = %v", err)
+	}
+	dialer.wait(t, 2)
+	addresses := dialer.dialedAddresses(t, 2)
+	if addresses[0] != "engine.example.com:443" || addresses[1] != "ingress.example.com:443" {
+		t.Fatalf("dialed addresses = %#v", addresses)
+	}
+}
+
 func TestControlChannelProxyTransportUsesOneQUICTransportPerEndpoint(t *testing.T) {
 	tlsProxyConfig := &tls.Config{ServerName: "proxy.example.com"}
 	selected := &QUICTransport{ForceIPv4: BoolPtr(true), ProxyHTTPHeaders: map[string]string{"X-Test": "value"}, TLSProxyConfig: tlsProxyConfig}
@@ -1491,6 +1539,10 @@ func serveControlChannelWithProxyConnection(conn net.Conn, proxyEndpoint, secret
 }
 
 func serveControlChannelWithDatagramProxyConnection(conn net.Conn) error {
+	return serveControlChannelWithDatagramProxyConnectionAt(conn, nil)
+}
+
+func serveControlChannelWithDatagramProxyConnectionAt(conn net.Conn, endpoint *wrapperspb.StringValue) error {
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
 	msg, err := readPbMessage(reader)
@@ -1524,10 +1576,11 @@ func serveControlChannelWithDatagramProxyConnection(conn net.Conn) error {
 		return err
 	}
 	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_ProxyConnReq{ProxyConnReq: &pb.ProxyConnReq{
-		TunnelId: "tun-dgram",
-		StreamId: "01020304-0000-0000-0000-000000000000",
-		Secret:   wrapperspb.String("unused-for-datagrams"),
-		SourceIp: &pb.IpAddress{Addr: &pb.IpAddress_V4{V4: 0xcb007101}},
+		TunnelId:      "tun-dgram",
+		StreamId:      "01020304-0000-0000-0000-000000000000",
+		Secret:        wrapperspb.String("unused-for-datagrams"),
+		SourceIp:      &pb.IpAddress{Addr: &pb.IpAddress_V4{V4: 0xcb007101}},
+		ProxyEndpoint: endpoint,
 	}}}); err != nil {
 		return err
 	}
@@ -1558,6 +1611,36 @@ func serveControlChannelWithDatagramProxyConnection(conn net.Conn) error {
 		return errUnexpectedTestMessage("CloseControlChannelReq")
 	}
 	return writePbMessage(writer, &pb.Message{Payload: &pb.Message_CloseControlChannelRsp{CloseControlChannelRsp: &pb.CloseControlChannelRsp{}}})
+}
+
+func serveRedirectedDatagramProxyConnection(conn net.Conn) error {
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	msg, err := readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	proxyReq := msg.GetProxyReq()
+	if proxyReq == nil || proxyReq.StreamId != "01020304-0000-0000-0000-000000000000" {
+		return errUnexpectedTestMessage("ProxyReq for redirected datagram stream")
+	}
+	if got := proxyReq.GetClientDetails().GetToken().GetValue(); got != "unused-for-datagrams" {
+		return fmt.Errorf("ProxyReq token = %q, want unused-for-datagrams", got)
+	}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_ProxyRsp{ProxyRsp: &pb.ProxyRsp{}}}); err != nil {
+		return err
+	}
+	if err := writeMessage(writer, []byte("from-ingress")); err != nil {
+		return err
+	}
+	payload, err := readMessage(reader)
+	if err != nil {
+		return err
+	}
+	if string(payload) != "to-ingress" {
+		return fmt.Errorf("redirected datagram payload = %q, want to-ingress", payload)
+	}
+	return nil
 }
 
 func serveProxyConnection(conn net.Conn) error {

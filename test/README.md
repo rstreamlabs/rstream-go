@@ -108,6 +108,28 @@ Private datagram cases also assert the selected tunnel packet path: stream frami
 
 The baseline command pins TLS so packet-path assertions remain deterministic. Use `bash run-e2e.sh --quic` for strict QUIC and `bash run-e2e.sh --auto` to verify that automatic selection prefers QUIC on a reachable local engine.
 
+To verify routing between distinct engines in the same regional pool, keep the
+normal context pointed at the regional ingress and explicitly select the tunnel
+owner for server processes:
+
+```bash
+export RSTREAM_E2E_OWNER_ENGINE=b43462b4.owner.example.com:8443
+export RSTREAM_E2E_OWNER_AUTHENTICATION_TOKEN="..."
+export RSTREAM_E2E_OWNER_STABLE_DOMAIN_ENGINE=b43462b4.pool.example.com:8443
+bash run-e2e.sh
+bash test/e2e/runtime-forward.sh --auto-transport
+```
+
+The explicit token is required so the harness cannot send stored credentials to
+an engine selected through an override. Client processes continue to use the
+normal context and therefore enter through the regional endpoint. The stable
+domain override is needed only by the CLI runtime matrix when the forced node
+endpoint differs from the regional serving endpoint.
+
+Set `RSTREAM_E2E_ALLOW_CROSS_REGION_ROUTING=1` to create every matrix tunnel
+with cross-region routing allowed. The engine still selects Direct routing when
+owner and ingress are in the same region.
+
 Run the runtime forwarding smoke suite:
 
 ```sh

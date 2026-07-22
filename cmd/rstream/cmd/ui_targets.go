@@ -174,7 +174,7 @@ func (r *uiRuntimeResolver) prepareTarget(target uiTarget, persist bool) (*resol
 
 func (r *uiRuntimeResolver) persistTarget(target uiTarget) (uiTarget, error) {
 	if target.Kind == uiTargetProject {
-		contextValue, err := persistProjectContext(r.configPath, target.APIURL, target.Project, "", true)
+		contextValue, err := persistProjectContext(r.configPath, target.APIURL, target.Project, "", r.options.region, true)
 		if err != nil {
 			return uiTarget{}, err
 		}
@@ -208,7 +208,7 @@ func (r *uiRuntimeResolver) contextForTarget(cfg config.Config, target uiTarget)
 		}
 		return *contextValue, "", nil
 	}
-	contextValue, err := upsertProjectContext(&cfg, target.APIURL, target.Project, target.Context.Name, false)
+	contextValue, err := upsertProjectContext(&cfg, target.APIURL, target.Project, target.Context.Name, r.options.region, false)
 	if err != nil {
 		return config.Context{}, "", err
 	}

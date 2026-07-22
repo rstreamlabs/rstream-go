@@ -101,9 +101,6 @@ func normalizeCreateTunnelProperties(props TunnelProperties) (TunnelProperties, 
 	if props.Port != nil && (props.Protocol == nil || *props.Protocol != ProtocolTCP) {
 		return props, errors.New("a published port requires protocol tcp")
 	}
-	if props.AllowCrossRegionRouting != nil && (props.Protocol == nil || *props.Protocol != ProtocolTCP) {
-		return props, errors.New("cross-region routing is available only for published TCP tunnels")
-	}
 	if props.Protocol == nil || *props.Protocol != ProtocolTCP {
 		return props, nil
 	}

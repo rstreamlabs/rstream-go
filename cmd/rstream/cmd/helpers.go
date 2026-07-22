@@ -157,9 +157,6 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 	if tcpPortPtr != nil && (protocol == nil || *protocol != rstream.ProtocolTCP) {
 		return nil, fmt.Errorf("--tcp-port requires --tcp")
 	}
-	if allowCrossRegionRoutingPtr != nil && (protocol == nil || *protocol != rstream.ProtocolTCP) {
-		return nil, fmt.Errorf("--allow-cross-region-routing requires --tcp")
-	}
 	if tcpPortPtr != nil && *tcpPortPtr == 0 {
 		return nil, fmt.Errorf("--tcp-port must be between 1 and 65535")
 	}

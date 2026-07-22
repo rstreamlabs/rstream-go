@@ -107,28 +107,74 @@ func TestProjectContextHelpers(t *testing.T) {
 func TestUpsertProjectContextReusesAndRefreshesContext(t *testing.T) {
 	apiURL := "https://api.example.com"
 	cfg := &config.Config{Contexts: []config.Context{{Name: "existing", APIURL: apiURL + "/", ProjectEndpoint: "project", Engine: "old.example:443"}}}
-	project := controlplane.Project{Name: "Project", Endpoint: "project", Domain: "new.example", EnginePort: 8443, TurnPort: 3478, TurnsPort: 5349}
-	contextValue, err := upsertProjectContext(cfg, apiURL, project, "", true)
+	project := controlplane.Project{
+		Name:       "Project",
+		Endpoint:   "project",
+		Domain:     "new.example",
+		EnginePort: 8443,
+		TurnPort:   3478,
+		TurnsPort:  5349,
+		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
+			Region:     "us-east-1",
+			Domain:     "us.example",
+			EnginePort: 8443,
+		}},
+	}
+	contextValue, err := upsertProjectContext(cfg, apiURL, project, "", "us-east-1", true)
 	if err != nil {
 		t.Fatalf("upsertProjectContext() error = %v", err)
 	}
 	if len(cfg.Contexts) != 1 || contextValue.Name != "existing" || contextValue.Engine != "project.new.example:8443" {
 		t.Fatalf("upserted context = %#v config=%#v", contextValue, cfg)
 	}
+	if contextValue.Region != "us-east-1" {
+		t.Fatalf("context region = %q, want us-east-1", contextValue.Region)
+	}
 	if cfg.Defaults.Context == nil || cfg.Defaults.Context.Name != "existing" {
 		t.Fatalf("default context = %#v, want existing", cfg.Defaults.Context)
 	}
 }
 
+func TestUpsertProjectContextClearsRegionForAutomaticSelection(t *testing.T) {
+	apiURL := "https://api.example.com"
+	cfg := &config.Config{Contexts: []config.Context{{Name: "existing", APIURL: apiURL, ProjectEndpoint: "project", Region: "us-east-1"}}}
+	project := controlplane.Project{Name: "Project", Endpoint: "project", Domain: "global.example", EnginePort: 443}
+	contextValue, err := upsertProjectContext(cfg, apiURL, project, "", "auto", true)
+	if err != nil {
+		t.Fatalf("upsertProjectContext() error = %v", err)
+	}
+	if contextValue.Region != "" {
+		t.Fatalf("context region = %q, want automatic selection", contextValue.Region)
+	}
+}
+
+func TestUpsertProjectContextRejectsUnavailableRegion(t *testing.T) {
+	project := controlplane.Project{
+		Name:       "Project",
+		Endpoint:   "project",
+		Domain:     "global.example",
+		EnginePort: 443,
+		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
+			Region:     "eu-west-3",
+			Domain:     "eu.example",
+			EnginePort: 8443,
+		}},
+	}
+	_, err := upsertProjectContext(&config.Config{}, "https://api.example", project, "project-us", "us-east-1", true)
+	if err == nil || !strings.Contains(err.Error(), "available: eu-west-3") {
+		t.Fatalf("upsertProjectContext() error = %v, want unavailable region", err)
+	}
+}
+
 func TestUpsertProjectContextValidatesInputs(t *testing.T) {
 	project := controlplane.Project{Name: "Project", Endpoint: "project"}
-	if _, err := upsertProjectContext(nil, "https://api.example", project, "", true); err == nil {
+	if _, err := upsertProjectContext(nil, "https://api.example", project, "", "", true); err == nil {
 		t.Fatal("upsertProjectContext() accepted nil config")
 	}
-	if _, err := upsertProjectContext(&config.Config{}, "", project, "", true); err == nil {
+	if _, err := upsertProjectContext(&config.Config{}, "", project, "", "", true); err == nil {
 		t.Fatal("upsertProjectContext() accepted empty API URL")
 	}
-	if _, err := upsertProjectContext(&config.Config{}, "https://api.example", project, "", true); err == nil {
+	if _, err := upsertProjectContext(&config.Config{}, "https://api.example", project, "", "", true); err == nil {
 		t.Fatal("upsertProjectContext() accepted project without engine address")
 	}
 }
