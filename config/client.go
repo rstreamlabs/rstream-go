@@ -113,11 +113,23 @@ func resolveClientRegion(ctx context.Context, resolved *Resolved) error {
 	if err != nil {
 		return err
 	}
+	return ResolveProjectRegion(resolved, project)
+}
+
+func ResolveProjectRegion(resolved *Resolved, project controlplane.Project) error {
+	if resolved == nil {
+		return errors.New("resolved configuration is required")
+	}
 	engine, err := project.EngineAddressForRegion(resolved.Region)
 	if err != nil {
 		return err
 	}
+	stableDomainEngine := project.EngineAddress()
+	if stableDomainEngine == "" {
+		stableDomainEngine = engine
+	}
 	resolved.Engine = engine
+	resolved.StableDomainEngine = stableDomainEngine
 	return nil
 }
 

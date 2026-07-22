@@ -72,7 +72,7 @@ func (r *Runner) Start(ctx context.Context, desired runmodel.DesiredTunnel) (run
 	if strings.TrimSpace(desired.Context.Token) == "" {
 		return nil, fmt.Errorf("token is required for tunnel %q", desired.Name)
 	}
-	if err := rstream.MaybeSetGeneratedStableDomain(&desired.Props, desired.Context.Engine); err != nil {
+	if err := rstream.MaybeSetGeneratedStableDomain(&desired.Props, desired.Context.StableDomainEndpoint()); err != nil {
 		return nil, fmt.Errorf("failed to generate stable domain for tunnel %q: %w", desired.Name, err)
 	}
 	workerCtx, cancel := context.WithCancel(ctx)

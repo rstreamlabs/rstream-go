@@ -894,6 +894,7 @@ func (c *controlChannelImpl) handleProxyConnReq(req *pb.ProxyConnReq) {
 		return
 	}
 	proxyTransport := c.proxyTransportLocked(proxyEndpoint)
+	datagramListener := c.datagramTunnels[tunnelId]
 	proxyCtx := tunnel.ctx
 	if proxyCtx == nil {
 		proxyCtx = c.lifecycleCtx
@@ -910,13 +911,41 @@ func (c *controlChannelImpl) handleProxyConnReq(req *pb.ProxyConnReq) {
 			c.sendProxyConnRsp(req.StreamId, err)
 			return
 		}
-		if err := c.deliverProxyConnection(proxyCtx, tunnel, &bytestreamConn{conn: conn, laddr: laddr, raddr: raddr}); err != nil {
+		proxyConn := &bytestreamConn{conn: conn, laddr: laddr, raddr: raddr}
+		if datagramListener != nil {
+			packetConn := PacketConnFromConn(proxyConn, &laddr, PacketModeFramed)
+			err = c.deliverDatagramProxyConnection(proxyCtx, tunnel, datagramListener, packetConn)
+		} else {
+			err = c.deliverProxyConnection(proxyCtx, tunnel, proxyConn)
+		}
+		if err != nil {
 			_ = conn.Close()
 			c.sendProxyConnRsp(req.StreamId, err)
 			return
 		}
 		c.sendProxyConnRsp(req.StreamId, nil)
 	}()
+}
+
+func (c *controlChannelImpl) deliverDatagramProxyConnection(ctx context.Context, tunnel *bytestreamTunnelImpl, listener *quicDatagramListener, conn net.PacketConn) error {
+	c.mu.Lock()
+	if tunnel.closing || tunnel.closed {
+		c.mu.Unlock()
+		return errors.New("tunnel is closing or closed")
+	}
+	c.mu.Unlock()
+	timer := time.NewTimer(proxyConnectionDeliveryTimeout)
+	defer timer.Stop()
+	select {
+	case listener.conns <- conn:
+		return nil
+	case <-ctx.Done():
+		return errors.New("tunnel is closing or closed")
+	case <-listener.ctx.Done():
+		return errors.New("datagram listener is closed")
+	case <-timer.C:
+		return errors.New("tunnel connection queue remained full")
+	}
 }
 
 func (c *controlChannelImpl) deliverProxyConnection(ctx context.Context, tunnel *bytestreamTunnelImpl, conn net.Conn) error {

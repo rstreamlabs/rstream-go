@@ -81,7 +81,7 @@ func runMCPPublish(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	if err := rstream.MaybeSetGeneratedStableDomain(&props, runtime.Resolved.Engine); err != nil {
+	if err := rstream.MaybeSetGeneratedStableDomain(&props, runtime.Resolved.StableDomainEndpoint()); err != nil {
 		return fmt.Errorf("failed to generate stable domain: %w", err)
 	}
 	tunnel, err := ctrl.CreateTunnel(ctx, props)

@@ -97,9 +97,19 @@ var projectUseCmd = &cobra.Command{
 		if err != nil {
 			return mapControlPlaneError(err)
 		}
+		regionValue, _ := cmd.Flags().GetString("region")
+		region, err := controlplane.NormalizeRegion(regionValue)
+		if err != nil {
+			return err
+		}
+		if region != "" {
+			if _, err := project.EngineAddressForRegion(region); err != nil {
+				return err
+			}
+		}
 		apiURL := runtime.Resolved.APIURL
 		nameFlag, _ := cmd.Flags().GetString("name")
-		ctx, err := persistProjectContext(runtime.ConfigPath, apiURL, project, nameFlag, true)
+		ctx, err := persistProjectContext(runtime.ConfigPath, apiURL, project, nameFlag, region, true)
 		if err != nil {
 			return err
 		}
@@ -234,10 +244,10 @@ func findContextByProjectEndpoint(cfg *config.Config, apiURL, endpoint string) *
 	return nil
 }
 
-func persistProjectContext(path, apiURL string, project controlplane.Project, name string, setDefault bool) (config.Context, error) {
+func persistProjectContext(path, apiURL string, project controlplane.Project, name, region string, setDefault bool) (config.Context, error) {
 	var persisted config.Context
 	err := config.UpdateAtomic(path, func(cfg *config.Config) error {
-		ctx, err := upsertProjectContext(cfg, apiURL, project, name, setDefault)
+		ctx, err := upsertProjectContext(cfg, apiURL, project, name, region, setDefault)
 		if err != nil {
 			return err
 		}
@@ -247,13 +257,22 @@ func persistProjectContext(path, apiURL string, project controlplane.Project, na
 	return persisted, err
 }
 
-func upsertProjectContext(cfg *config.Config, apiURL string, project controlplane.Project, name string, setDefault bool) (*config.Context, error) {
+func upsertProjectContext(cfg *config.Config, apiURL string, project controlplane.Project, name, region string, setDefault bool) (*config.Context, error) {
 	if cfg == nil {
 		return nil, errors.New("config is nil")
 	}
 	apiURL = config.NormalizeAPIURL(apiURL)
 	if apiURL == "" {
 		return nil, errors.New("project context requires a Control Plane API URL")
+	}
+	region, err := controlplane.NormalizeRegion(region)
+	if err != nil {
+		return nil, err
+	}
+	if region != "" {
+		if _, err := project.EngineAddressForRegion(region); err != nil {
+			return nil, err
+		}
 	}
 	engine := project.EngineAddress()
 	if engine == "" {
@@ -267,6 +286,7 @@ func upsertProjectContext(cfg *config.Config, apiURL string, project controlplan
 	ctx.APIURL = apiURL
 	ctx.ProjectEndpoint = project.Endpoint
 	ctx.Engine = engine
+	ctx.Region = region
 	ctx.TURNDomain = project.Domain
 	ctx.TURNPort = project.TurnPort
 	ctx.TURNSPort = project.TurnsPort

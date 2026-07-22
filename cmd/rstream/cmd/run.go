@@ -39,10 +39,11 @@ var runCmd = &cobra.Command{
 			return err
 		}
 		fallback := runmodel.ResolvedContext{
-			Name:      res.ContextName,
-			Engine:    res.Engine,
-			Token:     res.Token,
-			Transport: res.Transport,
+			Name:               res.ContextName,
+			Engine:             res.Engine,
+			StableDomainEngine: res.StableDomainEngine,
+			Token:              res.Token,
+			Transport:          res.Transport,
 		}
 		lookup := func(name string) (runmodel.ResolvedContext, error) {
 			resolved, err := resolveNamedContext(cfg, env, cmd, name)
@@ -50,10 +51,11 @@ var runCmd = &cobra.Command{
 				return runmodel.ResolvedContext{}, err
 			}
 			return runmodel.ResolvedContext{
-				Name:      name,
-				Engine:    resolved.Engine,
-				Token:     resolved.Token,
-				Transport: resolved.Transport,
+				Name:               name,
+				Engine:             resolved.Engine,
+				StableDomainEngine: resolved.StableDomainEngine,
+				Token:              resolved.Token,
+				Transport:          resolved.Transport,
 			}, nil
 		}
 		starter := runengine.New(

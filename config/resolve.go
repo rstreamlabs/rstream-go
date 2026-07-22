@@ -61,6 +61,7 @@ type Resolved struct {
 	Environment         *Environment
 	Context             *Context
 	Engine              string
+	StableDomainEngine  string
 	Region              string
 	Token               string
 	Transport           rstream.Dialer
@@ -224,12 +225,20 @@ func Resolve(input ResolveInput) (Resolved, error) {
 		Environment:         env,
 		Context:             ctx,
 		Engine:              engine,
+		StableDomainEngine:  engine,
 		Region:              region,
 		Token:               token,
 		Transport:           transport,
 		TLSClientConfig:     tlsClientConfig,
 		ControlPlaneHeaders: controlPlaneHeaders,
 	}, nil
+}
+
+func (r Resolved) StableDomainEndpoint() string {
+	if value := strings.TrimSpace(r.StableDomainEngine); value != "" {
+		return value
+	}
+	return r.Engine
 }
 
 func ResolveControlPlaneHeaders(env *Environment, raw string) (map[string]string, error) {

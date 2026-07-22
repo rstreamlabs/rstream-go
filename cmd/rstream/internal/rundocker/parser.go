@@ -422,9 +422,6 @@ func normalizePublishedTCP(props *rstream.TunnelProperties) error {
 		if props.Port != nil {
 			return fmt.Errorf("port requires protocol %q", rstream.ProtocolTCP)
 		}
-		if props.AllowCrossRegionRouting != nil {
-			return fmt.Errorf("allow-cross-region-routing requires protocol %q", rstream.ProtocolTCP)
-		}
 		return nil
 	}
 	if props.Type != nil && *props.Type != rstream.TunnelTypeBytestream {

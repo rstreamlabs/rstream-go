@@ -132,6 +132,32 @@ func TestResolveProjectByEndpointEscapesPath(t *testing.T) {
 	}
 }
 
+func TestResolveProjectByIDEscapesPath(t *testing.T) {
+	projectID := "project/with space"
+	expectedPath := "/api/projects/tunnels/" + url.PathEscape(projectID)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.EscapedPath(); got != expectedPath {
+			http.Error(w, "unexpected path", http.StatusBadRequest)
+			return
+		}
+		if got := r.Header.Get("x-deployment-bypass"); got != "secret" {
+			http.Error(w, "missing deployment bypass", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(Project{ID: projectID, Endpoint: "endpoint", Name: "Project"})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "token", WithHeaders(map[string]string{"x-deployment-bypass": "secret"}))
+	project, err := client.ResolveProjectByID(context.Background(), projectID)
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if project.ID != projectID || project.Endpoint != "endpoint" {
+		t.Fatalf("unexpected project: %+v", project)
+	}
+}
+
 func TestWorkspaceProjectCreationEndpoints(t *testing.T) {
 	workspaceID := "workspace/with space"
 	expectedPrefix := "/api/workspaces/" + url.PathEscape(workspaceID) + "/projects/tunnels"

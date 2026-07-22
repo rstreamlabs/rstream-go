@@ -17,6 +17,16 @@ func TestNormalizeCreateTunnelPropertiesPublishedTCP(t *testing.T) {
 	}
 }
 
+func TestNormalizeCreateTunnelPropertiesCrossRegionRouting(t *testing.T) {
+	props, err := normalizeCreateTunnelProperties(TunnelProperties{Protocol: ProtocolPtr(ProtocolHTTP), AllowCrossRegionRouting: BoolPtr(true)})
+	if err != nil {
+		t.Fatalf("normalizeCreateTunnelProperties() error = %v", err)
+	}
+	if props.AllowCrossRegionRouting == nil || !*props.AllowCrossRegionRouting {
+		t.Fatalf("AllowCrossRegionRouting = %#v, want true", props.AllowCrossRegionRouting)
+	}
+}
+
 func TestNormalizeCreateTunnelPropertiesRejectsInvalidTCPOptions(t *testing.T) {
 	tests := []struct {
 		name    string

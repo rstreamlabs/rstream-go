@@ -316,6 +316,7 @@ exec_text() {
 RSTREAM=$(build_rstream)
 HOME="$TMP_DIR/home"
 export HOME
+unset RSTREAM_API_URL RSTREAM_AUTHENTICATION_TOKEN RSTREAM_CONFIG RSTREAM_CONTEXT
 mkdir -p "$HOME"
 
 echo "=== local identity and trust store ==="

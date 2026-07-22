@@ -47,10 +47,18 @@ func ParseForwardTarget(raw, defaultHost string) (ForwardTarget, error) {
 }
 
 type ResolvedContext struct {
-	Name      string
-	Engine    string
-	Token     string
-	Transport rstream.Dialer
+	Name               string
+	Engine             string
+	StableDomainEngine string
+	Token              string
+	Transport          rstream.Dialer
+}
+
+func (r ResolvedContext) StableDomainEndpoint() string {
+	if value := strings.TrimSpace(r.StableDomainEngine); value != "" {
+		return value
+	}
+	return r.Engine
 }
 
 type DesiredTunnel struct {

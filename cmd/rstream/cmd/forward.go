@@ -130,7 +130,7 @@ func init() {
 	forwardCmd.Flags().Bool("http", false, "use HTTP protocol")
 	forwardCmd.MarkFlagsMutuallyExclusive("tls", "tcp", "dtls", "quic", "http")
 	forwardCmd.Flags().Uint32("tcp-port", 0, "use a reserved published TCP port")
-	forwardCmd.Flags().Bool("allow-cross-region-routing", false, "allow cross-region routing for a published TCP tunnel")
+	forwardCmd.Flags().Bool("allow-cross-region-routing", false, "allow cross-region routing when ingress and tunnel owner are in different regions")
 	forwardCmd.Flags().StringArray("label", nil, "set tunnel labels (key=value, might be specified multiple times)")
 	forwardCmd.Flags().String("geoip", "", "comma-separated allowed countries (ISO 3166-1 alpha-2)")
 	forwardCmd.Flags().String("trusted-ips", "", "comma-separated allowed IP/CIDR ranges")
@@ -167,7 +167,7 @@ func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := rstream.MaybeSetGeneratedStableDomain(props, runtime.Resolved.Engine); err != nil {
+	if err := rstream.MaybeSetGeneratedStableDomain(props, runtime.Resolved.StableDomainEndpoint()); err != nil {
 		return nil, fmt.Errorf("failed to generate stable domain: %w", err)
 	}
 	retryPtr := getBoolPtr(cmd, "retry")

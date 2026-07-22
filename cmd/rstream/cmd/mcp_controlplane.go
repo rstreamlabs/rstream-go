@@ -1045,11 +1045,14 @@ func mcpCreateProjectArgs(args map[string]json.RawMessage) (string, controlplane
 	if request.Placement != "regional" && request.Placement != "global" {
 		return "", request, fmt.Errorf("placement must be global or regional")
 	}
-	if request.Placement == "regional" && (request.Provider == "" || request.Region == "") {
+	if request.Provider == "" {
+		return "", request, fmt.Errorf("provider is required")
+	}
+	if request.Placement == "regional" && request.Region == "" {
 		return "", request, fmt.Errorf("provider and region are required for regional placement")
 	}
-	if request.Placement == "global" && (request.Provider != "" || request.Region != "") {
-		return "", request, fmt.Errorf("provider and region must be omitted for global placement")
+	if request.Placement == "global" && request.Region != "" {
+		return "", request, fmt.Errorf("region must be omitted for global placement")
 	}
 	if request.Plan, err = mcpRequiredStringArg(args, "plan"); err != nil {
 		return "", request, err

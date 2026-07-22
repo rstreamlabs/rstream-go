@@ -230,6 +230,9 @@ func createTunnel(ctx context.Context, client *rstream.Client, variant, name str
 		Type:    rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
 		Publish: rstream.BoolPtr(publish),
 	}
+	if os.Getenv("RSTREAM_E2E_ALLOW_CROSS_REGION_ROUTING") == "1" {
+		props.AllowCrossRegionRouting = rstream.BoolPtr(true)
+	}
 	if guaranteedDelivery {
 		props.DatagramGuaranteedDelivery = rstream.BoolPtr(true)
 	}
