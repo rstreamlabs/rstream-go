@@ -45,7 +45,7 @@ if [ -n "${RSTREAM_E2E_OWNER_CONTEXT:-}" ]; then
 fi
 
 owner_exec() {
-  env "${OWNER_ENV[@]}" "$@"
+  exec env "${OWNER_ENV[@]}" "$@"
 }
 
 cleanup() {
