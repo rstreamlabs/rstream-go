@@ -123,12 +123,7 @@ func resolveRuntimeRegionContext(ctx context.Context, cfg config.Config, resolve
 	if err != nil {
 		return mapControlPlaneError(err)
 	}
-	engine, err := project.EngineAddressForRegion(resolved.Region)
-	if err != nil {
-		return err
-	}
-	resolved.Engine = engine
-	return nil
+	return config.ResolveProjectRegion(resolved, project)
 }
 
 func resolveControlPlane(cmd *cobra.Command, requireToken bool) (*resolvedRuntime, error) {

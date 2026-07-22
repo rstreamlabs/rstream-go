@@ -227,15 +227,18 @@ func TestParseDesiredTunnelsRejectsPublishedTCPProtocolOptions(t *testing.T) {
 	}
 }
 
-func TestParseDesiredTunnelsRejectsCrossRegionRoutingWithoutTCP(t *testing.T) {
+func TestParseDesiredTunnelsAcceptsCrossRegionRoutingForHTTP(t *testing.T) {
 	labels := map[string]string{
 		"rstream.tunnel.web.forward":                    "8080",
 		"rstream.tunnel.web.protocol":                   "http",
-		"rstream.tunnel.web.allow-cross-region-routing": "false",
+		"rstream.tunnel.web.allow-cross-region-routing": "true",
 	}
-	_, err := ParseDesiredTunnels(ContainerInfo{Labels: labels}, "", runmodel.ResolvedContext{})
-	if err == nil || !strings.Contains(err.Error(), `allow-cross-region-routing requires protocol "tcp"`) {
-		t.Fatalf("expected routing policy validation error, got %v", err)
+	desired, err := ParseDesiredTunnels(ContainerInfo{Labels: labels, Networks: map[string]string{"backend": "10.0.0.8"}}, "", runmodel.ResolvedContext{})
+	if err != nil {
+		t.Fatalf("ParseDesiredTunnels() error = %v", err)
+	}
+	if len(desired) != 1 || desired[0].Props.AllowCrossRegionRouting == nil || !*desired[0].Props.AllowCrossRegionRouting {
+		t.Fatalf("unexpected routing properties: %#v", desired)
 	}
 }
 

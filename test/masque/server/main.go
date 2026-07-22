@@ -79,6 +79,9 @@ func createTunnel(ctx context.Context, client *rstream.Client, name, hostname st
 		Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
 		HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP3),
 	}
+	if os.Getenv("RSTREAM_E2E_ALLOW_CROSS_REGION_ROUTING") == "1" {
+		props.AllowCrossRegionRouting = rstream.BoolPtr(true)
+	}
 	if hostname != "" {
 		props.Hostname = rstream.StringPtr(hostname)
 	}

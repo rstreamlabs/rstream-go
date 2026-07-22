@@ -523,3 +523,59 @@ func TestPacketConnFromPacketListenerRoutesPackets(t *testing.T) {
 		t.Fatalf("WriteTo() after close error = %v, want net.ErrClosed", err)
 	}
 }
+
+func TestPacketConnFromPacketListenerPropagatesListenerClose(t *testing.T) {
+	remote := stubNetAddr("remote")
+	inner := newFakePacketConn(stubNetAddr("inner"))
+	listener := newFakePacketListener(stubNetAddr("listener"))
+	packetConn := PacketConnFromPacketListener(listener)
+	listener.accepted <- acceptedPacketConn{conn: inner, addr: remote}
+	inner.reads <- []byte("ready")
+	buf := make([]byte, 16)
+	if _, _, err := packetConn.ReadFrom(buf); err != nil {
+		t.Fatalf("initial ReadFrom() error = %v", err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatalf("listener Close() error = %v", err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := packetConn.ReadFrom(buf)
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		if !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("ReadFrom() error = %v, want net.ErrClosed", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("ReadFrom() remained blocked after listener close")
+	}
+	select {
+	case <-inner.closed:
+	case <-time.After(time.Second):
+		t.Fatalf("accepted connection remained open after listener close")
+	}
+}
+
+func TestPacketConnFromPacketListenerCloseUnblocksRead(t *testing.T) {
+	listener := newFakePacketListener(stubNetAddr("listener"))
+	packetConn := PacketConnFromPacketListener(listener)
+	buf := make([]byte, 16)
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := packetConn.ReadFrom(buf)
+		result <- err
+	}()
+	if err := packetConn.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	select {
+	case err := <-result:
+		if !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("ReadFrom() error = %v, want net.ErrClosed", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatalf("ReadFrom() remained blocked after close")
+	}
+}

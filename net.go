@@ -57,11 +57,13 @@ type packetConnWrapper struct {
 }
 
 type packetListenerWrapper struct {
-	mu     sync.Mutex
-	closed bool
-	inner  PacketListener
-	conns  map[net.Addr]net.PacketConn
-	pkts   chan packet
+	mu       sync.Mutex
+	closed   bool
+	closeErr error
+	inner    PacketListener
+	conns    map[net.Addr]net.PacketConn
+	pkts     chan packet
+	done     chan struct{}
 }
 
 func PacketListenerFromListener(l net.Listener) PacketListener {
@@ -222,6 +224,7 @@ func PacketConnFromPacketListener(l PacketListener) net.PacketConn {
 		inner: l,
 		conns: make(map[net.Addr]net.PacketConn),
 		pkts:  make(chan packet, 100),
+		done:  make(chan struct{}),
 	}
 	go pl.accept()
 	return pl
@@ -230,15 +233,19 @@ func PacketConnFromPacketListener(l PacketListener) net.PacketConn {
 func (pl *packetListenerWrapper) accept() {
 	for {
 		conn, raddr, err := pl.inner.Accept()
-		pl.mu.Lock()
-		if err != nil || pl.closed {
-			pl.mu.Unlock()
-			break
-		} else {
-			pl.conns[raddr] = conn
-			pl.mu.Unlock()
-			go pl.read(conn, raddr)
+		if err != nil {
+			_ = pl.shutdown(err)
+			return
 		}
+		pl.mu.Lock()
+		if pl.closed {
+			pl.mu.Unlock()
+			_ = conn.Close()
+			return
+		}
+		pl.conns[raddr] = conn
+		pl.mu.Unlock()
+		go pl.read(conn, raddr)
 	}
 }
 
@@ -261,6 +268,8 @@ func (pl *packetListenerWrapper) read(conn net.PacketConn, raddr net.Addr) {
 		pkt := packet{data: buf[:n], adrr: raddr}
 		select {
 		case pl.pkts <- pkt:
+		case <-pl.done:
+			return
 		default:
 			continue
 		}
@@ -268,12 +277,16 @@ func (pl *packetListenerWrapper) read(conn net.PacketConn, raddr net.Addr) {
 }
 
 func (pl *packetListenerWrapper) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
-	pkt, ok := <-pl.pkts
-	if !ok {
-		return 0, nil, net.ErrClosed
+	select {
+	case pkt := <-pl.pkts:
+		n = copy(p, pkt.data)
+		return n, pkt.adrr, nil
+	case <-pl.done:
+		pl.mu.Lock()
+		err = pl.closeErr
+		pl.mu.Unlock()
+		return 0, nil, err
 	}
-	n = copy(p, pkt.data)
-	return n, pkt.adrr, nil
 }
 
 func (pl *packetListenerWrapper) WriteTo(p []byte, addr net.Addr) (n int, err error) {
@@ -290,16 +303,24 @@ func (pl *packetListenerWrapper) WriteTo(p []byte, addr net.Addr) (n int, err er
 }
 
 func (pl *packetListenerWrapper) Close() error {
+	return pl.shutdown(net.ErrClosed)
+}
+
+func (pl *packetListenerWrapper) shutdown(err error) error {
 	pl.mu.Lock()
-	defer pl.mu.Unlock()
 	if pl.closed {
+		pl.mu.Unlock()
 		return nil
 	}
 	pl.closed = true
-	for _, conn := range pl.conns {
-		conn.Close()
-	}
+	pl.closeErr = err
+	conns := pl.conns
 	pl.conns = nil
+	close(pl.done)
+	pl.mu.Unlock()
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
 	return pl.inner.Close()
 }
 

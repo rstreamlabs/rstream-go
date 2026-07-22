@@ -114,6 +114,9 @@ func run(ctx context.Context, client *rstream.Client, variant, name string, publ
 		Type:    rstream.TunnelTypePtr(rstream.TunnelTypeBytestream),
 		Publish: rstream.BoolPtr(publish),
 	}
+	if os.Getenv("RSTREAM_E2E_ALLOW_CROSS_REGION_ROUTING") == "1" {
+		props.AllowCrossRegionRouting = rstream.BoolPtr(true)
+	}
 	if hostname != "" {
 		props.Hostname = rstream.StringPtr(hostname)
 	}

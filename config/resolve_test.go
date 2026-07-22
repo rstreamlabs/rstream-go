@@ -58,6 +58,9 @@ func TestResolvePrecedence(t *testing.T) {
 	if resolved.Engine != "engine.example:443" {
 		t.Fatalf("expected engine from context, got %q", resolved.Engine)
 	}
+	if resolved.StableDomainEndpoint() != "engine.example:443" {
+		t.Fatalf("expected Stable domain endpoint from context, got %q", resolved.StableDomainEndpoint())
+	}
 	if resolved.Token != "env-var-token" {
 		t.Fatalf("expected env token override, got %q", resolved.Token)
 	}
