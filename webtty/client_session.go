@@ -24,6 +24,8 @@ import (
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
 )
 
+const tunneledWebTransportInitialPacketSize = 1200
+
 type SessionConfig struct {
 	URL                    string
 	Transport              WebTTYTransport
@@ -380,10 +382,7 @@ func dialWebTransportWebTTYMessageConn(ctx context.Context, cfg *SessionConfig, 
 	}
 	dialer := &webtransport.Dialer{
 		TLSClientConfig: tlsConfig,
-		QUICConfig: &quic.Config{
-			EnableDatagrams:                  true,
-			EnableStreamResetPartialDelivery: true,
-		},
+		QUICConfig:      webTransportClientQUICConfig(endpoint.RequiresCustomDial),
 	}
 	if endpoint.RequiresCustomDial {
 		if cfg.DialPacketContext == nil {
@@ -419,6 +418,18 @@ func dialWebTransportWebTTYMessageConn(ctx context.Context, cfg *SessionConfig, 
 		return nil, fmt.Errorf("WebTransport stream open failed: %w", err)
 	}
 	return newWebTransportMessageConn(session, stream), nil
+}
+
+func webTransportClientQUICConfig(tunneled bool) *quic.Config {
+	cfg := &quic.Config{
+		EnableDatagrams:                  true,
+		EnableStreamResetPartialDelivery: true,
+	}
+	if tunneled {
+		cfg.InitialPacketSize = tunneledWebTransportInitialPacketSize
+		cfg.DisablePathMTUDiscovery = true
+	}
+	return cfg
 }
 
 func endpointTLSServerName(address string) string {
