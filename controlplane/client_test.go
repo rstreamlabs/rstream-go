@@ -193,6 +193,15 @@ func TestWorkspaceProjectCreationEndpoints(t *testing.T) {
 			seen["checkout"] = true
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(CreateProjectCheckoutResponse{URL: "https://checkout.example", ProjectID: "p3"})
+		case r.Method == http.MethodPut && r.URL.EscapedPath() == "/api/projects/tunnels/p2":
+			var request UpdateProjectRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Name != "Renamed" {
+				http.Error(w, "unexpected update request", http.StatusBadRequest)
+				return
+			}
+			seen["update"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(Project{ID: "p2", Name: request.Name})
 		case r.Method == http.MethodDelete && r.URL.EscapedPath() == "/api/projects/tunnels/p2":
 			seen["delete"] = true
 			w.WriteHeader(http.StatusNoContent)
@@ -221,10 +230,14 @@ func TestWorkspaceProjectCreationEndpoints(t *testing.T) {
 	if _, err := client.CreateProjectCheckout(context.Background(), workspaceID, request); err != nil {
 		t.Fatalf("CreateProjectCheckout returned error: %v", err)
 	}
+	updated, err := client.UpdateProject(context.Background(), "p2", UpdateProjectRequest{Name: "Renamed"})
+	if err != nil || updated.Name != "Renamed" {
+		t.Fatalf("UpdateProject returned %+v, %v", updated, err)
+	}
 	if err := client.DeleteProject(context.Background(), "p2"); err != nil {
 		t.Fatalf("DeleteProject returned error: %v", err)
 	}
-	for _, key := range []string{"workspaces", "workspace_projects", "options", "project_plan", "create", "checkout", "delete"} {
+	for _, key := range []string{"workspaces", "workspace_projects", "options", "project_plan", "create", "checkout", "update", "delete"} {
 		if !seen[key] {
 			t.Fatalf("endpoint %q was not called", key)
 		}

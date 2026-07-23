@@ -209,6 +209,15 @@ func TestProjectUseHelpDescribesDefaultContext(t *testing.T) {
 	}
 }
 
+func TestProjectRenameHelpAndValidation(t *testing.T) {
+	if projectRenameCmd.Short != "Rename a project" {
+		t.Fatalf("project rename help = %q", projectRenameCmd.Short)
+	}
+	if err := projectRenameCmd.RunE(projectRenameCmd, []string{" "}); err == nil || err.Error() != "project name is required" {
+		t.Fatalf("project rename empty name error = %v", err)
+	}
+}
+
 func TestMapControlPlaneError(t *testing.T) {
 	err := mapControlPlaneError(controlplane.ErrUnauthorized)
 	if err == nil || !strings.Contains(err.Error(), "not authenticated") {
