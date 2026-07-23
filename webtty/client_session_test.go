@@ -116,6 +116,20 @@ func TestCloneTLSConfigWithWebTTYDefaults(t *testing.T) {
 	}
 }
 
+func TestWebTransportClientQUICConfig(t *testing.T) {
+	direct := webTransportClientQUICConfig(false)
+	if direct.InitialPacketSize != 0 || direct.DisablePathMTUDiscovery {
+		t.Fatalf("direct config unexpectedly constrains MTU: %#v", direct)
+	}
+	tunneled := webTransportClientQUICConfig(true)
+	if tunneled.InitialPacketSize != tunneledWebTransportInitialPacketSize || !tunneled.DisablePathMTUDiscovery {
+		t.Fatalf("tunneled config does not constrain MTU: %#v", tunneled)
+	}
+	if !tunneled.EnableDatagrams || !tunneled.EnableStreamResetPartialDelivery {
+		t.Fatalf("tunneled config lost WebTransport features: %#v", tunneled)
+	}
+}
+
 func TestDecodeClientSessionEvent(t *testing.T) {
 	tests := []struct {
 		name    string

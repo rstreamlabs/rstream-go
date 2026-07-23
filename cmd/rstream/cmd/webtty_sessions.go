@@ -1172,9 +1172,6 @@ func validateWebTTYSessionAttachSupport(session *rstream.WebTTYSession) error {
 	default:
 		return fmt.Errorf("WebTTY session %s is not active", session.ID)
 	}
-	if session.DownTransport != rstream.WebTTYTransportWebSocket {
-		return fmt.Errorf("WebTTY session %s cannot be joined from the CLI because live join currently supports websocket sessions only", session.ID)
-	}
 	if !session.Live.Available {
 		return fmt.Errorf("WebTTY session %s is not live on this engine", session.ID)
 	}

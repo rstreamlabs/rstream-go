@@ -637,13 +637,23 @@ func TestWebTTYDetachContextAllowsNilParent(t *testing.T) {
 	}
 }
 
-func TestValidateWebTTYSessionAttachSupportAllowsLiveE2E(t *testing.T) {
+func TestValidateWebTTYSessionAttachSupportAllowsManagedAndE2ESessionTransports(t *testing.T) {
 	live := rstream.WebTTYSessionLive{Available: true, Attachable: true, HasUpstream: true}
-	if err := validateWebTTYSessionAttachSupport(&rstream.WebTTYSession{ID: "session-1", Status: rstream.WebTTYSessionStatusActive, DownTransport: rstream.WebTTYTransportWebSocket, EncryptionMode: rstream.WebTTYEncryptionModeManaged, Live: live}); err != nil {
-		t.Fatalf("managed attach support error = %v", err)
+	tests := []struct {
+		name       string
+		transport  rstream.WebTTYTransport
+		encryption rstream.WebTTYEncryptionMode
+	}{
+		{name: "plain managed", transport: rstream.WebTTYTransportPlain, encryption: rstream.WebTTYEncryptionModeManaged},
+		{name: "websocket E2E", transport: rstream.WebTTYTransportWebSocket, encryption: rstream.WebTTYEncryptionModeE2E},
+		{name: "webtransport managed", transport: rstream.WebTTYTransportWebTransport, encryption: rstream.WebTTYEncryptionModeManaged},
 	}
-	if err := validateWebTTYSessionAttachSupport(&rstream.WebTTYSession{ID: "session-1", Status: rstream.WebTTYSessionStatusActive, DownTransport: rstream.WebTTYTransportWebSocket, EncryptionMode: rstream.WebTTYEncryptionModeE2E, Live: live}); err != nil {
-		t.Fatalf("E2E attach support error = %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := validateWebTTYSessionAttachSupport(&rstream.WebTTYSession{ID: "session-1", Status: rstream.WebTTYSessionStatusActive, DownTransport: tt.transport, EncryptionMode: tt.encryption, Live: live}); err != nil {
+				t.Fatalf("attach support error = %v", err)
+			}
+		})
 	}
 }
 
@@ -681,16 +691,6 @@ func TestValidateWebTTYSessionAttachSupportRejectsUnsupportedLiveState(t *testin
 				Live:          live,
 			},
 			want: "not active",
-		},
-		{
-			name: "plain",
-			session: &rstream.WebTTYSession{
-				ID:            "session-1",
-				Status:        rstream.WebTTYSessionStatusActive,
-				DownTransport: rstream.WebTTYTransportPlain,
-				Live:          live,
-			},
-			want: "websocket sessions only",
 		},
 		{
 			name: "not live",

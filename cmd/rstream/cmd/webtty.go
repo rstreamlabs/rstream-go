@@ -34,6 +34,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const tunneledWebTTYWebTransportInitialPacketSize = 1200
+
 const (
 	webTTYAuthTokenEnv                           = "RSTREAM_WEBTTY_AUTH_TOKEN"
 	webTTYAuthorizedClientKeysEnv                = "RSTREAM_WEBTTY_AUTHORIZED_CLIENT_KEYS"
@@ -100,6 +102,11 @@ type webTTYClientCryptoConfig struct {
 
 type webTTYClientRstreamResolution struct {
 	URL        string
+	RuntimeE2E *webTTYClientRuntimeE2EContext
+	Scope      webTTYClientSecurityScope
+}
+
+type webTTYClientPublishedResolution struct {
 	RuntimeE2E *webTTYClientRuntimeE2EContext
 	Scope      webTTYClientSecurityScope
 }
@@ -434,7 +441,7 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 				return err
 			}
 			logger.Info("webtty webtransport server started", "address", address)
-			return serveWebTransportWebTTYOnPacketConn(ctx, rstream.PacketConnFromPacketListener(packetListener), terminalHandler, authToken, allowUnauthenticated, allowedOrigins, shutdownTimeout, tlsConfig, logger)
+			return serveWebTransportWebTTYOnPacketConn(ctx, rstream.PacketConnFromPacketListener(packetListener), terminalHandler, authToken, allowUnauthenticated, allowedOrigins, shutdownTimeout, tlsConfig, true, logger)
 		}
 		nl, ok := tunnel.(interface{ net.Listener })
 		if !ok {
@@ -560,20 +567,17 @@ func serveWebTransportWebTTY(ctx context.Context, addr string, terminalHandler *
 		NextProtos:   []string{http3.NextProtoH3},
 	}
 	logger.Info("webtty webtransport server started", "address", packetConn.LocalAddr().String())
-	return serveWebTransportWebTTYOnPacketConn(ctx, packetConn, terminalHandler, authToken, allowUnauthenticated, allowedOrigins, shutdownTimeout, tlsConfig, logger)
+	return serveWebTransportWebTTYOnPacketConn(ctx, packetConn, terminalHandler, authToken, allowUnauthenticated, allowedOrigins, shutdownTimeout, tlsConfig, false, logger)
 }
 
-func serveWebTransportWebTTYOnPacketConn(ctx context.Context, packetConn net.PacketConn, terminalHandler *webtty.Handler, authToken *string, allowUnauthenticated bool, allowedOrigins []string, shutdownTimeout time.Duration, tlsConfig *tls.Config, logger *slog.Logger) error {
+func serveWebTransportWebTTYOnPacketConn(ctx context.Context, packetConn net.PacketConn, terminalHandler *webtty.Handler, authToken *string, allowUnauthenticated bool, allowedOrigins []string, shutdownTimeout time.Duration, tlsConfig *tls.Config, tunneled bool, logger *slog.Logger) error {
 	mux := http.NewServeMux()
 	server := &webtransport.Server{
 		H3: &http3.Server{
 			Handler:         mux,
 			TLSConfig:       tlsConfig,
 			EnableDatagrams: true,
-			QUICConfig: &quic.Config{
-				EnableDatagrams:                  true,
-				EnableStreamResetPartialDelivery: true,
-			},
+			QUICConfig:      webTTYWebTransportQUICConfig(tunneled),
 		},
 		CheckOrigin: func(r *http.Request) bool {
 			return webTTYServerRequestOriginAllowed(r, allowedOrigins, !allowUnauthenticated)
@@ -619,6 +623,18 @@ func serveWebTransportWebTTYOnPacketConn(ctx context.Context, packetConn net.Pac
 		return nil
 	}
 	return err
+}
+
+func webTTYWebTransportQUICConfig(tunneled bool) *quic.Config {
+	cfg := &quic.Config{
+		EnableDatagrams:                  true,
+		EnableStreamResetPartialDelivery: true,
+	}
+	if tunneled {
+		cfg.InitialPacketSize = tunneledWebTTYWebTransportInitialPacketSize
+		cfg.DisablePathMTUDiscovery = true
+	}
+	return cfg
 }
 
 func generateWebTTYInternalWebTransportTLSConfig() (*tls.Config, error) {
@@ -2441,6 +2457,33 @@ func resolveWebTTYClientRstream(ctx context.Context, runtime *resolvedRuntime, r
 	}, nil
 }
 
+func resolveWebTTYClientPublished(ctx context.Context, runtime *resolvedRuntime, rstreamClient *rstream.Client, urlValue string) (*webTTYClientPublishedResolution, error) {
+	u, err := url.Parse(strings.TrimSpace(urlValue))
+	if err != nil {
+		return nil, err
+	}
+	target := strings.TrimSpace(u.Host)
+	if target == "" {
+		return nil, fmt.Errorf("WebTTY URL is missing a host")
+	}
+	serverInfo, err := resolveWebTTYRuntimeServerInfo(ctx, rstreamClient, target)
+	if err != nil {
+		return nil, err
+	}
+	if serverInfo == nil {
+		return nil, nil
+	}
+	runtimeE2E, err := webTTYClientRuntimeE2EContextFromServerInfo(ctx, runtime, *serverInfo)
+	resolution := &webTTYClientPublishedResolution{
+		RuntimeE2E: runtimeE2E,
+		Scope:      webTTYClientSecurityScopeFromServerInfo(target, serverInfo),
+	}
+	if err != nil {
+		return resolution, err
+	}
+	return resolution, nil
+}
+
 func webTTYProjectFromRuntimeServerInfo(runtime *resolvedRuntime, serverInfo *webtty.ServerInfo) (controlplane.Project, bool) {
 	if serverInfo == nil {
 		return controlplane.Project{}, false
@@ -2618,7 +2661,25 @@ func webTTYRuntimeServerMatchesTarget(server webtty.ServerInfo, target string) b
 			server.TunnelID == target ||
 			trimOptionalString(server.TunnelName) == target ||
 			trimOptionalString(server.ServerID) == target ||
-			trimOptionalString(server.ServerName) == target)
+			trimOptionalString(server.ServerName) == target ||
+			webTTYRuntimeHostMatchesTarget(trimOptionalString(server.Host), target))
+}
+
+func webTTYRuntimeHostMatchesTarget(host string, target string) bool {
+	return strings.EqualFold(normalizeWebTTYRuntimeHost(host), normalizeWebTTYRuntimeHost(target))
+}
+
+func normalizeWebTTYRuntimeHost(value string) string {
+	value = strings.TrimSpace(value)
+	host, port, err := net.SplitHostPort(value)
+	if err == nil {
+		host = strings.TrimSuffix(strings.TrimSpace(host), ".")
+		if port == "443" {
+			return strings.ToLower(host)
+		}
+		return strings.ToLower(net.JoinHostPort(host, port))
+	}
+	return strings.ToLower(strings.TrimSuffix(value, "."))
 }
 
 func runWebTTYClient(cmd *cobra.Command, urlOverride string, args []string) error {
@@ -2736,6 +2797,27 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 			if clientCfg.TLSConfig == nil {
 				clientCfg.TLSConfig = &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}
 			}
+		}
+	} else if authToken != nil && strings.TrimSpace(*authToken) != "" {
+		runtime, resolveErr := resolveRuntime(cmd, true, true)
+		if resolveErr == nil {
+			runtimeClient, clientErr := newClientFromResolved(runtime.Resolved)
+			if clientErr == nil {
+				publishedResolution, resolutionErr := resolveWebTTYClientPublished(ctx, runtime, runtimeClient, urlValue)
+				if publishedResolution != nil {
+					if resolutionErr != nil {
+						return resolutionErr
+					}
+					runtimeE2E = publishedResolution.RuntimeE2E
+					securityScope = publishedResolution.Scope
+				} else if resolutionErr != nil {
+					logger.Debug("unable to resolve published WebTTY server metadata", "error", resolutionErr)
+				}
+			} else {
+				logger.Debug("unable to create rstream client for published WebTTY metadata", "error", clientErr)
+			}
+		} else {
+			logger.Debug("unable to resolve rstream runtime for published WebTTY metadata", "error", resolveErr)
 		}
 	}
 	cryptoConfig, err := webTTYClientCryptoWithRuntimeAndScope(ctx, cmd, runtimeE2E, securityScope)

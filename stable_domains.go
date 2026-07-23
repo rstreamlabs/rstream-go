@@ -82,7 +82,7 @@ func engineHostname(engine string) string {
 	}
 	value = strings.Trim(value, "[]")
 	value = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(value), "."))
-	if strings.Contains(value, ":") {
+	if net.ParseIP(value) != nil || strings.Contains(value, ":") {
 		return ""
 	}
 	return value

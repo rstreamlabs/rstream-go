@@ -27,6 +27,9 @@ func TestGenerateStableDomainRejectsUnsupportedEngines(t *testing.T) {
 		"localhost:443",
 		"bad_label.example.com:443",
 		"project.bad_cluster.example.com:443",
+		"192.0.2.1",
+		"192.0.2.1:443",
+		"2001:db8::1",
 		"[2001:db8::1]:443",
 	}
 	for _, engine := range tests {
