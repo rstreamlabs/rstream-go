@@ -195,6 +195,13 @@ func (c *Client) CreateProjectCheckout(ctx context.Context, workspaceID string, 
 	return out, err
 }
 
+func (c *Client) UpdateProject(ctx context.Context, projectID string, request UpdateProjectRequest) (Project, error) {
+	var out Project
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID)
+	_, err := c.doJSONBody(ctx, http.MethodPut, path, nil, request, &out)
+	return out, err
+}
+
 func (c *Client) DeleteProject(ctx context.Context, projectID string) error {
 	path := "/api/projects/tunnels/" + url.PathEscape(projectID)
 	_, err := c.doJSON(ctx, http.MethodDelete, path, nil, nil)

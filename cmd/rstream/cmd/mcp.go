@@ -313,6 +313,7 @@ func mcpTools() []map[string]any {
 		mcpTool("rstream_context_get", "Get one local rstream CLI context, or the default context when name is omitted.", map[string]any{"name": mcpStringSchema("Optional local rstream context name.")}, []string{}),
 		mcpTool("rstream_project_creation_options", "Return project creation options and billing actions for a workspace.", map[string]any{"workspace_id": mcpStringSchema("Workspace ID.")}, []string{"workspace_id"}),
 		mcpTool("rstream_project_create", "Create a tunnel project, or start Stripe checkout only when start_checkout is true.", map[string]any{"workspace_id": mcpStringSchema("Workspace ID."), "name": mcpStringSchema("Project name."), "placement": mcpStringSchema("Global or regional placement."), "provider": mcpStringSchema("Infrastructure provider from project creation options."), "region": mcpStringSchema("Region for regional placement; omit for Global."), "plan": mcpStringSchema("Project plan from creation options."), "creation_fingerprint": mcpStringSchema("Creation fingerprint from project creation options."), "idempotency_key": mcpStringSchema("Optional idempotency key. A safe key is generated when omitted."), "start_checkout": map[string]any{"type": "boolean", "description": "Start Stripe checkout instead of direct creation. Set only after explicit user approval."}}, []string{"workspace_id", "name", "provider", "plan", "creation_fingerprint"}),
+		mcpTool("rstream_project_update", "Update a tunnel project's display name.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID to update."), "name": mcpStringSchema("New project name.")}, []string{"project_id", "name"}),
 		mcpTool("rstream_project_delete", "Delete a tunnel project after explicit user approval. Use this only for the exact project the user asked to remove.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID to delete.")}, []string{"project_id"}),
 		mcpTool("rstream_project_list", "List tunnel projects available through the local rstream Control plane context. If multiple projects are returned and the user did not name one, list the choices and ask for a project name, endpoint, or ID; do not recommend a default from project names such as Dev, Test, or Prod.", map[string]any{"workspace_id": mcpStringSchema("Optional workspace ID. When omitted, lists across accessible workspaces."), "q": mcpStringSchema("Optional project search query."), "page": map[string]any{"type": "number", "description": "Optional result page."}, "page_size": map[string]any{"type": "number", "description": "Optional page size."}, "sort": mcpStringSchema("Optional sort key."), "order": mcpStringSchema("Optional sort direction.")}, []string{}),
 		mcpTool("rstream_project_logs", "List tunnel request and connection logs for a tunnel project.", map[string]any{"project_id": mcpStringSchema("Tunnel project ID."), "timeline": mcpStringSchema("Optional timeline: 30m, 1h, 12h, 24h, 3d, 1w, or 30d."), "start": mcpStringSchema("Optional start date."), "end": mcpStringSchema("Optional end date."), "event_type": mcpStringSchema("Optional event type filter."), "after_event_id": mcpStringSchema("Optional event ID cursor."), "page": map[string]any{"type": "number", "description": "Optional result page."}, "page_size": map[string]any{"type": "number", "description": "Optional page size."}, "order": mcpStringSchema("Optional sort direction.")}, []string{"project_id"}),
@@ -398,6 +399,7 @@ func mcpToolTitle(name string) string {
 		"rstream_project_create":                  "Create tunnel project",
 		"rstream_project_creation_options":        "Inspect project creation options",
 		"rstream_project_delete":                  "Delete tunnel project",
+		"rstream_project_update":                  "Update tunnel project",
 		"rstream_project_domain_connect":          "Create Domain Connect link",
 		"rstream_project_domain_create":           "Add project domain",
 		"rstream_project_domain_delete":           "Delete project domain",
@@ -462,7 +464,7 @@ func mcpToolAnnotations(name string) map[string]any {
 	readOnly := strings.Contains(name, "_list") || strings.Contains(name, "_get") || strings.Contains(name, "_logs") || strings.Contains(name, "_usage") || strings.Contains(name, "_status") || strings.Contains(name, "_discover") || strings.Contains(name, "_tools") || strings.Contains(name, "_read") || strings.Contains(name, "_creation_options") || strings.Contains(name, "_domain_connect") || name == "rstream_openapi"
 	readOnly = readOnly || name == "rstream_webtty_session_events" || name == "rstream_webtty_session_export" || name == "rstream_webtty_session_participants"
 	destructive := strings.Contains(name, "_delete") || strings.Contains(name, "_release") || strings.Contains(name, "_reset") || strings.Contains(name, "_retry") || strings.HasSuffix(name, "_stop") || strings.Contains(name, "_settings_patch") || name == "rstream_webtty_exec" || name == "rstream_webtty_fs_write" || name == "rstream_remote_mcp_call" || name == "rstream_webtty_control_request_create" || name == "rstream_webtty_control_request_resolve"
-	idempotent := readOnly || strings.HasSuffix(name, "_stop") || name == "rstream_runtime_prepare"
+	idempotent := readOnly || strings.HasSuffix(name, "_stop") || name == "rstream_runtime_prepare" || name == "rstream_project_update"
 	openWorld := strings.Contains(name, "auth") || strings.Contains(name, "project") || strings.Contains(name, "workspace") || strings.Contains(name, "token") || strings.Contains(name, "local_tunnel") || strings.Contains(name, "remote") || strings.Contains(name, "webtty") || strings.Contains(name, "turn") || name == "rstream_runtime_prepare"
 	return map[string]any{"title": mcpToolTitle(name), "readOnlyHint": readOnly, "destructiveHint": destructive, "idempotentHint": idempotent, "openWorldHint": openWorld}
 }
@@ -472,6 +474,8 @@ func mcpToolOutputSchema(name string) map[string]any {
 		return map[string]any{"type": "object", "properties": map[string]any{"id": mcpStringSchema("Local auth session ID."), "login_url": mcpStringSchema("User approval URL."), "expires_at": mcpStringSchema("Login request expiry time."), "scopes": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, "required": []string{"id", "login_url"}, "additionalProperties": true}
 	case "rstream_project_create":
 		return map[string]any{"type": "object", "properties": map[string]any{"action": mcpStringSchema("Project creation action."), "project": map[string]any{"type": "object"}, "checkout": map[string]any{"type": "object"}}, "required": []string{"action"}, "additionalProperties": true}
+	case "rstream_project_update":
+		return map[string]any{"type": "object", "properties": map[string]any{"project": map[string]any{"type": "object"}}, "required": []string{"project"}, "additionalProperties": true}
 	case "rstream_project_delete":
 		return map[string]any{"type": "object", "properties": map[string]any{"action": mcpStringSchema("Project deletion action."), "project_id": mcpStringSchema("Deleted project ID.")}, "required": []string{"action", "project_id"}, "additionalProperties": true}
 	case "rstream_runtime_prepare":
@@ -529,6 +533,8 @@ func handleMCPToolCall(ctx context.Context, params json.RawMessage) (map[string]
 		return mcpProjectCreationOptions(ctx, call.Arguments)
 	case "rstream_project_create":
 		return mcpProjectCreate(ctx, call.Arguments)
+	case "rstream_project_update":
+		return mcpProjectUpdate(ctx, call.Arguments)
 	case "rstream_project_delete":
 		return mcpProjectDelete(ctx, call.Arguments)
 	case "rstream_project_list":

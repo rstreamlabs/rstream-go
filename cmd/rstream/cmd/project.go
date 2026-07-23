@@ -122,10 +122,33 @@ var projectUseCmd = &cobra.Command{
 	},
 }
 
+var projectRenameCmd = &cobra.Command{
+	Use:          "rename <name>",
+	Short:        "Rename a project",
+	SilenceUsage: true,
+	Args:         cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := strings.TrimSpace(args[0])
+		if name == "" {
+			return errors.New("project name is required")
+		}
+		client, projectID, err := projectResourceClient(cmd)
+		if err != nil {
+			return err
+		}
+		project, err := client.UpdateProject(cmd.Context(), projectID, controlplane.UpdateProjectRequest{Name: name})
+		if err != nil {
+			return mapControlPlaneError(err)
+		}
+		return writeProjectResourceResult(cmd, project)
+	},
+}
+
 func init() {
 	projectCmd.Flags().SortFlags = false
 	projectCmd.PersistentFlags().SortFlags = false
 	projectCmd.AddCommand(projectListCmd)
+	projectCmd.AddCommand(projectRenameCmd)
 	projectCmd.AddCommand(projectUseCmd)
 	projectListCmd.Flags().SortFlags = false
 	projectListCmd.Flags().String("workspace", "", "workspace ID")
@@ -138,6 +161,9 @@ func init() {
 	projectUseCmd.Flags().SortFlags = false
 	projectUseCmd.Flags().String("name", "", "context name (defaults to a derived name)")
 	projectUseCmd.Flags().StringP("output", "o", "none", "output mode (none, json, yaml)")
+	projectRenameCmd.Flags().SortFlags = false
+	projectRenameCmd.Flags().String("project-id", "", "project ID (defaults to the current context)")
+	projectRenameCmd.Flags().StringP("output", "o", "table", "output mode (table, json, yaml)")
 	rootCmd.AddCommand(projectCmd)
 }
 

@@ -142,6 +142,10 @@ type CreateProjectRequest struct {
 	IdempotencyKey      string `json:"idempotencyKey"`
 }
 
+type UpdateProjectRequest struct {
+	Name string `json:"name"`
+}
+
 type CreateProjectCheckoutResponse struct {
 	URL       string `json:"url"`
 	ProjectID string `json:"projectId"`
