@@ -257,6 +257,26 @@ func mcpProjectCreate(ctx context.Context, args map[string]json.RawMessage) (map
 	return mcpJSONResult(map[string]any{"action": "created", "project": project}, false)
 }
 
+func mcpProjectUpdate(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
+	client, _, err := mcpControlPlaneClient()
+	if err != nil {
+		return nil, err
+	}
+	projectID, err := mcpRequiredStringArg(args, "project_id")
+	if err != nil {
+		return nil, err
+	}
+	name, err := mcpRequiredStringArg(args, "name")
+	if err != nil {
+		return nil, err
+	}
+	project, err := client.UpdateProject(ctx, projectID, controlplane.UpdateProjectRequest{Name: strings.TrimSpace(name)})
+	if err != nil {
+		return nil, mapControlPlaneError(err)
+	}
+	return mcpJSONResult(map[string]any{"project": project}, false)
+}
+
 func mcpProjectDelete(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
 	client, _, err := mcpControlPlaneClient()
 	if err != nil {
