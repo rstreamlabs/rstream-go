@@ -58,6 +58,27 @@ import urllib.request
 api_url = os.environ["RSTREAM_RUNTIME_API_URL"].rstrip("/")
 control_token = os.environ["RSTREAM_RUNTIME_CONTROL_TOKEN"]
 
+def load_control_plane_headers():
+    raw = os.environ.get("RSTREAM_CONTROL_PLANE_HEADERS", "").strip()
+    if not raw:
+        return {}
+    try:
+        values = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("RSTREAM_CONTROL_PLANE_HEADERS must contain a JSON object") from exc
+    if not isinstance(values, dict):
+        raise RuntimeError("RSTREAM_CONTROL_PLANE_HEADERS must contain a JSON object")
+    headers = {}
+    for name, value in values.items():
+        if not isinstance(name, str) or not isinstance(value, str):
+            raise RuntimeError("RSTREAM_CONTROL_PLANE_HEADERS keys and values must be strings")
+        if name.lower() in {"authorization", "content-type"}:
+            raise RuntimeError(f"RSTREAM_CONTROL_PLANE_HEADERS cannot override {name}")
+        headers[name] = value
+    return headers
+
+control_plane_headers = load_control_plane_headers()
+
 def append_query(path, values):
     parts = urllib.parse.urlsplit(path)
     query = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
@@ -70,7 +91,8 @@ def request_status(base_url, token, method, path, body=None, insecure_tls=False,
     data = None
     if body is not None:
         data = json.dumps(body).encode()
-    headers = {"content-type": "application/json"}
+    headers = dict(control_plane_headers) if base_url.rstrip("/") == api_url else {}
+    headers["content-type"] = "application/json"
     if token and not query_token:
         headers["authorization"] = "Bearer " + token
     req = urllib.request.Request(base_url.rstrip("/") + path, data=data, method=method, headers=headers)
