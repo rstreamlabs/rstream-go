@@ -49,7 +49,7 @@ func New(c Config) (*slog.Logger, error) {
 	case "text":
 		return slog.New(slog.NewTextHandler(c.Output, opts)), nil
 	case "text-pretty":
-		return slog.New(tint.NewHandler(c.Output, &tint.Options{
+		return slog.New(tint.NewTextHandler(c.Output, &tint.Options{
 			Level:      level,
 			AddSource:  opts.AddSource,
 			TimeFormat: time.RFC3339,

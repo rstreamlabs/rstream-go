@@ -140,12 +140,15 @@ func runConnectUDP(ctx context.Context, client *rstream.Client, publish bool, na
 		if err != nil {
 			return err
 		}
-		masqueClient := &masque.Client{
+		request, err := masque.NewRequest(ctx, tpl, target)
+		if err != nil {
+			return err
+		}
+		transport := &masque.Transport{
 			TLSClientConfig: h3TLSConfig(hostWithoutPort(strings.TrimPrefix(baseURL, "https://"))),
 			QUICConfig:      h3QUICConfig(),
 		}
-		defer masqueClient.Close()
-		pc, resp, err := masqueClient.DialAddr(ctx, tpl, target)
+		pc, resp, err := transport.Dial(request)
 		if err != nil {
 			if resp != nil {
 				return fmt.Errorf("CONNECT-UDP status %s: %w", resp.Status, err)

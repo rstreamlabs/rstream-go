@@ -34,8 +34,6 @@ import (
 	rstream "github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
 	"github.com/rstreamlabs/rstream-go/test/e2eenv"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 const tunneledQUICInitialPacketSize = 1200
@@ -199,7 +197,10 @@ func runH1(ctx context.Context, tunnel rstream.BytestreamTunnel) error {
 }
 
 func runH2C(ctx context.Context, tunnel rstream.BytestreamTunnel) error {
-	srv := &http.Server{Handler: h2c.NewHandler(newProxyHandler(), &http2.Server{})}
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	srv := &http.Server{Handler: newProxyHandler(), Protocols: protocols}
 	go func() {
 		<-ctx.Done()
 		_ = srv.Close()

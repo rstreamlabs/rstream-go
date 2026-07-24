@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ThalesGroup/crypto11"
+	"github.com/eclipse-keypont/crypto11"
 )
 
 func loadPKCS11MTLSConfig(storage *MTLSStorage) (*tls.Config, error) {

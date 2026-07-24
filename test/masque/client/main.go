@@ -74,12 +74,15 @@ func runConnectUDP(ctx context.Context, addr, target string) error {
 	if err != nil {
 		return err
 	}
-	client := &masque.Client{
+	request, err := masque.NewRequest(ctx, tpl, target)
+	if err != nil {
+		return err
+	}
+	transport := &masque.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true, NextProtos: []string{http3.NextProtoH3}},
 		QUICConfig:      &quic.Config{EnableDatagrams: true},
 	}
-	defer client.Close()
-	pc, resp, err := client.DialAddr(ctx, tpl, target)
+	pc, resp, err := transport.Dial(request)
 	if err != nil {
 		if resp != nil {
 			return fmt.Errorf("CONNECT-UDP failed with status %s: %w", resp.Status, err)
