@@ -304,3 +304,67 @@ func TestRunNetcatUDPBridgeLoopEchoesThroughTunnel(t *testing.T) {
 		t.Fatalf("bridge error = %v", err)
 	}
 }
+
+func TestRunNetcatUDPBridgeLoopDoesNotBlockPeersWhileDialing(t *testing.T) {
+	bridgeSocket := newNetcatTestUDPConn(t)
+	firstClient := newNetcatTestUDPConn(t)
+	secondClient := newNetcatTestUDPConn(t)
+	firstDialStarted := make(chan struct{})
+	secondDialStarted := make(chan struct{})
+	releaseFirstDial := make(chan struct{})
+	var dials atomic.Int32
+	cfg := &netcatServerConfig{
+		OpenTimeout: time.Second,
+		PacketDial: func(ctx context.Context) (net.PacketConn, net.Addr, error) {
+			switch dials.Add(1) {
+			case 1:
+				close(firstDialStarted)
+				select {
+				case <-releaseFirstDial:
+				case <-ctx.Done():
+					return nil, nil, ctx.Err()
+				}
+			case 2:
+				close(secondDialStarted)
+			}
+			return newEchoTunnelConn(), netcatTestAddr("tunnel"), nil
+		},
+		Stderr: io.Discard,
+		Logger: slog.Default(),
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	bridgeErrCh := make(chan error, 1)
+	go func() { bridgeErrCh <- runNetcatUDPBridgeLoop(ctx, cfg, bridgeSocket) }()
+	if _, err := firstClient.WriteTo([]byte("first"), bridgeSocket.LocalAddr()); err != nil {
+		t.Fatalf("first WriteTo() error = %v", err)
+	}
+	select {
+	case <-firstDialStarted:
+	case <-time.After(time.Second):
+		t.Fatal("first tunnel dial did not start")
+	}
+	if _, err := secondClient.WriteTo([]byte("second"), bridgeSocket.LocalAddr()); err != nil {
+		t.Fatalf("second WriteTo() error = %v", err)
+	}
+	concurrent := false
+	select {
+	case <-secondDialStarted:
+		concurrent = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(releaseFirstDial)
+	if !concurrent {
+		select {
+		case <-secondDialStarted:
+		case <-time.After(time.Second):
+			t.Fatal("second tunnel dial did not start")
+		}
+	}
+	cancel()
+	if err := <-bridgeErrCh; err != nil && !errors.Is(err, context.Canceled) {
+		t.Fatalf("bridge error = %v", err)
+	}
+	if !concurrent {
+		t.Fatal("a slow tunnel dial blocked packets from another UDP peer")
+	}
+}

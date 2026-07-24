@@ -251,9 +251,6 @@ func (h *Handler) BeginDrain() {
 }
 
 func (h *Handler) Shutdown(ctx context.Context) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	h.BeginDrain()
 	deadline := *h.cfg.SessionCloseDeadline
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline && deadline > 0 {

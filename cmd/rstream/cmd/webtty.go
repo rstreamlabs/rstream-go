@@ -504,11 +504,7 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 }
 
 func webTTYShutdownContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
-	if ctx == nil {
-		ctx = context.Background()
-	} else {
-		ctx = context.WithoutCancel(ctx)
-	}
+	ctx = context.WithoutCancel(ctx)
 	if timeout <= 0 {
 		return context.WithCancel(ctx)
 	}
@@ -1176,30 +1172,6 @@ func webTTYAuthorizedClientSigningKeyResolver(cmd *cobra.Command, enrollment *we
 	return webtty.NewAuthorizedClientSigningKeyFileResolver(path), nil
 }
 
-func chainWebTTYAuthorizedClientSigningKeyResolvers(resolvers ...webtty.AuthorizedClientSigningKeyResolver) webtty.AuthorizedClientSigningKeyResolver {
-	active := make([]webtty.AuthorizedClientSigningKeyResolver, 0, len(resolvers))
-	for _, resolver := range resolvers {
-		if resolver != nil {
-			active = append(active, resolver)
-		}
-	}
-	if len(active) == 0 {
-		return nil
-	}
-	return func(ctx context.Context, signingKeyID []byte) ([]byte, error) {
-		for _, resolver := range active {
-			publicKey, err := resolver(ctx, signingKeyID)
-			if err != nil {
-				return nil, err
-			}
-			if len(publicKey) != 0 {
-				return publicKey, nil
-			}
-		}
-		return nil, nil
-	}
-}
-
 func webTTYAuthorizedClientsPathFromFlags(cmd *cobra.Command, enrollment *webTTYServerEnrollmentFile) (string, error) {
 	if value, changed := stringFlagValue(cmd, "authorized-clients-file"); changed {
 		value = strings.TrimSpace(value)
@@ -1287,18 +1259,6 @@ func webTTYClientCryptoWithRuntimeAndScope(ctx context.Context, cmd *cobra.Comma
 	return webTTYClientCryptoFromSources(ctx, e2eRequested, sources, serverKeysConfigured, runtimeE2E, scope)
 }
 
-func webTTYClientPayloadCryptoForRuntime(ctx context.Context, runtimeE2E *webTTYClientRuntimeE2EContext) (*webtty.PayloadCrypto, error) {
-	cryptoConfig, err := webTTYClientCryptoForRuntimeAndScope(ctx, runtimeE2E, webTTYClientSecurityScope{})
-	if err != nil {
-		return nil, err
-	}
-	return cryptoConfig.PayloadCrypto, nil
-}
-
-func webTTYClientCryptoForRuntime(ctx context.Context, runtimeE2E *webTTYClientRuntimeE2EContext) (webTTYClientCryptoConfig, error) {
-	return webTTYClientCryptoForRuntimeAndScope(ctx, runtimeE2E, webTTYClientSecurityScope{})
-}
-
 func webTTYClientCryptoForRuntimeAndScope(ctx context.Context, runtimeE2E *webTTYClientRuntimeE2EContext, scope webTTYClientSecurityScope) (webTTYClientCryptoConfig, error) {
 	sources, serverKeysConfigured, err := webTTYKnownServerSourcesFromEnvironment()
 	if err != nil {
@@ -1309,18 +1269,6 @@ func webTTYClientCryptoForRuntimeAndScope(ctx context.Context, runtimeE2E *webTT
 		return webTTYClientCryptoConfig{}, err
 	}
 	return cryptoConfig, nil
-}
-
-func webTTYClientPayloadCryptoFromSources(ctx context.Context, e2eRequested bool, serverKeys []webtty.E2ERecipient, serverKeysConfigured bool, runtimeE2E *webTTYClientRuntimeE2EContext) (*webtty.PayloadCrypto, error) {
-	sources := make([]webTTYKnownServerSource, 0, len(serverKeys))
-	for _, serverKey := range serverKeys {
-		sources = append(sources, webTTYKnownServerSource{Recipient: serverKey})
-	}
-	cryptoConfig, err := webTTYClientCryptoFromSources(ctx, e2eRequested, sources, serverKeysConfigured, runtimeE2E, webTTYClientSecurityScope{})
-	if err != nil {
-		return nil, err
-	}
-	return cryptoConfig.PayloadCrypto, nil
 }
 
 func webTTYClientCryptoFromSources(ctx context.Context, e2eRequested bool, sources []webTTYKnownServerSource, serverKeysConfigured bool, runtimeE2E *webTTYClientRuntimeE2EContext, scope webTTYClientSecurityScope) (webTTYClientCryptoConfig, error) {
@@ -1562,22 +1510,6 @@ func webTTYClientRuntimeE2EContextFromServerInfo(ctx context.Context, runtime *r
 	}, nil
 }
 
-func webTTYDefaultE2EServerKeys() ([]webtty.E2ERecipient, error) {
-	sources, err := webTTYDefaultKnownServerSources()
-	if err != nil {
-		return nil, err
-	}
-	keys := make([]webtty.E2ERecipient, 0, len(sources))
-	for _, source := range sources {
-		var appendErr error
-		keys, appendErr = appendWebTTYE2EServerKey(keys, source.Recipient)
-		if appendErr != nil {
-			return nil, appendErr
-		}
-	}
-	return keys, nil
-}
-
 func webTTYDefaultKnownServerSources() ([]webTTYKnownServerSource, error) {
 	path, err := webtty.DefaultKnownServerKeysPath()
 	if err != nil {
@@ -1747,22 +1679,6 @@ func webTTYMissingClientEndpointIdentityError(scope webTTYClientSecurityScope, c
 		return fmt.Errorf("WebTTY server %s requires a client endpoint identity; create one with rstream webtty identity create --name <identity>, then trust the server and associate the identity with rstream webtty known-server add %s --key <server-endpoint-identity> --client-identity <identity>", target, target)
 	}
 	return fmt.Errorf("WebTTY server requires a client endpoint identity; pass --identity, --identity-file, %s, %s, or associate an identity with the known server", webTTYIdentityEnv, webTTYIdentityFileEnv)
-}
-
-func webTTYE2EServerKeysFromEnvironment() ([]webtty.E2ERecipient, bool, error) {
-	sources, configured, err := webTTYKnownServerSourcesFromEnvironment()
-	if err != nil {
-		return nil, configured, err
-	}
-	keys := make([]webtty.E2ERecipient, 0, len(sources))
-	for _, source := range sources {
-		var appendErr error
-		keys, appendErr = appendWebTTYE2EServerKey(keys, source.Recipient)
-		if appendErr != nil {
-			return nil, configured, appendErr
-		}
-	}
-	return keys, configured, nil
 }
 
 func webTTYKnownServerSourcesFromEnvironment() ([]webTTYKnownServerSource, bool, error) {
@@ -2563,14 +2479,6 @@ func webTTYClientSecurityScopeFromServerInfo(target string, serverInfo *webtty.S
 	return scope
 }
 
-func webTTYClientRuntimeE2EContextFromRstream(ctx context.Context, runtime *resolvedRuntime, rstreamClient *rstream.Client, urlValue string) (*webTTYClientRuntimeE2EContext, error) {
-	resolved, err := resolveWebTTYClientRstream(ctx, runtime, rstreamClient, urlValue)
-	if err != nil {
-		return nil, err
-	}
-	return resolved.RuntimeE2E, nil
-}
-
 func resolveControlPlaneWebTTYServerTarget(ctx context.Context, client *controlplane.Client, projectID string, target string) (*controlplane.WebTTYServer, error) {
 	target = strings.TrimSpace(target)
 	if target == "" {
@@ -2870,41 +2778,13 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 
 func runWebTTYClientCapture(ctx context.Context, cfg *webtty.ClientConfig) (*webTTYClientResult, error) {
 	start := time.Now()
-	session, err := webtty.OpenClientSession(ctx, webTTYSessionConfigFromClientConfig(cfg))
-	if err != nil {
-		return nil, err
-	}
-	defer session.Close()
 	stdout := bytes.Buffer{}
 	stderr := bytes.Buffer{}
-	waitCh := make(chan struct {
-		exitCode int
-		err      error
-	}, 1)
-	go func() {
-		exitCode, err := session.Wait()
-		waitCh <- struct {
-			exitCode int
-			err      error
-		}{exitCode: exitCode, err: err}
-	}()
-	for {
-		select {
-		case event, ok := <-session.Events():
-			if ok {
-				if event.Stream == webtty.ClientSessionStderr {
-					stderr.Write(event.Data)
-				} else {
-					stdout.Write(event.Data)
-				}
-			}
-		case result := <-waitCh:
-			return &webTTYClientResult{URL: cfg.URL, Command: append([]string(nil), cfg.CmdArgs...), ExitCode: result.exitCode, Stdout: stdout.String(), Stderr: stderr.String(), DurationMS: time.Since(start).Milliseconds()}, result.err
-		case <-ctx.Done():
-			_ = session.CloseWithError(ctx.Err())
-			return &webTTYClientResult{URL: cfg.URL, Command: append([]string(nil), cfg.CmdArgs...), ExitCode: -1, Stdout: stdout.String(), Stderr: stderr.String(), DurationMS: time.Since(start).Milliseconds()}, ctx.Err()
-		}
-	}
+	resolved := *cfg
+	resolved.Stdout = &stdout
+	resolved.Stderr = &stderr
+	exitCode, err := webtty.RunClient(ctx, &resolved)
+	return &webTTYClientResult{URL: cfg.URL, Command: append([]string(nil), cfg.CmdArgs...), ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String(), DurationMS: time.Since(start).Milliseconds()}, err
 }
 
 func webTTYSessionConfigFromClientConfig(cfg *webtty.ClientConfig) *webtty.SessionConfig {

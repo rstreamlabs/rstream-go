@@ -486,35 +486,6 @@ func projectEventsQuery(params ProjectEventsParams) url.Values {
 	return query
 }
 
-func projectLogsQuery(params ProjectLogsParams) url.Values {
-	query := url.Values{}
-	if params.Timeline != "" {
-		query.Set("timeline", params.Timeline)
-	}
-	if params.Start != "" {
-		query.Set("start", params.Start)
-	}
-	if params.End != "" {
-		query.Set("end", params.End)
-	}
-	if params.EventType != "" {
-		query.Set("eventType", params.EventType)
-	}
-	if params.AfterEventID != "" {
-		query.Set("afterEventId", params.AfterEventID)
-	}
-	if params.Page != nil {
-		query.Set("page", strconv.Itoa(*params.Page))
-	}
-	if params.PageSize != nil {
-		query.Set("pageSize", strconv.Itoa(*params.PageSize))
-	}
-	if params.Order != "" {
-		query.Set("order", params.Order)
-	}
-	return query
-}
-
 func (c *Client) ListProjectWebhooks(ctx context.Context, projectID string, params ProjectWebhooksParams) (ProjectWebhooksResponse, error) {
 	var out ProjectWebhooksResponse
 	query := url.Values{}

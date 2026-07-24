@@ -1,0 +1,109 @@
+name: tests
+on:
+  pull_request:
+  push:
+    branches:
+      - develop
+      - main
+  schedule:
+    - cron: "41 3 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+jobs:
+  fast:
+    name: format, generate, vet, build, and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Install protobuf compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+      - name: Check formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files '*.go' ':!:*.pb.go')
+          unformatted="$(gofmt -l "${files[@]}")"
+          if [[ -n "${unformatted}" ]]; then
+            printf 'Unformatted Go files:\n%s\n' "${unformatted}" >&2
+            exit 1
+          fi
+      - name: Check generated protobuf
+        shell: bash
+        run: |
+          set -euo pipefail
+          go generate ./...
+          git diff --exit-code -- '*.pb.go'
+      - name: Vet
+        run: go vet ./...
+      - name: Install staticcheck
+        run: go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+      - name: Staticcheck
+        run: staticcheck ./...
+      - name: Build runtime test binaries
+        run: make test-bins
+      - name: Test
+        run: go test -shuffle=on -count=1 ./...
+  race:
+    name: race and lifecycle tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      REPEAT: ${{ github.event_name == 'schedule' && '10' || '2' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Run race detector
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -race -shuffle=on -count="${REPEAT}" ./...
+  webtty-runtime:
+    name: WebTTY CLI and Go runtime workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Run WebTTY CLI workflows
+        env:
+          RSTREAM_KEEP_RUNTIME: "1"
+        run: ./test/e2e/webtty-cli-workflows.sh
+      - name: Run WebTTY Go runtime matrix
+        env:
+          RSTREAM_KEEP_RUNTIME: "1"
+        run: ./test/e2e/webtty-runtime-matrix.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: webtty-runtime-logs
+          path: |
+            ${{ runner.temp }}/rstream-webtty-cli.*
+            ${{ runner.temp }}/rstream-webtty-runtime.*
+          if-no-files-found: ignore
+          retention-days: 7

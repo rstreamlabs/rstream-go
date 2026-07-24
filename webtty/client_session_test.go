@@ -8,9 +8,11 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -48,6 +50,49 @@ func TestResolveSessionConfigDefaults(t *testing.T) {
 	}
 	if cfg.Logger == nil {
 		t.Fatalf("expected default logger")
+	}
+}
+
+func TestClientRuntimeCloseInterruptsBlockedWrite(t *testing.T) {
+	conn := newBlockingSessionMessageConn()
+	closeDeadline := 50 * time.Millisecond
+	runtime := &clientRuntime{conn: conn, cfg: &ClientConfig{CloseDeadline: &closeDeadline}}
+	writeDone := make(chan error, 1)
+	go func() {
+		writeDone <- runtime.writeMessage(&pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: &pb.Heartbeat{}}})
+	}()
+	select {
+	case <-conn.writeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("WebTTY client write did not start")
+	}
+	closeDone := make(chan struct{})
+	go func() {
+		runtime.closeConn()
+		close(closeDone)
+	}()
+	completed := false
+	select {
+	case <-closeDone:
+		completed = true
+	case <-time.After(100 * time.Millisecond):
+	}
+	_ = conn.Close()
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("WebTTY client close remained blocked after transport close")
+	}
+	select {
+	case err := <-writeDone:
+		if !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("blocked write error = %v, want net.ErrClosed", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("blocked WebTTY client write did not return")
+	}
+	if !completed {
+		t.Fatal("WebTTY client close did not interrupt the blocked write")
 	}
 }
 
@@ -466,6 +511,91 @@ func TestClientSessionCloseStoresLocalResult(t *testing.T) {
 	}
 }
 
+func TestClientSessionCloseReleasesParentContextWatcher(t *testing.T) {
+	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		_ = readWebTTYMessage(t, conn)
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}})
+		_, _, _ = conn.ReadMessage()
+	})
+	defer server.Close()
+	baseline := runtime.NumGoroutine()
+	const sessions = 32
+	for i := 0; i < sessions; i++ {
+		session, err := OpenClientSession(context.Background(), &SessionConfig{URL: testWebTTYURL(server.URL), OpenDeadline: durationPtr(time.Second)})
+		if err != nil {
+			t.Fatalf("OpenClientSession() error = %v", err)
+		}
+		if err := session.Close(); err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+		if _, err := session.Wait(); err != nil {
+			t.Fatalf("Wait() error = %v", err)
+		}
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for runtime.NumGoroutine() > baseline+8 && time.Now().Before(deadline) {
+		runtime.Gosched()
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := runtime.NumGoroutine(); got > baseline+8 {
+		t.Fatalf("goroutines after closing sessions = %d, baseline = %d", got, baseline)
+	}
+}
+
+func TestClientSessionCloseDoesNotRequireDrainingEvents(t *testing.T) {
+	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		_ = readWebTTYMessage(t, conn)
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}})
+		for i := 0; i < 256; i++ {
+			raw, err := proto.Marshal(&pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{
+				Type:    pb.Data_TYPE_STDOUT,
+				Payload: &pb.Data_Data{Data: []byte("output")},
+			}}})
+			if err != nil {
+				t.Errorf("marshal protobuf message: %v", err)
+				return
+			}
+			if err := conn.WriteMessage(websocket.BinaryMessage, raw); err != nil {
+				return
+			}
+		}
+		_, _, _ = conn.ReadMessage()
+	})
+	defer server.Close()
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:          testWebTTYURL(server.URL),
+		OpenDeadline: durationPtr(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for len(session.events) < cap(session.events) && time.Now().Before(deadline) {
+		runtime.Gosched()
+	}
+	if got := len(session.events); got != cap(session.events) {
+		t.Fatalf("buffered events = %d, want %d", got, cap(session.events))
+	}
+	if err := session.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	waitDone := make(chan clientSessionResult, 1)
+	go func() {
+		exitCode, err := session.Wait()
+		waitDone <- clientSessionResult{exitCode: exitCode, err: err}
+	}()
+	select {
+	case result := <-waitDone:
+		if result.exitCode != -1 || result.err != nil {
+			t.Fatalf("Wait() after Close() = %d, %v", result.exitCode, result.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Wait() remained blocked while output events were not consumed")
+	}
+}
+
 func TestClientSessionRunRejectsMalformedMessages(t *testing.T) {
 	cases := []clientEvent{
 		{msg: nil},
@@ -833,6 +963,7 @@ func newBareClientSession(t *testing.T) *ClientSession {
 	return &ClientSession{
 		loopCancel: cancel,
 		doneRead:   make(chan struct{}),
+		done:       make(chan struct{}),
 		events:     make(chan ClientSessionEvent, 1),
 		resultCh:   make(chan clientSessionResult, 1),
 	}

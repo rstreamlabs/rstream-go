@@ -10,7 +10,9 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/dtls/v3"
@@ -25,8 +27,9 @@ type PacketListener interface {
 }
 
 type packet struct {
-	data []byte
-	adrr net.Addr
+	data   []byte
+	addr   net.Addr
+	source *packetListenerConn
 }
 
 type listenerWrapper struct {
@@ -57,13 +60,21 @@ type packetConnWrapper struct {
 }
 
 type packetListenerWrapper struct {
-	mu       sync.Mutex
-	closed   bool
-	closeErr error
-	inner    PacketListener
-	conns    map[net.Addr]net.PacketConn
-	pkts     chan packet
-	done     chan struct{}
+	mu            sync.Mutex
+	closed        bool
+	closeErr      error
+	inner         PacketListener
+	conns         map[string]*packetListenerConn
+	pkts          chan packet
+	done          chan struct{}
+	readDeadline  *packetDeadline
+	writeDeadline *packetDeadline
+}
+
+type packetListenerConn struct {
+	conn   net.PacketConn
+	addr   net.Addr
+	active atomic.Bool
 }
 
 func PacketListenerFromListener(l net.Listener) PacketListener {
@@ -221,10 +232,12 @@ func sameAddr(a, b net.Addr) bool {
 
 func PacketConnFromPacketListener(l PacketListener) net.PacketConn {
 	pl := &packetListenerWrapper{
-		inner: l,
-		conns: make(map[net.Addr]net.PacketConn),
-		pkts:  make(chan packet, 100),
-		done:  make(chan struct{}),
+		inner:         l,
+		conns:         make(map[string]*packetListenerConn),
+		pkts:          make(chan packet, 100),
+		done:          make(chan struct{}),
+		readDeadline:  newPacketDeadline(),
+		writeDeadline: newPacketDeadline(),
 	}
 	go pl.accept()
 	return pl
@@ -243,29 +256,49 @@ func (pl *packetListenerWrapper) accept() {
 			_ = conn.Close()
 			return
 		}
-		pl.conns[raddr] = conn
+		key := packetAddrKey(raddr)
+		entry := &packetListenerConn{conn: conn, addr: raddr}
+		entry.active.Store(true)
+		previous := pl.conns[key]
+		if previous != nil {
+			previous.active.Store(false)
+		}
+		pl.conns[key] = entry
 		pl.mu.Unlock()
-		go pl.read(conn, raddr)
+		if previous != nil {
+			_ = previous.conn.Close()
+		}
+		deadline, _ := pl.writeDeadline.snapshot()
+		if !deadline.IsZero() {
+			_ = conn.SetWriteDeadline(deadline)
+		}
+		go pl.read(entry, key)
 	}
 }
 
-func (pl *packetListenerWrapper) read(conn net.PacketConn, raddr net.Addr) {
+func (pl *packetListenerWrapper) read(entry *packetListenerConn, key string) {
 	defer func() {
-		conn.Close()
+		entry.active.Store(false)
+		_ = entry.conn.Close()
 		pl.mu.Lock()
 		defer pl.mu.Unlock()
 		if pl.closed {
 			return
 		}
-		delete(pl.conns, raddr)
+		if pl.conns[key] == entry {
+			delete(pl.conns, key)
+		}
 	}()
+	buf := make([]byte, 65535)
 	for {
-		buf := make([]byte, 65535)
-		n, _, err := conn.ReadFrom(buf)
+		n, _, err := entry.conn.ReadFrom(buf)
 		if err != nil {
 			break
 		}
-		pkt := packet{data: buf[:n], adrr: raddr}
+		if !entry.active.Load() {
+			return
+		}
+		pkt := packet{data: append([]byte(nil), buf[:n]...), addr: entry.addr, source: entry}
 		select {
 		case pl.pkts <- pkt:
 		case <-pl.done:
@@ -277,29 +310,54 @@ func (pl *packetListenerWrapper) read(conn net.PacketConn, raddr net.Addr) {
 }
 
 func (pl *packetListenerWrapper) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
-	select {
-	case pkt := <-pl.pkts:
-		n = copy(p, pkt.data)
-		return n, pkt.adrr, nil
-	case <-pl.done:
-		pl.mu.Lock()
-		err = pl.closeErr
-		pl.mu.Unlock()
-		return 0, nil, err
+	for {
+		select {
+		case <-pl.done:
+			return 0, nil, pl.err()
+		default:
+		}
+		deadline, changed := pl.readDeadline.snapshot()
+		if !deadline.IsZero() && !time.Now().Before(deadline) {
+			return 0, nil, os.ErrDeadlineExceeded
+		}
+		select {
+		case pkt := <-pl.pkts:
+			if pkt.source != nil && !pkt.source.active.Load() {
+				continue
+			}
+			select {
+			case <-pl.done:
+				return 0, nil, pl.err()
+			default:
+			}
+			n = copy(p, pkt.data)
+			return n, pkt.addr, nil
+		case <-pl.done:
+			return 0, nil, pl.err()
+		case <-changed:
+		}
 	}
 }
 
 func (pl *packetListenerWrapper) WriteTo(p []byte, addr net.Addr) (n int, err error) {
+	if pl.writeDeadline.expired() {
+		return 0, os.ErrDeadlineExceeded
+	}
 	pl.mu.Lock()
-	defer pl.mu.Unlock()
 	if pl.closed {
+		pl.mu.Unlock()
 		return 0, net.ErrClosed
 	}
-	conn, ok := pl.conns[addr]
+	entry, ok := pl.conns[packetAddrKey(addr)]
+	pl.mu.Unlock()
 	if !ok {
 		return 0, fmt.Errorf("no connection to %v", addr)
 	}
-	return conn.WriteTo(p, addr)
+	deadline, _ := pl.writeDeadline.snapshot()
+	if err := entry.conn.SetWriteDeadline(deadline); err != nil {
+		return 0, err
+	}
+	return entry.conn.WriteTo(p, entry.addr)
 }
 
 func (pl *packetListenerWrapper) Close() error {
@@ -313,15 +371,28 @@ func (pl *packetListenerWrapper) shutdown(err error) error {
 		return nil
 	}
 	pl.closed = true
+	if err == nil {
+		err = net.ErrClosed
+	}
 	pl.closeErr = err
 	conns := pl.conns
 	pl.conns = nil
+	for _, entry := range conns {
+		entry.active.Store(false)
+	}
 	close(pl.done)
 	pl.mu.Unlock()
-	for _, conn := range conns {
-		_ = conn.Close()
+	for _, entry := range conns {
+		_ = entry.conn.Close()
 	}
 	return pl.inner.Close()
+}
+
+func packetAddrKey(addr net.Addr) string {
+	if addr == nil {
+		return "\x00"
+	}
+	return addr.Network() + "\x00" + addr.String()
 }
 
 func (pl *packetListenerWrapper) LocalAddr() net.Addr {
@@ -329,15 +400,48 @@ func (pl *packetListenerWrapper) LocalAddr() net.Addr {
 }
 
 func (pl *packetListenerWrapper) SetDeadline(t time.Time) error {
-	return errors.New("unimplemented function")
+	if err := pl.SetReadDeadline(t); err != nil {
+		return err
+	}
+	return pl.SetWriteDeadline(t)
 }
 
 func (pl *packetListenerWrapper) SetReadDeadline(t time.Time) error {
-	return errors.New("unimplemented function")
+	pl.mu.Lock()
+	closed := pl.closed
+	pl.mu.Unlock()
+	if closed {
+		return net.ErrClosed
+	}
+	pl.readDeadline.set(t)
+	return nil
 }
 
 func (pl *packetListenerWrapper) SetWriteDeadline(t time.Time) error {
-	return errors.New("unimplemented function")
+	pl.mu.Lock()
+	if pl.closed {
+		pl.mu.Unlock()
+		return net.ErrClosed
+	}
+	conns := make([]net.PacketConn, 0, len(pl.conns))
+	for _, entry := range pl.conns {
+		conns = append(conns, entry.conn)
+	}
+	pl.mu.Unlock()
+	pl.writeDeadline.set(t)
+	var err error
+	for _, conn := range conns {
+		if deadlineErr := conn.SetWriteDeadline(t); deadlineErr != nil {
+			err = errors.Join(err, deadlineErr)
+		}
+	}
+	return err
+}
+
+func (pl *packetListenerWrapper) err() error {
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
+	return pl.closeErr
 }
 
 func readMessage(r *bufio.Reader) ([]byte, error) {

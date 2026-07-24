@@ -190,12 +190,12 @@ func TestServeTCPAndUDPReturnAcceptErrors(t *testing.T) {
 	runner := New()
 	tcpErr := errors.New("tcp closed")
 	tcpListener := &errorListener{err: tcpErr}
-	if err := runner.serveTCP(tcpListener, runmodel.ForwardTarget{Host: "127.0.0.1", Port: "1"}, slog.Default()); !errors.Is(err, tcpErr) {
+	if err := runner.serveTCP(t.Context(), tcpListener, runmodel.ForwardTarget{Host: "127.0.0.1", Port: "1"}, slog.Default()); !errors.Is(err, tcpErr) {
 		t.Fatalf("serveTCP() = %v, want %v", err, tcpErr)
 	}
 	udpErr := errors.New("udp closed")
 	packetListener := &errorPacketListener{err: udpErr}
-	if err := runner.serveUDP(packetListener, runmodel.ForwardTarget{Host: "127.0.0.1", Port: "1"}, slog.Default()); !errors.Is(err, udpErr) {
+	if err := runner.serveUDP(t.Context(), packetListener, runmodel.ForwardTarget{Host: "127.0.0.1", Port: "1"}, slog.Default()); !errors.Is(err, udpErr) {
 		t.Fatalf("serveUDP() = %v, want %v", err, udpErr)
 	}
 	ctx, cancel := context.WithCancel(t.Context())

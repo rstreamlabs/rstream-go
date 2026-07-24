@@ -9,10 +9,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -136,7 +139,7 @@ func TestSSEConnReadAggregatesDataLines(t *testing.T) {
 		resp: &http.Response{Body: io.NopCloser(body)},
 		rd:   bufio.NewReader(body),
 	}
-	got, err := conn.Read(nil)
+	got, err := conn.Read(t.Context())
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
@@ -151,7 +154,7 @@ func TestSSEConnReadFlushesTrailingDataOnEOF(t *testing.T) {
 		resp: &http.Response{Body: io.NopCloser(body)},
 		rd:   bufio.NewReader(body),
 	}
-	got, err := conn.Read(nil)
+	got, err := conn.Read(t.Context())
 	if err != nil {
 		t.Fatalf("Read() error = %v", err)
 	}
@@ -231,6 +234,105 @@ func TestAPIClientRoundTripAgainstLocalTLSServer(t *testing.T) {
 	body := strings.NewReader(`{"hello":"world"}`)
 	if data, status, err := client.apiDo(t.Context(), http.MethodPost, "/raw", nil, body, nil, nil); err != nil || status != http.StatusOK || string(data) != `{"ok":true}` {
 		t.Fatalf("apiDo(raw) = %q, %d, %v", data, status, err)
+	}
+}
+
+func TestAPIClientReusesConnections(t *testing.T) {
+	var connections atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			connections.Add(1)
+		}
+	}
+	server.StartTLS()
+	defer server.Close()
+	client := testAPIClient(server, "token")
+	for range 3 {
+		if _, err := client.ListClients(t.Context(), nil); err != nil {
+			t.Fatalf("ListClients() error = %v", err)
+		}
+	}
+	if got := connections.Load(); got != 1 {
+		t.Fatalf("API connections = %d, want one reused connection", got)
+	}
+}
+
+func TestAPIClientReusesConnectionUnderParallelLoad(t *testing.T) {
+	var connections atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	server.EnableHTTP2 = true
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			connections.Add(1)
+		}
+	}
+	server.StartTLS()
+	defer server.Close()
+	client := testAPIClient(server, "token")
+	if _, err := client.ListClients(t.Context(), nil); err != nil {
+		t.Fatalf("warm ListClients() error = %v", err)
+	}
+	const workers = 32
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := client.ListClients(t.Context(), nil)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("ListClients() error = %v", err)
+		}
+	}
+	if got := connections.Load(); got != 1 {
+		t.Fatalf("API connections = %d, want one shared HTTP/2 connection", got)
+	}
+}
+
+func TestAPIHTTPClientConcurrentInitialization(t *testing.T) {
+	client := &Client{}
+	const workers = 32
+	transports := make(chan http.RoundTripper, workers)
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			httpClient, err := client.apiHttpClient()
+			if err != nil {
+				errs <- err
+				return
+			}
+			transports <- httpClient.Transport
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	close(transports)
+	for err := range errs {
+		t.Fatalf("apiHttpClient() error = %v", err)
+	}
+	var transport http.RoundTripper
+	for got := range transports {
+		if transport == nil {
+			transport = got
+			continue
+		}
+		if got != transport {
+			t.Fatalf("apiHttpClient() returned distinct transports %p and %p", transport, got)
+		}
 	}
 }
 
@@ -397,6 +499,27 @@ func TestWatchSSEClosesConnectionOnContextCancel(t *testing.T) {
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("WatchSSE(cancel) = %v, want context.Canceled", err)
+	}
+}
+
+func TestWatchSSEReturnsDeadlineExceeded(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	client := testAPIClient(server, "token")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	err := client.WatchSSE(ctx, nil, func(Event) error {
+		t.Fatalf("handler should not receive an event")
+		return nil
+	})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("WatchSSE(deadline) = %v, want context.DeadlineExceeded", err)
 	}
 }
 

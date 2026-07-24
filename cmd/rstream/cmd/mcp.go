@@ -600,7 +600,7 @@ func handleMCPToolCall(ctx context.Context, params json.RawMessage) (map[string]
 	case "rstream_runtime_prepare":
 		return mcpRuntimePrepare(ctx, call.Arguments)
 	case "rstream_runtime_status":
-		return mcpRuntimeStatus()
+		return mcpRuntimeStatus(ctx)
 	case "rstream_token_create":
 		return mcpTokenCreate(ctx, call.Arguments)
 	case "rstream_workspace_list":
@@ -1045,7 +1045,7 @@ func newWebTTYFSMCPClient(ctx context.Context, args map[string]json.RawMessage) 
 	}
 	return &webTTYFSClient{client: httpClient, baseURL: baseURL}, nil
 }
-func resolveMCPRuntime(requireEngine bool, requireToken bool) (*resolvedRuntime, error) {
+func resolveMCPRuntime(ctx context.Context, requireEngine bool, requireToken bool) (*resolvedRuntime, error) {
 	env := config.ReadEnv()
 	path := env.ConfigPath
 	if path == "" {
@@ -1069,7 +1069,7 @@ func resolveMCPRuntime(requireEngine bool, requireToken bool) (*resolvedRuntime,
 		return nil, err
 	}
 	if requireEngine && resolved.Region != "" {
-		if err := resolveRuntimeRegionContext(context.Background(), cfg, &resolved); err != nil {
+		if err := resolveRuntimeRegionContext(ctx, cfg, &resolved); err != nil {
 			return nil, err
 		}
 	}

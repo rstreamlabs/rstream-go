@@ -16,6 +16,7 @@ import (
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/cmd/logging"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/netretry"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/streamrelay"
 	"github.com/spf13/cobra"
 )
@@ -212,9 +213,9 @@ func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {
 		return nil, fmt.Errorf("invalid output: %s (valid: text, json, xterm)", outStr)
 	}
 	if out == forwardOutputFormatXTerm {
-		if logging.IsTerminal(os.Stdout) == false {
+		if !logging.IsTerminal(os.Stdout) {
 			return nil, fmt.Errorf("output mode 'xterm' requires a terminal")
-		} else if flagVerbose == true {
+		} else if flagVerbose {
 			return nil, fmt.Errorf("output mode 'xterm' is not compatible with verbose mode")
 		}
 	}
@@ -356,10 +357,10 @@ func (s *forwardCtx) runOnce(ctx context.Context) error {
 	onlineStatus.Forwarded = &forwarded
 	s.setStatus(onlineStatus)
 	if l, ok := tunnel.(interface{ net.Listener }); ok {
-		return s.serveWithCtx(ctx, l.Close, func() error { return s.serveTCP(l) })
+		return s.serveWithCtx(ctx, l.Close, func() error { return s.serveTCP(ctx, l) })
 	}
 	if pl, ok := tunnel.(rstream.PacketListener); ok {
-		return s.serveWithCtx(ctx, pl.Close, func() error { return s.serveUDP(pl) })
+		return s.serveWithCtx(ctx, pl.Close, func() error { return s.serveUDP(ctx, pl) })
 	}
 	return fmt.Errorf("tunnel does not implement net.Listener or rstream.PacketListener")
 }
@@ -464,30 +465,36 @@ func (s *forwardCtx) proxyUDP(inbound net.PacketConn, remote net.Addr) {
 	})
 }
 
-func (s *forwardCtx) serveTCP(l net.Listener) error {
+func (s *forwardCtx) serveTCP(ctx context.Context, l net.Listener) error {
+	var acceptRetryDelay time.Duration
 	for {
 		inbound, err := l.Accept()
 		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
-				time.Sleep(50 * time.Millisecond)
+			delay, retry := netretry.NextAcceptDelay(err, acceptRetryDelay, netcatAcceptRetryMaxDelay)
+			if retry && netretry.Wait(ctx, delay) {
+				acceptRetryDelay = delay
 				continue
 			}
 			return err
 		}
+		acceptRetryDelay = 0
 		s.proxyTCP(inbound)
 	}
 }
 
-func (s *forwardCtx) serveUDP(l rstream.PacketListener) error {
+func (s *forwardCtx) serveUDP(ctx context.Context, l rstream.PacketListener) error {
+	var acceptRetryDelay time.Duration
 	for {
 		inbound, raddr, err := l.Accept()
 		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
-				time.Sleep(50 * time.Millisecond)
+			delay, retry := netretry.NextAcceptDelay(err, acceptRetryDelay, netcatAcceptRetryMaxDelay)
+			if retry && netretry.Wait(ctx, delay) {
+				acceptRetryDelay = delay
 				continue
 			}
 			return err
 		}
+		acceptRetryDelay = 0
 		s.proxyUDP(inbound, raddr)
 	}
 }

@@ -223,7 +223,7 @@ func TestHandleOpenMessage(t *testing.T) {
 func TestHandleSessionMessage(t *testing.T) {
 	var stdout bytes.Buffer
 	runtime := &clientRuntime{cfg: &ClientConfig{Stdout: &stdout, Stderr: &bytes.Buffer{}}}
-	exitCode, done, err := runtime.handleSessionMessage(context.TODO(), &pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{Type: pb.Data_TYPE_STDOUT, Payload: &pb.Data_Data{Data: []byte("ok")}}}})
+	exitCode, done, err := runtime.handleSessionMessage(t.Context(), &pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{Type: pb.Data_TYPE_STDOUT, Payload: &pb.Data_Data{Data: []byte("ok")}}}})
 	if err != nil {
 		t.Fatalf("handleSessionMessage(data) returned error: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestHandleSessionMessage(t *testing.T) {
 	if got := stdout.String(); got != "ok" {
 		t.Fatalf("unexpected stdout payload: got %q want %q", got, "ok")
 	}
-	exitCode, done, err = runtime.handleSessionMessage(context.TODO(), &pb.Message{Payload: &pb.Message_Close{Close: &pb.Close{ReturnCode: 7}}})
+	exitCode, done, err = runtime.handleSessionMessage(t.Context(), &pb.Message{Payload: &pb.Message_Close{Close: &pb.Close{ReturnCode: 7}}})
 	if err != nil {
 		t.Fatalf("handleSessionMessage(close) returned error: %v", err)
 	}
@@ -246,16 +246,16 @@ func TestHandleSessionMessage(t *testing.T) {
 	if exitCode != 7 {
 		t.Fatalf("unexpected exit code for close: got %d want 7", exitCode)
 	}
-	if _, done, err := runtime.handleSessionMessage(context.TODO(), &pb.Message{Payload: &pb.Message_Close{}}); !errors.Is(err, errClientProtocol) || !done {
+	if _, done, err := runtime.handleSessionMessage(t.Context(), &pb.Message{Payload: &pb.Message_Close{}}); !errors.Is(err, errClientProtocol) || !done {
 		t.Fatalf("handleSessionMessage(empty close) = done %v err %v", done, err)
 	}
-	if _, done, err := runtime.handleSessionMessage(context.TODO(), &pb.Message{Payload: &pb.Message_Error{}}); !errors.Is(err, errClientServer) || !done {
+	if _, done, err := runtime.handleSessionMessage(t.Context(), &pb.Message{Payload: &pb.Message_Error{}}); !errors.Is(err, errClientServer) || !done {
 		t.Fatalf("handleSessionMessage(empty error) = done %v err %v", done, err)
 	}
-	if _, done, err := runtime.handleSessionMessage(context.TODO(), &pb.Message{Payload: &pb.Message_ProtocolError{ProtocolError: &pb.ProtocolError{Code: pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_CLIENT_PROOF_REQUIRED}}}); err == nil || !strings.Contains(err.Error(), "client proof") || !done {
+	if _, done, err := runtime.handleSessionMessage(t.Context(), &pb.Message{Payload: &pb.Message_ProtocolError{ProtocolError: &pb.ProtocolError{Code: pb.ProtocolErrorCode_PROTOCOL_ERROR_CODE_CLIENT_PROOF_REQUIRED}}}); err == nil || !strings.Contains(err.Error(), "client proof") || !done {
 		t.Fatalf("handleSessionMessage(protocol error) = done %v err %v", done, err)
 	}
-	if _, done, err := runtime.handleSessionMessage(context.TODO(), &pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}}); err == nil || !done {
+	if _, done, err := runtime.handleSessionMessage(t.Context(), &pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}}); err == nil || !done {
 		t.Fatalf("handleSessionMessage(ack) should fail and finish the session")
 	}
 }
@@ -807,19 +807,19 @@ func TestWaitForOpen(t *testing.T) {
 func TestHandleDataValidation(t *testing.T) {
 	var stderr bytes.Buffer
 	runtime := &clientRuntime{cfg: &ClientConfig{Stdout: &bytes.Buffer{}, Stderr: &stderr}}
-	if err := runtime.handleData(context.TODO(), &pb.Data{Type: pb.Data_TYPE_STDERR, Payload: &pb.Data_Data{Data: []byte("err")}}); err != nil {
+	if err := runtime.handleData(t.Context(), &pb.Data{Type: pb.Data_TYPE_STDERR, Payload: &pb.Data_Data{Data: []byte("err")}}); err != nil {
 		t.Fatalf("handleData(stderr) error = %v", err)
 	}
 	if stderr.String() != "err" {
 		t.Fatalf("stderr payload = %q", stderr.String())
 	}
-	if err := runtime.handleData(context.TODO(), nil); err == nil {
+	if err := runtime.handleData(t.Context(), nil); err == nil {
 		t.Fatalf("expected nil data error")
 	}
-	if err := runtime.handleData(context.TODO(), &pb.Data{Type: pb.Data_TYPE_STDIN, Payload: &pb.Data_Data{Data: []byte("in")}}); err == nil {
+	if err := runtime.handleData(t.Context(), &pb.Data{Type: pb.Data_TYPE_STDIN, Payload: &pb.Data_Data{Data: []byte("in")}}); err == nil {
 		t.Fatalf("expected unexpected stream error")
 	}
-	if err := runtime.handleData(context.TODO(), &pb.Data{Type: pb.Data_TYPE_STDOUT}); err == nil {
+	if err := runtime.handleData(t.Context(), &pb.Data{Type: pb.Data_TYPE_STDOUT}); err == nil {
 		t.Fatalf("expected unexpected payload error")
 	}
 }

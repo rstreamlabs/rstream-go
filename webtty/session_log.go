@@ -9,29 +9,42 @@ import (
 )
 
 func (s *session) logSessionAccepted() {
-	if s == nil || s.logger == nil || s.acceptedLogged {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.logger == nil || s.acceptedLogged {
+		s.mu.Unlock()
 		return
 	}
 	s.acceptedLogged = true
 	if s.authenticatedAt.IsZero() {
 		s.authenticatedAt = time.Now()
 	}
-	attrs := s.sessionAuditAttrs()
-	attrs = appendSessionPolicyAttrs(attrs, s.cfg)
-	s.logger.Info("session accepted", attrs...)
+	attrs := appendSessionPolicyAttrs(s.sessionAuditAttrsLocked(), s.cfg)
+	logger := s.logger
+	s.mu.Unlock()
+	logger.Info("session accepted", attrs...)
 }
 
 func (s *session) logSessionRejected(err error) {
-	if s == nil || s.logger == nil {
+	if s == nil {
 		return
 	}
-	attrs := s.sessionAuditAttrs()
+	s.mu.Lock()
+	if s.logger == nil {
+		s.mu.Unlock()
+		return
+	}
+	attrs := s.sessionAuditAttrsLocked()
 	attrs = append(attrs,
 		"reason_code", webTTYSessionErrorReasonCode(err),
 		"error", err,
 	)
 	attrs = appendSessionPolicyAttrs(attrs, s.cfg)
-	s.logger.Warn("session rejected", attrs...)
+	logger := s.logger
+	s.mu.Unlock()
+	logger.Warn("session rejected", attrs...)
 }
 
 func appendSessionPolicyAttrs(attrs []any, cfg *ServerConfig) []any {
@@ -42,10 +55,7 @@ func appendSessionPolicyAttrs(attrs []any, cfg *ServerConfig) []any {
 	)
 }
 
-func (s *session) sessionAuditAttrs() []any {
-	if s == nil {
-		return nil
-	}
+func (s *session) sessionAuditAttrsLocked() []any {
 	cfg := s.cfg
 	if cfg == nil {
 		cfg = &ServerConfig{}

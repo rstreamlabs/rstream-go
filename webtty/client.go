@@ -94,6 +94,7 @@ type clientRuntime struct {
 	logger      *slog.Logger
 	logProto    bool
 	writeMu     sync.Mutex
+	closeOnce   sync.Once
 	stdinFD     int
 	hasStdinFD  bool
 	hasTerminal bool
@@ -123,6 +124,7 @@ var (
 	errClientProtocol         = errors.New("protocol error")
 	errClientServer           = errors.New("server error")
 	errClientUnexpected       = errors.New("unexpected message")
+	errClientWriteBusy        = errors.New("another WebTTY write is in progress")
 )
 
 func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
@@ -158,7 +160,8 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 	loopCtx, stopLoops := context.WithCancel(ctx)
 	defer stopLoops()
 	loopErrCh := make(chan error, 1)
-	if resolved.Interactive {
+	forwardStdin := resolved.Interactive || !runtime.hasStdinFD || !term.IsTerminal(runtime.stdinFD)
+	if forwardStdin {
 		go runtime.stdinSessionLoop(loopCtx, session, loopErrCh)
 	}
 	if resolved.AllocateTTY {
@@ -1022,7 +1025,19 @@ func (c *clientRuntime) sendClientError(err error) error {
 		return nil
 	}
 	msg := &pb.Message{Payload: &pb.Message_Error{Error: &pb.Error{Msg: err.Error()}}}
-	return c.writeMessage(msg)
+	c.logProtoMessage("sending", msg)
+	payload, err := proto.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal protobuf message: %w", err)
+	}
+	if !c.writeMu.TryLock() {
+		return errClientWriteBusy
+	}
+	defer c.writeMu.Unlock()
+	if err := c.conn.SetWriteDeadline(c.closeWriteDeadline()); err != nil {
+		return err
+	}
+	return c.conn.WriteMessage(websocket.BinaryMessage, payload)
 }
 
 func (c *clientRuntime) writeMessage(msg *pb.Message) error {
@@ -1037,10 +1052,22 @@ func (c *clientRuntime) writeMessage(msg *pb.Message) error {
 }
 
 func (c *clientRuntime) closeConn() {
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
-	_ = c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done"))
-	_ = c.conn.Close()
+	c.closeOnce.Do(func() {
+		deadline := c.closeWriteDeadline()
+		_ = c.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done"), deadline)
+		_ = c.conn.Close()
+	})
+}
+
+func (c *clientRuntime) closeWriteDeadline() time.Time {
+	timeout := defaultClientCloseDeadline
+	if c.cfg != nil && c.cfg.CloseDeadline != nil {
+		timeout = *c.cfg.CloseDeadline
+	}
+	if timeout < 0 {
+		timeout = 0
+	}
+	return time.Now().Add(timeout)
 }
 
 func (c *clientRuntime) logProtoMessage(direction string, msg *pb.Message) {

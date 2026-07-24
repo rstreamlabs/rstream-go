@@ -55,13 +55,6 @@ func webTTYBytesValueBytes(value *wrapperspb.BytesValue) []byte {
 	return append([]byte(nil), value.GetValue()...)
 }
 
-func serverEndpointIdentityToProto(identity *WebTTYEndpointIdentity) *pb.EndpointIdentity {
-	if identity == nil {
-		return nil
-	}
-	return endpointIdentityPublicToProto(identity.Public())
-}
-
 func endpointIdentityPublicToProto(identity WebTTYEndpointIdentityPublic) *pb.EndpointIdentity {
 	return &pb.EndpointIdentity{
 		SigningKeyId:        cloneBytes(identity.SigningKeyID),
@@ -99,9 +92,16 @@ func (s *session) sendServerHelloIfConfigured() error {
 	if _, err := rand.Read(nonce); err != nil {
 		return fmt.Errorf("generate WebTTY server nonce: %w", err)
 	}
-	s.serverNonce = nonce
 	identity := s.cfg.EndpointIdentity.Public()
-	s.serverKeyID = EncodeE2EKeyMaterial(identity.SigningKeyID)
+	serverKeyID := EncodeE2EKeyMaterial(identity.SigningKeyID)
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return errors.New("session is closed")
+	}
+	s.serverNonce = cloneBytes(nonce)
+	s.serverKeyID = serverKeyID
+	s.mu.Unlock()
 	workspaceID := strings.TrimSpace(s.cfg.WorkspaceID)
 	projectID := strings.TrimSpace(s.cfg.ProjectID)
 	serverID := strings.TrimSpace(s.cfg.ServerID)
@@ -167,10 +167,10 @@ func (s *session) verifyClientProof(ctx context.Context, openCfg *pb.Open) error
 	if !bytes.Equal(proof.SigningKeyId, expectedSigningKeyID) {
 		return fmt.Errorf("%w: signing key id does not match signing public key", errWebTTYClientProofInvalid)
 	}
-	s.clientKeyID = EncodeE2EKeyMaterial(proof.SigningKeyId)
-	s.clientPrincipal = strings.TrimSpace(webTTYStringValueText(proof.GetPrincipalId()))
-	s.clientDeviceID = strings.TrimSpace(webTTYStringValueText(proof.GetDeviceId()))
-	s.clientBrowserID = strings.TrimSpace(webTTYStringValueText(proof.GetBrowserId()))
+	clientKeyID := EncodeE2EKeyMaterial(proof.SigningKeyId)
+	clientPrincipal := strings.TrimSpace(webTTYStringValueText(proof.GetPrincipalId()))
+	clientDeviceID := strings.TrimSpace(webTTYStringValueText(proof.GetDeviceId()))
+	clientBrowserID := strings.TrimSpace(webTTYStringValueText(proof.GetBrowserId()))
 	if s.logger != nil && s.logger.Enabled(ctx, slog.LevelDebug) {
 		s.logger.Debug(
 			"verifying WebTTY client proof",
@@ -265,6 +265,16 @@ func (s *session) verifyClientProof(ctx context.Context, openCfg *pb.Open) error
 	if !bytes.Equal(authorizedPublicKey, proof.SigningPublicKey) {
 		return fmt.Errorf("%w: signing key does not match the authorized key", errWebTTYClientProofInvalid)
 	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return errors.New("session is closed")
+	}
+	s.clientKeyID = clientKeyID
+	s.clientPrincipal = clientPrincipal
+	s.clientDeviceID = clientDeviceID
+	s.clientBrowserID = clientBrowserID
+	s.mu.Unlock()
 	return nil
 }
 

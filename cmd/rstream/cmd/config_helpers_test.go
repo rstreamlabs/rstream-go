@@ -77,7 +77,7 @@ func TestEnvironmentTokenHelpersAndOutputValidation(t *testing.T) {
 
 func TestResolveConfigPathAndAPIURLPrecedence(t *testing.T) {
 	clearRstreamTestEnv(t)
-	command := runtimeFlagsCommand()
+	command := runtimeFlagsCommand(t)
 	flagPath := filepath.Join(t.TempDir(), "flag.yaml")
 	envPath := filepath.Join(t.TempDir(), "env.yaml")
 	mustSetFlag(t, command, "config", flagPath)
@@ -86,7 +86,7 @@ func TestResolveConfigPathAndAPIURLPrecedence(t *testing.T) {
 	if err != nil || path != flagPath {
 		t.Fatalf("resolveConfigPath(flag) = %q, %v", path, err)
 	}
-	command = runtimeFlagsCommand()
+	command = runtimeFlagsCommand(t)
 	t.Setenv("RSTREAM_CONFIG", envPath)
 	path, err = resolveConfigPath(command)
 	if err != nil || path != envPath {
@@ -97,7 +97,7 @@ func TestResolveConfigPathAndAPIURLPrecedence(t *testing.T) {
 	if err != nil || apiURL != "https://flag.example.com" {
 		t.Fatalf("resolveAPIURL(flag) = %q, %v", apiURL, err)
 	}
-	command = runtimeFlagsCommand()
+	command = runtimeFlagsCommand(t)
 	t.Setenv("RSTREAM_API_URL", "https://env.example.com")
 	apiURL, err = resolveAPIURL(command, config.Config{})
 	if err != nil || apiURL != "https://env.example.com" {
@@ -120,7 +120,7 @@ func TestResolveRuntimeLoadsConfigTokenAndTransport(t *testing.T) {
 	if err := config.WriteAtomic(path, cfg); err != nil {
 		t.Fatalf("WriteAtomic() error = %v", err)
 	}
-	command := runtimeFlagsCommand()
+	command := runtimeFlagsCommand(t)
 	t.Setenv("RSTREAM_CONFIG", path)
 	t.Setenv("RSTREAM_QUIC_TRANSPORT", "1")
 	runtime, err := resolveRuntime(command, true, true)
@@ -133,7 +133,7 @@ func TestResolveRuntimeLoadsConfigTokenAndTransport(t *testing.T) {
 	if _, ok := runtime.Resolved.Transport.(*rstream.QUICTransport); !ok {
 		t.Fatalf("transport override = %T, want QUICTransport", runtime.Resolved.Transport)
 	}
-	command = runtimeFlagsCommand()
+	command = runtimeFlagsCommand(t)
 	mustSetFlag(t, command, "tunnel-transport", "tls")
 	t.Setenv("RSTREAM_TUNNEL_TRANSPORT", "quic")
 	runtime, err = resolveRuntime(command, true, true)
@@ -183,7 +183,7 @@ func TestResolveRuntimeSelectsAuthorizedRegion(t *testing.T) {
 	if err := config.WriteAtomic(path, cfg); err != nil {
 		t.Fatal(err)
 	}
-	command := runtimeFlagsCommand()
+	command := runtimeFlagsCommand(t)
 	mustSetFlag(t, command, "region", "US-EAST-1")
 	t.Setenv("RSTREAM_CONFIG", path)
 	runtime, err := resolveRuntime(command, true, true)
@@ -230,7 +230,7 @@ func TestResolveRuntimeSelectsAuthorizedRegionWithContextToken(t *testing.T) {
 	if err := config.WriteAtomic(path, cfg); err != nil {
 		t.Fatal(err)
 	}
-	command := runtimeFlagsCommand()
+	command := runtimeFlagsCommand(t)
 	mustSetFlag(t, command, "region", "us-east-1")
 	t.Setenv("RSTREAM_CONFIG", path)
 	runtime, err := resolveRuntime(command, true, true)
@@ -256,7 +256,7 @@ func TestResolveControlPlaneIgnoresDefaultContext(t *testing.T) {
 	if err := config.WriteAtomic(path, cfg); err != nil {
 		t.Fatalf("WriteAtomic() error = %v", err)
 	}
-	command := runtimeFlagsCommand()
+	command := runtimeFlagsCommand(t)
 	t.Setenv("RSTREAM_CONFIG", path)
 	runtime, err := resolveControlPlane(command, true)
 	if err != nil {
@@ -280,7 +280,7 @@ func TestResolveControlPlaneHonorsExplicitContext(t *testing.T) {
 	if err := config.WriteAtomic(path, cfg); err != nil {
 		t.Fatalf("WriteAtomic() error = %v", err)
 	}
-	command := runtimeFlagsCommand()
+	command := runtimeFlagsCommand(t)
 	t.Setenv("RSTREAM_CONFIG", path)
 	t.Setenv("RSTREAM_CONTEXT", "tests")
 	runtime, err := resolveControlPlane(command, true)
@@ -314,8 +314,9 @@ func TestResolveControlPlaneTokenPrecedence(t *testing.T) {
 	}
 }
 
-func runtimeFlagsCommand() *cobra.Command {
+func runtimeFlagsCommand(t *testing.T) *cobra.Command {
 	command := &cobra.Command{Use: "test"}
+	command.SetContext(t.Context())
 	command.Flags().String("config", "", "")
 	command.Flags().String("api-url", "", "")
 	command.Flags().String("context", "", "")

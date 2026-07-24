@@ -53,7 +53,7 @@ func findPublishedHost(ctx context.Context, client *rstream.Client, name string)
 
 func sctpEcho(conn net.Conn) error {
 	defer conn.Close()
-	assoc, err := sctp.Client(sctp.Config{NetConn: conn})
+	assoc, err := sctp.ClientWithOptions(sctp.WithNetConn(conn))
 	if err != nil {
 		return fmt.Errorf("failed to create SCTP association: %w", err)
 	}
@@ -92,9 +92,7 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 		if err != nil {
 			return fmt.Errorf("failed to resolve published host: %w", err)
 		}
-		dtlsConn, err := dtls.Dial("udp", udpAddr, &dtls.Config{
-			ServerName: hostname,
-		})
+		dtlsConn, err := dtls.DialWithOptions("udp", udpAddr, dtls.WithServerName(hostname))
 		if err != nil {
 			return fmt.Errorf("failed to dial published DTLS host: %w", err)
 		}
