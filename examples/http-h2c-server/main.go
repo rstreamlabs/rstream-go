@@ -22,8 +22,6 @@ import (
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 func handler(w http.ResponseWriter, r *http.Request) {
@@ -63,9 +61,10 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	}
 	fmt.Printf("Server listening on %s\n", forwardingAddr)
 	// Start an HTTP server using the tunnel as a listener (HTTP/2)
-	server := &http.Server{
-		Handler: h2c.NewHandler(http.HandlerFunc(handler), &http2.Server{}),
-	}
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	server := &http.Server{Handler: http.HandlerFunc(handler), Protocols: protocols}
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Serve(netListener)

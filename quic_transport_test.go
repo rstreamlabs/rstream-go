@@ -1044,7 +1044,7 @@ func newTestMASQUEProxyWithOptions(t *testing.T, options testMASQUEProxyOptions)
 		Handler:         mux,
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		req, err := masque.ParseRequest(r, template)
+		req, err := masque.ParseProxyRequest(r, template)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
