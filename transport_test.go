@@ -621,6 +621,26 @@ func TestSOCKS5UDPDatagramCodec(t *testing.T) {
 	}
 }
 
+func TestSOCKS5UDPConnWriteRejectsInvalidRemoteAddress(t *testing.T) {
+	udp, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("ListenUDP() error = %v", err)
+	}
+	defer udp.Close()
+	controlClient, controlServer := net.Pipe()
+	defer controlClient.Close()
+	defer controlServer.Close()
+	conn := &socks5UDPConn{
+		control: controlClient,
+		udp:     udp,
+		relay:   udp.LocalAddr().(*net.UDPAddr),
+		target:  socks5Address{host: "target.example", port: 443},
+	}
+	if _, err := conn.WriteTo([]byte("payload"), stubNetAddr("invalid")); err == nil {
+		t.Fatal("WriteTo() with invalid remote address error = nil")
+	}
+}
+
 func TestResolveDialAddressRejectsInvalidAddress(t *testing.T) {
 	_, err := resolveDialAddress(context.Background(), "missing-port", dnsResolverConfig{override: "127.0.0.1:53"})
 	if err == nil || !strings.Contains(err.Error(), "failed to split host:port") {

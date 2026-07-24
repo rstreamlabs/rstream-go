@@ -163,116 +163,114 @@ var contextDeleteCmd = &cobra.Command{
 	},
 }
 
-var contextCreateCmd = &cobra.Command{
-	Use:          "create <name>",
-	Short:        "Create a context",
-	SilenceUsage: true,
-	Args:         cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		path, cfg, err := loadConfig(cmd)
-		if err != nil {
-			return err
+var contextCreateCmd = newContextCreateCommand()
+
+func newContextCreateCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "create <name>", Short: "Create a context", SilenceUsage: true, Args: cobra.ExactArgs(1), RunE: runContextCreate}
+	cmd.Flags().SortFlags = false
+	cmd.Flags().StringP("output", "o", "none", "output mode (none, json, yaml)")
+	addContextTransportFlags(cmd)
+	cmd.Flags().Bool("default", false, "set created context as default")
+	cmd.Flags().String("project-endpoint", "", "associate a project endpoint with this context (optional)")
+	cmd.Flags().Bool("no-api-url", false, "do not associate this context with a Control plane API URL")
+	return cmd
+}
+
+func runContextCreate(cmd *cobra.Command, args []string) error {
+	path, cfg, err := loadConfig(cmd)
+	if err != nil {
+		return err
+	}
+	selection, err := resolveContextSelection(cmd, cfg)
+	if err != nil {
+		return err
+	}
+	apiURL := ""
+	if selection.useAPIURL {
+		apiURL = selection.apiURL
+	}
+	if existing, _, err := cfg.FindContextByName(args[0]); err != nil {
+		return err
+	} else if existing != nil {
+		return fmt.Errorf("context %q already exists", args[0])
+	}
+	engine, _ := cmd.Flags().GetString("engine")
+	projectEndpoint, _ := cmd.Flags().GetString("project-endpoint")
+	regionValue, _ := cmd.Flags().GetString("region")
+	region, err := controlplane.NormalizeRegion(regionValue)
+	if err != nil {
+		return err
+	}
+	if engine != "" && region != "" {
+		return errors.New("region selection cannot be combined with an explicit engine override")
+	}
+	token, tokenProvided, err := readTokenFromFlags(cmd)
+	if err != nil {
+		return err
+	}
+	if tokenProvided && strings.TrimSpace(token) == "" {
+		return errors.New("token is empty")
+	}
+	newCtx := config.Context{Name: args[0], APIURL: apiURL, Engine: engine, ProjectEndpoint: projectEndpoint, Region: region}
+	if engine == "" {
+		if projectEndpoint == "" {
+			return errors.New("--engine is required")
 		}
-		selection, err := resolveContextSelection(cmd, cfg)
-		if err != nil {
-			return err
+		if selection.unlinked || apiURL == "" {
+			return errors.New("project endpoint lookup requires --api-url and authentication")
 		}
-		apiURL := ""
-		if selection.useAPIURL {
-			apiURL = selection.apiURL
-		}
-		if existing, _, err := cfg.FindContextByName(args[0]); err != nil {
-			return err
-		} else if existing != nil {
-			return fmt.Errorf("context %q already exists", args[0])
-		}
-		engine, _ := cmd.Flags().GetString("engine")
-		projectEndpoint, _ := cmd.Flags().GetString("project-endpoint")
-		regionValue, _ := cmd.Flags().GetString("region")
-		region, err := controlplane.NormalizeRegion(regionValue)
-		if err != nil {
-			return err
-		}
-		if engine != "" && region != "" {
-			return errors.New("region selection cannot be combined with an explicit engine override")
-		}
-		token, tokenProvided, err := readTokenFromFlags(cmd)
-		if err != nil {
-			return err
-		}
-		if tokenProvided && strings.TrimSpace(token) == "" {
-			return errors.New("token is empty")
-		}
-		newCtx := config.Context{
-			Name:            args[0],
-			APIURL:          apiURL,
-			Engine:          engine,
-			ProjectEndpoint: projectEndpoint,
-			Region:          region,
-		}
-		if engine == "" {
-			if projectEndpoint == "" {
-				return errors.New("--engine is required")
-			}
-			if selection.unlinked || apiURL == "" {
-				return errors.New("project endpoint lookup requires --api-url and authentication")
-			}
-			lookupToken := token
-			if !tokenProvided {
-				lookupToken, err = resolveControlPlaneToken(cfg, apiURL)
-				if err != nil {
-					return err
-				}
-			}
-			environment, _ := cfg.FindEnvironment(apiURL)
-			headers, err := config.ResolveControlPlaneHeaders(environment, config.ReadEnv().ControlPlaneHeaders)
+		lookupToken := token
+		if !tokenProvided {
+			lookupToken, err = resolveControlPlaneToken(cfg, apiURL)
 			if err != nil {
 				return err
 			}
-			client := controlplane.NewClient(apiURL, lookupToken, controlplane.WithHeaders(headers))
-			if err := client.RequireToken(); err != nil {
-				return err
-			}
-			project, err := client.ResolveProjectByEndpoint(cmd.Context(), projectEndpoint)
-			if err != nil {
-				return mapControlPlaneError(err)
-			}
-			if _, err := project.EngineAddressForRegion(region); err != nil {
-				return err
-			}
-			newCtx.ProjectEndpoint = project.Endpoint
-			newCtx.Engine = project.EngineAddress()
-			newCtx.TURNDomain = project.Domain
-			newCtx.TURNPort = project.TurnPort
-			newCtx.TURNSPort = project.TurnsPort
 		}
-		transport, err := transportFromFlags(cmd)
+		environment, _ := cfg.FindEnvironment(apiURL)
+		headers, err := config.ResolveControlPlaneHeaders(environment, config.ReadEnv().ControlPlaneHeaders)
 		if err != nil {
 			return err
 		}
-		if transport != nil {
-			newCtx.Transport = transport
-		}
-		if tokenProvided {
-			if err := setContextTokenFromFlags(cmd, &newCtx, token, newCtx.APIURL); err != nil {
-				return err
-			}
-		} else if cmd.Flags().Changed("token-storage") {
-			return errors.New("--token-storage requires --token, --token-stdin, or --token-file")
-		}
-		cfg.Contexts = append(cfg.Contexts, newCtx)
-		if setDefault, _ := cmd.Flags().GetBool("default"); setDefault {
-			cfg.Defaults.Context = &config.DefaultContext{Name: newCtx.Name}
-		}
-		if err := config.WriteAtomic(path, cfg); err != nil {
+		client := controlplane.NewClient(apiURL, lookupToken, controlplane.WithHeaders(headers))
+		if err := client.RequireToken(); err != nil {
 			return err
 		}
-		output, _ := cmd.Flags().GetString("output")
-		return writeOptionalStructuredOutput(output, map[string]any{
-			"context": redactContext(newCtx),
-			"default": cfg.Defaults.Context != nil && cfg.Defaults.Context.Name == newCtx.Name,
-		})
-	},
+		project, err := client.ResolveProjectByEndpoint(cmd.Context(), projectEndpoint)
+		if err != nil {
+			return mapControlPlaneError(err)
+		}
+		if _, err := project.EngineAddressForRegion(region); err != nil {
+			return err
+		}
+		newCtx.ProjectEndpoint = project.Endpoint
+		newCtx.Engine = project.EngineAddress()
+		newCtx.TURNDomain = project.Domain
+		newCtx.TURNPort = project.TurnPort
+		newCtx.TURNSPort = project.TurnsPort
+	}
+	transport, err := transportFromFlags(cmd)
+	if err != nil {
+		return err
+	}
+	if transport != nil {
+		newCtx.Transport = transport
+	}
+	if tokenProvided {
+		if err := setContextTokenFromFlags(cmd, &newCtx, token, newCtx.APIURL); err != nil {
+			return err
+		}
+	} else if cmd.Flags().Changed("token-storage") {
+		return errors.New("--token-storage requires --token, --token-stdin, or --token-file")
+	}
+	cfg.Contexts = append(cfg.Contexts, newCtx)
+	if setDefault, _ := cmd.Flags().GetBool("default"); setDefault {
+		cfg.Defaults.Context = &config.DefaultContext{Name: newCtx.Name}
+	}
+	if err := config.WriteAtomic(path, cfg); err != nil {
+		return err
+	}
+	output, _ := cmd.Flags().GetString("output")
+	return writeOptionalStructuredOutput(output, map[string]any{"context": redactContext(newCtx), "default": cfg.Defaults.Context != nil && cfg.Defaults.Context.Name == newCtx.Name})
 }
 
 var contextUpdateCmd = &cobra.Command{
@@ -457,16 +455,10 @@ func init() {
 	contextUseCmd.Flags().StringP("output", "o", "none", "output mode (none, json, yaml)")
 	contextDeleteCmd.Flags().SortFlags = false
 	contextDeleteCmd.Flags().StringP("output", "o", "none", "output mode (none, json, yaml)")
-	contextCreateCmd.Flags().SortFlags = false
-	contextCreateCmd.Flags().StringP("output", "o", "none", "output mode (none, json, yaml)")
 	contextUpdateCmd.Flags().SortFlags = false
 	contextUpdateCmd.Flags().StringP("output", "o", "none", "output mode (none, json, yaml)")
-	addContextTransportFlags(contextCreateCmd)
 	addContextTransportFlags(contextUpdateCmd)
-	contextCreateCmd.Flags().Bool("default", false, "set created context as default")
-	contextCreateCmd.Flags().String("project-endpoint", "", "associate a project endpoint with this context (optional)")
 	contextUpdateCmd.Flags().String("project-endpoint", "", "associate a project endpoint with this context (optional)")
-	contextCreateCmd.Flags().Bool("no-api-url", false, "do not associate this context with a Control plane API URL")
 	contextGetCmd.Flags().Bool("no-api-url", false, "select an unlinked context")
 	contextUseCmd.Flags().Bool("no-api-url", false, "select an unlinked context")
 	contextDeleteCmd.Flags().Bool("no-api-url", false, "select an unlinked context")

@@ -128,7 +128,6 @@ func dialH1(ctx context.Context, forwarding, target string) (io.ReadWriteCloser,
 		_ = conn.Close()
 		return nil, fmt.Errorf("CONNECT status %s", resp.Status)
 	}
-	_ = conn.SetDeadline(time.Time{})
 	if br.Buffered() > 0 {
 		return &bufferedConn{Conn: conn, reader: br}, nil
 	}

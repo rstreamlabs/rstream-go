@@ -82,14 +82,8 @@ func (t *AutoTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Confi
 		cancel()
 
 		t.mu.Lock()
-		if generation != t.generation {
-			if conn != nil {
-				_ = conn.Close()
-			}
-			closeAutoTransport(selected)
-			conn = nil
-			err = net.ErrClosed
-		} else if err == nil {
+		stale := generation != t.generation
+		if !stale && err == nil {
 			t.selected = selected
 			t.selectedMode = mode
 		}
@@ -97,6 +91,13 @@ func (t *AutoTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Confi
 		t.selectionCancel = nil
 		close(done)
 		t.mu.Unlock()
+		if stale {
+			if conn != nil {
+				_ = conn.Close()
+			}
+			_ = closeAutoTransport(selected)
+			return nil, net.ErrClosed
+		}
 		return conn, err
 	}
 }

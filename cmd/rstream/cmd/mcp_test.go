@@ -420,7 +420,7 @@ environments:
 		t.Fatalf("WriteFile returned error: %v", err)
 	}
 	t.Setenv("RSTREAM_CONFIG", configPath)
-	result, err := mcpRuntimeStatus()
+	result, err := mcpRuntimeStatus(t.Context())
 	if err != nil {
 		t.Fatalf("mcpRuntimeStatus returned error: %v", err)
 	}

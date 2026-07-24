@@ -12,9 +12,12 @@ import (
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/netretry"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/streamrelay"
 )
+
+const acceptRetryMaxDelay = time.Second
 
 type Runner struct {
 	logger       *slog.Logger
@@ -164,10 +167,10 @@ func (r *Runner) runOnce(ctx context.Context, desired runmodel.DesiredTunnel, lo
 	}
 	logger.Info("Tunnel created", "tunnel_id", str(props.ID), "forwarding", forwarding)
 	if l, ok := tunnel.(net.Listener); ok {
-		return r.serveWithCtx(ctx, l.Close, func() error { return r.serveTCP(l, desired.Forward, logger) })
+		return r.serveWithCtx(ctx, l.Close, func() error { return r.serveTCP(ctx, l, desired.Forward, logger) })
 	}
 	if pl, ok := tunnel.(rstream.PacketListener); ok {
-		return r.serveWithCtx(ctx, pl.Close, func() error { return r.serveUDP(pl, desired.Forward, logger) })
+		return r.serveWithCtx(ctx, pl.Close, func() error { return r.serveUDP(ctx, pl, desired.Forward, logger) })
 	}
 	return fmt.Errorf("tunnel does not implement net.Listener or PacketListener")
 }
@@ -185,16 +188,19 @@ func (r *Runner) serveWithCtx(ctx context.Context, closeFn func() error, fn func
 	}
 }
 
-func (r *Runner) serveTCP(l net.Listener, target runmodel.ForwardTarget, logger *slog.Logger) error {
+func (r *Runner) serveTCP(ctx context.Context, l net.Listener, target runmodel.ForwardTarget, logger *slog.Logger) error {
+	var acceptRetryDelay time.Duration
 	for {
 		inbound, err := l.Accept()
 		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
-				time.Sleep(50 * time.Millisecond)
+			delay, retry := netretry.NextAcceptDelay(err, acceptRetryDelay, acceptRetryMaxDelay)
+			if retry && netretry.Wait(ctx, delay) {
+				acceptRetryDelay = delay
 				continue
 			}
 			return err
 		}
+		acceptRetryDelay = 0
 		go r.proxyTCP(inbound, target, logger)
 	}
 }
@@ -210,16 +216,19 @@ func (r *Runner) proxyTCP(inbound net.Conn, target runmodel.ForwardTarget, logge
 	streamrelay.Bidirectional(inbound, outbound)
 }
 
-func (r *Runner) serveUDP(l rstream.PacketListener, target runmodel.ForwardTarget, logger *slog.Logger) error {
+func (r *Runner) serveUDP(ctx context.Context, l rstream.PacketListener, target runmodel.ForwardTarget, logger *slog.Logger) error {
+	var acceptRetryDelay time.Duration
 	for {
 		inbound, raddr, err := l.Accept()
 		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
-				time.Sleep(50 * time.Millisecond)
+			delay, retry := netretry.NextAcceptDelay(err, acceptRetryDelay, acceptRetryMaxDelay)
+			if retry && netretry.Wait(ctx, delay) {
+				acceptRetryDelay = delay
 				continue
 			}
 			return err
 		}
+		acceptRetryDelay = 0
 		go r.proxyUDP(inbound, raddr, target, logger)
 	}
 }

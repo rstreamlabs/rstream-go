@@ -642,9 +642,7 @@ func webTTYReadAllSessionEvents(ctx context.Context, client *rstream.Client, ses
 		if page == nil || len(*page) == 0 {
 			break
 		}
-		for _, event := range *page {
-			events = append(events, event)
-		}
+		events = append(events, *page...)
 		lastSeq, err := webTTYParseSequenceCursor((*page)[len(*page)-1].Seq, "event seq")
 		if err != nil {
 			return nil, err
@@ -1142,11 +1140,7 @@ func (r *webTTYReadyFileReader) Fd() uintptr {
 }
 
 func webTTYDetachContext(parent context.Context) (context.Context, context.CancelFunc) {
-	base := context.Background()
-	if parent != nil {
-		base = context.WithoutCancel(parent)
-	}
-	return context.WithTimeout(base, 5*time.Second)
+	return context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
 }
 
 func validateWebTTYSessionJoinCapabilities(capabilities *rstream.WebTTYCapabilities) error {

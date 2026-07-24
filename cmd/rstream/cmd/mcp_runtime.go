@@ -21,7 +21,7 @@ func mcpProjectSelectorProperties(extra map[string]any) map[string]any {
 	return props
 }
 
-func resolveMCPControlPlaneRuntime(requireToken bool) (*resolvedRuntime, error) {
+func resolveMCPControlPlaneRuntime(ctx context.Context, requireToken bool) (*resolvedRuntime, error) {
 	path, cfg, err := mcpLoadConfig()
 	if err != nil {
 		return nil, err
@@ -39,7 +39,7 @@ func resolveMCPControlPlaneRuntime(requireToken bool) (*resolvedRuntime, error) 
 	if !requireToken || !mcpIsAuthenticationRequiredError(err) {
 		return nil, err
 	}
-	return resolveMCPRuntime(false, true)
+	return resolveMCPRuntime(ctx, false, true)
 }
 
 func mcpRuntimePrepare(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
@@ -62,9 +62,9 @@ func resolveMCPRuntimeForArgs(ctx context.Context, args map[string]json.RawMessa
 		if _, err := mcpPrepareRuntimeConfig(ctx, args); err != nil {
 			return nil, err
 		}
-		return resolveMCPRuntime(true, true)
+		return resolveMCPRuntime(ctx, true, true)
 	}
-	runtime, err := resolveMCPRuntime(true, true)
+	runtime, err := resolveMCPRuntime(ctx, true, true)
 	if err == nil {
 		return runtime, nil
 	}
@@ -74,11 +74,11 @@ func resolveMCPRuntimeForArgs(ctx context.Context, args map[string]json.RawMessa
 	if _, prepareErr := mcpPrepareRuntimeConfig(ctx, args); prepareErr != nil {
 		return nil, prepareErr
 	}
-	return resolveMCPRuntime(true, true)
+	return resolveMCPRuntime(ctx, true, true)
 }
 
 func mcpPrepareRuntimeConfig(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	controlRuntime, err := resolveMCPControlPlaneRuntime(true)
+	controlRuntime, err := resolveMCPControlPlaneRuntime(ctx, true)
 	if err != nil {
 		return nil, err
 	}

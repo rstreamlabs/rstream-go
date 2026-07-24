@@ -15,7 +15,7 @@ import (
 )
 
 func mcpWebTTYControlPlaneProject(ctx context.Context, args map[string]json.RawMessage) (*resolvedRuntime, *controlplane.Client, controlplane.Project, error) {
-	runtime, err := resolveMCPControlPlaneRuntime(true)
+	runtime, err := resolveMCPControlPlaneRuntime(ctx, true)
 	if err != nil {
 		return nil, nil, controlplane.Project{}, err
 	}

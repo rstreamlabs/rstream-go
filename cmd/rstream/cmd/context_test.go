@@ -201,12 +201,9 @@ func TestContextCreateUsesSuppliedTokenForProjectLookup(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := newRootCmd()
-	rootCmd.RemoveCommand(contextCmd)
-	root.AddCommand(contextCmd)
-	t.Cleanup(func() {
-		root.RemoveCommand(contextCmd)
-		rootCmd.AddCommand(contextCmd)
-	})
+	contextCommand := &cobra.Command{Use: "context"}
+	contextCommand.AddCommand(newContextCreateCommand())
+	root.AddCommand(contextCommand)
 	root.SetArgs([]string{"context", "create", "edge-us", "--config", configPath, "--api-url", server.URL, "--project-endpoint", "1234abcd", "--token-file", tokenPath, "--region", "us-east-1", "--default"})
 	if err := root.ExecuteContext(t.Context()); err != nil {
 		t.Fatalf("context create error = %v", err)

@@ -96,11 +96,7 @@ func resolveRuntime(cmd *cobra.Command, requireEngine, requireToken bool) (*reso
 }
 
 func resolveRuntimeRegion(cmd *cobra.Command, cfg config.Config, resolved *config.Resolved) error {
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return resolveRuntimeRegionContext(ctx, cfg, resolved)
+	return resolveRuntimeRegionContext(cmd.Context(), cfg, resolved)
 }
 
 func resolveRuntimeRegionContext(ctx context.Context, cfg config.Config, resolved *config.Resolved) error {

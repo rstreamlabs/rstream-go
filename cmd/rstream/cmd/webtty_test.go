@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
 	"net"
@@ -169,6 +170,54 @@ func TestCmdWebTTYInterruptHelperProcess(t *testing.T) {
 		os.Exit(7)
 	case <-time.After(10 * time.Second):
 		os.Exit(9)
+	}
+}
+
+func TestCmdWebTTYEchoStdinHelperProcess(t *testing.T) {
+	if os.Getenv("RSTREAM_CMD_WEBTTY_TEST_STDIN_HELPER") != "1" {
+		return
+	}
+	if _, err := io.Copy(os.Stdout, os.Stdin); err != nil {
+		os.Exit(8)
+	}
+	os.Exit(0)
+}
+
+func TestRunWebTTYClientCaptureForwardsPipedStdin(t *testing.T) {
+	zero := time.Duration(0)
+	allowUnauthenticated := true
+	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{HeartbeatInterval: &zero, AllowUnauthenticated: &allowUnauthenticated})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	stdin, input, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe() error = %v", err)
+	}
+	defer stdin.Close()
+	if _, err := input.WriteString("capture-pipe\n"); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+	if err := input.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	deadline := time.Second
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	result, err := runWebTTYClientCapture(ctx, &webtty.ClientConfig{
+		URL:           "ws" + strings.TrimPrefix(server.URL, "http"),
+		Interactive:   false,
+		Stdin:         stdin,
+		CmdArgs:       []string{os.Args[0], "-test.run=^TestCmdWebTTYEchoStdinHelperProcess$"},
+		EnvVars:       []string{"RSTREAM_CMD_WEBTTY_TEST_STDIN_HELPER=1"},
+		OpenDeadline:  &deadline,
+		CloseDeadline: &deadline,
+	})
+	if err != nil {
+		t.Fatalf("runWebTTYClientCapture() error = %v", err)
+	}
+	if result.ExitCode != 0 || result.Stdout != "capture-pipe\n" || result.Stderr != "" {
+		t.Fatalf("runWebTTYClientCapture() = %#v", result)
 	}
 }
 

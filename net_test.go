@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -310,7 +311,7 @@ func TestConnFromPacketConnCarriesSCTP(t *testing.T) {
 	errCh := make(chan error, 1)
 	releaseServer := make(chan struct{})
 	go func() {
-		assoc, err := sctp.Server(sctp.Config{NetConn: serverConn})
+		assoc, err := sctp.ServerWithOptions(sctp.WithNetConn(serverConn))
 		if err != nil {
 			errCh <- err
 			return
@@ -334,7 +335,7 @@ func TestConnFromPacketConnCarriesSCTP(t *testing.T) {
 		}
 		errCh <- err
 	}()
-	assoc, err := sctp.Client(sctp.Config{NetConn: clientConn})
+	assoc, err := sctp.ClientWithOptions(sctp.WithNetConn(clientConn))
 	if err != nil {
 		t.Fatalf("sctp.Client() error = %v", err)
 	}
@@ -438,6 +439,25 @@ func (c *fakePacketConn) SetDeadline(time.Time) error      { return nil }
 func (c *fakePacketConn) SetReadDeadline(time.Time) error  { return nil }
 func (c *fakePacketConn) SetWriteDeadline(time.Time) error { return nil }
 
+type blockingPacketConn struct {
+	*fakePacketConn
+	writeStarted chan struct{}
+}
+
+func newBlockingPacketConn(laddr net.Addr) *blockingPacketConn {
+	return &blockingPacketConn{fakePacketConn: newFakePacketConn(laddr), writeStarted: make(chan struct{})}
+}
+
+func (c *blockingPacketConn) WriteTo([]byte, net.Addr) (int, error) {
+	select {
+	case <-c.writeStarted:
+	default:
+		close(c.writeStarted)
+	}
+	<-c.closed
+	return 0, net.ErrClosed
+}
+
 type acceptedPacketConn struct {
 	conn net.PacketConn
 	addr net.Addr
@@ -483,14 +503,23 @@ func TestPacketConnFromPacketListenerRoutesPackets(t *testing.T) {
 	if packetConn.LocalAddr() != listener.addr {
 		t.Fatalf("LocalAddr() = %v, want %v", packetConn.LocalAddr(), listener.addr)
 	}
-	if err := packetConn.SetDeadline(time.Now()); err == nil || !strings.Contains(err.Error(), "unimplemented") {
-		t.Fatalf("SetDeadline() error = %v, want unimplemented error", err)
+	if err := packetConn.SetReadDeadline(time.Now().Add(-time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline() error = %v", err)
 	}
-	if err := packetConn.SetReadDeadline(time.Now()); err == nil || !strings.Contains(err.Error(), "unimplemented") {
-		t.Fatalf("SetReadDeadline() error = %v, want unimplemented error", err)
+	if _, _, err := packetConn.ReadFrom(make([]byte, 1)); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("ReadFrom() with expired deadline error = %v, want deadline exceeded", err)
 	}
-	if err := packetConn.SetWriteDeadline(time.Now()); err == nil || !strings.Contains(err.Error(), "unimplemented") {
-		t.Fatalf("SetWriteDeadline() error = %v, want unimplemented error", err)
+	if err := packetConn.SetReadDeadline(time.Time{}); err != nil {
+		t.Fatalf("SetReadDeadline() clear error = %v", err)
+	}
+	if err := packetConn.SetWriteDeadline(time.Now().Add(-time.Second)); err != nil {
+		t.Fatalf("SetWriteDeadline() error = %v", err)
+	}
+	if _, err := packetConn.WriteTo([]byte("expired"), remote); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("WriteTo() with expired deadline error = %v, want deadline exceeded", err)
+	}
+	if err := packetConn.SetDeadline(time.Time{}); err != nil {
+		t.Fatalf("SetDeadline() clear error = %v", err)
 	}
 	listener.accepted <- acceptedPacketConn{conn: inner, addr: remote}
 	inner.reads <- []byte("hello")
@@ -521,6 +550,32 @@ func TestPacketConnFromPacketListenerRoutesPackets(t *testing.T) {
 	}
 	if _, err := packetConn.WriteTo([]byte("closed"), remote); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("WriteTo() after close error = %v, want net.ErrClosed", err)
+	}
+	if err := packetConn.SetDeadline(time.Time{}); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("SetDeadline() after close error = %v, want net.ErrClosed", err)
+	}
+}
+
+func TestPacketConnFromPacketListenerPendingReadTracksDeadline(t *testing.T) {
+	listener := newFakePacketListener(stubNetAddr("listener"))
+	packetConn := PacketConnFromPacketListener(listener)
+	defer packetConn.Close()
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := packetConn.ReadFrom(make([]byte, 1))
+		result <- err
+	}()
+	time.Sleep(10 * time.Millisecond)
+	if err := packetConn.SetReadDeadline(time.Now().Add(20 * time.Millisecond)); err != nil {
+		t.Fatalf("SetReadDeadline() error = %v", err)
+	}
+	select {
+	case err := <-result:
+		if !errors.Is(err, os.ErrDeadlineExceeded) {
+			t.Fatalf("ReadFrom() error = %v, want deadline exceeded", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ReadFrom() did not observe the new deadline")
 	}
 }
 
@@ -577,5 +632,116 @@ func TestPacketConnFromPacketListenerCloseUnblocksRead(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatalf("ReadFrom() remained blocked after close")
+	}
+}
+
+func TestPacketConnFromPacketListenerCloseInterruptsBlockedWrite(t *testing.T) {
+	remote := stubNetAddr("remote")
+	inner := newBlockingPacketConn(stubNetAddr("inner"))
+	listener := newFakePacketListener(stubNetAddr("listener"))
+	packetConn := PacketConnFromPacketListener(listener)
+	listener.accepted <- acceptedPacketConn{conn: inner, addr: remote}
+	inner.reads <- []byte("ready")
+	buf := make([]byte, 16)
+	if _, _, err := packetConn.ReadFrom(buf); err != nil {
+		t.Fatalf("initial ReadFrom() error = %v", err)
+	}
+	writeErr := make(chan error, 1)
+	go func() {
+		_, err := packetConn.WriteTo([]byte("blocked"), remote)
+		writeErr <- err
+	}()
+	select {
+	case <-inner.writeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("WriteTo() did not start")
+	}
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- packetConn.Close() }()
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close() blocked behind WriteTo()")
+	}
+	select {
+	case err := <-writeErr:
+		if !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("WriteTo() error = %v, want net.ErrClosed", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WriteTo() remained blocked after Close()")
+	}
+}
+
+func TestPacketConnFromPacketListenerReplacesSameAddressAtomically(t *testing.T) {
+	remote := stubNetAddr("remote")
+	first := newFakePacketConn(stubNetAddr("first"))
+	second := newFakePacketConn(stubNetAddr("second"))
+	listener := newFakePacketListener(stubNetAddr("listener"))
+	packetConn := PacketConnFromPacketListener(listener)
+	defer packetConn.Close()
+	listener.accepted <- acceptedPacketConn{conn: first, addr: remote}
+	first.reads <- []byte("first")
+	buf := make([]byte, 16)
+	if _, _, err := packetConn.ReadFrom(buf); err != nil {
+		t.Fatalf("first ReadFrom() error = %v", err)
+	}
+	listener.accepted <- acceptedPacketConn{conn: second, addr: stubNetAddr("remote")}
+	second.reads <- []byte("second")
+	if _, _, err := packetConn.ReadFrom(buf); err != nil {
+		t.Fatalf("second ReadFrom() error = %v", err)
+	}
+	select {
+	case <-first.closed:
+	case <-time.After(time.Second):
+		t.Fatal("replaced connection remained open")
+	}
+	if n, err := packetConn.WriteTo([]byte("current"), remote); err != nil || n != len("current") {
+		t.Fatalf("WriteTo() = %d, %v; want %d, nil", n, err, len("current"))
+	}
+	select {
+	case got := <-second.writes:
+		if string(got) != "current" {
+			t.Fatalf("replacement write = %q, want current", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("replacement did not receive WriteTo()")
+	}
+}
+
+func TestPacketConnFromPacketListenerDropsQueuedPacketsFromReplacedConnection(t *testing.T) {
+	remote := stubNetAddr("remote")
+	first := newFakePacketConn(stubNetAddr("first"))
+	second := newFakePacketConn(stubNetAddr("second"))
+	listener := newFakePacketListener(stubNetAddr("listener"))
+	packetConn := PacketConnFromPacketListener(listener)
+	defer packetConn.Close()
+	listener.accepted <- acceptedPacketConn{conn: first, addr: remote}
+	first.reads <- []byte("stale")
+	select {
+	case <-first.closed:
+		t.Fatal("first connection closed before replacement")
+	case <-time.After(20 * time.Millisecond):
+	}
+	listener.accepted <- acceptedPacketConn{conn: second, addr: stubNetAddr("remote")}
+	select {
+	case <-first.closed:
+	case <-time.After(time.Second):
+		t.Fatal("replaced connection remained open")
+	}
+	second.reads <- []byte("current")
+	buf := make([]byte, 16)
+	if err := packetConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline() error = %v", err)
+	}
+	n, _, err := packetConn.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("ReadFrom() error = %v", err)
+	}
+	if got := string(buf[:n]); got != "current" {
+		t.Fatalf("ReadFrom() = %q, want current packet from replacement", got)
 	}
 }

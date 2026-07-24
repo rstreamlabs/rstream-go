@@ -1438,7 +1438,11 @@ func parseWorkspaceDeviceEncryptionPublicKey(t *testing.T, encoded string) []byt
 	if !ok || publicKey.Curve != elliptic.P256() {
 		t.Fatalf("unexpected encryption public key: %T", key)
 	}
-	return elliptic.Marshal(publicKey.Curve, publicKey.X, publicKey.Y)
+	raw, err := publicKey.Bytes()
+	if err != nil {
+		t.Fatalf("encode encryption public key: %v", err)
+	}
+	return raw
 }
 
 func verifyWorkspaceDeviceSignature(t *testing.T, key *ecdsa.PublicKey, payload any, signature string) bool {

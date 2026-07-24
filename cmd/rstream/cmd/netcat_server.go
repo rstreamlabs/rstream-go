@@ -14,7 +14,11 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/netretry"
 )
+
+const netcatAcceptRetryMaxDelay = time.Second
 
 type netcatManagedListener struct {
 	net.Listener
@@ -82,18 +86,13 @@ func runNetcatServer(ctx context.Context, cfg *netcatServerConfig) error {
 	if result.Generated {
 		fmt.Fprintln(cfg.Stderr, result.Display)
 	}
-	sessionCtx, cancelSessions := context.WithCancel(context.Background())
+	sessionCtx, cancelSessions := context.WithCancel(ctx)
 	defer cancelSessions()
-	go func() {
-		select {
-		case <-ctx.Done():
-			cancelSessions()
-			_ = result.Listener.Close()
-		case <-sessionCtx.Done():
-		}
-	}()
+	stopListener := context.AfterFunc(ctx, func() { _ = result.Listener.Close() })
+	defer stopListener()
 	var wg sync.WaitGroup
 	var slots chan struct{}
+	var acceptRetryDelay time.Duration
 	if cfg.MaxConnections > 0 {
 		slots = make(chan struct{}, cfg.MaxConnections)
 	}
@@ -103,15 +102,16 @@ func runNetcatServer(ctx context.Context, cfg *netcatServerConfig) error {
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				break
 			}
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Temporary() {
-				time.Sleep(50 * time.Millisecond)
+			delay, retry := netretry.NextAcceptDelay(err, acceptRetryDelay, netcatAcceptRetryMaxDelay)
+			if retry && netretry.Wait(ctx, delay) {
+				acceptRetryDelay = delay
 				continue
 			}
 			cancelSessions()
 			wg.Wait()
 			return err
 		}
+		acceptRetryDelay = 0
 		acquiredSlot := false
 		if slots != nil {
 			select {

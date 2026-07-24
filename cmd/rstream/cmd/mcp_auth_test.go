@@ -95,7 +95,7 @@ func TestMCPAuthStartAndPollStoresTokenWithoutReturningIt(t *testing.T) {
 	if err != nil || !ok || token != "approved-token" {
 		t.Fatalf("stored token = %q ok=%v err=%v", token, ok, err)
 	}
-	status, err := mcpRuntimeStatus()
+	status, err := mcpRuntimeStatus(t.Context())
 	if err != nil {
 		t.Fatalf("mcpRuntimeStatus returned error: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestMCPAuthStartAndPollStoresTokenWithoutReturningIt(t *testing.T) {
 func TestMCPRuntimeStatusRequiresTokenToBeReady(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
 	t.Setenv("RSTREAM_CONFIG", configPath)
-	status, err := mcpRuntimeStatus()
+	status, err := mcpRuntimeStatus(t.Context())
 	if err != nil {
 		t.Fatalf("mcpRuntimeStatus returned error: %v", err)
 	}

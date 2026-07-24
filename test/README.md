@@ -126,9 +126,9 @@ normal context and therefore enter through the regional endpoint. The stable
 domain override is needed only by the CLI runtime matrix when the forced node
 endpoint differs from the regional serving endpoint.
 
-Set `RSTREAM_E2E_ALLOW_CROSS_REGION_ROUTING=1` to create every matrix tunnel
-with cross-region routing allowed. The engine still selects Direct routing when
-owner and ingress are in the same region.
+Set `RSTREAM_E2E_ALLOW_CROSS_REGION_ROUTING=true` or `false` to override the
+engine default for every matrix tunnel. Leave it unset to exercise the engine
+default.
 
 Run the runtime forwarding smoke suite:
 
@@ -264,7 +264,9 @@ bash test/e2e/webtty-cli-workflows.sh
 
 This suite validates local WebTTY identities, trust-store files, registered
 server config parsing, workspace-managed device config, public help output,
-runtime E2E inference, and WebDAV sidecar rejection when E2E is active.
+runtime E2E inference, WebDAV sidecar rejection when E2E is active, and
+non-interactive stdin semantics including empty input, large input, non-zero
+remote exits, and parallel clients.
 
 Run the WebTTY runtime matrix:
 
@@ -278,6 +280,22 @@ C++ binaries are available, explicit-key E2E, connection setup, command
 execution, and expected failure paths. It resolves companion repositories from
 sibling checkouts named `rstream-js` and `rstream-cpp`; override with
 `RSTREAM_JS_REPO` or `RSTREAM_CPP_REPO` when testing a different checkout.
+
+WebTTY coverage is organized by behavioral boundaries rather than by repeating
+every CLI flag combination:
+
+| Boundary | Runtime coverage |
+| --- | --- |
+| Transport | WebSocket, plain TCP, plain TLS, and WebTransport |
+| Security | unauthenticated local development, token rejection, explicit-key E2E, and workspace-managed E2E |
+| Session mode | interactive, non-interactive, spectator, control transfer, and recorded replay |
+| Input lifecycle | terminal input, reader input, piped input, EOF, large payloads, early remote exit, and parallel clients |
+| Runtime integration | direct servers, lightweight rstream tunnels, registered servers, engine reconnect, and parallel engine inventory resolution |
+| Interoperability | Go, JavaScript, C++, and Windows when their runtime prerequisites are available |
+
+The engine repository's `test/e2e/webtty-managed-engine-runtime.sh` complements
+this matrix with the local Enterprise Edition engine, PostgreSQL projections,
+managed sessions, and concurrent lightweight `/api/tunnels` resolution.
 
 The runtime scripts resolve the CLI in this order: `RSTREAM_BIN`, a built repository binary under `out/cmd/rstream`, then `rstream` from `PATH`. Set `RSTREAM_BIN` when you need to test a specific binary.
 

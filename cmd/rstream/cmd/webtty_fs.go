@@ -237,9 +237,40 @@ func newWebTTYFSClient(cmd *cobra.Command) (*webTTYFSClient, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create rstream client: %w", err)
 		}
+		serverInfo, err := resolveWebTTYRuntimeServerInfo(cmd.Context(), client, target)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateWebTTYFilesystemCapability(target, serverInfo); err != nil {
+			return nil, err
+		}
+		dialTarget := webTTYRuntimeDialTarget(serverInfo)
+		rawURL, err = webTTYURLWithRstreamTarget(rawURL, dialTarget)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(fsPath) == "" && serverInfo.FSPath != nil {
+			fsPath = strings.TrimSpace(*serverInfo.FSPath)
+		}
+		baseURL, target, err = resolveWebTTYFSBaseURL(rawURL, fsPath)
+		if err != nil {
+			return nil, err
+		}
 		httpClient = &http.Client{Transport: &http.Transport{DialContext: newWebTTYFSDialContext(client, target)}}
 	}
 	return &webTTYFSClient{client: httpClient, baseURL: baseURL, authToken: authToken}, nil
+}
+
+func validateWebTTYFilesystemCapability(target string, serverInfo *webtty.ServerInfo) error {
+	if serverInfo == nil {
+		return fmt.Errorf("WebTTY server %q is not online", target)
+	}
+	for _, capability := range serverInfo.Capabilities {
+		if capability == webtty.WebTTYCapabilityFS {
+			return nil
+		}
+	}
+	return fmt.Errorf("WebTTY server %q does not advertise a filesystem sidecar", target)
 }
 
 func resolveWebTTYFSBaseURL(raw string, fsPath string) (string, string, error) {
@@ -462,9 +493,7 @@ func webDAVDisplayPath(raw string) string {
 	if err == nil {
 		raw = value
 	}
-	if strings.HasPrefix(raw, webtty.WebTTYDefaultFSPath) {
-		raw = strings.TrimPrefix(raw, webtty.WebTTYDefaultFSPath)
-	}
+	raw = strings.TrimPrefix(raw, webtty.WebTTYDefaultFSPath)
 	if raw == "" {
 		return "/"
 	}

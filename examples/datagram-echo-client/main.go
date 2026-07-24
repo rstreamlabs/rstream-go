@@ -77,7 +77,7 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 						}
 						return p
 					}()}
-				packetConn, err := dtls.Dial("udp", raddr, &dtls.Config{ServerName: hostname})
+				packetConn, err := dtls.DialWithOptions("udp", raddr, dtls.WithServerName(hostname))
 				if err != nil {
 					return fmt.Errorf("failed to dial published host: %w", err)
 				}

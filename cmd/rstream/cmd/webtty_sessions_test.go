@@ -626,17 +626,6 @@ func TestWebTTYDetachContextPreservesValuesAfterParentCancel(t *testing.T) {
 	}
 }
 
-func TestWebTTYDetachContextAllowsNilParent(t *testing.T) {
-	ctx, cancel := webTTYDetachContext(nil)
-	defer cancel()
-	if ctx == nil {
-		t.Fatal("detach context is nil")
-	}
-	if _, ok := ctx.Deadline(); !ok {
-		t.Fatal("detach context should have a deadline")
-	}
-}
-
 func TestValidateWebTTYSessionAttachSupportAllowsManagedAndE2ESessionTransports(t *testing.T) {
 	live := rstream.WebTTYSessionLive{Available: true, Attachable: true, HasUpstream: true}
 	tests := []struct {
