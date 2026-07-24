@@ -19,7 +19,9 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -512,6 +514,84 @@ func TestWebTTYHandlerWorkspaceManagedVerifierAcceptsTrustedClient(t *testing.T)
 	}
 	if !verifierCalled {
 		t.Fatal("workspace-managed client proof verifier was not called")
+	}
+}
+
+func TestWebTTYHandlerOpenTimeoutCancelsBlockedClientProofVerifier(t *testing.T) {
+	zero := time.Duration(0)
+	required := true
+	openDeadline := 30 * time.Millisecond
+	serverIdentity, clientIdentity, clientCrypto := newTestE2ECryptoPair(t, "test/workspace-managed-verifier-timeout")
+	serverPublic := serverIdentity.Public()
+	verifierStarted := make(chan struct{})
+	releaseVerifier := make(chan struct{})
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:      &zero,
+		SessionOpenDeadline:    &openDeadline,
+		PayloadCryptoResolver:  NewE2EServerPayloadCryptoResolver(serverIdentity.Encryption),
+		RequireSessionKeyGrant: &required,
+		EndpointIdentity:       serverIdentity,
+		RequireClientProof:     &required,
+		WorkspaceID:            "workspace-1",
+		ProjectID:              "project-1",
+		ServerID:               "server-1",
+		ClientProofVerifier: func(ctx context.Context, _ ClientProofVerification) ([]byte, error) {
+			close(verifierStarted)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-releaseVerifier:
+				return nil, errors.New("verifier released by test")
+			}
+		},
+	}))
+	server := httptest.NewServer(handler)
+	result := make(chan error, 1)
+	go func() {
+		session, err := OpenClientSession(context.Background(), &SessionConfig{
+			URL:                    testWebTTYURL(server.URL),
+			CmdArgs:                testShellCommand("printf should-not-run", "[Console]::Out.Write('should-not-run')"),
+			OpenDeadline:           durationPtr(2 * time.Second),
+			CloseDeadline:          durationPtr(time.Second),
+			PayloadCrypto:          clientCrypto,
+			EndpointIdentity:       clientIdentity,
+			ExpectedServerIdentity: &serverPublic,
+			ClientCredential:       []byte("workspace-managed-client-credential"),
+			ClientPrincipalID:      "device-1",
+			ClientDeviceID:         "device-1",
+		})
+		if session != nil {
+			_ = session.Close()
+		}
+		result <- err
+	}()
+	select {
+	case <-verifierStarted:
+	case <-time.After(time.Second):
+		close(releaseVerifier)
+		server.Close()
+		t.Fatal("client proof verifier was not called")
+	}
+	completedByTimeout := false
+	var openErr error
+	select {
+	case openErr = <-result:
+		completedByTimeout = true
+	case <-time.After(500 * time.Millisecond):
+		close(releaseVerifier)
+		openErr = <-result
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	if err := handler.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	cancel()
+	server.Close()
+	if !completedByTimeout {
+		t.Fatal("session open timeout did not cancel the blocked client proof verifier")
+	}
+	if openErr == nil {
+		t.Fatal("expected session opening to fail after the server timeout")
 	}
 }
 
@@ -1158,6 +1238,255 @@ func TestRunClientInteractivePipeSession(t *testing.T) {
 	}
 	if stdout.String() != "typed" || stderr.String() != "err" {
 		t.Fatalf("stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestRunClientNonInteractivePipeSession(t *testing.T) {
+	zero := time.Duration(0)
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	stdin, input, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe() error = %v", err)
+	}
+	defer stdin.Close()
+	if _, err := input.WriteString("piped\n"); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+	if err := input.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	var stdout strings.Builder
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	exitCode, err := RunClient(ctx, &ClientConfig{
+		URL:           testWebTTYURL(server.URL),
+		Interactive:   false,
+		Stdin:         stdin,
+		Stdout:        &stdout,
+		CmdArgs:       testShellCommand("cat", "$input | ForEach-Object { [Console]::Out.WriteLine($_) }"),
+		OpenDeadline:  durationPtr(time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
+	if err != nil || exitCode != 0 {
+		t.Fatalf("RunClient() = %d, %v", exitCode, err)
+	}
+	if stdout.String() != "piped\n" {
+		t.Fatalf("stdout = %q, want piped input", stdout.String())
+	}
+}
+
+func TestRunClientNonInteractiveReaderSession(t *testing.T) {
+	zero := time.Duration(0)
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	var stdout strings.Builder
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	exitCode, err := RunClient(ctx, &ClientConfig{
+		URL:           testWebTTYURL(server.URL),
+		Stdin:         strings.NewReader("reader\n"),
+		Stdout:        &stdout,
+		CmdArgs:       testShellCommand("cat", "$input | ForEach-Object { [Console]::Out.WriteLine($_) }"),
+		OpenDeadline:  durationPtr(time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
+	if err != nil || exitCode != 0 {
+		t.Fatalf("RunClient() = %d, %v", exitCode, err)
+	}
+	if stdout.String() != "reader\n" {
+		t.Fatalf("stdout = %q, want reader input", stdout.String())
+	}
+}
+
+func TestRunClientNonInteractiveEmptyPipeSendsEOF(t *testing.T) {
+	zero := time.Duration(0)
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	stdin, input, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe() error = %v", err)
+	}
+	defer stdin.Close()
+	if err := input.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	exitCode, err := RunClient(ctx, &ClientConfig{
+		URL:           testWebTTYURL(server.URL),
+		Stdin:         stdin,
+		CmdArgs:       testShellCommand("cat", "$input | Out-Null"),
+		OpenDeadline:  durationPtr(time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
+	if err != nil || exitCode != 0 {
+		t.Fatalf("RunClient() = %d, %v", exitCode, err)
+	}
+}
+
+func TestRunClientStdinEOFDoesNotEndRunningCommand(t *testing.T) {
+	zero := time.Duration(0)
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	stdin, input, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe() error = %v", err)
+	}
+	defer stdin.Close()
+	if err := input.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	var stdout strings.Builder
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	exitCode, err := RunClient(ctx, &ClientConfig{
+		URL:           testWebTTYURL(server.URL),
+		Stdin:         stdin,
+		Stdout:        &stdout,
+		CmdArgs:       testShellCommand("sleep 0.2; printf survived", "Start-Sleep -Milliseconds 200; [Console]::Out.Write('survived')"),
+		OpenDeadline:  durationPtr(time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
+	if err != nil || exitCode != 0 {
+		t.Fatalf("RunClient() = %d, %v", exitCode, err)
+	}
+	if stdout.String() != "survived" {
+		t.Fatalf("stdout = %q, want survived", stdout.String())
+	}
+}
+
+func TestRunClientNonInteractiveLargePipeIsNotTruncated(t *testing.T) {
+	zero := time.Duration(0)
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	stdin, input, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe() error = %v", err)
+	}
+	defer stdin.Close()
+	const inputSize = 2 << 20
+	writeResult := make(chan error, 1)
+	go func() {
+		_, err := input.Write(bytes.Repeat([]byte("x"), inputSize))
+		if closeErr := input.Close(); err == nil {
+			err = closeErr
+		}
+		writeResult <- err
+	}()
+	var stdout strings.Builder
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	exitCode, err := RunClient(ctx, &ClientConfig{
+		URL:           testWebTTYURL(server.URL),
+		Stdin:         stdin,
+		Stdout:        &stdout,
+		CmdArgs:       testShellCommand("wc -c", "$data = [Console]::OpenStandardInput(); $buffer = New-Object byte[] 32768; $total = 0; while (($count = $data.Read($buffer, 0, $buffer.Length)) -gt 0) { $total += $count }; [Console]::Out.Write($total)"),
+		OpenDeadline:  durationPtr(time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
+	if err != nil || exitCode != 0 {
+		t.Fatalf("RunClient() = %d, %v", exitCode, err)
+	}
+	if err := <-writeResult; err != nil {
+		t.Fatalf("stdin write error = %v", err)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != strconv.Itoa(inputSize) {
+		t.Fatalf("received byte count = %q, want %d", got, inputSize)
+	}
+}
+
+func TestRunClientRemoteExitDoesNotWaitForOpenStdin(t *testing.T) {
+	zero := time.Duration(0)
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	stdin, input, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe() error = %v", err)
+	}
+	defer stdin.Close()
+	defer input.Close()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	exitCode, err := RunClient(ctx, &ClientConfig{
+		URL:           testWebTTYURL(server.URL),
+		Stdin:         stdin,
+		CmdArgs:       testShellCommand("exit 0", "exit 0"),
+		OpenDeadline:  durationPtr(time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
+	if err != nil || exitCode != 0 {
+		t.Fatalf("RunClient() = %d, %v", exitCode, err)
+	}
+}
+
+func TestRunClientParallelNonInteractivePipes(t *testing.T) {
+	zero := time.Duration(0)
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	const clients = 24
+	results := make(chan error, clients)
+	var wg sync.WaitGroup
+	for i := 0; i < clients; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			stdin, input, err := os.Pipe()
+			if err != nil {
+				results <- err
+				return
+			}
+			defer stdin.Close()
+			expected := "client-" + strconv.Itoa(index)
+			if _, err := input.WriteString(expected); err != nil {
+				_ = input.Close()
+				results <- err
+				return
+			}
+			if err := input.Close(); err != nil {
+				results <- err
+				return
+			}
+			var stdout strings.Builder
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			exitCode, err := RunClient(ctx, &ClientConfig{
+				URL:           testWebTTYURL(server.URL),
+				Stdin:         stdin,
+				Stdout:        &stdout,
+				CmdArgs:       testShellCommand("cat", "$input | ForEach-Object { [Console]::Out.Write($_) }"),
+				OpenDeadline:  durationPtr(time.Second),
+				CloseDeadline: durationPtr(time.Second),
+			})
+			if err != nil {
+				results <- err
+				return
+			}
+			if exitCode != 0 || stdout.String() != expected {
+				results <- errors.New("parallel WebTTY output mismatch")
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(results)
+	for err := range results {
+		if err != nil {
+			t.Fatalf("parallel RunClient() error = %v", err)
+		}
 	}
 }
 

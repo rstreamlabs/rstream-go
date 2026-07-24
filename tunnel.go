@@ -27,13 +27,27 @@ type bytestreamTunnelImpl struct {
 	props    TunnelProperties
 	ctrl     *controlChannelImpl
 	tunnelID string
-	closeCh  chan error
+	closedCh chan struct{}
 	closing  bool
 	closed   bool
 	err      error
 	conns    chan net.Conn
 	ctx      context.Context
 	cancel   context.CancelFunc
+}
+
+type tunnelCleanup struct {
+	cancel context.CancelFunc
+	conns  []net.Conn
+}
+
+func (c tunnelCleanup) run() {
+	if c.cancel != nil {
+		c.cancel()
+	}
+	for _, conn := range c.conns {
+		_ = conn.Close()
+	}
 }
 
 func (t *bytestreamTunnelImpl) ForwardingAddress() (string, error) {
@@ -47,17 +61,27 @@ func (t *bytestreamTunnelImpl) Properties() (TunnelProperties, error) {
 func (t *bytestreamTunnelImpl) Accept() (net.Conn, error) {
 	t.ctrl.mu.Lock()
 	if t.closed {
+		err := t.acceptErrorLocked()
 		t.ctrl.mu.Unlock()
-		return nil, net.ErrClosed
+		return nil, err
 	}
+	closedCh := t.ensureClosedSignalLocked()
 	t.ctrl.mu.Unlock()
 	select {
 	case conn := <-t.conns:
-		return conn, nil
-	case err := <-t.closeCh:
-		if err == nil {
-			return nil, net.ErrClosed
+		t.ctrl.mu.Lock()
+		if t.closed {
+			err := t.acceptErrorLocked()
+			t.ctrl.mu.Unlock()
+			_ = conn.Close()
+			return nil, err
 		}
+		t.ctrl.mu.Unlock()
+		return conn, nil
+	case <-closedCh:
+		t.ctrl.mu.Lock()
+		err := t.acceptErrorLocked()
+		t.ctrl.mu.Unlock()
 		return nil, err
 	}
 }
@@ -71,53 +95,108 @@ func (t *bytestreamTunnelImpl) Addr() net.Addr {
 func (t *bytestreamTunnelImpl) Close() error {
 	t.ctrl.mu.Lock()
 	if t.closed {
+		err := t.err
 		t.ctrl.mu.Unlock()
-		return nil
+		return err
 	}
-	if t.closing == false {
+	closedCh := t.ensureClosedSignalLocked()
+	sendClose := !t.closing
+	if sendClose {
 		t.closing = true
-		go func() {
-			msg := &pb.Message{
-				Payload: &pb.Message_CloseTunnelReq{
-					CloseTunnelReq: &pb.CloseTunnelReq{
-						TunnelId: t.tunnelID,
-					},
-				},
-			}
-			if err := t.ctrl.writePbMessage(msg); err != nil {
-				t.ctrl.mu.Lock()
-				t.ctrl.onError(fmt.Errorf("failed to send CloseTunnelReq: %w", err))
-				t.ctrl.mu.Unlock()
-			}
-		}()
 	}
 	t.ctrl.mu.Unlock()
+	ctx, cancel := t.ctrl.newCloseContext()
+	defer cancel()
+	if sendClose {
+		msg := &pb.Message{
+			Payload: &pb.Message_CloseTunnelReq{
+				CloseTunnelReq: &pb.CloseTunnelReq{
+					TunnelId: t.tunnelID,
+				},
+			},
+		}
+		if err := t.ctrl.writePbMessageContext(ctx, msg); err != nil {
+			closeErr := fmt.Errorf("failed to send CloseTunnelReq: %w", err)
+			t.ctrl.onError(closeErr)
+			return closeErr
+		}
+	}
 	select {
-	case err := <-t.closeCh:
+	case <-closedCh:
+		t.ctrl.mu.Lock()
+		err := t.err
+		t.ctrl.mu.Unlock()
 		return err
-	case <-t.ctrl.doneCh:
+	case <-t.ctrl.closedCh:
+		if err := t.ctrl.Err(); err != nil {
+			return fmt.Errorf("control channel closed: %w", err)
+		}
 		return errors.New("control channel closed")
+	case <-ctx.Done():
+		select {
+		case <-closedCh:
+			t.ctrl.mu.Lock()
+			err := t.err
+			t.ctrl.mu.Unlock()
+			return err
+		case <-t.ctrl.closedCh:
+			if err := t.ctrl.Err(); err != nil {
+				return fmt.Errorf("control channel closed: %w", err)
+			}
+			return errors.New("control channel closed")
+		default:
+		}
+		closeErr := fmt.Errorf("timed out waiting for tunnel %q to close: %w", t.tunnelID, context.Cause(ctx))
+		t.ctrl.onError(closeErr)
+		return closeErr
 	}
 }
 
-func (t *bytestreamTunnelImpl) onClose() {
+func (t *bytestreamTunnelImpl) onCloseLocked() tunnelCleanup {
 	if t.closed {
-		return
+		return tunnelCleanup{}
 	}
-	t.onError(nil)
+	return t.onErrorLocked(nil)
 }
 
 func (t *bytestreamTunnelImpl) onError(err error) {
+	t.ctrl.mu.Lock()
+	cleanup := t.onErrorLocked(err)
+	t.ctrl.mu.Unlock()
+	cleanup.run()
+}
+
+func (t *bytestreamTunnelImpl) onErrorLocked(err error) tunnelCleanup {
 	if t.closed {
-		return
+		return tunnelCleanup{}
 	}
 	t.closed = true
 	t.err = err
-	if t.cancel != nil {
-		t.cancel()
+	close(t.ensureClosedSignalLocked())
+	cleanup := tunnelCleanup{cancel: t.cancel}
+	t.cancel = nil
+	for {
+		select {
+		case conn := <-t.conns:
+			cleanup.conns = append(cleanup.conns, conn)
+		default:
+			return cleanup
+		}
 	}
-	t.closeCh <- err
-	close(t.closeCh)
+}
+
+func (t *bytestreamTunnelImpl) acceptErrorLocked() error {
+	if t.err != nil {
+		return t.err
+	}
+	return net.ErrClosed
+}
+
+func (t *bytestreamTunnelImpl) ensureClosedSignalLocked() chan struct{} {
+	if t.closedCh == nil {
+		t.closedCh = make(chan struct{})
+	}
+	return t.closedCh
 }
 
 type bytestreamConn struct {

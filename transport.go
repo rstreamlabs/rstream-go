@@ -116,7 +116,7 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 				err = errors.New("cannot use TLS with HTTP proxy")
 			}
 			if err == nil && tlsProxyCfg != nil {
-				if tlsProxyCfg.InsecureSkipVerify == false && tlsProxyCfg.ServerName == "" {
+				if !tlsProxyCfg.InsecureSkipVerify && tlsProxyCfg.ServerName == "" {
 					tlsProxyCfg.ServerName = proxyURL.Hostname()
 				}
 				tlsConn := tls.Client(conn, tlsProxyCfg)

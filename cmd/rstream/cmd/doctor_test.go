@@ -124,7 +124,7 @@ func TestDoctorTransportProbeStatuses(t *testing.T) {
 func TestRunDoctorWithoutContextStaysLocalAndReportsActionableChecks(t *testing.T) {
 	clearRstreamTestEnv(t)
 	path := filepath.Join(t.TempDir(), "missing.yaml")
-	command := runtimeFlagsCommand()
+	command := runtimeFlagsCommand(t)
 	mustSetFlag(t, command, "config", path)
 	report := runDoctor(command)
 	if report.ConfigPath != path {

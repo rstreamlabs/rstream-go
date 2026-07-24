@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -440,19 +439,6 @@ func printWorkspaceDeviceAlreadyEnrolled(cmd *cobra.Command, workspace workspace
 	return nil
 }
 
-func revokeWorkspaceDeviceWithLocalProof(ctx context.Context, client *controlplane.Client, workspaceID string, device workspaceDeviceFile, reason string) error {
-	request := controlplane.RevokeWorkspaceDeviceKeyRequest{
-		Reason: reason,
-	}
-	if device.Status == workspaceDeviceStatusActive {
-		return revokeWorkspaceDeviceWithActorProof(ctx, client, workspaceID, device, device, reason)
-	}
-	if err := client.RevokeWorkspaceDeviceKey(ctx, workspaceID, device.DeviceKeyID, request); err != nil {
-		return mapControlPlaneError(err)
-	}
-	return nil
-}
-
 func revokeWorkspaceDeviceWithActorProof(ctx context.Context, client *controlplane.Client, workspaceID string, actor workspaceDeviceFile, target workspaceDeviceFile, reason string) error {
 	if actor.Status != workspaceDeviceStatusActive {
 		return fmt.Errorf("workspace device %s cannot revoke %s because it is %s", actor.DeviceKeyID, target.DeviceKeyID, actor.Status)
@@ -579,18 +565,6 @@ func completeWorkspaceDeviceRotations(ctx context.Context, client *controlplane.
 		devices[index].device = replacement
 	}
 	return devices, nil
-}
-
-func workspaceDeviceAccessProofs(workspaceID string, limit int) ([]controlplane.WorkspaceDeviceAccessProof, error) {
-	items, err := workspaceDeviceAccessProofsWithDevices(workspaceID, limit)
-	if err != nil {
-		return nil, err
-	}
-	proofs := make([]controlplane.WorkspaceDeviceAccessProof, 0, len(items))
-	for _, item := range items {
-		proofs = append(proofs, item.proof)
-	}
-	return proofs, nil
 }
 
 func workspaceDeviceAccessProofsWithDevices(workspaceID string, limit int) ([]workspaceDeviceAccessProofWithDevice, error) {
@@ -836,13 +810,11 @@ func parseWorkspaceDeviceEncryptionKey(device workspaceDeviceFile) (*ecdh.Privat
 		if privateKey.Curve != elliptic.P256() {
 			return nil, fmt.Errorf("workspace device encryption key is not P-256 ECDH")
 		}
-		scalar := privateKey.D.Bytes()
-		if len(scalar) > 32 {
-			return nil, fmt.Errorf("workspace device encryption key scalar is invalid")
+		scalar, err := privateKey.Bytes()
+		if err != nil {
+			return nil, fmt.Errorf("encode workspace device encryption key scalar: %w", err)
 		}
-		padded := make([]byte, 32)
-		copy(padded[32-len(scalar):], scalar)
-		ecdhKey, err := ecdh.P256().NewPrivateKey(padded)
+		ecdhKey, err := ecdh.P256().NewPrivateKey(scalar)
 		if err != nil {
 			return nil, fmt.Errorf("parse workspace device encryption key scalar: %w", err)
 		}
@@ -969,10 +941,13 @@ func workspaceP256ECDHPublicKeyFromSPKI(encoded string) (*ecdh.PublicKey, error)
 		}
 		return publicKey, nil
 	case *ecdsa.PublicKey:
-		if publicKey.Curve != elliptic.P256() || !publicKey.Curve.IsOnCurve(publicKey.X, publicKey.Y) {
+		if publicKey.Curve != elliptic.P256() {
 			return nil, fmt.Errorf("public key is not P-256 ECDH")
 		}
-		raw := elliptic.Marshal(elliptic.P256(), publicKey.X, publicKey.Y)
+		raw, err := publicKey.Bytes()
+		if err != nil {
+			return nil, fmt.Errorf("encode P-256 ECDH public key: %w", err)
+		}
 		ecdhPublicKey, err := ecdh.P256().NewPublicKey(raw)
 		if err != nil {
 			return nil, err
@@ -999,27 +974,27 @@ func workspaceP256SigningKeyFromJWK(jwk workspaceECKeyJWK) (*ecdsa.PrivateKey, e
 	if err != nil {
 		return nil, fmt.Errorf("decode workspace signing key scalar: %w", err)
 	}
-	curve := elliptic.P256()
-	x := new(big.Int).SetBytes(xBytes)
-	y := new(big.Int).SetBytes(yBytes)
-	d := new(big.Int).SetBytes(dBytes)
-	if !curve.IsOnCurve(x, y) || d.Sign() <= 0 || d.Cmp(curve.Params().N) >= 0 {
+	if len(xBytes) > 32 || len(yBytes) > 32 || len(dBytes) > 32 {
 		return nil, fmt.Errorf("workspace signing key JWK is invalid")
 	}
-	scalar := d.Bytes()
-	padded := make([]byte, 32)
-	if len(scalar) > len(padded) {
-		return nil, fmt.Errorf("workspace signing key scalar is invalid")
+	publicBytes := make([]byte, 65)
+	publicBytes[0] = 4
+	copy(publicBytes[33-len(xBytes):33], xBytes)
+	copy(publicBytes[65-len(yBytes):], yBytes)
+	publicKey, err := ecdsa.ParseUncompressedPublicKey(elliptic.P256(), publicBytes)
+	if err != nil {
+		return nil, fmt.Errorf("workspace signing key JWK is invalid: %w", err)
 	}
-	copy(padded[len(padded)-len(scalar):], scalar)
-	checkX, checkY := curve.ScalarBaseMult(padded)
-	if checkX.Cmp(x) != 0 || checkY.Cmp(y) != 0 {
+	privateBytes := make([]byte, 32)
+	copy(privateBytes[32-len(dBytes):], dBytes)
+	privateKey, err := ecdsa.ParseRawPrivateKey(elliptic.P256(), privateBytes)
+	if err != nil {
+		return nil, fmt.Errorf("workspace signing key scalar is invalid: %w", err)
+	}
+	if !publicKey.Equal(privateKey.Public()) {
 		return nil, fmt.Errorf("workspace signing key public coordinates do not match private scalar")
 	}
-	return &ecdsa.PrivateKey{
-		PublicKey: ecdsa.PublicKey{Curve: curve, X: x, Y: y},
-		D:         d,
-	}, nil
+	return privateKey, nil
 }
 
 func signWorkspacePayload(privateKey *ecdsa.PrivateKey, payload any) (string, error) {

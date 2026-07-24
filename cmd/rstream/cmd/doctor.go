@@ -115,9 +115,6 @@ func runDoctor(cmd *cobra.Command) doctorReport {
 		report.ProjectEndpoint = resolved.Context.ProjectEndpoint
 	}
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	checkDoctorContext(&report, resolved)
 	checkDoctorToken(&report, resolved.Token)
 	if doctorUsesControlPlane(resolved) {

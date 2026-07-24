@@ -54,6 +54,7 @@ import (
 	"github.com/quic-go/webtransport-go"
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/test/e2eenv"
 )
 
 func generateTLSConfig() (*tls.Config, error) {
@@ -356,8 +357,9 @@ func run(ctx context.Context, client *rstream.Client, publish bool, publishedPro
 		Type:    rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
 		Publish: rstream.BoolPtr(publish),
 	}
-	if os.Getenv("RSTREAM_E2E_ALLOW_CROSS_REGION_ROUTING") == "1" {
-		tunnelProps.AllowCrossRegionRouting = rstream.BoolPtr(true)
+	tunnelProps.AllowCrossRegionRouting, err = e2eenv.AllowCrossRegionRouting()
+	if err != nil {
+		return fmt.Errorf("cross-region routing: %w", err)
 	}
 	if tokenAuth {
 		tunnelProps.TokenAuth = rstream.BoolPtr(true)

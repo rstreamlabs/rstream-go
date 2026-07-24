@@ -13,6 +13,8 @@
 # --auto: exercise QUIC preference through automatic transport selection.
 set -euo pipefail
 
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+. "$ROOT/test/e2e/runtime_common.sh"
 BIN="${BIN:-out/test}"
 RUN_ID=$(printf '%s' "$(date +%s)-$$-$RANDOM-$RANDOM" | cksum | awk '{printf "%08x", $1}')
 NAME_PREFIX="${RSTREAM_E2E_NAME_PREFIX:-e2e-$RUN_ID}"
@@ -131,7 +133,7 @@ start_server() {
   local i=0
   while [ $i -lt 20 ]; do
     if grep -q "^READY" "$tmpout" 2>/dev/null; then
-      SERVER_ADDR=$(grep "^READY" "$tmpout" | head -1 | awk '{print $2}')
+      SERVER_ADDR=$(rewrite_downstream_address "$(grep "^READY" "$tmpout" | head -1 | awk '{print $2}')")
       rm -f "$tmpout"
       return 0
     fi
