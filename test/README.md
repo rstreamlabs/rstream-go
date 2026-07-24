@@ -50,7 +50,8 @@ The stream and datagram suites each cover two connectivity modes:
 Runtime credential and permission suites also require:
 
 - A running Control plane API passed explicitly with `RSTREAM_RUNTIME_API_URL`.
-- A PAT in `RSTREAM_RUNTIME_CONTROL_TOKEN` with `account.projects.read-only`, `account.tokens.create`, and `account.credentials.read-write`. Use an unrestricted admin/dev PAT for the most complete runtime pass. The Control plane setup scripts do not reuse the engine context token implicitly.
+- A PAT in `RSTREAM_RUNTIME_CONTROL_TOKEN` with `account.projects.read-only`, `account.tokens.create`, `account.credentials.read-write`, `tunnels.resources.read-only`, `tunnels.tunnels.create-delete`, and `tunnels.streams.create-delete`. The tunnel permissions are required because the suites mint narrower child tokens and mTLS credentials. Use an unrestricted admin/dev PAT for the most complete runtime pass. The Control plane setup scripts do not reuse the engine context token implicitly.
+- `RSTREAM_CONTROL_PLANE_HEADERS` set to the same JSON object used by the CLI when the Control plane is protected by an upstream access gateway.
 - At least one Basic project for token/grant runtime checks. Set `RSTREAM_RUNTIME_BASIC_PROJECT_ENDPOINT` or `RSTREAM_RUNTIME_PROJECT_ENDPOINT` to make the selection explicit.
 - One Pro project for published tunnel mTLS checks. Set `RSTREAM_RUNTIME_PRO_PROJECT_ENDPOINT`.
 - An engine build with mTLS support enabled when running mTLS suites.
