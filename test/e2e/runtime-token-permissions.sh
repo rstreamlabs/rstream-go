@@ -579,7 +579,6 @@ fi
 
 start_upstream "denied"
 if start_forward_with_env "unrestricted-denied" "$PROJECT_ENGINE" "$CONTROL_TOKEN" --http --publish --token-auth --name "$DENIED_NAME" --label "suite=$NAME_PREFIX"; then
-    DENIED_FORWARDING="$FORWARDING"
     DENIED_PID="$FORWARD_PID"
     pass "unrestricted token creates comparison tunnel"
 else

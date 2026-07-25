@@ -540,6 +540,7 @@ run_case "binary pipe preserves every byte" exec_binary_pipe_json 1048576 --url 
 run_case "remote exit does not wait for open stdin" exec_remote_exit_with_open_stdin --url "ws://$addr" --identity operator --e2e -- /bin/sh -c 'printf remote-exit'
 runtime_workdir="$TMP_DIR/runtime-workdir"
 mkdir -p "$runtime_workdir"
+# shellcheck disable=SC2016
 run_case "exec applies env workdir and no-TTY mode" exec_runtime_config_json "$runtime_workdir" --url "ws://$addr" --identity operator --e2e --no-tty --env RSTREAM_RUNTIME_FLAG=runtime-flags --workdir "$runtime_workdir" -- /bin/sh -c 'test ! -t 0; printf "%s\n%s" "$RSTREAM_RUNTIME_FLAG" "$PWD"'
 run_case "exec allocates a PTY on request" exec_text "runtime-tty" --url "ws://$addr" --identity operator --e2e --tty -- /bin/sh -c 'test -t 0 && test -t 1 && printf runtime-tty'
 run_case "JSON preserves streams and remote exit status" exec_pipe_json_with_exit "input" "failure" 17 "input" --url "ws://$addr" --identity operator --e2e -- /bin/sh -c 'cat; printf failure >&2; exit 17'
@@ -648,16 +649,18 @@ run_case_expect_fail "E2E refuses WebDAV filesystem sidecar from config" "filesy
 
 echo "=== public CLI surface ==="
 help_output="$TMP_DIR/help.txt"
-"$RSTREAM" webtty --help >"$help_output"
-"$RSTREAM" webtty server --help >>"$help_output"
-"$RSTREAM" webtty client --help >>"$help_output"
-"$RSTREAM" webtty exec --help >>"$help_output"
-"$RSTREAM" webtty server create --help >>"$help_output"
-"$RSTREAM" webtty server list --help >>"$help_output"
-"$RSTREAM" webtty server show --help >>"$help_output"
-"$RSTREAM" webtty server delete --help >>"$help_output"
-"$RSTREAM" webtty list --help >>"$help_output"
-"$RSTREAM" webtty sessions list --help >>"$help_output"
+{
+  "$RSTREAM" webtty --help
+  "$RSTREAM" webtty server --help
+  "$RSTREAM" webtty client --help
+  "$RSTREAM" webtty exec --help
+  "$RSTREAM" webtty server create --help
+  "$RSTREAM" webtty server list --help
+  "$RSTREAM" webtty server show --help
+  "$RSTREAM" webtty server delete --help
+  "$RSTREAM" webtty list --help
+  "$RSTREAM" webtty sessions list --help
+} >"$help_output"
 run_case "webtty help has no deprecated protocol flag" assert_not_contains "--protocol" "$help_output"
 run_case "webtty help has no e2e-policy flag" assert_not_contains "e2e-policy" "$help_output"
 run_case "webtty help has no server-binding flag" assert_not_contains "server-binding" "$help_output"
