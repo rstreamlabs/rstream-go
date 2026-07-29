@@ -31,6 +31,11 @@ type Event struct {
 	Object      json.RawMessage `json:"object"`
 }
 
+type EngineHealth struct {
+	Live  bool `json:"live"`
+	Ready bool `json:"ready"`
+}
+
 func cloneProxyHTTPHeaders(headers map[string]string) map[string]string {
 	if len(headers) == 0 {
 		return nil
@@ -206,6 +211,40 @@ func (c *Client) Logout(ctx context.Context) (*string, error) {
 		return nil, err
 	}
 	return engine, nil
+}
+
+func (c *Client) CheckHealth(ctx context.Context) (*EngineHealth, error) {
+	body, _, err := c.apiDo(ctx, http.MethodGet, "/health/live", nil, nil, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("check engine liveness: %w", err)
+	}
+	if err := validateHealthResponse(body, "live"); err != nil {
+		return nil, fmt.Errorf("check engine liveness: %w", err)
+	}
+	body, status, err := c.apiDo(ctx, http.MethodGet, "/health/ready", nil, nil, nil, nil)
+	if err != nil {
+		if status == http.StatusServiceUnavailable {
+			return &EngineHealth{Live: true}, nil
+		}
+		return nil, fmt.Errorf("check engine readiness: %w", err)
+	}
+	if err := validateHealthResponse(body, "ready"); err != nil {
+		return nil, fmt.Errorf("check engine readiness: %w", err)
+	}
+	return &EngineHealth{Live: true, Ready: true}, nil
+}
+
+func validateHealthResponse(body []byte, expected string) error {
+	var response struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	if response.Status != expected {
+		return fmt.Errorf("unexpected status %q", response.Status)
+	}
+	return nil
 }
 
 func (c *Client) ListClients(ctx context.Context, params *ListClientsParams) (*ListClientsResponse, error) {

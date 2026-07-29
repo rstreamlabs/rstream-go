@@ -219,7 +219,11 @@ func TestProjectRenameHelpAndValidation(t *testing.T) {
 }
 
 func TestMapControlPlaneError(t *testing.T) {
-	err := mapControlPlaneError(controlplane.ErrUnauthorized)
+	err := mapControlPlaneError(controlplane.ErrAccessProtection)
+	if err == nil || !strings.Contains(err.Error(), "deployment protection") || !strings.Contains(err.Error(), "control-plane headers") {
+		t.Fatalf("access protection error not mapped: %v", err)
+	}
+	err = mapControlPlaneError(controlplane.ErrUnauthorized)
 	if err == nil || !strings.Contains(err.Error(), "not authenticated") {
 		t.Fatalf("unauthorized error not mapped: %v", err)
 	}

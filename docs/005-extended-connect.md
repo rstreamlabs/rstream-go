@@ -1,6 +1,6 @@
 # Extended CONNECT and MASQUE
 
-The Go SDK can publish and dial HTTP/3 datagram tunnels that carry Extended CONNECT protocols such as WebTransport, CONNECT-UDP, and CONNECT-IP. Plain authority-form CONNECT is not Extended CONNECT and is documented separately in [HTTP_CONNECT.md](HTTP_CONNECT.md). The SDK does not implement MASQUE itself; the samples and runtime tests use the upstream protocol libraries directly:
+The Go SDK can publish and dial HTTP/3 datagram tunnels that carry Extended CONNECT protocols such as WebTransport, CONNECT-UDP, and CONNECT-IP. Plain authority-form CONNECT is not Extended CONNECT and is documented separately in [HTTP_CONNECT.md](004-http-connect.md). The SDK does not implement MASQUE itself; the samples and runtime tests use the upstream protocol libraries directly:
 
 - `github.com/quic-go/masque-go` for CONNECT-UDP.
 - `github.com/quic-go/connect-ip-go` for CONNECT-IP.

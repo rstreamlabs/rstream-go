@@ -55,15 +55,15 @@ var projectDomainAddCmd = &cobra.Command{
 	SilenceUsage: true,
 	Args:         cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		hostname := strings.TrimSpace(strings.ToLower(args[0]))
-		if hostname == "" {
-			return errors.New("hostname is required")
+		request, err := projectDomainCreateRequest(cmd, args[0])
+		if err != nil {
+			return err
 		}
 		client, projectID, err := projectResourceClient(cmd)
 		if err != nil {
 			return err
 		}
-		domain, err := client.CreateProjectDomain(cmd.Context(), projectID, controlplane.CreateProjectDomainRequest{Hostname: hostname})
+		domain, err := client.CreateProjectDomain(cmd.Context(), projectID, request)
 		if err != nil {
 			return mapControlPlaneError(err)
 		}
@@ -202,7 +202,47 @@ func init() {
 		command.Flags().String("project-id", "", "project ID (defaults to the current context)")
 		command.Flags().StringP("output", "o", "table", "output mode (table, json, yaml)")
 	}
+	projectDomainAddCmd.Flags().String("kind", "hostname", "domain kind (hostname, wildcard)")
+	projectDomainAddCmd.Flags().String("certificate-validation", "tls-alpn-01", "certificate validation method (tls-alpn-01, dns-01)")
 	projectCmd.AddCommand(projectDomainCmd, projectTCPAddressCmd)
+}
+
+func projectDomainCreateRequest(cmd *cobra.Command, hostname string) (controlplane.CreateProjectDomainRequest, error) {
+	kind, _ := cmd.Flags().GetString("kind")
+	validation, _ := cmd.Flags().GetString("certificate-validation")
+	return newProjectDomainCreateRequest(hostname, kind, validation, cmd.Flags().Changed("certificate-validation"))
+}
+
+func newProjectDomainCreateRequest(hostname string, kindValue string, validationValue string, validationExplicit bool) (controlplane.CreateProjectDomainRequest, error) {
+	hostname = strings.TrimSpace(strings.ToLower(hostname))
+	if hostname == "" {
+		return controlplane.CreateProjectDomainRequest{}, errors.New("hostname is required")
+	}
+	var kind controlplane.ProjectDomainKind
+	switch strings.TrimSpace(strings.ToLower(kindValue)) {
+	case "hostname":
+		kind = controlplane.ProjectDomainKindHostname
+	case "wildcard":
+		kind = controlplane.ProjectDomainKindWildcard
+	default:
+		return controlplane.CreateProjectDomainRequest{}, fmt.Errorf("invalid domain kind %q", kindValue)
+	}
+	if kind == controlplane.ProjectDomainKindWildcard && !validationExplicit {
+		validationValue = "dns-01"
+	}
+	var validation controlplane.ProjectDomainCertificateValidation
+	switch strings.ReplaceAll(strings.TrimSpace(strings.ToLower(validationValue)), "-", "_") {
+	case "tls_alpn_01":
+		validation = controlplane.ProjectDomainCertificateValidationTLSALPN01
+	case "dns_01":
+		validation = controlplane.ProjectDomainCertificateValidationDNS01
+	default:
+		return controlplane.CreateProjectDomainRequest{}, fmt.Errorf("invalid certificate validation method %q", validationValue)
+	}
+	if kind == controlplane.ProjectDomainKindWildcard && validation != controlplane.ProjectDomainCertificateValidationDNS01 {
+		return controlplane.CreateProjectDomainRequest{}, errors.New("wildcard domains require DNS-01 certificate validation")
+	}
+	return controlplane.CreateProjectDomainRequest{Hostname: hostname, Kind: kind, CertificateValidation: validation}, nil
 }
 
 func projectResourceClient(cmd *cobra.Command) (*controlplane.Client, string, error) {

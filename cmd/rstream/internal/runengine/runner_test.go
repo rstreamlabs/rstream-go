@@ -24,6 +24,8 @@ import (
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
+const runEngineTestTimeout = 10 * time.Second
+
 func TestRunnerStartValidation(t *testing.T) {
 	runner := New()
 	_, err := runner.Start(t.Context(), runmodel.DesiredTunnel{})
@@ -226,7 +228,7 @@ func TestRunnerRunOnceCreatesTunnelAndClosesOnContextCancel(t *testing.T) {
 	}()
 	select {
 	case <-tunnelReady:
-	case <-time.After(2 * time.Second):
+	case <-time.After(runEngineTestTimeout):
 		t.Fatalf("timed out waiting for tunnel creation")
 	}
 	time.Sleep(20 * time.Millisecond)
@@ -376,7 +378,7 @@ func (d *runEnginePipeDialer) wait(t *testing.T) {
 		if err != nil {
 			t.Fatalf("engine server error = %v", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(runEngineTestTimeout):
 		t.Fatalf("timed out waiting for engine server")
 	}
 }

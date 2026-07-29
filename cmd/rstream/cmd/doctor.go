@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -65,6 +66,10 @@ type doctorTokenInfo struct {
 	HasResources bool       `json:"hasResources"`
 }
 
+type doctorTunnelClient interface {
+	Connect(context.Context, *rstream.Config) (rstream.ControlChannel, error)
+}
+
 var doctorCmd = &cobra.Command{
 	GroupID:      "utils",
 	Use:          "doctor",
@@ -74,14 +79,19 @@ var doctorCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		report := runDoctor(cmd)
 		output, _ := cmd.Flags().GetString("output")
+		var err error
 		switch output {
 		case "json":
-			return writeStructuredOutput("json", report)
+			err = writeStructuredOutput("json", report)
 		case "table":
-			return printDoctorTable(os.Stdout, report)
+			err = printDoctorTable(os.Stdout, report)
 		default:
 			return validateOutputMode(output, "table", "json")
 		}
+		if err != nil {
+			return err
+		}
+		return doctorReportError(report)
 	},
 }
 
@@ -89,6 +99,7 @@ func init() {
 	doctorCmd.Flags().SortFlags = false
 	doctorCmd.PersistentFlags().SortFlags = false
 	doctorCmd.Flags().StringP("output", "o", "table", "output mode (table, json)")
+	doctorCmd.Flags().Bool("deep", false, "create and close a private tunnel")
 	rootCmd.AddCommand(doctorCmd)
 }
 
@@ -126,8 +137,19 @@ func runDoctor(cmd *cobra.Command) doctorReport {
 	}
 	checkDoctorNetwork(ctx, &report, resolved)
 	checkDoctorEngine(ctx, &report, resolved)
+	deep, _ := cmd.Flags().GetBool("deep")
+	if deep {
+		checkDoctorTunnelCreation(ctx, &report, resolved)
+	}
 	report.finalize()
 	return report
+}
+
+func doctorReportError(report doctorReport) error {
+	if report.Summary.Fail > 0 {
+		return errors.New("one or more doctor checks failed")
+	}
+	return nil
 }
 
 func resolveDoctorRuntime(cmd *cobra.Command, cfg config.Config) (config.Resolved, error) {
@@ -317,32 +339,101 @@ func checkDoctorNetwork(ctx context.Context, report *doctorReport, resolved conf
 
 func checkDoctorEngine(ctx context.Context, report *doctorReport, resolved config.Resolved) {
 	if resolved.Engine == "" {
-		report.add("engine_inventory", doctorStatusSkip, "engine is not configured", nil)
+		report.add("engine", doctorStatusSkip, "engine is not configured", nil)
 		return
 	}
 	if resolved.Token == "" {
-		report.add("engine_inventory", doctorStatusSkip, "token is required", nil)
+		report.add("engine", doctorStatusSkip, "token is required", nil)
 		return
 	}
 	client, err := newClientFromResolved(resolved)
 	if err != nil {
-		report.add("engine_inventory", doctorStatusFail, err.Error(), nil)
+		report.add("engine", doctorStatusFail, err.Error(), nil)
 		return
 	}
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	health, err := client.CheckHealth(runCtx)
+	if err != nil {
+		report.add("engine", doctorStatusFail, "engine health check failed", map[string]string{"error": err.Error()})
+		return
+	}
+	if !health.Ready {
+		report.add("engine", doctorStatusFail, "engine is running but unavailable", nil)
+		return
+	}
 	clients, err := client.ListClients(runCtx, nil)
 	if err != nil {
-		report.add("engine_clients", doctorStatusFail, err.Error(), nil)
-	} else {
-		report.add("engine_clients", doctorStatusPass, "engine clients listed", map[string]string{"count": strconv.Itoa(len(*clients))})
+		report.add("engine", doctorStatusFail, "engine API is unavailable", map[string]string{"error": err.Error()})
+		return
 	}
 	tunnels, err := client.ListTunnels(runCtx, nil)
 	if err != nil {
-		report.add("engine_tunnels", doctorStatusFail, err.Error(), nil)
+		report.add("engine", doctorStatusFail, "engine API is unavailable", map[string]string{"error": err.Error()})
 		return
 	}
-	report.add("engine_tunnels", doctorStatusPass, "engine tunnels listed", map[string]string{"total": strconv.Itoa(len(*tunnels)), "online": strconv.Itoa(countDoctorOnlineTunnels(*tunnels))})
+	report.add("engine", doctorStatusPass, "engine is ready", map[string]string{"clients": strconv.Itoa(len(*clients)), "tunnels": strconv.Itoa(len(*tunnels)), "onlineTunnels": strconv.Itoa(countDoctorOnlineTunnels(*tunnels))})
+}
+
+func checkDoctorTunnelCreation(ctx context.Context, report *doctorReport, resolved config.Resolved) {
+	if resolved.Engine == "" {
+		report.add("tunnel_creation", doctorStatusSkip, "engine is not configured", nil)
+		return
+	}
+	if resolved.Token == "" {
+		report.add("tunnel_creation", doctorStatusSkip, "token is required", nil)
+		return
+	}
+	client, err := newClientFromResolved(resolved)
+	if err != nil {
+		report.add("tunnel_creation", doctorStatusFail, "failed to configure the tunnel client", map[string]string{"error": err.Error()})
+		return
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	details, err := probeDoctorTunnelCreation(runCtx, client)
+	if err != nil {
+		report.add("tunnel_creation", doctorStatusFail, "private tunnel lifecycle failed", map[string]string{"error": err.Error()})
+		return
+	}
+	report.add("tunnel_creation", doctorStatusPass, "private tunnel lifecycle succeeded", details)
+}
+
+func probeDoctorTunnelCreation(ctx context.Context, client doctorTunnelClient) (map[string]string, error) {
+	control, err := client.Connect(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("opening control channel: %w", err)
+	}
+	controlClosed := false
+	defer func() {
+		if !controlClosed {
+			_ = control.Close()
+		}
+	}()
+	tunnel, err := control.CreateTunnel(ctx, rstream.TunnelProperties{
+		Type:    rstream.TunnelTypePtr(rstream.TunnelTypeBytestream),
+		Publish: rstream.BoolPtr(false),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("creating private tunnel: %w", err)
+	}
+	props, err := tunnel.Properties()
+	if err != nil {
+		_ = tunnel.Close()
+		return nil, fmt.Errorf("reading tunnel properties: %w", err)
+	}
+	if err := tunnel.Close(); err != nil {
+		return nil, fmt.Errorf("closing private tunnel: %w", err)
+	}
+	if err := control.Close(); err != nil {
+		return nil, fmt.Errorf("closing control channel: %w", err)
+	}
+	controlClosed = true
+	details := map[string]string{}
+	if props.ID != nil {
+		details["tunnelId"] = *props.ID
+	}
+	return details, nil
 }
 
 type doctorTransportProbe struct {

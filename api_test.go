@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -520,6 +521,90 @@ func TestWatchSSEReturnsDeadlineExceeded(t *testing.T) {
 	})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("WatchSSE(deadline) = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+func TestCheckHealth(t *testing.T) {
+	tests := []struct {
+		name      string
+		liveBody  string
+		readyBody string
+		readyCode int
+		want      EngineHealth
+		wantError string
+	}{
+		{name: "ready", liveBody: `{"status":"live"}`, readyBody: `{"status":"ready"}`, readyCode: http.StatusOK, want: EngineHealth{Live: true, Ready: true}},
+		{name: "unavailable", liveBody: `{"status":"live"}`, readyBody: `{"status":"unavailable"}`, readyCode: http.StatusServiceUnavailable, want: EngineHealth{Live: true}},
+		{name: "invalid liveness", liveBody: `{"status":"wrong"}`, readyBody: `{"status":"ready"}`, readyCode: http.StatusOK, wantError: `unexpected status "wrong"`},
+		{name: "invalid readiness", liveBody: `{"status":"live"}`, readyBody: `{`, readyCode: http.StatusOK, wantError: "decode response"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/health/live":
+					_, _ = w.Write([]byte(tt.liveBody))
+				case "/api/health/ready":
+					w.WriteHeader(tt.readyCode)
+					_, _ = w.Write([]byte(tt.readyBody))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			health, err := testAPIClient(server, "token").CheckHealth(t.Context())
+			if tt.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantError) {
+					t.Fatalf("CheckHealth() error = %v, want %q", err, tt.wantError)
+				}
+				return
+			}
+			if err != nil || health == nil || *health != tt.want {
+				t.Fatalf("CheckHealth() = %#v, %v, want %#v", health, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestCheckHealthSupportsConcurrentCalls(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		switch r.URL.Path {
+		case "/api/health/live":
+			_, _ = w.Write([]byte(`{"status":"live"}`))
+		case "/api/health/ready":
+			_, _ = w.Write([]byte(`{"status":"ready"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := testAPIClient(server, "token")
+	const callers = 32
+	var wg sync.WaitGroup
+	errorsCh := make(chan error, callers)
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			health, err := client.CheckHealth(t.Context())
+			if err != nil {
+				errorsCh <- err
+				return
+			}
+			if health == nil || !health.Live || !health.Ready {
+				errorsCh <- fmt.Errorf("unexpected health: %#v", health)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errorsCh)
+	for err := range errorsCh {
+		t.Error(err)
+	}
+	if got := requests.Load(); got != callers*2 {
+		t.Fatalf("request count = %d, want %d", got, callers*2)
 	}
 }
 
