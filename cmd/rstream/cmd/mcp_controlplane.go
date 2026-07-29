@@ -1066,8 +1066,23 @@ func mcpCreateProjectArgs(args map[string]json.RawMessage) (string, controlplane
 	if request.Name, err = mcpRequiredStringArg(args, "name"); err != nil {
 		return "", request, err
 	}
-	if request.Placement, err = mcpOptionalStringArg(args, "placement", "regional"); err != nil {
+	routing, err := mcpOptionalStringArg(args, "routing", "")
+	if err != nil {
 		return "", request, err
+	}
+	legacyPlacement, err := mcpOptionalStringArg(args, "placement", "")
+	if err != nil {
+		return "", request, err
+	}
+	if routing != "" && legacyPlacement != "" && routing != legacyPlacement {
+		return "", request, fmt.Errorf("routing conflicts with legacy placement")
+	}
+	request.Placement = routing
+	if request.Placement == "" {
+		request.Placement = legacyPlacement
+	}
+	if request.Placement == "" {
+		request.Placement = "regional"
 	}
 	if request.Provider, err = mcpOptionalStringArg(args, "provider", ""); err != nil {
 		return "", request, err
@@ -1076,16 +1091,16 @@ func mcpCreateProjectArgs(args map[string]json.RawMessage) (string, controlplane
 		return "", request, err
 	}
 	if request.Placement != "regional" && request.Placement != "global" {
-		return "", request, fmt.Errorf("placement must be global or regional")
+		return "", request, fmt.Errorf("routing must be global or regional")
 	}
 	if request.Provider == "" {
 		return "", request, fmt.Errorf("provider is required")
 	}
 	if request.Placement == "regional" && request.Region == "" {
-		return "", request, fmt.Errorf("provider and region are required for regional placement")
+		return "", request, fmt.Errorf("provider and region are required for regional routing")
 	}
 	if request.Placement == "global" && request.Region != "" {
-		return "", request, fmt.Errorf("region must be omitted for global placement")
+		return "", request, fmt.Errorf("region must be omitted for global routing")
 	}
 	if request.Plan, err = mcpRequiredStringArg(args, "plan"); err != nil {
 		return "", request, err
