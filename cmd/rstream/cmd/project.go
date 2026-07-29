@@ -251,6 +251,9 @@ func isAllowed(value string, allowed ...string) bool {
 }
 
 func mapControlPlaneError(err error) error {
+	if errors.Is(err, controlplane.ErrAccessProtection) {
+		return errors.New("control plane access was intercepted by deployment protection (configure the required control-plane headers for this context)")
+	}
 	if errors.Is(err, controlplane.ErrUnauthorized) {
 		return errors.New("not authenticated (run rstream login or set RSTREAM_AUTHENTICATION_TOKEN)")
 	}

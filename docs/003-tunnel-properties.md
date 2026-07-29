@@ -86,7 +86,7 @@ TCP tunnels do not accept `hostname`, HTTP, TLS, or edge authentication options.
 
 HTTP tunnels accept HTTP traffic at the edge and forward HTTP requests to your upstream service. Downstream clients may negotiate HTTP/1.1, HTTP/2, or HTTP/3 with the edge; this is independent from how the edge reaches your upstream.
 
-HTTP tunnels also carry plain authority-form CONNECT and Extended CONNECT protocols when the selected HTTP versions support them. Plain CONNECT follows normal HTTP tunnel version support and is documented in [HTTP_CONNECT.md](HTTP_CONNECT.md). WebSocket can be translated across HTTP/1.1 Upgrade, HTTP/2 Extended CONNECT, and HTTP/3 Extended CONNECT. WebTransport, CONNECT-UDP, and CONNECT-IP require an HTTP/3 upstream tunnel, which means `type=datagram`, `protocol=http`, and `http_version=h3` for published endpoints.
+HTTP tunnels also carry plain authority-form CONNECT and Extended CONNECT protocols when the selected HTTP versions support them. Plain CONNECT follows normal HTTP tunnel version support and is documented in [HTTP_CONNECT.md](004-http-connect.md). WebSocket can be translated across HTTP/1.1 Upgrade, HTTP/2 Extended CONNECT, and HTTP/3 Extended CONNECT. WebTransport, CONNECT-UDP, and CONNECT-IP require an HTTP/3 upstream tunnel, which means `type=datagram`, `protocol=http`, and `http_version=h3` for published endpoints.
 
 ### Upstream HTTP mode
 
@@ -148,4 +148,4 @@ rstream.TunnelProperties{
 
 The rstream engine relays MASQUE sessions but does not terminate UDP or IP proxy semantics itself. Your upstream service should implement CONNECT-UDP or CONNECT-IP using a protocol library such as `quic-go/masque-go` or `quic-go/connect-ip-go`.
 
-See [EXTENDED_CONNECT.md](EXTENDED_CONNECT.md) for SDK sample layout and runtime test coverage.
+See [005-extended-connect.md](005-extended-connect.md) for SDK sample layout and runtime test coverage.

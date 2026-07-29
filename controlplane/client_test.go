@@ -65,6 +65,32 @@ func TestControlPlaneHeadersAndRedirectIsolation(t *testing.T) {
 	}
 }
 
+func TestControlPlaneHTMLResponsesAreTyped(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+		status      int
+	}{
+		{name: "content type", contentType: "text/html; charset=utf-8", body: "<!doctype html><title>Protected</title>", status: http.StatusOK},
+		{name: "body prefix", contentType: "text/plain", body: " \n<html><title>Protected</title>", status: http.StatusOK},
+		{name: "forbidden", contentType: "text/html", body: "<html><title>Protected</title>", status: http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", tt.contentType)
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+			if _, err := NewClient(server.URL, "token").Whoami(t.Context()); !errors.Is(err, ErrAccessProtection) {
+				t.Fatalf("Whoami() error = %v, want ErrAccessProtection", err)
+			}
+		})
+	}
+}
+
 func TestWhoamiAuthorizationAndAuthErrorWrapping(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -684,7 +710,7 @@ func TestProjectOperationsAndWorkspaceMembersEndpoints(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.EscapedPath() == projectPrefix+"/domains":
 			seen["domain_create"] = true
 			var payload CreateProjectDomainRequest
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Hostname != "codex.example.com" {
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Hostname != "*.codex.example.com" || payload.Kind != ProjectDomainKindWildcard || payload.CertificateValidation != ProjectDomainCertificateValidationDNS01 {
 				http.Error(w, "unexpected domain create", http.StatusBadRequest)
 				return
 			}
@@ -763,7 +789,7 @@ func TestProjectOperationsAndWorkspaceMembersEndpoints(t *testing.T) {
 	if _, err := client.ListProjectDomains(context.Background(), projectID, ListProjectDomainsParams{Query: "codex", PageSize: &memberPageSize}); err != nil {
 		t.Fatalf("ListProjectDomains returned error: %v", err)
 	}
-	if _, err := client.CreateProjectDomain(context.Background(), projectID, CreateProjectDomainRequest{Hostname: "codex.example.com"}); err != nil {
+	if _, err := client.CreateProjectDomain(t.Context(), projectID, CreateProjectDomainRequest{Hostname: "*.codex.example.com", Kind: ProjectDomainKindWildcard, CertificateValidation: ProjectDomainCertificateValidationDNS01}); err != nil {
 		t.Fatalf("CreateProjectDomain returned error: %v", err)
 	}
 	if _, err := client.GetProjectDomain(context.Background(), projectID, domainID); err != nil {
