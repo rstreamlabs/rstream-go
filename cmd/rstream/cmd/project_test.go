@@ -112,6 +112,7 @@ func TestUpsertProjectContextReusesAndRefreshesContext(t *testing.T) {
 		Endpoint:   "project",
 		Domain:     "new.example",
 		EnginePort: 8443,
+		Placement:  "global",
 		TurnPort:   3478,
 		TurnsPort:  5349,
 		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
@@ -154,6 +155,7 @@ func TestUpsertProjectContextRejectsUnavailableRegion(t *testing.T) {
 		Endpoint:   "project",
 		Domain:     "global.example",
 		EnginePort: 443,
+		Placement:  "global",
 		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
 			Region:     "eu-west-3",
 			Domain:     "eu.example",
@@ -190,16 +192,39 @@ func TestWriteProjectsTableIncludesWorkspaceID(t *testing.T) {
 		Plan:        "pro",
 		Deployment:  "cloud",
 		Provider:    "aws",
+		Placement:   "global",
 		Region:      "eu-west-3",
+		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
+			Region: "us-east-1",
+		}},
 	}})
 	if err != nil {
 		t.Fatalf("writeProjectsTable() error = %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"WORKSPACE ID", "workspace-1", "project-1"} {
+	for _, want := range []string{"ROUTING", "REGIONS", "global", "eu-west-3, us-east-1", "WORKSPACE ID", "workspace-1", "project-1"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("project table missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestUpsertProjectContextRejectsRegionForRegionalProject(t *testing.T) {
+	project := controlplane.Project{
+		Name:       "Project",
+		Endpoint:   "project",
+		Domain:     "regional.example",
+		EnginePort: 443,
+		Placement:  "regional",
+		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
+			Region:     "eu-west-3",
+			Domain:     "regional.example",
+			EnginePort: 443,
+		}},
+	}
+	_, err := upsertProjectContext(&config.Config{}, "https://api.example", project, "", "eu-west-3", true)
+	if err == nil || !strings.Contains(err.Error(), "only available for global projects") {
+		t.Fatalf("upsertProjectContext() error = %v, want regional project rejection", err)
 	}
 }
 

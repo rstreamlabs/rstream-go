@@ -169,27 +169,54 @@ func init() {
 
 func writeProjectsTable(out io.Writer, projects []controlplane.Project) error {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "NAME\tENDPOINT\tSTATUS\tPLAN\tDEPLOYMENT\tPROVIDER\tREGION\tWORKSPACE ID\tID")
+	_, _ = fmt.Fprintln(w, "NAME\tENDPOINT\tSTATUS\tPLAN\tDEPLOYMENT\tPROVIDER\tROUTING\tREGIONS\tWORKSPACE ID\tID")
 	for _, project := range projects {
-		region := project.Region
-		if region == "" {
-			region = "-"
-		}
 		_, _ = fmt.Fprintf(
 			w,
-			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			terminalSafeDefault(project.Name),
 			terminalSafeDefault(project.Endpoint),
 			terminalSafeDefault(project.Status),
 			terminalSafeDefault(project.Plan),
 			terminalSafeDefault(project.Deployment),
 			terminalSafeDefault(project.Provider),
-			terminalSafeDefault(region),
+			terminalSafeDefault(projectRouting(project)),
+			terminalSafeDefault(strings.Join(projectRegions(project), ", ")),
 			terminalSafeDefault(project.WorkspaceID),
 			terminalSafeDefault(project.ID),
 		)
 	}
 	return w.Flush()
+}
+
+func projectRouting(project controlplane.Project) string {
+	switch value := strings.ToLower(strings.TrimSpace(project.Placement)); value {
+	case "global", "regional":
+		return value
+	default:
+		return "-"
+	}
+}
+
+func projectRegions(project controlplane.Project) []string {
+	regions := make(map[string]struct{}, len(project.RegionalEndpoints)+1)
+	if region := strings.ToLower(strings.TrimSpace(project.Region)); region != "" {
+		regions[region] = struct{}{}
+	}
+	for _, endpoint := range project.RegionalEndpoints {
+		if region := strings.ToLower(strings.TrimSpace(endpoint.Region)); region != "" {
+			regions[region] = struct{}{}
+		}
+	}
+	if len(regions) == 0 {
+		return []string{"-"}
+	}
+	values := make([]string, 0, len(regions))
+	for region := range regions {
+		values = append(values, region)
+	}
+	sort.Strings(values)
+	return values
 }
 
 func listProjectsParamsFromFlags(cmd *cobra.Command) (controlplane.ListProjectsParams, bool, error) {
