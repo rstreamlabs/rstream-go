@@ -37,6 +37,9 @@ func (p Project) EngineAddressForRegion(region string) (string, error) {
 		}
 		return "", errors.New("project does not define an engine endpoint")
 	}
+	if strings.EqualFold(strings.TrimSpace(p.Placement), "regional") {
+		return "", errors.New("region selection is only available for global projects")
+	}
 	var matches []ProjectRegionalEndpoint
 	availableSet := make(map[string]struct{}, len(p.RegionalEndpoints))
 	for _, candidate := range p.RegionalEndpoints {

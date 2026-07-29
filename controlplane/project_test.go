@@ -12,6 +12,7 @@ func TestProjectEngineAddressForRegion(t *testing.T) {
 		Endpoint:   "project",
 		Domain:     "global.example.test",
 		EnginePort: 443,
+		Placement:  "global",
 		RegionalEndpoints: []ProjectRegionalEndpoint{
 			{Provider: "aws", Region: "eu-west-3", Domain: "eu.example.test", EnginePort: 8443},
 			{Provider: "aws", Region: "us-east-1", Domain: "us.example.test", EnginePort: 443},
@@ -34,6 +35,26 @@ func TestProjectEngineAddressForRegion(t *testing.T) {
 	_, err = project.EngineAddressForRegion("ap-southeast-1")
 	if err == nil || !strings.Contains(err.Error(), "available: eu-west-3, us-east-1") {
 		t.Fatalf("expected available region error, got %v", err)
+	}
+}
+
+func TestProjectEngineAddressForRegionRejectsRegionalProject(t *testing.T) {
+	project := Project{
+		Endpoint:   "project",
+		Domain:     "regional.example.test",
+		EnginePort: 443,
+		Placement:  "regional",
+		RegionalEndpoints: []ProjectRegionalEndpoint{{
+			Region:     "eu-west-3",
+			Domain:     "regional.example.test",
+			EnginePort: 443,
+		}},
+	}
+	if _, err := project.EngineAddressForRegion("eu-west-3"); err == nil || !strings.Contains(err.Error(), "only available for global projects") {
+		t.Fatalf("expected regional project error, got %v", err)
+	}
+	if engine, err := project.EngineAddressForRegion("auto"); err != nil || engine != "project.regional.example.test:443" {
+		t.Fatalf("automatic engine address = %q, %v", engine, err)
 	}
 }
 
