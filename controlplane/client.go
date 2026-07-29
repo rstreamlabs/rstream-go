@@ -3,6 +3,7 @@
 package controlplane
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -18,8 +19,9 @@ import (
 )
 
 var (
-	ErrForbidden    = errors.New("not authorized")
-	ErrUnauthorized = errors.New("not authenticated")
+	ErrAccessProtection = errors.New("control-plane access intercepted")
+	ErrForbidden        = errors.New("not authorized")
+	ErrUnauthorized     = errors.New("not authenticated")
 )
 
 type apiErrorResponse struct {
@@ -701,17 +703,17 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 		return 0, err
 	}
 	c.logger.Debug("control-plane request", "method", method, "url", fullURL)
-	var reader *bytes.Reader
+	var requestBody *bytes.Reader
 	if body != nil {
 		payload, err := json.Marshal(body)
 		if err != nil {
 			return 0, err
 		}
-		reader = bytes.NewReader(payload)
+		requestBody = bytes.NewReader(payload)
 	} else {
-		reader = bytes.NewReader(nil)
+		requestBody = bytes.NewReader(nil)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, fullURL, reader)
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, requestBody)
 	if err != nil {
 		return 0, err
 	}
@@ -729,9 +731,13 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 		return 0, err
 	}
 	defer resp.Body.Close()
+	responseBody := bufio.NewReader(resp.Body)
+	if (resp.StatusCode < 300 || resp.StatusCode >= 400) && controlPlaneResponseIsHTML(resp.Header.Get("Content-Type"), responseBody) {
+		return resp.StatusCode, ErrAccessProtection
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		responseBody, _ := io.ReadAll(resp.Body)
-		message := controlPlaneErrorMessage(resp.Status, responseBody)
+		payload, _ := io.ReadAll(responseBody)
+		message := controlPlaneErrorMessage(resp.Status, payload)
 		if resp.StatusCode == http.StatusUnauthorized {
 			return resp.StatusCode, fmt.Errorf("%w: %s", ErrUnauthorized, message)
 		}
@@ -745,7 +751,7 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 	if out == nil {
 		return resp.StatusCode, nil
 	}
-	dec := json.NewDecoder(resp.Body)
+	dec := json.NewDecoder(responseBody)
 	if err := dec.Decode(out); err != nil {
 		return resp.StatusCode, err
 	}
@@ -775,9 +781,13 @@ func (c *Client) doForm(ctx context.Context, method, path string, form url.Value
 		return 0, err
 	}
 	defer resp.Body.Close()
+	responseBody := bufio.NewReader(resp.Body)
+	if (resp.StatusCode < 300 || resp.StatusCode >= 400) && controlPlaneResponseIsHTML(resp.Header.Get("Content-Type"), responseBody) {
+		return resp.StatusCode, ErrAccessProtection
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		responseBody, _ := io.ReadAll(resp.Body)
-		message := oauthControlPlaneErrorMessage(resp.Status, responseBody)
+		payload, _ := io.ReadAll(responseBody)
+		message := oauthControlPlaneErrorMessage(resp.Status, payload)
 		c.logger.Debug("control-plane response", "status", resp.StatusCode, "statusText", resp.Status)
 		return resp.StatusCode, message
 	}
@@ -785,11 +795,19 @@ func (c *Client) doForm(ctx context.Context, method, path string, form url.Value
 	if out == nil {
 		return resp.StatusCode, nil
 	}
-	dec := json.NewDecoder(resp.Body)
+	dec := json.NewDecoder(responseBody)
 	if err := dec.Decode(out); err != nil {
 		return resp.StatusCode, err
 	}
 	return resp.StatusCode, nil
+}
+
+func controlPlaneResponseIsHTML(contentType string, reader *bufio.Reader) bool {
+	if strings.Contains(strings.ToLower(contentType), "text/html") {
+		return true
+	}
+	prefix, _ := reader.Peek(512)
+	return bytes.HasPrefix(bytes.TrimSpace(prefix), []byte("<"))
 }
 
 func controlPlaneErrorMessage(status string, body []byte) string {

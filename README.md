@@ -130,7 +130,7 @@ If this is a new rstream account, the browser step opened by `rstream login` is 
 
 Codex can start the same flow through local MCP after `rstream codex setup`: `rstream_auth_start` returns the approval URL, and `rstream_auth_poll` stores the approved token locally without returning it to the prompt. The approval code is only returned separately when the provider cannot embed it in the URL. The default MCP login scope is limited; when the user explicitly asks Codex to create projects or change project settings, `rstream_auth_start` can request a broader `permissions` array and the hosted approval page shows that elevated grant.
 
-For advanced authentication modes (token-based login, remote device flows, and project-scoped contexts), see [docs/CLI_WORKFLOW.md](docs/CLI_WORKFLOW.md).
+For advanced authentication modes (token-based login, remote device flows, and project-scoped contexts), see [docs/001-cli-workflow.md](docs/001-cli-workflow.md).
 
 Before running SDK examples, ensure a project context is set up with the CLI (`rstream project use <project-endpoint>`). The SDK and CLI share the same configuration model and config file.
 
@@ -446,7 +446,7 @@ The implemented E2E helper suite is AES-256-GCM payload encryption with fresh
 `DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-256-GCM` key envelopes.
 Go WebTTY `tls://` plain transport and local WebTransport use TLS 1.3 minimum.
 
-See [docs/WEBTTY.md](docs/WEBTTY.md) for the complete WebTTY CLI, local file,
+See [docs/006-webtty.md](docs/006-webtty.md) for the complete WebTTY CLI, local file,
 runtime config, and E2E workflow reference.
 
 `rstream codex setup` preserves an explicit `RSTREAM_CONFIG` in the generated MCP server entry when one is set. `rstream mcp serve` exposes local rstream tools over MCP stdio for Codex and other local agent runtimes. The tool surface includes OAuth login start/poll tools, runtime preparation for a selected project, local context/status inspection, workspace and tunnel project discovery, project creation options, explicit project creation or checkout start, project plan inspection, project logs, usage, TURN usage, short-lived TURN credential minting, stable domain inspection and management, project settings, short-lived delegated auth token minting, managed local tunnels that can be listed and stopped across Codex sessions, WebTTY inventory, WebTTY command execution, WebDAV filesystem sidecar access, remote service exposure through WebTTY, and remote MCP surface discovery and invocation. `rstream mcp publish` serves the same local tools over Streamable HTTP at `/mcp` and publishes them through a token-protected HTTP tunnel.
@@ -574,7 +574,7 @@ rstream -v run --apply examples/run-yaml/tunnels.yaml --watch
 rstream -v run --docker --watch
 ```
 
-See `docs/CMD_RUN.md` for the full YAML schema, Docker label reference, and reconciliation details.
+See `docs/008-cmd-run.md` for the full YAML schema, Docker label reference, and reconciliation details.
 
 ## Build and compilation
 
@@ -973,10 +973,10 @@ func main() {
 
 Operational and advanced CLI/SDK workflows:
 
-- CLI workflow and authentication: [docs/CLI_WORKFLOW.md](docs/CLI_WORKFLOW.md)
-- Declarative run workflows: [docs/CMD_RUN.md](docs/CMD_RUN.md)
-- Transport configuration: [docs/TRANSPORT.md](docs/TRANSPORT.md)
-- Tunnel property reference: [docs/TUNNEL_PROPERTIES.md](docs/TUNNEL_PROPERTIES.md)
+- CLI workflow and authentication: [docs/001-cli-workflow.md](docs/001-cli-workflow.md)
+- Declarative run workflows: [docs/008-cmd-run.md](docs/008-cmd-run.md)
+- Transport configuration: [docs/002-transport.md](docs/002-transport.md)
+- Tunnel property reference: [docs/003-tunnel-properties.md](docs/003-tunnel-properties.md)
 
 ## Contributing
 

@@ -514,7 +514,20 @@ func mcpProjectDomainCreate(ctx context.Context, args map[string]json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	domain, err := client.CreateProjectDomain(ctx, projectID, controlplane.CreateProjectDomainRequest{Hostname: hostname})
+	kind, err := mcpOptionalStringArg(args, "kind", "hostname")
+	if err != nil {
+		return nil, err
+	}
+	validation, err := mcpOptionalStringArg(args, "certificate_validation", "tls_alpn_01")
+	if err != nil {
+		return nil, err
+	}
+	_, validationExplicit := args["certificate_validation"]
+	request, err := newProjectDomainCreateRequest(hostname, kind, validation, validationExplicit)
+	if err != nil {
+		return nil, err
+	}
+	domain, err := client.CreateProjectDomain(ctx, projectID, request)
 	if err != nil {
 		return nil, mapControlPlaneError(err)
 	}

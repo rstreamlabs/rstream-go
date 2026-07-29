@@ -651,8 +651,24 @@ type ListProjectDomainsResponse struct {
 	TotalPages int             `json:"totalPages"`
 }
 
+type ProjectDomainKind string
+
+const (
+	ProjectDomainKindHostname ProjectDomainKind = "hostname"
+	ProjectDomainKindWildcard ProjectDomainKind = "wildcard"
+)
+
+type ProjectDomainCertificateValidation string
+
+const (
+	ProjectDomainCertificateValidationTLSALPN01 ProjectDomainCertificateValidation = "tls_alpn_01"
+	ProjectDomainCertificateValidationDNS01     ProjectDomainCertificateValidation = "dns_01"
+)
+
 type CreateProjectDomainRequest struct {
-	Hostname string `json:"hostname"`
+	Hostname              string                             `json:"hostname"`
+	Kind                  ProjectDomainKind                  `json:"kind"`
+	CertificateValidation ProjectDomainCertificateValidation `json:"certificateValidation"`
 }
 
 type DomainConnectResponse map[string]any
