@@ -191,7 +191,7 @@ func TestContextCreateUsesSuppliedTokenForProjectLookup(t *testing.T) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(controlplane.Project{Endpoint: "1234abcd", Domain: "global.example.test", EnginePort: 443, RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{Provider: "aws", Region: "us-east-1", Domain: "us.example.test", EnginePort: 8443}}})
+		_ = json.NewEncoder(w).Encode(controlplane.Project{Endpoint: "1234abcd", Domain: "global.example.test", EnginePort: 443, Routing: "global", RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{Provider: "aws", Region: "us-east-1", Domain: "us.example.test", EnginePort: 8443}}})
 	}))
 	defer server.Close()
 	directory := t.TempDir()

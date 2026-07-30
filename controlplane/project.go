@@ -26,7 +26,28 @@ func (p Project) EngineAddress() string {
 	return ""
 }
 
+func validateProjectResponse(project Project) error {
+	switch strings.ToLower(strings.TrimSpace(project.Routing)) {
+	case "global", "regional":
+		return nil
+	default:
+		return errors.New("control plane returned an invalid project routing mode")
+	}
+}
+
+func validateProjectListResponse(response ListProjectsResponse) error {
+	for _, project := range response.Projects {
+		if err := validateProjectResponse(project); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (p Project) EngineAddressForRegion(region string) (string, error) {
+	if err := validateProjectResponse(p); err != nil {
+		return "", err
+	}
 	requested, err := NormalizeRegion(region)
 	if err != nil {
 		return "", err
@@ -37,7 +58,7 @@ func (p Project) EngineAddressForRegion(region string) (string, error) {
 		}
 		return "", errors.New("project does not define an engine endpoint")
 	}
-	if strings.EqualFold(strings.TrimSpace(p.Placement), "regional") {
+	if strings.EqualFold(strings.TrimSpace(p.Routing), "regional") {
 		return "", errors.New("region selection is only available for global projects")
 	}
 	var matches []ProjectRegionalEndpoint
