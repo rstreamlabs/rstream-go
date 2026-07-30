@@ -84,7 +84,7 @@ func TestUIRuntimeResolverDiscoversPaginatedProjectsAndWorkspaceNames(t *testing
 		case "/api/projects/tunnels":
 			requests++
 			page := r.URL.Query().Get("page")
-			project := controlplane.Project{ID: "project-" + page, WorkspaceID: "workspace-1", Name: "Project " + page, Endpoint: "project-" + page, Domain: "engine.example", EnginePort: 443, Status: "active"}
+			project := controlplane.Project{ID: "project-" + page, WorkspaceID: "workspace-1", Name: "Project " + page, Endpoint: "project-" + page, Domain: "engine.example", EnginePort: 443, Status: "active", Routing: "regional"}
 			_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{project}, Page: requests, PageSize: 100, Total: 2, TotalPages: 2})
 		default:
 			http.NotFound(w, r)
@@ -123,7 +123,7 @@ func TestUIRuntimeResolverToleratesWorkspaceLookupFailure(t *testing.T) {
 			return
 		}
 		if r.URL.Path == "/api/projects/tunnels" {
-			_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{{ID: "project-1", Name: "Project", Endpoint: "project", Domain: "engine.example"}}, TotalPages: 1})
+			_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{{ID: "project-1", Name: "Project", Endpoint: "project", Domain: "engine.example", Routing: "regional"}}, TotalPages: 1})
 			return
 		}
 		http.NotFound(w, r)

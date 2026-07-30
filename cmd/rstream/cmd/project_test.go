@@ -112,7 +112,7 @@ func TestUpsertProjectContextReusesAndRefreshesContext(t *testing.T) {
 		Endpoint:   "project",
 		Domain:     "new.example",
 		EnginePort: 8443,
-		Placement:  "global",
+		Routing:    "global",
 		TurnPort:   3478,
 		TurnsPort:  5349,
 		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
@@ -155,7 +155,7 @@ func TestUpsertProjectContextRejectsUnavailableRegion(t *testing.T) {
 		Endpoint:   "project",
 		Domain:     "global.example",
 		EnginePort: 443,
-		Placement:  "global",
+		Routing:    "global",
 		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
 			Region:     "eu-west-3",
 			Domain:     "eu.example",
@@ -192,7 +192,7 @@ func TestWriteProjectsTableIncludesWorkspaceID(t *testing.T) {
 		Plan:        "pro",
 		Deployment:  "cloud",
 		Provider:    "aws",
-		Placement:   "global",
+		Routing:     "global",
 		Region:      "eu-west-3",
 		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
 			Region: "us-east-1",
@@ -215,7 +215,7 @@ func TestUpsertProjectContextRejectsRegionForRegionalProject(t *testing.T) {
 		Endpoint:   "project",
 		Domain:     "regional.example",
 		EnginePort: 443,
-		Placement:  "regional",
+		Routing:    "regional",
 		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
 			Region:     "eu-west-3",
 			Domain:     "regional.example",

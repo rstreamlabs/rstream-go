@@ -145,7 +145,7 @@ func TestResolveProjectByEndpointEscapesPath(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(Project{ID: "p1", Endpoint: endpoint, Name: "Project"})
+		_ = json.NewEncoder(w).Encode(Project{ID: "p1", Endpoint: endpoint, Name: "Project", Routing: "regional"})
 	}))
 	defer server.Close()
 	client := NewClient(server.URL, "token")
@@ -171,7 +171,7 @@ func TestResolveProjectByIDEscapesPath(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(Project{ID: projectID, Endpoint: "endpoint", Name: "Project"})
+		_ = json.NewEncoder(w).Encode(Project{ID: projectID, Endpoint: "endpoint", Name: "Project", Routing: "regional"})
 	}))
 	defer server.Close()
 	client := NewClient(server.URL, "token", WithHeaders(map[string]string{"x-deployment-bypass": "secret"}))
@@ -181,6 +181,28 @@ func TestResolveProjectByIDEscapesPath(t *testing.T) {
 	}
 	if project.ID != projectID || project.Endpoint != "endpoint" {
 		t.Fatalf("unexpected project: %+v", project)
+	}
+}
+
+func TestProjectResponsesRequireRouting(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/projects/tunnels":
+			_ = json.NewEncoder(w).Encode(ListProjectsResponse{Projects: []Project{{ID: "p1"}}})
+		case "/api/projects/tunnels/p1":
+			_ = json.NewEncoder(w).Encode(Project{ID: "p1"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "token")
+	if _, err := client.ListProjects(t.Context(), ListProjectsParams{}); err == nil || !strings.Contains(err.Error(), "routing") {
+		t.Fatalf("ListProjects() error = %v, want routing error", err)
+	}
+	if _, err := client.ResolveProjectByID(t.Context(), "p1"); err == nil || !strings.Contains(err.Error(), "routing") {
+		t.Fatalf("ResolveProjectByID() error = %v, want routing error", err)
 	}
 }
 
@@ -201,7 +223,7 @@ func TestWorkspaceProjectCreationEndpoints(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.EscapedPath() == expectedPrefix:
 			seen["workspace_projects"] = true
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(ListProjectsResponse{Projects: []Project{{ID: "p1", Name: "Project"}}})
+			_ = json.NewEncoder(w).Encode(ListProjectsResponse{Projects: []Project{{ID: "p1", Name: "Project", Routing: "regional"}}})
 		case r.Method == http.MethodGet && r.URL.EscapedPath() == expectedPrefix+"/plan/config":
 			seen["options"] = true
 			w.Header().Set("Content-Type", "application/json")
@@ -214,7 +236,7 @@ func TestWorkspaceProjectCreationEndpoints(t *testing.T) {
 			seen["create"] = true
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(Project{ID: "p2", Name: "Created"})
+			_ = json.NewEncoder(w).Encode(Project{ID: "p2", Name: "Created", Routing: "regional"})
 		case r.Method == http.MethodPost && r.URL.EscapedPath() == expectedPrefix+"/payment-checkout":
 			seen["checkout"] = true
 			w.Header().Set("Content-Type", "application/json")
@@ -227,7 +249,7 @@ func TestWorkspaceProjectCreationEndpoints(t *testing.T) {
 			}
 			seen["update"] = true
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(Project{ID: "p2", Name: request.Name})
+			_ = json.NewEncoder(w).Encode(Project{ID: "p2", Name: request.Name, Routing: "regional"})
 		case r.Method == http.MethodDelete && r.URL.EscapedPath() == "/api/projects/tunnels/p2":
 			seen["delete"] = true
 			w.WriteHeader(http.StatusNoContent)
@@ -249,7 +271,7 @@ func TestWorkspaceProjectCreationEndpoints(t *testing.T) {
 	if _, err := client.GetProjectPlan(context.Background(), "p1"); err != nil {
 		t.Fatalf("GetProjectPlan returned error: %v", err)
 	}
-	request := CreateProjectRequest{Name: "Created", Placement: "regional", Provider: "aws", Region: "eu-west-3", Plan: "basic", CreationFingerprint: "abc", IdempotencyKey: "idem"}
+	request := CreateProjectRequest{Name: "Created", Routing: "regional", Provider: "aws", Region: "eu-west-3", Plan: "basic", CreationFingerprint: "abc", IdempotencyKey: "idem"}
 	if _, err := client.CreateProject(context.Background(), workspaceID, request); err != nil {
 		t.Fatalf("CreateProject returned error: %v", err)
 	}
@@ -1052,7 +1074,7 @@ func TestListProjectsQueryParamsAndParsing(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(ListProjectsResponse{
-			Projects:   []Project{{ID: "p1", Name: "Acme", Endpoint: "acme:8443", Status: "active", Plan: "pro", Deployment: "shared", Provider: "aws"}},
+			Projects:   []Project{{ID: "p1", Name: "Acme", Endpoint: "acme:8443", Status: "active", Plan: "pro", Deployment: "shared", Provider: "aws", Routing: "regional"}},
 			Page:       2,
 			PageSize:   10,
 			Total:      1,

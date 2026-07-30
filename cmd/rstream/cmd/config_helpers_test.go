@@ -164,6 +164,7 @@ func TestResolveRuntimeSelectsAuthorizedRegion(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(controlplane.Project{
 			Endpoint: "project",
+			Routing:  "global",
 			RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{
 				{Provider: "aws", Region: "eu-west-3", Domain: "eu.example.test", EnginePort: 8443},
 				{Provider: "aws", Region: "us-east-1", Domain: "us.example.test", EnginePort: 443},
@@ -207,6 +208,7 @@ func TestResolveRuntimeSelectsAuthorizedRegionWithContextToken(t *testing.T) {
 		}
 		_ = json.NewEncoder(w).Encode(controlplane.Project{
 			Endpoint: "project",
+			Routing:  "global",
 			RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{
 				{Provider: "aws", Region: "us-east-1", Domain: "us.example.test", EnginePort: 443},
 			},

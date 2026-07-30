@@ -254,7 +254,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("content-type", "application/json")
             self.end_headers()
-            payload = {"id": "project-runtime", "workspaceId": "workspace-runtime", "endpoint": "runtime-project"}
+            payload = {
+                "id": "project-runtime",
+                "workspaceId": "workspace-runtime",
+                "endpoint": "runtime-project",
+                "routing": "regional",
+            }
             self.wfile.write(json.dumps(payload).encode())
             return
         self.send_error(404)

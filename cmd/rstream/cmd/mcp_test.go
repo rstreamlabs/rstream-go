@@ -303,7 +303,7 @@ func TestMCPProjectListIgnoresExpiredDefaultContextWhenLoginTokenExists(t *testi
 		if got := r.Header.Get("Authorization"); got != "Bearer login-token" {
 			t.Fatalf("Authorization = %q", got)
 		}
-		_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{{ID: "p1", Name: "Prod", Endpoint: "abc12345", Domain: "cluster.example.com", EnginePort: 443, Status: "active", Plan: "pro"}}})
+		_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{{ID: "p1", Name: "Prod", Endpoint: "abc12345", Domain: "cluster.example.com", EnginePort: 443, Status: "active", Plan: "pro", Routing: "regional"}}})
 	}))
 	defer server.Close()
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -349,7 +349,7 @@ func TestMCPRuntimePrepareUsesLoginTokenInsteadOfShortContextToken(t *testing.T)
 		if got := r.Header.Get("Authorization"); got != "Bearer login-token" {
 			t.Fatalf("Authorization = %q", got)
 		}
-		_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{{ID: "p1", WorkspaceID: "w1", Name: "Prod", Endpoint: "abc12345", Domain: "cluster.example.com", EnginePort: 443, Status: "active", Plan: "pro", Region: "eu-west-3", TurnPort: 3478, TurnsPort: 5349}}})
+		_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{{ID: "p1", WorkspaceID: "w1", Name: "Prod", Endpoint: "abc12345", Domain: "cluster.example.com", EnginePort: 443, Status: "active", Plan: "pro", Routing: "regional", Region: "eu-west-3", TurnPort: 3478, TurnsPort: 5349}}})
 	}))
 	defer server.Close()
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -677,7 +677,7 @@ func TestMCPCreateProjectArgsRequiresExplicitBillingInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mcpCreateProjectArgs returned error: %v", err)
 	}
-	if workspaceID != "ws1" || request.Name != "Codex Demo" || request.Placement != "regional" || request.Provider != "aws" || request.Region != "eu-west-3" || request.Plan != "basic" || request.CreationFingerprint != "fingerprint" {
+	if workspaceID != "ws1" || request.Name != "Codex Demo" || request.Routing != "regional" || request.Provider != "aws" || request.Region != "eu-west-3" || request.Plan != "basic" || request.CreationFingerprint != "fingerprint" {
 		t.Fatalf("unexpected request: workspace=%q request=%#v", workspaceID, request)
 	}
 	if !strings.HasPrefix(request.IdempotencyKey, "mcp:") {
@@ -688,21 +688,13 @@ func TestMCPCreateProjectArgsRequiresExplicitBillingInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mcpCreateProjectArgs(global) returned error: %v", err)
 	}
-	if globalRequest.Placement != "global" || globalRequest.Provider != "aws" || globalRequest.Region != "" {
+	if globalRequest.Routing != "global" || globalRequest.Provider != "aws" || globalRequest.Region != "" {
 		t.Fatalf("unexpected global request: %#v", globalRequest)
 	}
-	legacyArgs := map[string]json.RawMessage{"workspace_id": json.RawMessage(`"ws1"`), "name": json.RawMessage(`"Legacy"`), "placement": json.RawMessage(`"global"`), "provider": json.RawMessage(`"aws"`), "plan": json.RawMessage(`"pro"`), "creation_fingerprint": json.RawMessage(`"fingerprint"`)}
-	if _, legacyRequest, legacyErr := mcpCreateProjectArgs(legacyArgs); legacyErr != nil || legacyRequest.Placement != "global" {
-		t.Fatalf("legacy placement compatibility = %#v, %v", legacyRequest, legacyErr)
-	}
-	globalArgs["placement"] = json.RawMessage(`"regional"`)
-	if _, _, err := mcpCreateProjectArgs(globalArgs); err == nil || !strings.Contains(err.Error(), "conflicts") {
-		t.Fatalf("expected routing conflict, got %v", err)
-	}
-	delete(globalArgs, "placement")
+	delete(globalArgs, "routing")
 	delete(globalArgs, "provider")
 	if _, _, err := mcpCreateProjectArgs(globalArgs); err == nil {
-		t.Fatal("expected missing global provider error")
+		t.Fatal("expected missing provider error")
 	}
 	delete(args, "creation_fingerprint")
 	if _, _, err := mcpCreateProjectArgs(args); err == nil {
