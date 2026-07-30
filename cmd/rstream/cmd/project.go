@@ -190,7 +190,7 @@ func writeProjectsTable(out io.Writer, projects []controlplane.Project) error {
 }
 
 func projectRouting(project controlplane.Project) string {
-	switch value := strings.ToLower(strings.TrimSpace(project.Placement)); value {
+	switch value := strings.ToLower(strings.TrimSpace(project.Routing)); value {
 	case "global", "regional":
 		return value
 	default:

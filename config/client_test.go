@@ -76,7 +76,7 @@ func TestResolveProjectRegionKeepsGlobalStableDomainEndpoint(t *testing.T) {
 		Endpoint:   "project",
 		Domain:     "global.example.test",
 		EnginePort: 443,
-		Placement:  "global",
+		Routing:    "global",
 		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
 			Region:     "eu-west-3",
 			Domain:     "eu.example.test",

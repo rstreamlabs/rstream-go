@@ -25,7 +25,7 @@ type Project struct {
 	Domain            string                    `json:"domain,omitempty"`
 	EnginePort        int                       `json:"enginePort,omitempty"`
 	Status            string                    `json:"status"`
-	Placement         string                    `json:"placement,omitempty"`
+	Routing           string                    `json:"routing"`
 	RegionalEndpoints []ProjectRegionalEndpoint `json:"regionalEndpoints,omitempty"`
 	Provider          string                    `json:"provider"`
 	Region            string                    `json:"region,omitempty"`
@@ -113,16 +113,16 @@ type ProjectCreationOption struct {
 	UnavailableReason     string                       `json:"unavailableReason,omitempty"`
 	BillingImpact         ProjectCreationBillingImpact `json:"billingImpact"`
 	BillingAction         ProjectCreationBillingAction `json:"billingAction"`
-	Placements            []string                     `json:"placements"`
+	RoutingModes          []string                     `json:"routingModes"`
 	Providers             []ProjectCreationProvider    `json:"providers"`
 	CreationFingerprint   string                       `json:"creationFingerprint"`
 }
 
 type RecommendedProjectCreationOption struct {
-	Placement string `json:"placement"`
-	Plan      string `json:"plan"`
-	Provider  string `json:"provider,omitempty"`
-	Region    string `json:"region,omitempty"`
+	Routing  string `json:"routing"`
+	Plan     string `json:"plan"`
+	Provider string `json:"provider,omitempty"`
+	Region   string `json:"region,omitempty"`
 }
 
 type ProjectCreationOptionsResponse struct {
@@ -134,7 +134,7 @@ type ProjectPlan map[string]any
 
 type CreateProjectRequest struct {
 	Name                string `json:"name"`
-	Placement           string `json:"placement,omitempty"`
+	Routing             string `json:"routing,omitempty"`
 	Provider            string `json:"provider,omitempty"`
 	Region              string `json:"region,omitempty"`
 	Plan                string `json:"plan"`

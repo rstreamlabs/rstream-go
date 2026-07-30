@@ -12,7 +12,7 @@ func TestProjectEngineAddressForRegion(t *testing.T) {
 		Endpoint:   "project",
 		Domain:     "global.example.test",
 		EnginePort: 443,
-		Placement:  "global",
+		Routing:    "global",
 		RegionalEndpoints: []ProjectRegionalEndpoint{
 			{Provider: "aws", Region: "eu-west-3", Domain: "eu.example.test", EnginePort: 8443},
 			{Provider: "aws", Region: "us-east-1", Domain: "us.example.test", EnginePort: 443},
@@ -43,7 +43,7 @@ func TestProjectEngineAddressForRegionRejectsRegionalProject(t *testing.T) {
 		Endpoint:   "project",
 		Domain:     "regional.example.test",
 		EnginePort: 443,
-		Placement:  "regional",
+		Routing:    "regional",
 		RegionalEndpoints: []ProjectRegionalEndpoint{{
 			Region:     "eu-west-3",
 			Domain:     "regional.example.test",
@@ -61,6 +61,7 @@ func TestProjectEngineAddressForRegionRejectsRegionalProject(t *testing.T) {
 func TestProjectEngineAddressForRegionRejectsAmbiguousAndInvalidEndpoints(t *testing.T) {
 	project := Project{
 		Endpoint: "project",
+		Routing:  "global",
 		RegionalEndpoints: []ProjectRegionalEndpoint{
 			{Region: "eu-west-3", Domain: "eu-1.example.test", EnginePort: 443},
 			{Region: "EU-WEST-3", Domain: "eu-2.example.test", EnginePort: 443},

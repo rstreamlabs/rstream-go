@@ -3012,7 +3012,7 @@ func TestResolveWebTTYClientRstreamFallsBackToControlPlaneProjectWhenInventorySc
 		}
 		resolveProjectCalls++
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(controlplane.Project{ID: "project-1", WorkspaceID: "workspace-1", Endpoint: "project-endpoint"})
+		_ = json.NewEncoder(w).Encode(controlplane.Project{ID: "project-1", WorkspaceID: "workspace-1", Endpoint: "project-endpoint", Routing: "regional"})
 	}))
 	defer controlServer.Close()
 	resolution, err := resolveWebTTYClientRstream(t.Context(), &resolvedRuntime{Resolved: config.Resolved{
