@@ -113,3 +113,52 @@ require_control_plane_token() {
     exit 2
   fi
 }
+
+require_runtime_project_engine_match() {
+  local binary=$1
+  local context_json=
+  if [ -z "${RSTREAM_RUNTIME_PROJECT_ID:-}" ]; then
+    printf "ERROR set RSTREAM_RUNTIME_PROJECT_ID before validating the runtime engine\n" >&2
+    exit 2
+  fi
+  if [ -z "${RSTREAM_ENGINE:-}" ]; then
+    if [ -z "${RSTREAM_CONTEXT:-}" ]; then
+      printf "ERROR RSTREAM_CONTEXT or RSTREAM_ENGINE is required\n" >&2
+      exit 2
+    fi
+    context_json=$("$binary" context get "$RSTREAM_CONTEXT" --output json)
+  fi
+  RSTREAM_RUNTIME_CONTEXT_JSON="$context_json" python3 - <<'PY'
+import json
+import os
+import sys
+import urllib.parse
+import urllib.request
+
+api_url = os.environ["RSTREAM_RUNTIME_API_URL"].rstrip("/")
+project_id = os.environ["RSTREAM_RUNTIME_PROJECT_ID"]
+token = os.environ["RSTREAM_RUNTIME_CONTROL_TOKEN"]
+request = urllib.request.Request(
+    f"{api_url}/api/projects/tunnels/{project_id}",
+    headers={"authorization": f"Bearer {token}"},
+)
+with urllib.request.urlopen(request, timeout=20) as response:
+    project_endpoint = json.load(response)["endpoint"]
+
+engine = os.environ.get("RSTREAM_ENGINE", "").strip()
+if engine:
+    parsed = urllib.parse.urlsplit(engine if "://" in engine else f"//{engine}")
+    engine_endpoint = (parsed.hostname or "").split(".", 1)[0]
+else:
+    context = json.loads(os.environ["RSTREAM_RUNTIME_CONTEXT_JSON"])
+    engine_endpoint = context.get("ProjectEndpoint", "")
+
+if engine_endpoint != project_endpoint:
+    print(
+        "ERROR runtime project and engine do not match: "
+        f"project endpoint is {project_endpoint}, engine endpoint is {engine_endpoint or '<empty>'}",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
+PY
+}

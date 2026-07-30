@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -22,18 +23,22 @@ import (
 	masque "github.com/quic-go/masque-go"
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
+	"github.com/quic-go/quic-go/quicvarint"
 	"github.com/yosida95/uritemplate/v3"
 )
 
 const (
-	socksVersion = byte(0x05)
-	socksNoAuth  = byte(0x00)
-	socksConnect = byte(0x01)
-	socksUDP     = byte(0x03)
-	socksIPv4    = byte(0x01)
-	socksDomain  = byte(0x03)
-	socksIPv6    = byte(0x04)
+	socksVersion      = byte(0x05)
+	socksNoAuth       = byte(0x00)
+	socksConnect      = byte(0x01)
+	socksUDP          = byte(0x03)
+	socksIPv4         = byte(0x01)
+	socksDomain       = byte(0x03)
+	socksIPv6         = byte(0x04)
+	maxUDPPayloadSize = 1500
 )
+
+var masqueContextIDZero = quicvarint.Append(nil, 0)
 
 func main() {
 	mode := flag.String("mode", "http", "proxy mode: http, socks5, masque")
@@ -340,7 +345,6 @@ func runMASQUEProxy(ctx context.Context, addr, publicHost, certFile, keyFile str
 	publicAddr := net.JoinHostPort(publicHost, port)
 	template := uritemplate.MustNew("https://" + publicAddr + "/.well-known/masque/udp/{target_host}/{target_port}/")
 	mux := http.NewServeMux()
-	proxy := &masque.Proxy{}
 	server := &http3.Server{
 		TLSConfig:       &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{http3.NextProtoH3}},
 		QUICConfig:      &quic.Config{EnableDatagrams: true, InitialPacketSize: 1452},
@@ -353,18 +357,118 @@ func runMASQUEProxy(ctx context.Context, addr, publicHost, certFile, keyFile str
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := proxy.Proxy(w, req); err != nil {
+		if err := proxyMASQUEUDP(r.Context(), w, req); err != nil {
 			log.Printf("MASQUE proxy error: %v", err)
 		}
 	})
 	go func() {
 		<-ctx.Done()
-		_ = proxy.Close()
 		_ = server.Close()
 		_ = udpConn.Close()
 	}()
 	fmt.Printf("READY https://%s/.well-known/masque/udp/{target_host}/{target_port}/\n", publicAddr)
 	return server.Serve(udpConn)
+}
+
+func proxyMASQUEUDP(ctx context.Context, w http.ResponseWriter, request *masque.ProxyRequest) error {
+	target, err := net.ResolveUDPAddr("udp", request.Target)
+	if err != nil {
+		http.Error(w, "unable to resolve target", http.StatusBadGateway)
+		return err
+	}
+	conn, err := net.DialUDP("udp", nil, target)
+	if err != nil {
+		http.Error(w, "unable to reach target", http.StatusBadGateway)
+		return err
+	}
+	defer conn.Close()
+	streamer, ok := w.(http3.HTTPStreamer)
+	if !ok {
+		http.Error(w, "HTTP/3 stream unavailable", http.StatusInternalServerError)
+		return fmt.Errorf("response writer does not expose an HTTP/3 stream")
+	}
+	stream := streamer.HTTPStream()
+	w.Header().Set(http3.CapsuleProtocolHeader, "?1")
+	w.WriteHeader(http.StatusOK)
+	relayCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errs := make(chan error, 2)
+	go func() {
+		errs <- relayMASQUEToTarget(relayCtx, conn, stream)
+	}()
+	go func() {
+		errs <- relayMASQUEFromTarget(conn, stream)
+	}()
+	firstErr := <-errs
+	cancel()
+	_ = conn.Close()
+	stream.CancelRead(quic.StreamErrorCode(http3.ErrCodeConnectError))
+	_ = stream.Close()
+	secondErr := <-errs
+	return errors.Join(normalizeProxyRelayError(firstErr), normalizeProxyRelayError(secondErr))
+}
+
+func relayMASQUEToTarget(ctx context.Context, conn *net.UDPConn, stream *http3.Stream) error {
+	for {
+		data, err := stream.ReceiveDatagram(ctx)
+		if err != nil {
+			return err
+		}
+		contextID, offset, err := quicvarint.Parse(data)
+		if err != nil {
+			return err
+		}
+		if contextID != 0 || len(data[offset:]) > maxUDPPayloadSize {
+			continue
+		}
+		if _, err := conn.Write(data[offset:]); err != nil {
+			return err
+		}
+	}
+}
+
+func relayMASQUEFromTarget(conn *net.UDPConn, stream *http3.Stream) error {
+	buffer := make([]byte, len(masqueContextIDZero)+maxUDPPayloadSize+1)
+	copy(buffer, masqueContextIDZero)
+	for {
+		size, err := conn.Read(buffer[len(masqueContextIDZero):])
+		if err != nil {
+			return err
+		}
+		if size > maxUDPPayloadSize {
+			continue
+		}
+		dropped, err := sendMASQUEDatagram(stream, buffer[:len(masqueContextIDZero)+size])
+		if err != nil {
+			return err
+		}
+		if dropped {
+			log.Printf("dropping UDP packet that exceeds the CONNECT-UDP path MTU")
+		}
+	}
+}
+
+type masqueDatagramSender interface {
+	SendDatagram([]byte) error
+}
+
+func sendMASQUEDatagram(sender masqueDatagramSender, datagram []byte) (bool, error) {
+	err := sender.SendDatagram(datagram)
+	if err == nil {
+		return false, nil
+	}
+	var tooLarge *quic.DatagramTooLargeError
+	if errors.As(err, &tooLarge) {
+		return true, nil
+	}
+	return false, err
+}
+
+func normalizeProxyRelayError(err error) error {
+	if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+		return nil
+	}
+	return err
 }
 
 func mustUDPAddr(addr string) *net.UDPAddr {
