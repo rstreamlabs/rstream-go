@@ -15,7 +15,7 @@ require (
 	github.com/miekg/dns v1.1.72
 	github.com/moby/moby/api v1.54.2
 	github.com/moby/moby/client v0.4.1
-	github.com/pion/dtls/v3 v3.1.2
+	github.com/pion/dtls/v3 v3.1.4
 	github.com/pion/sctp v1.9.5
 	github.com/quic-go/connect-ip-go v0.1.0
 	github.com/quic-go/masque-go v0.3.0
