@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.26.0](https://github.com/rstreamlabs/rstream-go/compare/v1.25.1...v1.26.0) (2026-08-01)
+
+
+### Features
+
+* **cli:** expose project routing regions ([50401f7](https://github.com/rstreamlabs/rstream-go/commit/50401f7da140e15cca52c3c542f1eccd47f45336))
+* **cli:** improve control plane and engine diagnostics ([7a790f6](https://github.com/rstreamlabs/rstream-go/commit/7a790f658aeb37ae82402ebaf226365a19c50206))
+* **edge:** add region-aware stream routing ([8c9aa12](https://github.com/rstreamlabs/rstream-go/commit/8c9aa129123231af7b8095cf88a545e6d31115ce))
+* **edge:** release region-aware routing and diagnostics ([820b0de](https://github.com/rstreamlabs/rstream-go/commit/820b0de157233ef87655c49c638e4ec357435bfc))
+* **edge:** support direct ingress routing ([dcac846](https://github.com/rstreamlabs/rstream-go/commit/dcac84625f0932172881a6f34e800f5c6865f1ca))
+* **projects:** add rename command ([5243d61](https://github.com/rstreamlabs/rstream-go/commit/5243d6153b7358ecb1ec519df40b5766c50be76a))
+
+
+### Bug Fixes
+
+* **ci:** pin the protobuf compiler ([e7ee58a](https://github.com/rstreamlabs/rstream-go/commit/e7ee58acf9dccdd1e22b5b41b0e32ea1489de9a3))
+* **cli:** harden control plane workflows ([318b759](https://github.com/rstreamlabs/rstream-go/commit/318b759d47d0ba9be01325d019ebd9383de9920a))
+* **edge:** complete managed WebTTY routing ([99ec020](https://github.com/rstreamlabs/rstream-go/commit/99ec02071a2fd5de59232819e503a94a98f84842))
+* **reliability:** harden concurrent runtime paths ([2a68f9d](https://github.com/rstreamlabs/rstream-go/commit/2a68f9d0a85a7ad2ca651e0a52486a475bd4e100))
+
 ## [1.25.1](https://github.com/rstreamlabs/rstream-go/compare/v1.25.0...v1.25.1) (2026-07-18)
 
 
