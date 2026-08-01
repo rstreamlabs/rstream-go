@@ -39,6 +39,7 @@ import (
 	"github.com/quic-go/quic-go/http3"
 	rstream "github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/test/e2eenv"
 	"golang.org/x/net/http2"
 )
 
@@ -304,6 +305,10 @@ func run(ctx context.Context, client *rstream.Client, upstream, name string) err
 	defer ctrl.Close()
 	props := rstream.TunnelProperties{
 		Name: rstream.StringPtr(name),
+	}
+	props.AllowCrossRegionRouting, err = e2eenv.AllowCrossRegionRouting()
+	if err != nil {
+		return fmt.Errorf("cross-region routing: %w", err)
 	}
 	switch upstream {
 	case "h2c":

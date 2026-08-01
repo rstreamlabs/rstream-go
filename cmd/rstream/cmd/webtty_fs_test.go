@@ -5,6 +5,8 @@ package cmd
 import (
 	"strings"
 	"testing"
+
+	"github.com/rstreamlabs/rstream-go/webtty"
 )
 
 func TestResolveWebTTYFSBaseURL(t *testing.T) {
@@ -41,6 +43,29 @@ func TestResolveWebTTYFSBaseURLRejectsMissingRstreamHost(t *testing.T) {
 	_, _, err := resolveWebTTYFSBaseURL("rstrm:///fs", "")
 	if err == nil {
 		t.Fatal("expected missing host to be rejected")
+	}
+}
+
+func TestValidateWebTTYFilesystemCapability(t *testing.T) {
+	tests := []struct {
+		name       string
+		serverInfo *webtty.ServerInfo
+		want       string
+	}{
+		{name: "offline", want: "not online"},
+		{name: "exec only", serverInfo: &webtty.ServerInfo{Capabilities: []string{webtty.WebTTYCapabilityExec}}, want: "does not advertise a filesystem sidecar"},
+		{name: "filesystem", serverInfo: &webtty.ServerInfo{Capabilities: []string{webtty.WebTTYCapabilityExec, webtty.WebTTYCapabilityFS}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateWebTTYFilesystemCapability("shell", tt.serverInfo)
+			if tt.want == "" && err != nil {
+				t.Fatalf("validateWebTTYFilesystemCapability() error = %v", err)
+			}
+			if tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)) {
+				t.Fatalf("validateWebTTYFilesystemCapability() error = %v, want %q", err, tt.want)
+			}
+		})
 	}
 }
 

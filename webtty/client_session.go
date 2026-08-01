@@ -24,6 +24,8 @@ import (
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
 )
 
+const tunneledWebTransportInitialPacketSize = 1200
+
 type SessionConfig struct {
 	URL                    string
 	Transport              WebTTYTransport
@@ -77,6 +79,7 @@ type ClientSession struct {
 	runtime            *clientRuntime
 	loopCancel         context.CancelFunc
 	doneRead           chan struct{}
+	done               chan struct{}
 	events             chan ClientSessionEvent
 	resultCh           chan clientSessionResult
 	closeTransportOnce sync.Once
@@ -283,6 +286,7 @@ func OpenClientSession(ctx context.Context, cfg *SessionConfig) (*ClientSession,
 		runtime:    runtime,
 		loopCancel: loopCancel,
 		doneRead:   doneRead,
+		done:       make(chan struct{}),
 		events:     make(chan ClientSessionEvent, 128),
 		resultCh:   make(chan clientSessionResult, 1),
 	}
@@ -292,8 +296,11 @@ func OpenClientSession(ctx context.Context, cfg *SessionConfig) (*ClientSession,
 	}
 	go session.run(loopCtx, readEvents, loopErrCh)
 	go func() {
-		<-ctx.Done()
-		_ = session.CloseWithError(ctx.Err())
+		select {
+		case <-ctx.Done():
+			_ = session.CloseWithError(ctx.Err())
+		case <-session.done:
+		}
 	}()
 	return session, nil
 }
@@ -329,7 +336,9 @@ func dialWebTTYMessageConn(ctx context.Context, cfg *SessionConfig, endpoint *cl
 	conn, resp, err := dialer.DialContext(ctx, endpoint.URL, header)
 	if err != nil {
 		if resp != nil {
-			return nil, fmt.Errorf("websocket dial failed with status %d", resp.StatusCode)
+			statusCode := resp.StatusCode
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("websocket dial failed with status %d", statusCode)
 		}
 		return nil, fmt.Errorf("websocket dial failed: %w", err)
 	}
@@ -380,10 +389,7 @@ func dialWebTransportWebTTYMessageConn(ctx context.Context, cfg *SessionConfig, 
 	}
 	dialer := &webtransport.Dialer{
 		TLSClientConfig: tlsConfig,
-		QUICConfig: &quic.Config{
-			EnableDatagrams:                  true,
-			EnableStreamResetPartialDelivery: true,
-		},
+		QUICConfig:      webTransportClientQUICConfig(endpoint.RequiresCustomDial),
 	}
 	if endpoint.RequiresCustomDial {
 		if cfg.DialPacketContext == nil {
@@ -409,7 +415,9 @@ func dialWebTransportWebTTYMessageConn(ctx context.Context, cfg *SessionConfig, 
 	resp, session, err := dialer.Dial(ctx, endpoint.URL, header)
 	if err != nil {
 		if resp != nil {
-			return nil, fmt.Errorf("WebTransport dial failed with status %d", resp.StatusCode)
+			statusCode := resp.StatusCode
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("WebTransport dial failed with status %d", statusCode)
 		}
 		return nil, fmt.Errorf("WebTransport dial failed: %w", err)
 	}
@@ -419,6 +427,18 @@ func dialWebTransportWebTTYMessageConn(ctx context.Context, cfg *SessionConfig, 
 		return nil, fmt.Errorf("WebTransport stream open failed: %w", err)
 	}
 	return newWebTransportMessageConn(session, stream), nil
+}
+
+func webTransportClientQUICConfig(tunneled bool) *quic.Config {
+	cfg := &quic.Config{
+		EnableDatagrams:                  true,
+		EnableStreamResetPartialDelivery: true,
+	}
+	if tunneled {
+		cfg.InitialPacketSize = tunneledWebTransportInitialPacketSize
+		cfg.DisablePathMTUDiscovery = true
+	}
+	return cfg
 }
 
 func endpointTLSServerName(address string) string {
@@ -542,7 +562,14 @@ func (s *ClientSession) CloseWithError(err error) error {
 func (s *ClientSession) run(ctx context.Context, readEvents <-chan clientEvent, loopErrCh <-chan error) {
 	for {
 		select {
-		case event := <-readEvents:
+		case <-ctx.Done():
+			s.finalize(-1, ctx.Err())
+			return
+		case event, ok := <-readEvents:
+			if !ok {
+				s.finalize(-1, io.EOF)
+				return
+			}
 			if event.err != nil {
 				s.finalize(-1, event.err)
 				return
@@ -561,7 +588,12 @@ func (s *ClientSession) run(ctx context.Context, readEvents <-chan clientEvent, 
 				if !ok {
 					continue
 				}
-				s.events <- sessionEvent
+				select {
+				case s.events <- sessionEvent:
+				case <-ctx.Done():
+					s.finalize(-1, ctx.Err())
+					return
+				}
 			case *pb.Message_Close:
 				if payload.Close == nil {
 					s.finalize(-1, errClientProtocol)
@@ -620,6 +652,7 @@ func (s *ClientSession) finalize(exitCode int, err error) {
 		s.resultCh <- result
 		close(s.resultCh)
 		close(s.events)
+		close(s.done)
 	})
 }
 

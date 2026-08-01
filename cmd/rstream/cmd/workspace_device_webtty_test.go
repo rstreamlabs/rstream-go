@@ -25,15 +25,3 @@ func writeTestWorkspaceDeviceWithWebTTYIdentity(t *testing.T, device workspaceDe
 		t.Fatalf("writeWorkspaceDeviceFile() error = %v", err)
 	}
 }
-
-func testWorkspaceDeviceAuthorizedWebTTYSigningKeys(t *testing.T, device workspaceDeviceFile) map[string][]byte {
-	t.Helper()
-	signingKey := parseWorkspaceDevicePublicKey(t, device.PublicSigningKey)
-	publicDER, err := webtty.MarshalWebTTYSigningPublicKey(signingKey)
-	if err != nil {
-		t.Fatalf("MarshalWebTTYSigningPublicKey() error = %v", err)
-	}
-	return map[string][]byte{
-		string(webtty.WebTTYSigningKeyID(publicDER)): publicDER,
-	}
-}

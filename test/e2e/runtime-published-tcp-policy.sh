@@ -41,6 +41,7 @@ if [ -z "${RSTREAM_CONTEXT:-}" ] && [ -z "${RSTREAM_ENGINE:-}" ]; then
   printf "ERROR RSTREAM_CONTEXT or RSTREAM_ENGINE is required\n" >&2
   exit 2
 fi
+require_runtime_project_engine_match "$RSTREAM_BIN"
 export RSTREAM_AUTHENTICATION_TOKEN="$RSTREAM_RUNTIME_CONTROL_TOKEN"
 
 cat >"$TMP_DIR/api.py" <<'PY'

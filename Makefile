@@ -16,6 +16,7 @@ EXAMPLES := $(shell find examples -mindepth 2 -maxdepth 2 -name '*.go' -print 2>
 # Detect git tag and branch
 GIT_TAG := $(shell git describe --tags --exact-match 2>/dev/null | sed 's/^v//')
 GIT_BRANCH := $(shell git symbolic-ref --quiet --short HEAD 2>/dev/null || printf dev)
+GIT_COMMIT := $(shell git rev-parse --verify HEAD 2>/dev/null || printf unknown)
 CHANNEL ?= $(if $(GIT_TAG),stable,dev)
 VERSION ?= $(if $(GIT_TAG),$(GIT_TAG),$(GIT_BRANCH))
 
@@ -36,6 +37,8 @@ X86_64_VARIANTS := v1 v2 v3 v4
 
 # Go Module
 GO_MODULE := $(shell go list -m)
+GO_MODULE_BASE := $(shell printf '%s\n' "$(GO_MODULE)" | sed -E 's|/v[0-9]+$$||')
+AGENT := $(patsubst %-go,%,$(notdir $(GO_MODULE_BASE)))
 
 # Host platform
 HOST_GOOS := $(shell go env GOOS)
@@ -139,16 +142,15 @@ $(if $(filter $1,x86_i686),i386, \
 $1))))))))))))
 endef
 
-define sources_proto
-$(shell find . -name '*.proto' ! -path './cmd/*' ! -path './examples/*')
-endef
+PROTO_SOURCES := $(shell find . -name '*.proto' ! -path './cmd/*' ! -path './examples/*')
+PB_GO_SOURCES := $(PROTO_SOURCES:.proto=.pb.go)
+COMMON_GO_SOURCES := $(shell find . -name '*.go' ! -path './cmd/*' ! -path './examples/*' ! -name '*.pb.go')
 
-define sources_pb_go
-$(foreach proto,$(call sources_proto),$(subst .proto,.pb.go,$(proto)))
-endef
+$(foreach bin,$(BINARIES),$(eval SOURCES_cmd_$(bin) := $(shell find ./cmd/$(bin) -name '*.go' 2>/dev/null)))
+$(foreach example,$(EXAMPLES),$(eval SOURCES_examples_$(example) := $(shell find ./examples/$(example) -name '*.go' 2>/dev/null)))
 
 define sources
-$(shell find . -name '*.go' ! -path './cmd/*' ! -path './examples/*' ! -path '*.pb.go' -o -path "./$1/$2/*") $(call sources_pb_go)
+$(COMMON_GO_SOURCES) $(PB_GO_SOURCES) $(SOURCES_$1_$2)
 endef
 
 define base_dir_cmd
@@ -208,7 +210,7 @@ set -e ;\
 echo "Building $1/$2 for $3/$4" ;\
 $(eval GOARCH=$(if $(findstring armv,$(word 1,$(subst /, ,$4))),arm,$(if $(findstring x86_i,$4),386,$(if $(findstring x86_64,$4),amd64,$(word 1,$(subst /, ,$4)))))) \
 $(eval GOAMD64=$(if $(findstring x86_64,$4),$(if $(findstring _v,$4),$(lastword $(subst _, ,$4)),v1),)) \
-CGO_ENABLED=$(call target_cgo_enabled,$3,$(GOARCH)) GOPRIVATE=github.com/rstreamlabs GOOS=$(subst macos,darwin,$3) GOARCH=$(GOARCH) $(if $(filter $(GOARCH),arm),GOARM=$(word 1,$(subst armv, ,$(word 1,$(subst hf, ,$4))))$(shell echo ,)$(if $(findstring hf,$4),hardfloat,softfloat),) $(if $(filter amd64,$(GOARCH)),GOAMD64=$(GOAMD64),) $(if $(findstring x86_i386,$4),GO386=softfloat,) go build -buildvcs=false -v $(if $(filter cmd,$1),$(call go_build_tags,$2),) -ldflags="-X '$(GO_MODULE).Agent=$(patsubst %-go,%,$(notdir $(shell printf '%s\n' "$(GO_MODULE)" | sed -E 's|/v[0-9]+$$||')))' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).OS=$3' -X '$(GO_MODULE).Arch=$4'" -o $$@ ./$1/$2
+CGO_ENABLED=$(call target_cgo_enabled,$3,$(GOARCH)) GOPRIVATE=github.com/rstreamlabs GOOS=$(subst macos,darwin,$3) GOARCH=$(GOARCH) $(if $(filter $(GOARCH),arm),GOARM=$(word 1,$(subst armv, ,$(word 1,$(subst hf, ,$4))))$(comma)$(if $(findstring hf,$4),hardfloat,softfloat),) $(if $(filter amd64,$(GOARCH)),GOAMD64=$(GOAMD64),) $(if $(findstring x86_i386,$4),GO386=softfloat,) go build -buildvcs=false -v $(if $(filter cmd,$1),$(call go_build_tags,$2),) -ldflags="-X '$(GO_MODULE).Agent=$(AGENT)' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).Commit=$(GIT_COMMIT)' -X '$(GO_MODULE).OS=$3' -X '$(GO_MODULE).Arch=$4'" -o $$@ ./$1/$2
 endef
 
 define build_pkg
@@ -231,7 +233,7 @@ endef
 
 define deploy_pkg
 set -e ;\
-$(eval FILENAME=$(shell basename $(call pkg_path,$1,$2,$3))) \
+$(eval FILENAME=$(notdir $(call pkg_path,$1,$2,$3))) \
 CHECKSUM=$$$$(shasum -a 256 $(call pkg_path,$1,$2,$3) | awk '{print $$$$1}') ;\
 echo "Deploying $(call pkg_path,$1,$2,$3)" ;\
 RESPONSE=$$$$(curl \
@@ -281,7 +283,7 @@ endef
 
 define build_docker
 echo $(DOCKER_PLATFORMS) ;\
-$(eval IMAGE=$(shell echo $(DOCKER_REPO)/$1)) \
+$(eval IMAGE=$(DOCKER_REPO)/$1) \
 $(if $(findstring linux/x86_i686,$(DOCKER_PLATFORMS)),\
   mkdir -p $(call base_dir_cmd,$1)/linux/386/release/bin ;\
   ln -sf ../../../x86_i686/release/bin/$1 $(call base_dir_cmd,$1)/linux/386/release/bin/$1 ;\
@@ -439,17 +441,19 @@ TEST_GOARCH := $(shell go env GOARCH)
 TEST_GOAMD64 := $(shell go env GOAMD64)
 TEST_COMMON_SOURCES := $(shell find . -maxdepth 1 -name '*.go' ! -name '*.pb.go' -print) $(shell find config internal pb webtty -name '*.go' 2>/dev/null)
 
+$(foreach role,$(TEST_ROLES),$(eval TEST_SOURCES_$(subst /,_,$(role)) := $(shell find test/$(role) -name '*.go' 2>/dev/null)))
+
 .PHONY: test-bins
 
 test-bins: $(foreach r,$(TEST_ROLES),$(TEST_OUT)/$(r)) $(call base_dir_examples)/tcp-ssh-client $(call base_dir_examples)/tcp-ssh-server
 
 define template_test_bin
-$(TEST_OUT)/$1: $$(shell find test/$1 -name '*.go' 2>/dev/null) $(TEST_COMMON_SOURCES)
+$(TEST_OUT)/$1: $$(TEST_SOURCES_$(subst /,_,$1)) $(TEST_COMMON_SOURCES)
 	@set -e; echo "Building test/$1 for $(CURRENT_OS)/$(CURRENT_ARCH)"; \
 	CGO_ENABLED=0 GOPRIVATE=github.com/rstreamlabs \
 	GOOS=$(TEST_GOOS) GOARCH=$(TEST_GOARCH) $(if $(filter amd64,$(TEST_GOARCH)),GOAMD64=$(TEST_GOAMD64),) \
 	go build -buildvcs=false \
-	  -ldflags="-X '$(GO_MODULE).Agent=$(patsubst %-go,%,$(notdir $(shell printf '%s\n' '$(GO_MODULE)' | sed -E 's|/v[0-9]+$$||')))' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).OS=$(CURRENT_OS)' -X '$(GO_MODULE).Arch=$(CURRENT_ARCH)'" \
+	  -ldflags="-X '$(GO_MODULE).Agent=$(AGENT)' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).Commit=$(GIT_COMMIT)' -X '$(GO_MODULE).OS=$(CURRENT_OS)' -X '$(GO_MODULE).Arch=$(CURRENT_ARCH)'" \
 	  -o $(TEST_OUT)/$1 ./test/$1
 endef
 

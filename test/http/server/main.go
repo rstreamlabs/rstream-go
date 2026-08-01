@@ -29,8 +29,7 @@ import (
 	"github.com/quic-go/quic-go/http3"
 	rstream "github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
+	"github.com/rstreamlabs/rstream-go/test/e2eenv"
 )
 
 const sseEventCount = 3
@@ -91,7 +90,10 @@ func runH1(ctx context.Context, tunnel rstream.BytestreamTunnel) error {
 }
 
 func runH2C(ctx context.Context, tunnel rstream.BytestreamTunnel) error {
-	srv := &http.Server{Handler: h2c.NewHandler(newHandler(), &http2.Server{})}
+	protocols := new(http.Protocols)
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	srv := &http.Server{Handler: newHandler(), Protocols: protocols}
 	go func() {
 		<-ctx.Done()
 		_ = srv.Close()
@@ -133,6 +135,10 @@ func run(ctx context.Context, client *rstream.Client, upstream, name string) err
 	defer ctrl.Close()
 	props := rstream.TunnelProperties{
 		Name: rstream.StringPtr(name),
+	}
+	props.AllowCrossRegionRouting, err = e2eenv.AllowCrossRegionRouting()
+	if err != nil {
+		return fmt.Errorf("cross-region routing: %w", err)
 	}
 	switch upstream {
 	case "h2c":

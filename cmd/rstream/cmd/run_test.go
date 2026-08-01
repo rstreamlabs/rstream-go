@@ -102,7 +102,7 @@ func TestRunLoopWatchErrorIsReturned(t *testing.T) {
 }
 
 func TestResolveNamedContextRequiresEngineAndToken(t *testing.T) {
-	command := runtimeFlagsCommand()
+	command := runtimeFlagsCommand(t)
 	mustSetFlag(t, command, "api-url", "https://api.example.com")
 	cfg := config.Config{Contexts: []config.Context{{Name: "prod", APIURL: "https://api.example.com", Engine: "engine.example.com:443"}}}
 	resolved, err := resolveNamedContext(cfg, config.EnvSettings{Token: "env-token"}, command, "prod")

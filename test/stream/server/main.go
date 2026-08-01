@@ -30,6 +30,7 @@ import (
 
 	rstream "github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/test/e2eenv"
 )
 
 func generateTLSConfig(tlsALPN string) (*tls.Config, error) {
@@ -113,6 +114,10 @@ func run(ctx context.Context, client *rstream.Client, variant, name string, publ
 		Name:    rstream.StringPtr(name),
 		Type:    rstream.TunnelTypePtr(rstream.TunnelTypeBytestream),
 		Publish: rstream.BoolPtr(publish),
+	}
+	props.AllowCrossRegionRouting, err = e2eenv.AllowCrossRegionRouting()
+	if err != nil {
+		return fmt.Errorf("cross-region routing: %w", err)
 	}
 	if hostname != "" {
 		props.Hostname = rstream.StringPtr(hostname)

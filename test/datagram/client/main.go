@@ -48,6 +48,14 @@ func dtlsALPNs(tlsALPN string) []string {
 	return nil
 }
 
+func dtlsClientOptions(hostname, tlsALPN string) []dtls.ClientOption {
+	opts := []dtls.ClientOption{dtls.WithServerName(hostname), dtls.WithInsecureSkipVerify(true)}
+	if protocols := dtlsALPNs(tlsALPN); len(protocols) > 0 {
+		opts = append(opts, dtls.WithSupportedProtocols(protocols...))
+	}
+	return opts
+}
+
 // hostPortFromAddr extracts a bare host:port, stripping any scheme prefix and
 // trailing protocol annotation (e.g. " (dtls)", " (quic)").
 func hostPortFromAddr(addr, defaultPort string) string {
@@ -106,11 +114,7 @@ func runDTLSPublished(ctx context.Context, addr, tlsALPN string) error {
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", hp, err)
 	}
-	conn, err := dtls.Dial("udp", udpAddr, &dtls.Config{
-		ServerName:         hostname,
-		InsecureSkipVerify: true,
-		SupportedProtocols: dtlsALPNs(tlsALPN),
-	})
+	conn, err := dtls.DialWithOptions("udp", udpAddr, dtlsClientOptions(hostname, tlsALPN)...)
 	if err != nil {
 		return fmt.Errorf("dtls dial %s: %w", hp, err)
 	}
@@ -242,11 +246,7 @@ func runSCTPPublished(ctx context.Context, addr, tlsALPN string) error {
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", hp, err)
 	}
-	conn, err := dtls.Dial("udp", udpAddr, &dtls.Config{
-		ServerName:         hostname,
-		InsecureSkipVerify: true,
-		SupportedProtocols: dtlsALPNs(tlsALPN),
-	})
+	conn, err := dtls.DialWithOptions("udp", udpAddr, dtlsClientOptions(hostname, tlsALPN)...)
 	if err != nil {
 		return fmt.Errorf("dtls dial %s: %w", hp, err)
 	}
@@ -265,7 +265,7 @@ func runSCTPPublished(ctx context.Context, addr, tlsALPN string) error {
 
 func sctpEcho(conn net.Conn) error {
 	defer conn.Close()
-	assoc, err := sctp.Client(sctp.Config{NetConn: conn})
+	assoc, err := sctp.ClientWithOptions(sctp.WithNetConn(conn))
 	if err != nil {
 		return fmt.Errorf("sctp client: %w", err)
 	}

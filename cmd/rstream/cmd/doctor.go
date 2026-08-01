@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -19,7 +20,6 @@ import (
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
-	"github.com/rstreamlabs/rstream-go/controlplane"
 	"github.com/spf13/cobra"
 )
 
@@ -66,6 +66,10 @@ type doctorTokenInfo struct {
 	HasResources bool       `json:"hasResources"`
 }
 
+type doctorTunnelClient interface {
+	Connect(context.Context, *rstream.Config) (rstream.ControlChannel, error)
+}
+
 var doctorCmd = &cobra.Command{
 	GroupID:      "utils",
 	Use:          "doctor",
@@ -75,14 +79,19 @@ var doctorCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		report := runDoctor(cmd)
 		output, _ := cmd.Flags().GetString("output")
+		var err error
 		switch output {
 		case "json":
-			return writeStructuredOutput("json", report)
+			err = writeStructuredOutput("json", report)
 		case "table":
-			return printDoctorTable(os.Stdout, report)
+			err = printDoctorTable(os.Stdout, report)
 		default:
 			return validateOutputMode(output, "table", "json")
 		}
+		if err != nil {
+			return err
+		}
+		return doctorReportError(report)
 	},
 }
 
@@ -90,6 +99,7 @@ func init() {
 	doctorCmd.Flags().SortFlags = false
 	doctorCmd.PersistentFlags().SortFlags = false
 	doctorCmd.Flags().StringP("output", "o", "table", "output mode (table, json)")
+	doctorCmd.Flags().Bool("deep", false, "create and close a private tunnel")
 	rootCmd.AddCommand(doctorCmd)
 }
 
@@ -116,9 +126,6 @@ func runDoctor(cmd *cobra.Command) doctorReport {
 		report.ProjectEndpoint = resolved.Context.ProjectEndpoint
 	}
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	checkDoctorContext(&report, resolved)
 	checkDoctorToken(&report, resolved.Token)
 	if doctorUsesControlPlane(resolved) {
@@ -130,30 +137,50 @@ func runDoctor(cmd *cobra.Command) doctorReport {
 	}
 	checkDoctorNetwork(ctx, &report, resolved)
 	checkDoctorEngine(ctx, &report, resolved)
+	deep, _ := cmd.Flags().GetBool("deep")
+	if deep {
+		checkDoctorTunnelCreation(ctx, &report, resolved)
+	}
 	report.finalize()
 	return report
+}
+
+func doctorReportError(report doctorReport) error {
+	if report.Summary.Fail > 0 {
+		return errors.New("one or more doctor checks failed")
+	}
+	return nil
 }
 
 func resolveDoctorRuntime(cmd *cobra.Command, cfg config.Config) (config.Resolved, error) {
 	flagAPIURL, _ := cmd.Flags().GetString("api-url")
 	flagContext, _ := cmd.Flags().GetString("context")
+	flagRegion, _ := cmd.Flags().GetString("region")
 	flagTunnelTransport, _ := cmd.Flags().GetString("tunnel-transport")
 	env := config.ReadEnv()
 	resolved, err := config.Resolve(config.ResolveInput{
-		Config:              cfg,
-		FlagAPIURL:          flagAPIURL,
-		FlagContext:         flagContext,
-		EnvAPIURL:           env.APIURL,
-		EnvContext:          env.Context,
-		EnvEngine:           env.Engine,
-		EnvToken:            env.Token,
-		FlagTunnelTransport: flagTunnelTransport,
-		EnvTunnelTransport:  env.TunnelTransport,
-		EnvUseQUIC:          env.UseQUIC,
-		ResolveToken:        true,
+		Config:                 cfg,
+		FlagAPIURL:             flagAPIURL,
+		FlagContext:            flagContext,
+		FlagRegion:             flagRegion,
+		EnvAPIURL:              env.APIURL,
+		EnvContext:             env.Context,
+		EnvEngine:              env.Engine,
+		EnvToken:               env.Token,
+		EnvRegion:              env.Region,
+		EnvControlPlaneHeaders: env.ControlPlaneHeaders,
+		FlagTunnelTransport:    flagTunnelTransport,
+		EnvTunnelTransport:     env.TunnelTransport,
+		EnvUseQUIC:             env.UseQUIC,
+		ResolveToken:           true,
 	})
 	if err != nil {
 		return config.Resolved{}, err
+	}
+	if resolved.Region != "" {
+		if err := resolveRuntimeRegion(cmd, cfg, &resolved); err != nil {
+			return config.Resolved{}, err
+		}
 	}
 	return resolved, nil
 }
@@ -214,7 +241,7 @@ func checkDoctorControlPlane(ctx context.Context, report *doctorReport, resolved
 	}
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	client := controlplane.NewClient(resolved.APIURL, resolved.Token)
+	client := newRuntimeControlPlaneClient(resolved)
 	whoami, err := client.Whoami(runCtx)
 	if err != nil {
 		report.add("control_plane_auth", doctorStatusFail, mapControlPlaneError(err).Error(), nil)
@@ -238,7 +265,7 @@ func checkDoctorProject(ctx context.Context, report *doctorReport, resolved conf
 	}
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	client := controlplane.NewClient(resolved.APIURL, resolved.Token)
+	client := newRuntimeControlPlaneClient(resolved)
 	project, err := client.ResolveProjectByEndpoint(runCtx, resolved.Context.ProjectEndpoint)
 	if err != nil {
 		report.add("project", doctorStatusFail, mapControlPlaneError(err).Error(), map[string]string{"projectEndpoint": resolved.Context.ProjectEndpoint})
@@ -280,7 +307,6 @@ func checkDoctorNetwork(ctx context.Context, report *doctorReport, resolved conf
 	tlsStatus, quicStatus := doctorTransportProbeStatuses(mode, tlsResult.OK, quicResult.OK)
 	report.add("tls", tlsStatus, tlsResult.Message, tlsResult.Details)
 	report.add("quic_transport", quicStatus, quicResult.Message, quicResult.Details)
-
 	selected := "none"
 	selectionStatus := doctorStatusFail
 	selectionMessage := "no tunnel transport is reachable"
@@ -313,32 +339,101 @@ func checkDoctorNetwork(ctx context.Context, report *doctorReport, resolved conf
 
 func checkDoctorEngine(ctx context.Context, report *doctorReport, resolved config.Resolved) {
 	if resolved.Engine == "" {
-		report.add("engine_inventory", doctorStatusSkip, "engine is not configured", nil)
+		report.add("engine", doctorStatusSkip, "engine is not configured", nil)
 		return
 	}
 	if resolved.Token == "" {
-		report.add("engine_inventory", doctorStatusSkip, "token is required", nil)
+		report.add("engine", doctorStatusSkip, "token is required", nil)
 		return
 	}
 	client, err := newClientFromResolved(resolved)
 	if err != nil {
-		report.add("engine_inventory", doctorStatusFail, err.Error(), nil)
+		report.add("engine", doctorStatusFail, err.Error(), nil)
 		return
 	}
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	health, err := client.CheckHealth(runCtx)
+	if err != nil {
+		report.add("engine", doctorStatusFail, "engine health check failed", map[string]string{"error": err.Error()})
+		return
+	}
+	if !health.Ready {
+		report.add("engine", doctorStatusFail, "engine is running but unavailable", nil)
+		return
+	}
 	clients, err := client.ListClients(runCtx, nil)
 	if err != nil {
-		report.add("engine_clients", doctorStatusFail, err.Error(), nil)
-	} else {
-		report.add("engine_clients", doctorStatusPass, "engine clients listed", map[string]string{"count": strconv.Itoa(len(*clients))})
+		report.add("engine", doctorStatusFail, "engine API is unavailable", map[string]string{"error": err.Error()})
+		return
 	}
 	tunnels, err := client.ListTunnels(runCtx, nil)
 	if err != nil {
-		report.add("engine_tunnels", doctorStatusFail, err.Error(), nil)
+		report.add("engine", doctorStatusFail, "engine API is unavailable", map[string]string{"error": err.Error()})
 		return
 	}
-	report.add("engine_tunnels", doctorStatusPass, "engine tunnels listed", map[string]string{"total": strconv.Itoa(len(*tunnels)), "online": strconv.Itoa(countDoctorOnlineTunnels(*tunnels))})
+	report.add("engine", doctorStatusPass, "engine is ready", map[string]string{"clients": strconv.Itoa(len(*clients)), "tunnels": strconv.Itoa(len(*tunnels)), "onlineTunnels": strconv.Itoa(countDoctorOnlineTunnels(*tunnels))})
+}
+
+func checkDoctorTunnelCreation(ctx context.Context, report *doctorReport, resolved config.Resolved) {
+	if resolved.Engine == "" {
+		report.add("tunnel_creation", doctorStatusSkip, "engine is not configured", nil)
+		return
+	}
+	if resolved.Token == "" {
+		report.add("tunnel_creation", doctorStatusSkip, "token is required", nil)
+		return
+	}
+	client, err := newClientFromResolved(resolved)
+	if err != nil {
+		report.add("tunnel_creation", doctorStatusFail, "failed to configure the tunnel client", map[string]string{"error": err.Error()})
+		return
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	details, err := probeDoctorTunnelCreation(runCtx, client)
+	if err != nil {
+		report.add("tunnel_creation", doctorStatusFail, "private tunnel lifecycle failed", map[string]string{"error": err.Error()})
+		return
+	}
+	report.add("tunnel_creation", doctorStatusPass, "private tunnel lifecycle succeeded", details)
+}
+
+func probeDoctorTunnelCreation(ctx context.Context, client doctorTunnelClient) (map[string]string, error) {
+	control, err := client.Connect(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("opening control channel: %w", err)
+	}
+	controlClosed := false
+	defer func() {
+		if !controlClosed {
+			_ = control.Close()
+		}
+	}()
+	tunnel, err := control.CreateTunnel(ctx, rstream.TunnelProperties{
+		Type:    rstream.TunnelTypePtr(rstream.TunnelTypeBytestream),
+		Publish: rstream.BoolPtr(false),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("creating private tunnel: %w", err)
+	}
+	props, err := tunnel.Properties()
+	if err != nil {
+		_ = tunnel.Close()
+		return nil, fmt.Errorf("reading tunnel properties: %w", err)
+	}
+	if err := tunnel.Close(); err != nil {
+		return nil, fmt.Errorf("closing private tunnel: %w", err)
+	}
+	if err := control.Close(); err != nil {
+		return nil, fmt.Errorf("closing control channel: %w", err)
+	}
+	controlClosed = true
+	details := map[string]string{}
+	if props.ID != nil {
+		details["tunnelId"] = *props.ID
+	}
+	return details, nil
 }
 
 type doctorTransportProbe struct {

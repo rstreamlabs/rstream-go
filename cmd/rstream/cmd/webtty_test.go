@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
 	"net"
@@ -168,6 +170,54 @@ func TestCmdWebTTYInterruptHelperProcess(t *testing.T) {
 		os.Exit(7)
 	case <-time.After(10 * time.Second):
 		os.Exit(9)
+	}
+}
+
+func TestCmdWebTTYEchoStdinHelperProcess(t *testing.T) {
+	if os.Getenv("RSTREAM_CMD_WEBTTY_TEST_STDIN_HELPER") != "1" {
+		return
+	}
+	if _, err := io.Copy(os.Stdout, os.Stdin); err != nil {
+		os.Exit(8)
+	}
+	os.Exit(0)
+}
+
+func TestRunWebTTYClientCaptureForwardsPipedStdin(t *testing.T) {
+	zero := time.Duration(0)
+	allowUnauthenticated := true
+	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{HeartbeatInterval: &zero, AllowUnauthenticated: &allowUnauthenticated})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	stdin, input, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe() error = %v", err)
+	}
+	defer stdin.Close()
+	if _, err := input.WriteString("capture-pipe\n"); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+	if err := input.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	deadline := time.Second
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	result, err := runWebTTYClientCapture(ctx, &webtty.ClientConfig{
+		URL:           "ws" + strings.TrimPrefix(server.URL, "http"),
+		Interactive:   false,
+		Stdin:         stdin,
+		CmdArgs:       []string{os.Args[0], "-test.run=^TestCmdWebTTYEchoStdinHelperProcess$"},
+		EnvVars:       []string{"RSTREAM_CMD_WEBTTY_TEST_STDIN_HELPER=1"},
+		OpenDeadline:  &deadline,
+		CloseDeadline: &deadline,
+	})
+	if err != nil {
+		t.Fatalf("runWebTTYClientCapture() error = %v", err)
+	}
+	if result.ExitCode != 0 || result.Stdout != "capture-pipe\n" || result.Stderr != "" {
+		t.Fatalf("runWebTTYClientCapture() = %#v", result)
 	}
 }
 
@@ -411,6 +461,16 @@ func TestWebTTYServerRetryableError(t *testing.T) {
 			name: "closed network listener",
 			err:  net.ErrClosed,
 			want: true,
+		},
+		{
+			name: "engine service unavailable",
+			err:  fmt.Errorf("create tunnel: %w", &rstream.EngineError{Code: rstream.EngineErrorCodeServiceUnavailable}),
+			want: true,
+		},
+		{
+			name: "engine feature unavailable",
+			err:  &rstream.EngineError{Code: rstream.EngineErrorCodeFeatureNotAvailable},
+			want: false,
 		},
 		{
 			name: "context canceled",
@@ -2817,6 +2877,97 @@ func TestResolveWebTTYClientRstreamUsesEngineInventoryProjectForWorkspaceManaged
 	}
 }
 
+func TestResolveWebTTYClientPublishedUsesEngineInventoryHostForWorkspaceManagedServer(t *testing.T) {
+	serverID := "server-workspace"
+	hostname := "shell.example.com"
+	port := uint32(8443)
+	engineServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/api/tunnels" {
+			http.Error(w, "unexpected engine request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(rstream.ListTunnelsResponse{{
+			TunnelProperties: rstream.TunnelProperties{
+				ID:       rstream.StringPtr("tunnel-workspace"),
+				Name:     rstream.StringPtr(serverID),
+				Protocol: rstream.ProtocolPtr(rstream.ProtocolWebTTY),
+				Type:     rstream.TunnelTypePtr(rstream.TunnelTypeBytestream),
+				Hostname: &hostname,
+				Port:     &port,
+				Labels: map[string]string{
+					webtty.WebTTYServerIDLabelKey:         serverID,
+					webtty.WebTTYServerNameLabelKey:       "workspace-shell",
+					webtty.WebTTYEncryptionPolicyLabelKey: webTTYServerEncryptionPolicyWorkspaceManaged,
+					webtty.WebTTYE2ELabelKey:              webtty.WebTTYE2ERequired,
+					webtty.WebTTYClientProofLabelKey:      webtty.WebTTYClientProofRequired,
+					webtty.WebTTYHostKeyIDLabelKey:        "workspace-host-key",
+					webtty.WebTTYApplicationProtocolKey:   webtty.WebTTYApplicationProtocol,
+				},
+			},
+			WorkspaceID: "workspace-1",
+			ProjectID:   "project-1",
+			Status:      "online",
+		}})
+	}))
+	defer engineServer.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(engineServer.Certificate())
+	engineAddress := strings.TrimPrefix(engineServer.URL, "https://")
+	token := "token"
+	engineClient := &rstream.Client{
+		EngineURL:       &engineAddress,
+		Token:           &token,
+		TLSClientConfig: &tls.Config{RootCAs: roots},
+	}
+	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "control plane should not be called to resolve project scope already present in engine inventory", http.StatusBadRequest)
+	}))
+	defer controlServer.Close()
+	resolution, err := resolveWebTTYClientPublished(t.Context(), &resolvedRuntime{Resolved: config.Resolved{
+		APIURL: controlServer.URL,
+		Token:  token,
+		Context: &config.Context{
+			ProjectEndpoint: "project-endpoint",
+		},
+	}}, engineClient, "https://shell.example.com:8443/webtty/exec")
+	if err != nil {
+		t.Fatalf("resolveWebTTYClientPublished() error = %v", err)
+	}
+	if resolution == nil || resolution.RuntimeE2E == nil {
+		t.Fatal("workspace-managed published server should create runtime E2E context")
+	}
+	if resolution.RuntimeE2E.project.ID != "project-1" || resolution.RuntimeE2E.project.WorkspaceID != "workspace-1" || resolution.RuntimeE2E.serverID != serverID {
+		t.Fatalf("unexpected runtime E2E context: %#v", resolution.RuntimeE2E)
+	}
+	if !resolution.Scope.E2ERequired || !resolution.Scope.ClientProofRequired || resolution.Scope.HostKeyID != "workspace-host-key" {
+		t.Fatalf("unexpected workspace-managed security scope: %#v", resolution.Scope)
+	}
+}
+
+func TestWebTTYRuntimeHostMatchesTarget(t *testing.T) {
+	tests := []struct {
+		name   string
+		host   string
+		target string
+		want   bool
+	}{
+		{name: "exact host and port", host: "shell.example.com:8443", target: "shell.example.com:8443", want: true},
+		{name: "case insensitive", host: "Shell.Example.com:8443", target: "shell.example.com:8443", want: true},
+		{name: "default TLS port", host: "shell.example.com", target: "shell.example.com:443", want: true},
+		{name: "trailing dot", host: "shell.example.com.", target: "shell.example.com", want: true},
+		{name: "different port", host: "shell.example.com:8443", target: "shell.example.com:9443"},
+		{name: "different host", host: "shell.example.com", target: "other.example.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := webTTYRuntimeHostMatchesTarget(tt.host, tt.target); got != tt.want {
+				t.Fatalf("webTTYRuntimeHostMatchesTarget(%q, %q) = %v, want %v", tt.host, tt.target, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveWebTTYClientRstreamFallsBackToControlPlaneProjectWhenInventoryScopeMissing(t *testing.T) {
 	serverID := "server-workspace"
 	engineServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2861,7 +3012,7 @@ func TestResolveWebTTYClientRstreamFallsBackToControlPlaneProjectWhenInventorySc
 		}
 		resolveProjectCalls++
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(controlplane.Project{ID: "project-1", WorkspaceID: "workspace-1", Endpoint: "project-endpoint"})
+		_ = json.NewEncoder(w).Encode(controlplane.Project{ID: "project-1", WorkspaceID: "workspace-1", Endpoint: "project-endpoint", Routing: "regional"})
 	}))
 	defer controlServer.Close()
 	resolution, err := resolveWebTTYClientRstream(t.Context(), &resolvedRuntime{Resolved: config.Resolved{
@@ -3796,6 +3947,20 @@ func TestWebTTYSessionConfigFromClientConfigKeepsTransportDialers(t *testing.T) 
 	}
 	if sessionCfg.ClientPrincipalID != "user-1" || sessionCfg.ClientDeviceID != "device-1" || sessionCfg.ClientBrowserID != "browser-1" {
 		t.Fatalf("client identity context was not propagated: %#v", sessionCfg)
+	}
+}
+
+func TestWebTTYWebTransportQUICConfig(t *testing.T) {
+	direct := webTTYWebTransportQUICConfig(false)
+	if direct.InitialPacketSize != 0 || direct.DisablePathMTUDiscovery {
+		t.Fatalf("direct config unexpectedly constrains MTU: %#v", direct)
+	}
+	tunneled := webTTYWebTransportQUICConfig(true)
+	if tunneled.InitialPacketSize != tunneledWebTTYWebTransportInitialPacketSize || !tunneled.DisablePathMTUDiscovery {
+		t.Fatalf("tunneled config does not constrain MTU: %#v", tunneled)
+	}
+	if !tunneled.EnableDatagrams || !tunneled.EnableStreamResetPartialDelivery {
+		t.Fatalf("tunneled config lost WebTransport features: %#v", tunneled)
 	}
 }
 

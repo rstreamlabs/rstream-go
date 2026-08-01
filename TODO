@@ -6,6 +6,9 @@
 - Add an explicit WebTTY termination control message
   WebTTY already supports stdin EOF through stream closure, and transport/session close tears down the server-side process. A future protocol revision should add an intentional client-to-server termination message, optionally carrying a signal where the platform supports it, so SDKs can distinguish a deliberate process termination from a network failure without inferring intent from WebSocket close.
 
+- Add targeted WebTTY runtime server resolution
+  `webtty exec`, attach, and related runtime commands must resolve registered-server identity, E2E policy, host keys, and capabilities before opening a session. They currently obtain that metadata by listing every online tunnel and matching the requested URL locally. Add a project-scoped Engine endpoint that resolves one tunnel ID, server ID, name, or hostname and returns the same authorized metadata with explicit ambiguous/not-found errors. Keep the inventory API for listing workflows, but remove its use from single-server runtime resolution once the targeted endpoint has equivalent security and compatibility coverage.
+
 - Keep WebTTY E2E crypto agility scoped and explicit
   The protocol reserves ChaCha20-Poly1305 suite identifiers, but the current implementation intentionally supports only the AES-256-GCM payload suite and HPKE X25519 / HKDF-SHA256 / AES-256-GCM key envelopes. Do not enable ChaCha20-Poly1305 until all SDKs have audited implementations, shared test vectors, cross-SDK runtime coverage, and product documentation that explains suite negotiation and fail-closed behavior.
 

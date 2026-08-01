@@ -60,6 +60,29 @@ type QUICTransport struct {
 	datagramReadRunning  bool
 }
 
+func cloneQUICTransport(transport *QUICTransport) *QUICTransport {
+	if transport == nil {
+		return &QUICTransport{}
+	}
+	return &QUICTransport{
+		LocalAddr:            transport.LocalAddr,
+		NetworkInterface:     transport.NetworkInterface,
+		ForceIPv4:            transport.ForceIPv4,
+		ForceIPv6:            transport.ForceIPv6,
+		DNSOverride:          transport.DNSOverride,
+		DNSOverTLS:           transport.DNSOverTLS,
+		DNSServerName:        transport.DNSServerName,
+		DNSSECEnabled:        transport.DNSSECEnabled,
+		ProxyHTTP:            transport.ProxyHTTP,
+		ProxySOCKS5:          transport.ProxySOCKS5,
+		ProxyUsername:        transport.ProxyUsername,
+		ProxyPassword:        transport.ProxyPassword,
+		ProxyHTTPHeaders:     cloneProxyHTTPHeaders(transport.ProxyHTTPHeaders),
+		TLSProxyConfig:       cloneTLSConfig(transport.TLSProxyConfig),
+		ProxyFromEnvironment: transport.ProxyFromEnvironment,
+	}
+}
+
 // Dial establishes or reuses a QUIC connection to addr, then opens and returns
 // a new QUIC stream wrapped as a net.Conn.
 func (t *QUICTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (net.Conn, error) {
@@ -78,9 +101,10 @@ func (t *QUICTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Confi
 			return &quicStreamConn{stream: stream, conn: conn, transport: t}, nil
 		}
 		openErr = err
-		if ctx.Err() != nil || conn.Context().Err() == nil || !t.invalidateConnection(conn) {
+		if ctx.Err() != nil {
 			return nil, fmt.Errorf("failed to open QUIC stream: %w", err)
 		}
+		t.invalidateConnection(conn)
 	}
 	return nil, fmt.Errorf("failed to open QUIC stream: %w", openErr)
 }
@@ -164,25 +188,25 @@ func (t *QUICTransport) Close() error {
 	t.mu.Lock()
 	t.closeGeneration++
 	channels := t.detachDatagramChannelsLocked()
-	if t.quicConn == nil {
-		t.mu.Unlock()
-		for _, ch := range channels {
-			ch.Close()
-		}
-		return nil
-	}
-	err := t.quicConn.CloseWithError(0, "transport closed")
+	conn := t.quicConn
+	qtransport := t.qtransport
+	pconn := t.pconn
+	proxyCloser := t.proxyCloser
 	t.quicConn = nil
 	t.origin = ""
-	if closeErr := closeQUICTransportResources(t.qtransport, t.pconn, t.proxyCloser); closeErr != nil && err == nil {
-		err = closeErr
-	}
 	t.qtransport = nil
 	t.pconn = nil
 	t.proxyCloser = nil
 	t.mu.Unlock()
+	var err error
+	if conn != nil {
+		err = conn.CloseWithError(0, "transport closed")
+	}
+	if closeErr := closeQUICTransportResources(qtransport, pconn, proxyCloser); closeErr != nil && err == nil {
+		err = closeErr
+	}
 	for _, ch := range channels {
-		ch.Close()
+		_ = ch.Close()
 	}
 	return err
 }
@@ -518,64 +542,6 @@ func hexNibble(c byte) (byte, bool) {
 	}
 }
 
-// datagramDeadline tracks one read or write deadline for a datagram channel.
-// wait() returns a channel closed once the deadline expires; setting a new
-// deadline replaces the channel so pending waiters only observe the deadline
-// that was active when they started waiting.
-type datagramDeadline struct {
-	mu    sync.Mutex
-	timer *time.Timer
-	ch    chan struct{}
-}
-
-func newDatagramDeadline() *datagramDeadline {
-	return &datagramDeadline{ch: make(chan struct{})}
-}
-
-func (d *datagramDeadline) set(t time.Time) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.timer != nil {
-		d.timer.Stop()
-		d.timer = nil
-	}
-	select {
-	case <-d.ch:
-		d.ch = make(chan struct{})
-	default:
-	}
-	if t.IsZero() {
-		return
-	}
-	if dur := time.Until(t); dur <= 0 {
-		close(d.ch)
-	} else {
-		ch := d.ch
-		d.timer = time.AfterFunc(dur, func() {
-			d.mu.Lock()
-			defer d.mu.Unlock()
-			if d.ch == ch {
-				close(ch)
-			}
-		})
-	}
-}
-
-func (d *datagramDeadline) wait() <-chan struct{} {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.ch
-}
-
-func (d *datagramDeadline) expired() bool {
-	select {
-	case <-d.wait():
-		return true
-	default:
-		return false
-	}
-}
-
 // quicDatagramChannel implements net.PacketConn for a single datagram tunnel
 // channel identified by a full stream-derived channel ID. Datagrams sent on
 // WriteTo are prefixed with the channel ID; incoming datagrams are received on
@@ -590,27 +556,52 @@ type quicDatagramChannel struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	once          sync.Once
+	deadlineMu    sync.Mutex
+	closed        bool
 	onClose       func(*quicDatagramChannel)
-	readDeadline  *datagramDeadline
-	writeDeadline *datagramDeadline
+	readDeadline  *packetDeadline
+	writeDeadline *packetDeadline
 }
 
 func (c *quicDatagramChannel) ReadFrom(p []byte) (int, net.Addr, error) {
-	select {
-	case data, ok := <-c.recvCh:
-		if !ok {
+	for {
+		select {
+		case <-c.ctx.Done():
 			return 0, nil, net.ErrClosed
+		default:
 		}
-		n := copy(p, data)
-		return n, c.raddr, nil
-	case <-c.ctx.Done():
-		return 0, nil, net.ErrClosed
-	case <-c.readDeadline.wait():
-		return 0, nil, os.ErrDeadlineExceeded
+		deadline, changed := c.readDeadline.snapshot()
+		if !deadline.IsZero() && !time.Now().Before(deadline) {
+			return 0, nil, os.ErrDeadlineExceeded
+		}
+		select {
+		case data, ok := <-c.recvCh:
+			if !ok {
+				return 0, nil, net.ErrClosed
+			}
+			select {
+			case <-c.ctx.Done():
+				return 0, nil, net.ErrClosed
+			default:
+			}
+			n := copy(p, data)
+			return n, c.raddr, nil
+		case <-c.ctx.Done():
+			return 0, nil, net.ErrClosed
+		case <-changed:
+		}
 	}
 }
 
 func (c *quicDatagramChannel) WriteTo(p []byte, addr net.Addr) (int, error) {
+	select {
+	case <-c.ctx.Done():
+		return 0, net.ErrClosed
+	default:
+	}
+	if addr == nil || c.raddr == nil || addr.String() != c.raddr.String() {
+		return 0, fmt.Errorf("invalid remote address %v; expected %v", addr, c.raddr)
+	}
 	if c.writeDeadline.expired() {
 		return 0, os.ErrDeadlineExceeded
 	}
@@ -629,7 +620,18 @@ func (c *quicDatagramChannel) WriteTo(p []byte, addr net.Addr) (int, error) {
 
 func (c *quicDatagramChannel) Close() error {
 	c.once.Do(func() {
-		c.cancel()
+		c.deadlineMu.Lock()
+		c.closed = true
+		if c.readDeadline != nil {
+			c.readDeadline.set(time.Time{})
+		}
+		if c.writeDeadline != nil {
+			c.writeDeadline.set(time.Time{})
+		}
+		c.deadlineMu.Unlock()
+		if c.cancel != nil {
+			c.cancel()
+		}
 		if c.onClose != nil {
 			c.onClose(c)
 		}
@@ -642,17 +644,32 @@ func (c *quicDatagramChannel) LocalAddr() net.Addr {
 }
 
 func (c *quicDatagramChannel) SetDeadline(t time.Time) error {
+	c.deadlineMu.Lock()
+	defer c.deadlineMu.Unlock()
+	if c.closed {
+		return net.ErrClosed
+	}
 	c.readDeadline.set(t)
 	c.writeDeadline.set(t)
 	return nil
 }
 
 func (c *quicDatagramChannel) SetReadDeadline(t time.Time) error {
+	c.deadlineMu.Lock()
+	defer c.deadlineMu.Unlock()
+	if c.closed {
+		return net.ErrClosed
+	}
 	c.readDeadline.set(t)
 	return nil
 }
 
 func (c *quicDatagramChannel) SetWriteDeadline(t time.Time) error {
+	c.deadlineMu.Lock()
+	defer c.deadlineMu.Unlock()
+	if c.closed {
+		return net.ErrClosed
+	}
 	c.writeDeadline.set(t)
 	return nil
 }
@@ -670,9 +687,20 @@ type quicDatagramListener struct {
 
 func (l *quicDatagramListener) Accept() (net.PacketConn, net.Addr, error) {
 	select {
+	case <-l.ctx.Done():
+		return nil, nil, net.ErrClosed
+	default:
+	}
+	select {
 	case conn, ok := <-l.conns:
 		if !ok {
 			return nil, nil, net.ErrClosed
+		}
+		select {
+		case <-l.ctx.Done():
+			_ = conn.Close()
+			return nil, nil, net.ErrClosed
+		default:
 		}
 		if ch, ok := conn.(*quicDatagramChannel); ok {
 			return conn, ch.raddr, nil
@@ -684,7 +712,17 @@ func (l *quicDatagramListener) Accept() (net.PacketConn, net.Addr, error) {
 }
 
 func (l *quicDatagramListener) Close() error {
-	l.once.Do(func() { l.cancel() })
+	l.once.Do(func() {
+		l.cancel()
+		for {
+			select {
+			case conn := <-l.conns:
+				_ = conn.Close()
+			default:
+				return
+			}
+		}
+	})
 	return nil
 }
 

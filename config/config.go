@@ -23,9 +23,10 @@ type DefaultContext struct {
 }
 
 type Environment struct {
-	APIURL    string           `yaml:"apiUrl"`
-	Auth      *Auth            `yaml:"auth,omitempty"`
-	Transport *TransportConfig `yaml:"transport,omitempty"`
+	APIURL    string            `yaml:"apiUrl"`
+	Auth      *Auth             `yaml:"auth,omitempty"`
+	Headers   map[string]string `yaml:"headers,omitempty"`
+	Transport *TransportConfig  `yaml:"transport,omitempty"`
 }
 
 type Context struct {
@@ -33,6 +34,7 @@ type Context struct {
 	APIURL          string           `yaml:"apiUrl,omitempty"`
 	ProjectEndpoint string           `yaml:"projectEndpoint,omitempty"`
 	Engine          string           `yaml:"engine,omitempty"`
+	Region          string           `yaml:"region,omitempty"`
 	TURNDomain      string           `yaml:"turnDomain,omitempty"`
 	TURNPort        int              `yaml:"turnPort,omitempty"`
 	TURNSPort       int              `yaml:"turnsPort,omitempty"`

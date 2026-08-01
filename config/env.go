@@ -8,28 +8,32 @@ import (
 )
 
 type EnvSettings struct {
-	ConfigPath      string
-	APIURL          string
-	Context         string
-	Engine          string
-	Token           string
-	MTLSCert        string
-	MTLSKey         string
-	TunnelTransport string
-	UseQUIC         *bool
+	ConfigPath          string
+	APIURL              string
+	Context             string
+	Engine              string
+	Token               string
+	MTLSCert            string
+	MTLSKey             string
+	Region              string
+	TunnelTransport     string
+	UseQUIC             *bool
+	ControlPlaneHeaders string
 }
 
 func ReadEnv() EnvSettings {
 	return EnvSettings{
-		ConfigPath:      strings.TrimSpace(os.Getenv("RSTREAM_CONFIG")),
-		APIURL:          NormalizeAPIURL(os.Getenv("RSTREAM_API_URL")),
-		Context:         strings.TrimSpace(os.Getenv("RSTREAM_CONTEXT")),
-		Engine:          strings.TrimSpace(os.Getenv("RSTREAM_ENGINE")),
-		Token:           strings.TrimSpace(os.Getenv("RSTREAM_AUTHENTICATION_TOKEN")),
-		MTLSCert:        strings.TrimSpace(os.Getenv("RSTREAM_MTLS_CERT_FILE")),
-		MTLSKey:         strings.TrimSpace(os.Getenv("RSTREAM_MTLS_KEY_FILE")),
-		TunnelTransport: strings.TrimSpace(os.Getenv("RSTREAM_TUNNEL_TRANSPORT")),
-		UseQUIC:         legacyQUICTransportSetting(),
+		ConfigPath:          strings.TrimSpace(os.Getenv("RSTREAM_CONFIG")),
+		APIURL:              NormalizeAPIURL(os.Getenv("RSTREAM_API_URL")),
+		Context:             strings.TrimSpace(os.Getenv("RSTREAM_CONTEXT")),
+		Engine:              strings.TrimSpace(os.Getenv("RSTREAM_ENGINE")),
+		Token:               strings.TrimSpace(os.Getenv("RSTREAM_AUTHENTICATION_TOKEN")),
+		MTLSCert:            strings.TrimSpace(os.Getenv("RSTREAM_MTLS_CERT_FILE")),
+		MTLSKey:             strings.TrimSpace(os.Getenv("RSTREAM_MTLS_KEY_FILE")),
+		Region:              strings.TrimSpace(os.Getenv("RSTREAM_REGION")),
+		TunnelTransport:     strings.TrimSpace(os.Getenv("RSTREAM_TUNNEL_TRANSPORT")),
+		UseQUIC:             legacyQUICTransportSetting(),
+		ControlPlaneHeaders: strings.TrimSpace(os.Getenv("RSTREAM_CONTROL_PLANE_HEADERS")),
 	}
 }
 

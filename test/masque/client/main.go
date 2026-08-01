@@ -28,8 +28,10 @@ import (
 )
 
 const (
-	connectIPClientAddr = "10.77.0.2"
-	connectIPServerAddr = "10.77.0.1"
+	connectIPClientAddr    = "10.77.0.2"
+	connectIPServerAddr    = "10.77.0.1"
+	connectUDPEchoTimeout  = 10 * time.Second
+	connectUDPRetryTimeout = 250 * time.Millisecond
 )
 
 func normalizePublishedAddr(raw string) (hostport, baseURL string, err error) {
@@ -72,12 +74,15 @@ func runConnectUDP(ctx context.Context, addr, target string) error {
 	if err != nil {
 		return err
 	}
-	client := &masque.Client{
+	request, err := masque.NewRequest(ctx, tpl, target)
+	if err != nil {
+		return err
+	}
+	transport := &masque.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true, NextProtos: []string{http3.NextProtoH3}},
 		QUICConfig:      &quic.Config{EnableDatagrams: true},
 	}
-	defer client.Close()
-	pc, resp, err := client.DialAddr(ctx, tpl, target)
+	pc, resp, err := transport.Dial(request)
 	if err != nil {
 		if resp != nil {
 			return fmt.Errorf("CONNECT-UDP failed with status %s: %w", resp.Status, err)
@@ -86,21 +91,40 @@ func runConnectUDP(ctx context.Context, addr, target string) error {
 	}
 	defer pc.Close()
 	payload := []byte("ping-connect-udp")
-	if _, err := pc.WriteTo(payload, nil); err != nil {
-		return fmt.Errorf("write UDP payload: %w", err)
-	}
-	if err := pc.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
-		return fmt.Errorf("set read deadline: %w", err)
-	}
+	return exchangeConnectUDPPayload(pc, payload, connectUDPEchoTimeout, connectUDPRetryTimeout)
+}
+
+func exchangeConnectUDPPayload(pc net.PacketConn, payload []byte, timeout, retryTimeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
 	buf := make([]byte, 2048)
-	n, _, err := pc.ReadFrom(buf)
-	if err != nil {
-		return fmt.Errorf("read UDP echo: %w", err)
+	attempts := 0
+	for {
+		attempts++
+		if _, err := pc.WriteTo(payload, nil); err != nil {
+			return fmt.Errorf("write UDP payload: %w", err)
+		}
+		readDeadline := time.Now().Add(retryTimeout)
+		if readDeadline.After(deadline) {
+			readDeadline = deadline
+		}
+		if err := pc.SetReadDeadline(readDeadline); err != nil {
+			return fmt.Errorf("set read deadline: %w", err)
+		}
+		n, _, err := pc.ReadFrom(buf)
+		if err == nil {
+			if !bytes.Equal(buf[:n], payload) {
+				return fmt.Errorf("UDP echo mismatch: got %q, want %q", buf[:n], payload)
+			}
+			return nil
+		}
+		var netErr net.Error
+		if !errors.As(err, &netErr) || !netErr.Timeout() {
+			return fmt.Errorf("read UDP echo: %w", err)
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("read UDP echo after %d attempts: %w", attempts, err)
+		}
 	}
-	if !bytes.Equal(buf[:n], payload) {
-		return fmt.Errorf("UDP echo mismatch: got %q, want %q", buf[:n], payload)
-	}
-	return nil
 }
 
 func runConnectIP(ctx context.Context, addr string) error {

@@ -61,8 +61,8 @@ func TestQUICDatagramChannelWritePrefixesChannelID(t *testing.T) {
 		recvCh:        make(chan []byte, 1),
 		ctx:           ctx,
 		cancel:        cancel,
-		readDeadline:  newDatagramDeadline(),
-		writeDeadline: newDatagramDeadline(),
+		readDeadline:  newPacketDeadline(),
+		writeDeadline: newPacketDeadline(),
 	}
 	n, err := channel.WriteTo([]byte("payload"), stubNetAddr("remote"))
 	if err != nil || n != len("payload") {
@@ -103,8 +103,8 @@ func TestQUICDatagramChannelReadAndClose(t *testing.T) {
 		recvCh:        make(chan []byte, 1),
 		ctx:           ctx,
 		cancel:        cancel,
-		readDeadline:  newDatagramDeadline(),
-		writeDeadline: newDatagramDeadline(),
+		readDeadline:  newPacketDeadline(),
+		writeDeadline: newPacketDeadline(),
 	}
 	channel.recvCh <- []byte("packet")
 	buf := make([]byte, 16)
@@ -137,12 +137,112 @@ func TestQUICDatagramChannelReadAndClose(t *testing.T) {
 	if _, _, err := channel.ReadFrom(buf); err != nil {
 		t.Fatalf("ReadFrom() after clearing deadline error = %v", err)
 	}
+	if err := channel.SetDeadline(time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("SetDeadline(future) error = %v", err)
+	}
 	if err := channel.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
 	if _, _, err := channel.ReadFrom(buf); !errors.Is(err, net.ErrClosed) {
 		t.Fatalf("ReadFrom() after close error = %v, want net.ErrClosed", err)
 	}
+	if _, err := channel.WriteTo([]byte("packet"), stubNetAddr("remote")); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("WriteTo() after close error = %v, want net.ErrClosed", err)
+	}
+	if err := channel.SetDeadline(time.Time{}); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("SetDeadline() after close error = %v, want net.ErrClosed", err)
+	}
+	channel.readDeadline.mu.Lock()
+	readTimer := channel.readDeadline.timer
+	channel.readDeadline.mu.Unlock()
+	channel.writeDeadline.mu.Lock()
+	writeTimer := channel.writeDeadline.timer
+	channel.writeDeadline.mu.Unlock()
+	if readTimer != nil || writeTimer != nil {
+		t.Fatalf("deadline timers remained active after close: read=%v write=%v", readTimer != nil, writeTimer != nil)
+	}
+}
+
+func TestQUICDatagramChannelPendingReadTracksDeadlineChanges(t *testing.T) {
+	t.Run("extended", func(t *testing.T) {
+		channel := newTestQUICDatagramChannel(t)
+		defer channel.Close()
+		if err := channel.SetReadDeadline(time.Now().Add(40 * time.Millisecond)); err != nil {
+			t.Fatalf("SetReadDeadline() error = %v", err)
+		}
+		result := readQUICDatagramAsync(channel)
+		time.Sleep(10 * time.Millisecond)
+		if err := channel.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			t.Fatalf("SetReadDeadline() extension error = %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+		channel.recvCh <- []byte("packet")
+		if err := <-result; err != nil {
+			t.Fatalf("ReadFrom() after deadline extension error = %v", err)
+		}
+	})
+	t.Run("cleared", func(t *testing.T) {
+		channel := newTestQUICDatagramChannel(t)
+		defer channel.Close()
+		if err := channel.SetReadDeadline(time.Now().Add(40 * time.Millisecond)); err != nil {
+			t.Fatalf("SetReadDeadline() error = %v", err)
+		}
+		result := readQUICDatagramAsync(channel)
+		time.Sleep(10 * time.Millisecond)
+		if err := channel.SetReadDeadline(time.Time{}); err != nil {
+			t.Fatalf("SetReadDeadline() clear error = %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+		channel.recvCh <- []byte("packet")
+		if err := <-result; err != nil {
+			t.Fatalf("ReadFrom() after deadline clear error = %v", err)
+		}
+	})
+	t.Run("shortened", func(t *testing.T) {
+		channel := newTestQUICDatagramChannel(t)
+		defer channel.Close()
+		if err := channel.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+			t.Fatalf("SetReadDeadline() error = %v", err)
+		}
+		result := readQUICDatagramAsync(channel)
+		time.Sleep(10 * time.Millisecond)
+		if err := channel.SetReadDeadline(time.Now().Add(20 * time.Millisecond)); err != nil {
+			t.Fatalf("SetReadDeadline() shortening error = %v", err)
+		}
+		select {
+		case err := <-result:
+			if !errors.Is(err, os.ErrDeadlineExceeded) {
+				t.Fatalf("ReadFrom() error = %v, want deadline exceeded", err)
+			}
+		case <-time.After(250 * time.Millisecond):
+			t.Fatal("ReadFrom() did not observe the shortened deadline")
+		}
+	})
+}
+
+func newTestQUICDatagramChannel(t *testing.T) *quicDatagramChannel {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	return &quicDatagramChannel{
+		provider:      &recordingDatagramProvider{},
+		laddr:         stubNetAddr("local"),
+		raddr:         stubNetAddr("remote"),
+		recvCh:        make(chan []byte, 1),
+		ctx:           ctx,
+		cancel:        cancel,
+		readDeadline:  newPacketDeadline(),
+		writeDeadline: newPacketDeadline(),
+	}
+}
+
+func readQUICDatagramAsync(channel *quicDatagramChannel) <-chan error {
+	result := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 16)
+		_, _, err := channel.ReadFrom(buf)
+		result <- err
+	}()
+	return result
 }
 
 func TestQUICTransportErrorsBeforeConnection(t *testing.T) {
@@ -176,6 +276,54 @@ func TestQUICTransportCloseInvalidatesInFlightConnectGeneration(t *testing.T) {
 	transport.LocalAddr = &localAddr
 	if _, err := transport.Dial(t.Context(), "127.0.0.1:443", &tls.Config{}); err == nil || !strings.Contains(err.Error(), "failed to parse local address") {
 		t.Fatalf("Dial() after idle Close() error = %v, want local address validation", err)
+	}
+}
+
+type blockingCloser struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (c *blockingCloser) Close() error {
+	close(c.started)
+	<-c.release
+	return nil
+}
+
+func TestQUICTransportCloseDoesNotHoldStateLockDuringIO(t *testing.T) {
+	server := newTestQUICEchoServer(t)
+	defer server.close()
+	transport := &QUICTransport{}
+	tlsConfig := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{testQUICALPN}}
+	conn, err := transport.Dial(t.Context(), server.addr, tlsConfig)
+	if err != nil {
+		t.Fatalf("Dial() error = %v", err)
+	}
+	_ = conn.Close()
+	closer := &blockingCloser{started: make(chan struct{}), release: make(chan struct{})}
+	transport.mu.Lock()
+	transport.proxyCloser = closer
+	transport.mu.Unlock()
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- transport.Close() }()
+	select {
+	case <-closer.started:
+	case <-time.After(time.Second):
+		t.Fatal("Close() did not reach blocking resource")
+	}
+	stateRead := make(chan error, 1)
+	go func() { stateRead <- transport.SendDatagram([]byte("probe")) }()
+	select {
+	case err := <-stateRead:
+		if err == nil || !strings.Contains(err.Error(), "not established") {
+			t.Fatalf("SendDatagram() error = %v, want not established", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("transport state remained locked during resource close")
+	}
+	close(closer.release)
+	if err := <-closeDone; err != nil {
+		t.Fatalf("Close() error = %v", err)
 	}
 }
 
@@ -406,6 +554,34 @@ func TestMASQUEUDPPacketConnReadDeadlineCanBeClearedAfterExpiry(t *testing.T) {
 	}
 }
 
+func TestMASQUEUDPPacketConnWriteLifecycle(t *testing.T) {
+	stream := newBlockingMASQUEUDPStream()
+	conn := newMASQUEUDPPacketConn(stream, stubNetAddr("local"), stubNetAddr("remote"))
+	if _, err := conn.WriteTo([]byte("payload"), stubNetAddr("other")); err == nil {
+		t.Fatal("WriteTo() with invalid remote address error = nil")
+	}
+	if err := conn.SetWriteDeadline(time.Now().Add(-time.Second)); err != nil {
+		t.Fatalf("SetWriteDeadline() error = %v", err)
+	}
+	if _, err := conn.WriteTo([]byte("payload"), stubNetAddr("remote")); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("WriteTo() with expired deadline error = %v, want deadline exceeded", err)
+	}
+	if err := conn.SetWriteDeadline(time.Time{}); err != nil {
+		t.Fatalf("SetWriteDeadline() clear error = %v", err)
+	}
+	stream.sendErr = errors.New("send failed")
+	if n, err := conn.WriteTo([]byte("payload"), stubNetAddr("remote")); n != 0 || !errors.Is(err, stream.sendErr) {
+		t.Fatalf("WriteTo() = %d, %v; want 0, send failed", n, err)
+	}
+	stream.sendErr = nil
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if _, err := conn.WriteTo([]byte("payload"), stubNetAddr("remote")); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("WriteTo() after close error = %v, want net.ErrClosed", err)
+	}
+}
+
 func TestQUICTransportMASQUEProxyHonorsCustomDNSAndLocalAddress(t *testing.T) {
 	resolverAddr := startDNSResolutionTestServer(t, dnsAnswerAllA("127.0.0.1"))
 	server := newTestQUICEchoServer(t)
@@ -519,6 +695,28 @@ func TestQUICDatagramListenerAcceptAndClose(t *testing.T) {
 	}
 }
 
+func TestQUICDatagramListenerCloseReleasesQueuedConnections(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	listener := &quicDatagramListener{
+		conns:  make(chan net.PacketConn, 1),
+		ctx:    ctx,
+		cancel: cancel,
+	}
+	conn := newFakePacketConn(stubNetAddr("conn"))
+	listener.conns <- conn
+	if err := listener.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	select {
+	case <-conn.closed:
+	case <-time.After(time.Second):
+		t.Fatal("queued datagram connection remained open after listener closure")
+	}
+	if _, _, err := listener.Accept(); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("Accept() after close error = %v, want net.ErrClosed", err)
+	}
+}
+
 type recordingDatagramProvider struct {
 	sent [][]byte
 	err  error
@@ -541,6 +739,7 @@ type blockingMASQUEUDPStream struct {
 	closed    chan struct{}
 	once      sync.Once
 	sent      [][]byte
+	sendErr   error
 }
 
 func newBlockingMASQUEUDPStream() *blockingMASQUEUDPStream {
@@ -578,6 +777,9 @@ func (s *blockingMASQUEUDPStream) ReceiveDatagram(ctx context.Context) ([]byte, 
 }
 
 func (s *blockingMASQUEUDPStream) SendDatagram(data []byte) error {
+	if s.sendErr != nil {
+		return s.sendErr
+	}
 	s.sent = append(s.sent, append([]byte(nil), data...))
 	return nil
 }
@@ -842,7 +1044,7 @@ func newTestMASQUEProxyWithOptions(t *testing.T, options testMASQUEProxyOptions)
 		Handler:         mux,
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		req, err := masque.ParseRequest(r, template)
+		req, err := masque.ParseProxyRequest(r, template)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

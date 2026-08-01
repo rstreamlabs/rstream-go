@@ -642,9 +642,7 @@ func webTTYReadAllSessionEvents(ctx context.Context, client *rstream.Client, ses
 		if page == nil || len(*page) == 0 {
 			break
 		}
-		for _, event := range *page {
-			events = append(events, event)
-		}
+		events = append(events, *page...)
 		lastSeq, err := webTTYParseSequenceCursor((*page)[len(*page)-1].Seq, "event seq")
 		if err != nil {
 			return nil, err
@@ -1142,11 +1140,7 @@ func (r *webTTYReadyFileReader) Fd() uintptr {
 }
 
 func webTTYDetachContext(parent context.Context) (context.Context, context.CancelFunc) {
-	base := context.Background()
-	if parent != nil {
-		base = context.WithoutCancel(parent)
-	}
-	return context.WithTimeout(base, 5*time.Second)
+	return context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
 }
 
 func validateWebTTYSessionJoinCapabilities(capabilities *rstream.WebTTYCapabilities) error {
@@ -1171,9 +1165,6 @@ func validateWebTTYSessionAttachSupport(session *rstream.WebTTYSession) error {
 	case rstream.WebTTYSessionStatusOpening, rstream.WebTTYSessionStatusActive:
 	default:
 		return fmt.Errorf("WebTTY session %s is not active", session.ID)
-	}
-	if session.DownTransport != rstream.WebTTYTransportWebSocket {
-		return fmt.Errorf("WebTTY session %s cannot be joined from the CLI because live join currently supports websocket sessions only", session.ID)
 	}
 	if !session.Live.Available {
 		return fmt.Errorf("WebTTY session %s is not live on this engine", session.ID)
@@ -1434,7 +1425,7 @@ func webTTYSessionAttachWorkspaceCredential(ctx context.Context, runtime *resolv
 		proofs = append(proofs, item.proof)
 		localDevices = append(localDevices, item.device)
 	}
-	controlClient := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+	controlClient := newRuntimeControlPlaneClient(runtime.Resolved)
 	resolved, err := controlClient.ResolveWebTTYServerClient(ctx, projectID, serverID, controlplane.ResolveWebTTYServerClientRequest{
 		DeviceProofs: proofs,
 	})
