@@ -54,7 +54,7 @@ func mcpLocalTunnelExpose(ctx context.Context, args map[string]json.RawMessage) 
 	if err != nil {
 		return nil, err
 	}
-	host, port, props, err := mcpLocalTunnelArgs(args, runtime.Resolved.Engine)
+	host, port, props, err := mcpLocalTunnelArgs(args, runtime.Resolved.StableDomainEndpoint())
 	if err != nil {
 		return nil, err
 	}

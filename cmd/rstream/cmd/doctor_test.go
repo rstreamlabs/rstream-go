@@ -3,12 +3,17 @@
 package cmd
 
 import (
+	"context"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -25,6 +30,15 @@ func TestDoctorReportSummaryAndAddressHelpers(t *testing.T) {
 	report.finalize()
 	if report.Summary.Pass != 1 || report.Summary.Warn != 1 || report.Summary.Fail != 1 || report.Summary.Skip != 1 {
 		t.Fatalf("unexpected summary: %#v", report.Summary)
+	}
+	if err := doctorReportError(report); err == nil {
+		t.Fatal("doctorReportError() should reject a report with failed checks")
+	}
+	healthyReport := doctorReport{}
+	healthyReport.add("config", doctorStatusPass, "ok", nil)
+	healthyReport.finalize()
+	if err := doctorReportError(healthyReport); err != nil {
+		t.Fatalf("doctorReportError() = %v", err)
 	}
 	host, address, err := doctorEngineHostPort("https://engine.example.com")
 	if err != nil || host != "engine.example.com" || address != "engine.example.com:443" {
@@ -124,7 +138,7 @@ func TestDoctorTransportProbeStatuses(t *testing.T) {
 func TestRunDoctorWithoutContextStaysLocalAndReportsActionableChecks(t *testing.T) {
 	clearRstreamTestEnv(t)
 	path := filepath.Join(t.TempDir(), "missing.yaml")
-	command := runtimeFlagsCommand()
+	command := runtimeFlagsCommand(t)
 	mustSetFlag(t, command, "config", path)
 	report := runDoctor(command)
 	if report.ConfigPath != path {
@@ -137,7 +151,7 @@ func TestRunDoctorWithoutContextStaysLocalAndReportsActionableChecks(t *testing.
 	for _, check := range report.Checks {
 		got[check.Name] = check.Status
 	}
-	if got["config"] != doctorStatusPass || got["context"] != doctorStatusWarn || got["token"] != doctorStatusFail || got["engine_address"] != doctorStatusSkip || got["engine_inventory"] != doctorStatusSkip {
+	if got["config"] != doctorStatusPass || got["context"] != doctorStatusWarn || got["token"] != doctorStatusFail || got["engine_address"] != doctorStatusSkip || got["engine"] != doctorStatusSkip {
 		t.Fatalf("unexpected doctor checks: %#v", got)
 	}
 	file, err := os.CreateTemp(t.TempDir(), "doctor-*.txt")
@@ -179,7 +193,161 @@ func TestDoctorTLSAndTunnelHelpers(t *testing.T) {
 	}
 }
 
+func TestDoctorEngineAggregatesHealthAndInventory(t *testing.T) {
+	var inventoryRequests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer token" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		switch r.URL.Path {
+		case "/api/health/live":
+			_, _ = w.Write([]byte(`{"status":"live"}`))
+		case "/api/health/ready":
+			_, _ = w.Write([]byte(`{"status":"ready"}`))
+		case "/api/clients":
+			inventoryRequests.Add(1)
+			_, _ = w.Write([]byte(`[{"id":"client-1"}]`))
+		case "/api/tunnels":
+			inventoryRequests.Add(1)
+			_, _ = w.Write([]byte(`[{"id":"tunnel-1","status":"online"}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	report := doctorReport{}
+	checkDoctorEngine(t.Context(), &report, doctorTestResolved(server))
+	if len(report.Checks) != 1 || report.Checks[0].Name != "engine" || report.Checks[0].Status != doctorStatusPass || report.Checks[0].Message != "engine is ready" {
+		t.Fatalf("engine check = %#v", report.Checks)
+	}
+	if report.Checks[0].Details["clients"] != "1" || report.Checks[0].Details["tunnels"] != "1" || report.Checks[0].Details["onlineTunnels"] != "1" {
+		t.Fatalf("engine details = %#v", report.Checks[0].Details)
+	}
+	if inventoryRequests.Load() != 2 {
+		t.Fatalf("inventory requests = %d, want 2", inventoryRequests.Load())
+	}
+}
+
+func TestDoctorEngineStopsWhenRuntimeIsUnavailable(t *testing.T) {
+	var inventoryRequests atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/health/live":
+			_, _ = w.Write([]byte(`{"status":"live"}`))
+		case "/api/health/ready":
+			http.Error(w, `{"status":"unavailable"}`, http.StatusServiceUnavailable)
+		default:
+			inventoryRequests.Add(1)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	report := doctorReport{}
+	checkDoctorEngine(t.Context(), &report, doctorTestResolved(server))
+	if len(report.Checks) != 1 || report.Checks[0].Name != "engine" || report.Checks[0].Status != doctorStatusFail || report.Checks[0].Message != "engine is running but unavailable" {
+		t.Fatalf("engine check = %#v", report.Checks)
+	}
+	if inventoryRequests.Load() != 0 {
+		t.Fatalf("inventory requests = %d, want 0", inventoryRequests.Load())
+	}
+}
+
+func TestProbeDoctorTunnelCreationExercisesLifecycle(t *testing.T) {
+	tunnel := &doctorTestTunnel{props: rstream.TunnelProperties{ID: rstream.StringPtr("tunnel-1")}}
+	control := &doctorTestControlChannel{tunnel: tunnel}
+	details, err := probeDoctorTunnelCreation(t.Context(), &doctorTestTunnelClient{control: control})
+	if err != nil {
+		t.Fatalf("probeDoctorTunnelCreation() error = %v", err)
+	}
+	if details["tunnelId"] != "tunnel-1" || tunnel.closeCalls != 1 || control.closeCalls != 1 {
+		t.Fatalf("unexpected lifecycle: details=%#v tunnelClose=%d controlClose=%d", details, tunnel.closeCalls, control.closeCalls)
+	}
+	if control.props.Type == nil || *control.props.Type != rstream.TunnelTypeBytestream || control.props.Publish == nil || *control.props.Publish {
+		t.Fatalf("unexpected tunnel properties: %#v", control.props)
+	}
+}
+
+func TestProbeDoctorTunnelCreationClosesControlAfterFailure(t *testing.T) {
+	control := &doctorTestControlChannel{createErr: errors.New("create failed")}
+	_, err := probeDoctorTunnelCreation(t.Context(), &doctorTestTunnelClient{control: control})
+	if err == nil || !strings.Contains(err.Error(), "creating private tunnel") {
+		t.Fatalf("probeDoctorTunnelCreation() error = %v", err)
+	}
+	if control.closeCalls != 1 {
+		t.Fatalf("control close calls = %d, want 1", control.closeCalls)
+	}
+}
+
+func doctorTestResolved(server *httptest.Server) config.Resolved {
+	return config.Resolved{
+		Engine: strings.TrimPrefix(server.URL, "https://"),
+		Token:  "token",
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: true,
+		},
+	}
+}
+
 func doctorToken(claims map[string]any) string {
 	payload, _ := json.Marshal(claims)
 	return "header." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
+}
+
+type doctorTestTunnelClient struct {
+	control rstream.ControlChannel
+	err     error
+}
+
+func (c *doctorTestTunnelClient) Connect(context.Context, *rstream.Config) (rstream.ControlChannel, error) {
+	return c.control, c.err
+}
+
+type doctorTestControlChannel struct {
+	tunnel     rstream.Tunnel
+	createErr  error
+	closeErr   error
+	closeCalls int
+	props      rstream.TunnelProperties
+}
+
+func (c *doctorTestControlChannel) CreateTunnel(_ context.Context, props rstream.TunnelProperties) (rstream.Tunnel, error) {
+	c.props = props
+	return c.tunnel, c.createErr
+}
+
+func (c *doctorTestControlChannel) Close() error {
+	c.closeCalls++
+	return c.closeErr
+}
+
+func (c *doctorTestControlChannel) Done() <-chan error {
+	return make(chan error)
+}
+
+func (c *doctorTestControlChannel) Err() error {
+	return nil
+}
+
+func (c *doctorTestControlChannel) ServerDetails() *rstream.ServerDetails {
+	return nil
+}
+
+type doctorTestTunnel struct {
+	props      rstream.TunnelProperties
+	closeErr   error
+	closeCalls int
+}
+
+func (t *doctorTestTunnel) ForwardingAddress() (string, error) {
+	return "", nil
+}
+
+func (t *doctorTestTunnel) Properties() (rstream.TunnelProperties, error) {
+	return t.props, nil
+}
+
+func (t *doctorTestTunnel) Close() error {
+	t.closeCalls++
+	return t.closeErr
 }

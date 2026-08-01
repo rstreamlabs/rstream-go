@@ -31,6 +31,11 @@ type Event struct {
 	Object      json.RawMessage `json:"object"`
 }
 
+type EngineHealth struct {
+	Live  bool `json:"live"`
+	Ready bool `json:"ready"`
+}
+
 func cloneProxyHTTPHeaders(headers map[string]string) map[string]string {
 	if len(headers) == 0 {
 		return nil
@@ -94,17 +99,26 @@ func (c *Client) apiDialer() Dialer {
 }
 
 func (c *Client) apiHttpClient() (*http.Client, error) {
-	dialer := c.apiDialer()
-	return &http.Client{
-		Transport: &http.Transport{
+	c.apiMu.Lock()
+	if c.apiTransport == nil {
+		dialer := c.apiDialer()
+		c.apiTransport = &http.Transport{
 			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				// API calls always use TCP TLS regardless of the configured
 				// transport, because API endpoints require HTTP/1.1 or H2 (not H3).
 				return c.dialEngineWithTransport(ctx, &addr, &[]string{"h2", "http/1.1"}, dialer)
 			},
-			ForceAttemptHTTP2: true,
-		},
-		Timeout: 5 * time.Second,
+			ForceAttemptHTTP2:   true,
+			MaxIdleConns:        4,
+			MaxIdleConnsPerHost: 4,
+			IdleConnTimeout:     90 * time.Second,
+		}
+	}
+	transport := c.apiTransport
+	c.apiMu.Unlock()
+	return &http.Client{
+		Transport: transport,
+		Timeout:   5 * time.Second,
 	}, nil
 }
 
@@ -199,6 +213,40 @@ func (c *Client) Logout(ctx context.Context) (*string, error) {
 	return engine, nil
 }
 
+func (c *Client) CheckHealth(ctx context.Context) (*EngineHealth, error) {
+	body, _, err := c.apiDo(ctx, http.MethodGet, "/health/live", nil, nil, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("check engine liveness: %w", err)
+	}
+	if err := validateHealthResponse(body, "live"); err != nil {
+		return nil, fmt.Errorf("check engine liveness: %w", err)
+	}
+	body, status, err := c.apiDo(ctx, http.MethodGet, "/health/ready", nil, nil, nil, nil)
+	if err != nil {
+		if status == http.StatusServiceUnavailable {
+			return &EngineHealth{Live: true}, nil
+		}
+		return nil, fmt.Errorf("check engine readiness: %w", err)
+	}
+	if err := validateHealthResponse(body, "ready"); err != nil {
+		return nil, fmt.Errorf("check engine readiness: %w", err)
+	}
+	return &EngineHealth{Live: true, Ready: true}, nil
+}
+
+func validateHealthResponse(body []byte, expected string) error {
+	var response struct {
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	if response.Status != expected {
+		return fmt.Errorf("unexpected status %q", response.Status)
+	}
+	return nil
+}
+
 func (c *Client) ListClients(ctx context.Context, params *ListClientsParams) (*ListClientsResponse, error) {
 	q := url.Values{}
 	if err := setQueryJSON(q, "params", params); err != nil {
@@ -264,28 +312,23 @@ func (c *Client) Watch(ctx context.Context, transport string, params *WatchParam
 	if err != nil {
 		return err
 	}
-	stop := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = ec.Close()
-		case <-stop:
-		}
-	}()
+	stopClose := context.AfterFunc(ctx, func() {
+		_ = ec.Close()
+	})
 	defer func() {
-		close(stop)
+		stopClose()
 		_ = ec.Close()
 	}()
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return context.Cause(ctx)
 		default:
 		}
 		raw, err := ec.Read(ctx)
 		if err != nil {
-			if ctx.Err() != nil {
-				return context.Canceled
+			if cause := context.Cause(ctx); cause != nil {
+				return cause
 			}
 			if err == io.EOF {
 				return nil
@@ -414,6 +457,7 @@ type wsConn struct {
 	c            *websocket.Conn
 	done         chan struct{}
 	closeOnce    sync.Once
+	closeErr     error
 	pingInterval time.Duration
 	readTimeout  time.Duration
 }
@@ -443,12 +487,11 @@ func newWSConn(conn *websocket.Conn, pingInterval, readTimeout time.Duration) *w
 }
 
 func (w *wsConn) Close() error {
-	var err error
 	w.closeOnce.Do(func() {
 		close(w.done)
-		err = w.c.Close()
+		w.closeErr = w.c.Close()
 	})
-	return err
+	return w.closeErr
 }
 
 func (w *wsConn) Read(ctx context.Context) ([]byte, error) {
@@ -513,7 +556,9 @@ func (c *Client) openWS(ctx context.Context, engine, token string, params *Watch
 	conn, resp, err := dialer.DialContext(ctx, u.String(), header)
 	if err != nil {
 		if resp != nil {
-			return nil, fmt.Errorf("websocket dial failed: %s (%d)", http.StatusText(resp.StatusCode), resp.StatusCode)
+			statusCode := resp.StatusCode
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("websocket dial failed: %s (%d)", http.StatusText(statusCode), statusCode)
 		}
 		return nil, fmt.Errorf("websocket dial failed: %w", err)
 	}

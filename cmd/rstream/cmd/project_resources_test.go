@@ -83,3 +83,77 @@ func TestFindProjectTCPAddressID(t *testing.T) {
 		t.Fatal("findProjectTCPAddressID() unexpectedly found missing port")
 	}
 }
+
+func TestNewProjectDomainCreateRequest(t *testing.T) {
+	tests := []struct {
+		name               string
+		hostname           string
+		kind               string
+		validation         string
+		validationExplicit bool
+		want               controlplane.CreateProjectDomainRequest
+		wantError          string
+	}{
+		{
+			name:       "hostname defaults to TLS-ALPN-01",
+			hostname:   " API.Example.com ",
+			kind:       "hostname",
+			validation: "tls-alpn-01",
+			want: controlplane.CreateProjectDomainRequest{
+				Hostname:              "api.example.com",
+				Kind:                  controlplane.ProjectDomainKindHostname,
+				CertificateValidation: controlplane.ProjectDomainCertificateValidationTLSALPN01,
+			},
+		},
+		{
+			name:       "wildcard defaults to DNS-01",
+			hostname:   "example.com",
+			kind:       "wildcard",
+			validation: "tls-alpn-01",
+			want: controlplane.CreateProjectDomainRequest{
+				Hostname:              "example.com",
+				Kind:                  controlplane.ProjectDomainKindWildcard,
+				CertificateValidation: controlplane.ProjectDomainCertificateValidationDNS01,
+			},
+		},
+		{
+			name:               "explicit wildcard TLS validation is rejected",
+			hostname:           "example.com",
+			kind:               "wildcard",
+			validation:         "tls-alpn-01",
+			validationExplicit: true,
+			wantError:          "wildcard domains require DNS-01 certificate validation",
+		},
+		{
+			name:       "unknown kind is rejected",
+			hostname:   "example.com",
+			kind:       "apex",
+			validation: "dns-01",
+			wantError:  "invalid domain kind",
+		},
+		{
+			name:       "unknown validation is rejected",
+			hostname:   "example.com",
+			kind:       "hostname",
+			validation: "http-01",
+			wantError:  "invalid certificate validation method",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := newProjectDomainCreateRequest(test.hostname, test.kind, test.validation, test.validationExplicit)
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("newProjectDomainCreateRequest() error = %v, want %q", err, test.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("newProjectDomainCreateRequest() error = %v", err)
+			}
+			if got != test.want {
+				t.Fatalf("newProjectDomainCreateRequest() = %+v, want %+v", got, test.want)
+			}
+		})
+	}
+}

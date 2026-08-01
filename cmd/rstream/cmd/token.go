@@ -31,7 +31,7 @@ var tokenCreateCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		client := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+		client := newRuntimeControlPlaneClient(runtime.Resolved)
 		request, err := createTokenRequestFromFlags(cmd)
 		if err != nil {
 			return err

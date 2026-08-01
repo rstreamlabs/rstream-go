@@ -18,6 +18,8 @@ TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/rstream-go-proxy-runtime.XXXXXX")
 PASS=0
 FAIL=0
 PIDS=()
+STARTED_PID=""
+STARTED_VALUE=""
 
 cleanup() {
   local pid
@@ -83,7 +85,8 @@ start_proxy() {
   esac
   local pid=$!
   PIDS+=("$pid")
-  wait_ready "$pid" "$log" "$label"
+  STARTED_PID=$pid
+  STARTED_VALUE=$(wait_ready "$pid" "$log" "$label")
 }
 
 start_upstream() {
@@ -92,7 +95,8 @@ start_upstream() {
   "$PYTHON" "$ROOT/test/e2e/runtime_harness.py" serve tcp >"$log" 2>&1 &
   local pid=$!
   PIDS+=("$pid")
-  wait_ready "$pid" "$log" "$label"
+  STARTED_PID=$pid
+  STARTED_VALUE=$(wait_ready "$pid" "$log" "$label")
 }
 
 write_config() {
@@ -141,6 +145,14 @@ sys.exit(1)
 PY
 }
 
+print_case_logs() {
+  local label=$1 component
+  for component in proxy upstream forward; do
+    printf "\n%s log:\n" "$component" >&2
+    tail -40 "$TMP_DIR/$component-$label.log" >&2 || true
+  done
+}
+
 start_forward() {
   local label=$1 config_path=$2 upstream=$3 tunnel_prefix=$4
   local log="$TMP_DIR/forward-$label.log"
@@ -152,7 +164,7 @@ start_forward() {
   local deadline=$((SECONDS + TIMEOUT_SECONDS))
   while [ "$SECONDS" -lt "$deadline" ]; do
     if extract_forward_ready "$log"; then
-      printf "%s\n" "$pid"
+      STARTED_PID=$pid
       return 0
     fi
     if ! kill -0 "$pid" 2>/dev/null; then
@@ -169,26 +181,36 @@ start_forward() {
 
 run_case() {
   local label=$1 proxy_mode=$2 use_quic=$3 proxy_key=$4
-  local proxy_url upstream config_path tunnel_prefix forward_pid
-  proxy_url=$(start_proxy "$label" "$proxy_mode")
-  upstream=$(start_upstream "$label")
+  local proxy_url proxy_pid upstream upstream_pid config_path tunnel_prefix forward_pid
+  start_proxy "$label" "$proxy_mode"
+  proxy_url=$STARTED_VALUE
+  proxy_pid=$STARTED_PID
+  start_upstream "$label"
+  upstream=$STARTED_VALUE
+  upstream_pid=$STARTED_PID
   config_path="$TMP_DIR/config-$label.yaml"
   tunnel_prefix="$NAME_PREFIX-$label"
   write_config "$config_path" "$use_quic" "$proxy_key" "$proxy_url"
-  if ! forward_pid=$(start_forward "$label" "$config_path" "$upstream" "$tunnel_prefix"); then
+  if ! start_forward "$label" "$config_path" "$upstream" "$tunnel_prefix"; then
     printf "FAIL %-36s\n" "$label" >&2
     FAIL=$((FAIL + 1))
     return
   fi
-  if RSTREAM_CONFIG="$config_path" RSTREAM_CONTEXT=proxy-e2e "$BIN/stream/client" --variant plain --tunnel "$tunnel_prefix"; then
+  forward_pid=$STARTED_PID
+  if RSTREAM_CONFIG="$config_path" RSTREAM_CONTEXT=proxy-e2e "$BIN/stream/client" --variant plain --tunnel "$tunnel_prefix" &&
+    { [ "$proxy_mode" != "masque" ] || sleep 35; } &&
+    RSTREAM_CONFIG="$config_path" RSTREAM_CONTEXT=proxy-e2e "$BIN/stream/client" --variant plain --tunnel "$tunnel_prefix"; then
     printf "PASS %-36s\n" "$label"
     PASS=$((PASS + 1))
   else
     printf "FAIL %-36s\n" "$label" >&2
+    print_case_logs "$label"
     FAIL=$((FAIL + 1))
   fi
   kill "$forward_pid" 2>/dev/null || true
   wait "$forward_pid" 2>/dev/null || true
+  kill "$upstream_pid" "$proxy_pid" 2>/dev/null || true
+  wait "$upstream_pid" "$proxy_pid" 2>/dev/null || true
 }
 
 run_case "tls-http-proxy" http false http

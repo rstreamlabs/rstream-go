@@ -100,7 +100,7 @@ func TestMCPToolsListContainsAgentNativeTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal returned error: %v", err)
 	}
-	for _, want := range []string{"rstream_auth_poll", "rstream_auth_start", "rstream_context_list", "rstream_context_get", "rstream_project_creation_options", "rstream_project_create", "rstream_project_delete", "rstream_project_events_list", "rstream_project_list", "rstream_project_logs", "rstream_project_usage", "rstream_project_plan_get", "rstream_project_turn_usage", "rstream_project_turn_credentials_create", "rstream_project_webhooks_list", "rstream_project_webhook_deliveries_list", "rstream_project_webhook_delivery_get", "rstream_project_domains_list", "rstream_project_domain_create", "rstream_project_domain_get", "rstream_project_domain_delete", "rstream_project_domain_verify", "rstream_project_domain_connect", "rstream_project_tcp_addresses_list", "rstream_project_tcp_address_reserve", "rstream_project_tcp_address_release", "rstream_project_settings_get", "rstream_project_settings_patch", "rstream_project_settings_reset", "rstream_local_tunnel_expose", "rstream_local_tunnel_list", "rstream_local_tunnel_stop", "rstream_remote_expose", "rstream_remote_expose_stop", "rstream_remote_mcp_discover", "rstream_remote_mcp_tools", "rstream_remote_mcp_call", "rstream_runtime_prepare", "rstream_runtime_status", "rstream_token_create", "rstream_workspace_list", "rstream_workspace_members_list", "rstream_webtty_list", "rstream_webtty_servers_list", "rstream_webtty_server_get", "rstream_webtty_server_create", "rstream_webtty_server_update", "rstream_webtty_server_delete", "rstream_webtty_server_enrollment_get", "rstream_webtty_exec", "rstream_webtty_sessions_list", "rstream_webtty_session_get", "rstream_webtty_session_events", "rstream_webtty_session_export", "rstream_webtty_session_participants", "rstream_webtty_control_requests_list", "rstream_webtty_control_request_create", "rstream_webtty_control_request_resolve", "rstream_webtty_fs_list", "rstream_webtty_fs_read", "rstream_webtty_fs_download", "rstream_webtty_fs_write", "rstream_webtty_fs_mkdir", "rstream_webtty_fs_delete"} {
+	for _, want := range []string{"rstream_auth_poll", "rstream_auth_start", "rstream_context_list", "rstream_context_get", "rstream_project_creation_options", "rstream_project_create", "rstream_project_update", "rstream_project_delete", "rstream_project_events_list", "rstream_project_list", "rstream_project_logs", "rstream_project_usage", "rstream_project_plan_get", "rstream_project_turn_usage", "rstream_project_turn_credentials_create", "rstream_project_webhooks_list", "rstream_project_webhook_deliveries_list", "rstream_project_webhook_delivery_get", "rstream_project_domains_list", "rstream_project_domain_create", "rstream_project_domain_get", "rstream_project_domain_delete", "rstream_project_domain_verify", "rstream_project_domain_connect", "rstream_project_tcp_addresses_list", "rstream_project_tcp_address_reserve", "rstream_project_tcp_address_release", "rstream_project_settings_get", "rstream_project_settings_patch", "rstream_project_settings_reset", "rstream_local_tunnel_expose", "rstream_local_tunnel_list", "rstream_local_tunnel_stop", "rstream_remote_expose", "rstream_remote_expose_stop", "rstream_remote_mcp_discover", "rstream_remote_mcp_tools", "rstream_remote_mcp_call", "rstream_runtime_prepare", "rstream_runtime_status", "rstream_token_create", "rstream_workspace_list", "rstream_workspace_members_list", "rstream_webtty_list", "rstream_webtty_servers_list", "rstream_webtty_server_get", "rstream_webtty_server_create", "rstream_webtty_server_update", "rstream_webtty_server_delete", "rstream_webtty_server_enrollment_get", "rstream_webtty_exec", "rstream_webtty_sessions_list", "rstream_webtty_session_get", "rstream_webtty_session_events", "rstream_webtty_session_export", "rstream_webtty_session_participants", "rstream_webtty_control_requests_list", "rstream_webtty_control_request_create", "rstream_webtty_control_request_resolve", "rstream_webtty_fs_list", "rstream_webtty_fs_read", "rstream_webtty_fs_download", "rstream_webtty_fs_write", "rstream_webtty_fs_mkdir", "rstream_webtty_fs_delete"} {
 		if !strings.Contains(string(payload), want) {
 			t.Fatalf("tools/list missing %q: %s", want, string(payload))
 		}
@@ -125,7 +125,7 @@ func TestMCPToolsListContainsAgentNativeTools(t *testing.T) {
 		Key  string
 		Name string
 		Want bool
-	}{{"destructiveHint", "rstream_webtty_exec", true}, {"destructiveHint", "rstream_webtty_fs_write", true}, {"destructiveHint", "rstream_webtty_control_request_create", true}, {"destructiveHint", "rstream_webtty_control_request_resolve", true}, {"destructiveHint", "rstream_remote_mcp_call", true}, {"openWorldHint", "rstream_project_list", true}, {"readOnlyHint", "rstream_project_creation_options", true}, {"readOnlyHint", "rstream_project_domain_connect", true}, {"readOnlyHint", "rstream_webtty_session_export", true}} {
+	}{{"destructiveHint", "rstream_webtty_exec", true}, {"destructiveHint", "rstream_webtty_fs_write", true}, {"destructiveHint", "rstream_webtty_control_request_create", true}, {"destructiveHint", "rstream_webtty_control_request_resolve", true}, {"destructiveHint", "rstream_remote_mcp_call", true}, {"idempotentHint", "rstream_project_update", true}, {"openWorldHint", "rstream_project_list", true}, {"readOnlyHint", "rstream_project_creation_options", true}, {"readOnlyHint", "rstream_project_domain_connect", true}, {"readOnlyHint", "rstream_webtty_session_export", true}} {
 		if got := toolsByName[check.Name][check.Key]; got != check.Want {
 			t.Fatalf("%s %s = %#v, want %v", check.Name, check.Key, got, check.Want)
 		}
@@ -303,7 +303,7 @@ func TestMCPProjectListIgnoresExpiredDefaultContextWhenLoginTokenExists(t *testi
 		if got := r.Header.Get("Authorization"); got != "Bearer login-token" {
 			t.Fatalf("Authorization = %q", got)
 		}
-		_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{{ID: "p1", Name: "Prod", Endpoint: "abc12345", Domain: "cluster.example.com", EnginePort: 443, Status: "active", Plan: "pro"}}})
+		_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{{ID: "p1", Name: "Prod", Endpoint: "abc12345", Domain: "cluster.example.com", EnginePort: 443, Status: "active", Plan: "pro", Routing: "regional"}}})
 	}))
 	defer server.Close()
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -349,7 +349,7 @@ func TestMCPRuntimePrepareUsesLoginTokenInsteadOfShortContextToken(t *testing.T)
 		if got := r.Header.Get("Authorization"); got != "Bearer login-token" {
 			t.Fatalf("Authorization = %q", got)
 		}
-		_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{{ID: "p1", WorkspaceID: "w1", Name: "Prod", Endpoint: "abc12345", Domain: "cluster.example.com", EnginePort: 443, Status: "active", Plan: "pro", Region: "eu-west-3", TurnPort: 3478, TurnsPort: 5349}}})
+		_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{{ID: "p1", WorkspaceID: "w1", Name: "Prod", Endpoint: "abc12345", Domain: "cluster.example.com", EnginePort: 443, Status: "active", Plan: "pro", Routing: "regional", Region: "eu-west-3", TurnPort: 3478, TurnsPort: 5349}}})
 	}))
 	defer server.Close()
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -420,7 +420,7 @@ environments:
 		t.Fatalf("WriteFile returned error: %v", err)
 	}
 	t.Setenv("RSTREAM_CONFIG", configPath)
-	result, err := mcpRuntimeStatus()
+	result, err := mcpRuntimeStatus(t.Context())
 	if err != nil {
 		t.Fatalf("mcpRuntimeStatus returned error: %v", err)
 	}
@@ -677,11 +677,24 @@ func TestMCPCreateProjectArgsRequiresExplicitBillingInputs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("mcpCreateProjectArgs returned error: %v", err)
 	}
-	if workspaceID != "ws1" || request.Name != "Codex Demo" || request.Provider != "aws" || request.Region != "eu-west-3" || request.Plan != "basic" || request.CreationFingerprint != "fingerprint" {
+	if workspaceID != "ws1" || request.Name != "Codex Demo" || request.Routing != "regional" || request.Provider != "aws" || request.Region != "eu-west-3" || request.Plan != "basic" || request.CreationFingerprint != "fingerprint" {
 		t.Fatalf("unexpected request: workspace=%q request=%#v", workspaceID, request)
 	}
 	if !strings.HasPrefix(request.IdempotencyKey, "mcp:") {
 		t.Fatalf("missing generated idempotency key: %q", request.IdempotencyKey)
+	}
+	globalArgs := map[string]json.RawMessage{"workspace_id": json.RawMessage(`"ws1"`), "name": json.RawMessage(`"Global"`), "routing": json.RawMessage(`"global"`), "provider": json.RawMessage(`"aws"`), "plan": json.RawMessage(`"pro"`), "creation_fingerprint": json.RawMessage(`"fingerprint"`)}
+	_, globalRequest, err := mcpCreateProjectArgs(globalArgs)
+	if err != nil {
+		t.Fatalf("mcpCreateProjectArgs(global) returned error: %v", err)
+	}
+	if globalRequest.Routing != "global" || globalRequest.Provider != "aws" || globalRequest.Region != "" {
+		t.Fatalf("unexpected global request: %#v", globalRequest)
+	}
+	delete(globalArgs, "routing")
+	delete(globalArgs, "provider")
+	if _, _, err := mcpCreateProjectArgs(globalArgs); err == nil {
+		t.Fatal("expected missing provider error")
 	}
 	delete(args, "creation_fingerprint")
 	if _, _, err := mcpCreateProjectArgs(args); err == nil {

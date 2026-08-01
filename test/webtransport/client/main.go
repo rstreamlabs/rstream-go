@@ -44,9 +44,18 @@ const tunneledQUICInitialPacketSize = 1200
 // set up *webtransport.Session instances; callers are responsible for close.
 // token, when non-empty, is sent as "Authorization: Bearer <token>" on each
 // WebTransport dial (supports token-auth protected tunnels).
-func buildDialer(client *rstream.Client, publish bool, token string) (sessionDialer, error) {
+func webTransportTLSConfig(base *tls.Config) *tls.Config {
+	cfg := &tls.Config{}
+	if base != nil {
+		cfg = base.Clone()
+	}
+	cfg.NextProtos = []string{"h3"}
+	return cfg
+}
+
+func buildDialer(client *rstream.Client, publish bool, token string, tunnelName string, publishedTLSConfig *tls.Config) (sessionDialer, error) {
 	if publish {
-		host, err := findPublishedHost(client, "wt-matrix")
+		host, err := findPublishedHost(client, tunnelName)
 		if err != nil {
 			return nil, err
 		}
@@ -63,7 +72,7 @@ func buildDialer(client *rstream.Client, publish bool, token string) (sessionDia
 			dialHdr.Set("Authorization", "Bearer "+token)
 		}
 		return func(ctx context.Context, relPath string) (*webtransport.Session, error) {
-			d := webtransport.Dialer{}
+			d := webtransport.Dialer{TLSClientConfig: webTransportTLSConfig(publishedTLSConfig)}
 			u := "https://" + host + relPath
 			_, sess, err := d.Dial(ctx, u, dialHdr)
 			return sess, err
@@ -84,8 +93,8 @@ func buildDialer(client *rstream.Client, publish bool, token string) (sessionDia
 				return quic.DialEarly(ctx, pc, &raddr, tlsCfg, tunneledConfig)
 			},
 		}
-		u := "https://wt-matrix" + relPath
-		_, sess, err := d.Dial(ctx, u, http.Header{"Origin": {"https://wt-matrix"}})
+		u := "https://" + tunnelName + relPath
+		_, sess, err := d.Dial(ctx, u, http.Header{"Origin": {"https://" + tunnelName}})
 		return sess, err
 	}, nil
 }
@@ -560,12 +569,17 @@ func main() {
 	caseName := flag.String("case", "all", "test case name, or 'all' to run the full matrix")
 	timeout := flag.Duration("timeout", 30*time.Second, "per-case timeout")
 	token := flag.String("token", "", "Bearer token for token-auth protected tunnels (empty = no auth header)")
+	tunnelName := flag.String("tunnel", "wt-matrix", "tunnel name")
 	flag.Parse()
+	resolution, err := config.ResolveFromEnv(config.ClientEnvOptions{RequireEngine: true})
+	if err != nil {
+		log.Fatalf("Configuration error: %v", err)
+	}
 	client, err := config.NewClientFromEnv()
 	if err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
-	dial, err := buildDialer(client, *publish, *token)
+	dial, err := buildDialer(client, *publish, *token, *tunnelName, resolution.Resolved.TLSClientConfig)
 	if err != nil {
 		log.Fatalf("dialer setup: %v", err)
 	}

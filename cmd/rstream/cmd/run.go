@@ -39,10 +39,11 @@ var runCmd = &cobra.Command{
 			return err
 		}
 		fallback := runmodel.ResolvedContext{
-			Name:      res.ContextName,
-			Engine:    res.Engine,
-			Token:     res.Token,
-			Transport: res.Transport,
+			Name:               res.ContextName,
+			Engine:             res.Engine,
+			StableDomainEngine: res.StableDomainEngine,
+			Token:              res.Token,
+			Transport:          res.Transport,
 		}
 		lookup := func(name string) (runmodel.ResolvedContext, error) {
 			resolved, err := resolveNamedContext(cfg, env, cmd, name)
@@ -50,10 +51,11 @@ var runCmd = &cobra.Command{
 				return runmodel.ResolvedContext{}, err
 			}
 			return runmodel.ResolvedContext{
-				Name:      name,
-				Engine:    resolved.Engine,
-				Token:     resolved.Token,
-				Transport: resolved.Transport,
+				Name:               name,
+				Engine:             resolved.Engine,
+				StableDomainEngine: resolved.StableDomainEngine,
+				Token:              resolved.Token,
+				Transport:          resolved.Transport,
 			}, nil
 		}
 		starter := runengine.New(
@@ -157,17 +159,30 @@ func loadRuntimeContext(cmd *cobra.Command) (config.Resolved, config.Config, con
 
 func resolveNamedContext(cfg config.Config, env config.EnvSettings, cmd *cobra.Command, name string) (config.Resolved, error) {
 	flagAPIURL, _ := cmd.Flags().GetString("api-url")
+	flagRegion, _ := cmd.Flags().GetString("region")
 	input := config.ResolveInput{
-		Config:        cfg,
-		FlagAPIURL:    flagAPIURL,
-		FlagContext:   name,
-		EnvAPIURL:     env.APIURL,
-		EnvContext:    env.Context,
-		EnvEngine:     env.Engine,
-		EnvToken:      env.Token,
-		RequireEngine: true,
-		RequireToken:  true,
-		ResolveToken:  true,
+		Config:                 cfg,
+		FlagAPIURL:             flagAPIURL,
+		FlagContext:            name,
+		FlagRegion:             flagRegion,
+		EnvAPIURL:              env.APIURL,
+		EnvContext:             env.Context,
+		EnvEngine:              env.Engine,
+		EnvToken:               env.Token,
+		EnvRegion:              env.Region,
+		EnvControlPlaneHeaders: env.ControlPlaneHeaders,
+		RequireEngine:          true,
+		RequireToken:           true,
+		ResolveToken:           true,
 	}
-	return config.Resolve(input)
+	resolved, err := config.Resolve(input)
+	if err != nil {
+		return config.Resolved{}, err
+	}
+	if resolved.Region != "" {
+		if err := resolveRuntimeRegion(cmd, cfg, &resolved); err != nil {
+			return config.Resolved{}, err
+		}
+	}
+	return resolved, nil
 }

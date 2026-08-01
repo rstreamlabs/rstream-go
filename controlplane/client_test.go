@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -23,14 +24,70 @@ func TestNewClientOptionsAndRequireToken(t *testing.T) {
 	if client.apiURL != "https://api.example.com" || client.token != "token" {
 		t.Fatalf("client fields not normalized: apiURL=%q token=%q", client.apiURL, client.token)
 	}
-	if client.httpClient != httpClient || client.logger != logger {
+	if client.httpClient == httpClient || client.httpClient.Timeout != httpClient.Timeout || client.logger != logger {
 		t.Fatalf("client options not applied")
+	}
+	if client.httpClient.CheckRedirect == nil {
+		t.Fatal("control plane client must reject redirects")
 	}
 	if err := client.RequireToken(); err != nil {
 		t.Fatalf("RequireToken() error = %v", err)
 	}
 	if err := NewClient("https://api.example.com", " ").RequireToken(); err == nil {
 		t.Fatalf("expected missing token error")
+	}
+}
+
+func TestControlPlaneHeadersAndRedirectIsolation(t *testing.T) {
+	var redirected atomic.Int32
+	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirected.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer redirectTarget.Close()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Deployment-Bypass"); got != "secret" {
+			http.Error(w, "missing deployment header", http.StatusBadRequest)
+			return
+		}
+		http.Redirect(w, r, redirectTarget.URL, http.StatusTemporaryRedirect)
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "token", WithHeaders(map[string]string{"x-deployment-bypass": "secret"}))
+	if _, err := client.Whoami(context.Background()); err == nil || !strings.Contains(err.Error(), "307") {
+		t.Fatalf("Whoami() error = %v, want redirect response", err)
+	}
+	if redirected.Load() != 0 {
+		t.Fatalf("redirect target received %d requests", redirected.Load())
+	}
+	if _, err := NewClient(server.URL, "token", WithHeaders(map[string]string{"Authorization": "secret"})).Whoami(context.Background()); err == nil || !strings.Contains(err.Error(), "reserved control plane header") {
+		t.Fatalf("Whoami() error = %v, want reserved header error", err)
+	}
+}
+
+func TestControlPlaneHTMLResponsesAreTyped(t *testing.T) {
+	tests := []struct {
+		name        string
+		contentType string
+		body        string
+		status      int
+	}{
+		{name: "content type", contentType: "text/html; charset=utf-8", body: "<!doctype html><title>Protected</title>", status: http.StatusOK},
+		{name: "body prefix", contentType: "text/plain", body: " \n<html><title>Protected</title>", status: http.StatusOK},
+		{name: "forbidden", contentType: "text/html", body: "<html><title>Protected</title>", status: http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", tt.contentType)
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+			if _, err := NewClient(server.URL, "token").Whoami(t.Context()); !errors.Is(err, ErrAccessProtection) {
+				t.Fatalf("Whoami() error = %v, want ErrAccessProtection", err)
+			}
+		})
 	}
 }
 
@@ -88,7 +145,7 @@ func TestResolveProjectByEndpointEscapesPath(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(Project{ID: "p1", Endpoint: endpoint, Name: "Project"})
+		_ = json.NewEncoder(w).Encode(Project{ID: "p1", Endpoint: endpoint, Name: "Project", Routing: "regional"})
 	}))
 	defer server.Close()
 	client := NewClient(server.URL, "token")
@@ -98,6 +155,54 @@ func TestResolveProjectByEndpointEscapesPath(t *testing.T) {
 	}
 	if project.ID != "p1" || project.Endpoint != endpoint {
 		t.Fatalf("unexpected project: %+v", project)
+	}
+}
+
+func TestResolveProjectByIDEscapesPath(t *testing.T) {
+	projectID := "project/with space"
+	expectedPath := "/api/projects/tunnels/" + url.PathEscape(projectID)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.EscapedPath(); got != expectedPath {
+			http.Error(w, "unexpected path", http.StatusBadRequest)
+			return
+		}
+		if got := r.Header.Get("x-deployment-bypass"); got != "secret" {
+			http.Error(w, "missing deployment bypass", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(Project{ID: projectID, Endpoint: "endpoint", Name: "Project", Routing: "regional"})
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "token", WithHeaders(map[string]string{"x-deployment-bypass": "secret"}))
+	project, err := client.ResolveProjectByID(context.Background(), projectID)
+	if err != nil {
+		t.Fatalf("resolve failed: %v", err)
+	}
+	if project.ID != projectID || project.Endpoint != "endpoint" {
+		t.Fatalf("unexpected project: %+v", project)
+	}
+}
+
+func TestProjectResponsesRequireRouting(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/projects/tunnels":
+			_ = json.NewEncoder(w).Encode(ListProjectsResponse{Projects: []Project{{ID: "p1"}}})
+		case "/api/projects/tunnels/p1":
+			_ = json.NewEncoder(w).Encode(Project{ID: "p1"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := NewClient(server.URL, "token")
+	if _, err := client.ListProjects(t.Context(), ListProjectsParams{}); err == nil || !strings.Contains(err.Error(), "routing") {
+		t.Fatalf("ListProjects() error = %v, want routing error", err)
+	}
+	if _, err := client.ResolveProjectByID(t.Context(), "p1"); err == nil || !strings.Contains(err.Error(), "routing") {
+		t.Fatalf("ResolveProjectByID() error = %v, want routing error", err)
 	}
 }
 
@@ -118,7 +223,7 @@ func TestWorkspaceProjectCreationEndpoints(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.EscapedPath() == expectedPrefix:
 			seen["workspace_projects"] = true
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(ListProjectsResponse{Projects: []Project{{ID: "p1", Name: "Project"}}})
+			_ = json.NewEncoder(w).Encode(ListProjectsResponse{Projects: []Project{{ID: "p1", Name: "Project", Routing: "regional"}}})
 		case r.Method == http.MethodGet && r.URL.EscapedPath() == expectedPrefix+"/plan/config":
 			seen["options"] = true
 			w.Header().Set("Content-Type", "application/json")
@@ -131,11 +236,20 @@ func TestWorkspaceProjectCreationEndpoints(t *testing.T) {
 			seen["create"] = true
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusCreated)
-			_ = json.NewEncoder(w).Encode(Project{ID: "p2", Name: "Created"})
+			_ = json.NewEncoder(w).Encode(Project{ID: "p2", Name: "Created", Routing: "regional"})
 		case r.Method == http.MethodPost && r.URL.EscapedPath() == expectedPrefix+"/payment-checkout":
 			seen["checkout"] = true
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(CreateProjectCheckoutResponse{URL: "https://checkout.example", ProjectID: "p3"})
+		case r.Method == http.MethodPut && r.URL.EscapedPath() == "/api/projects/tunnels/p2":
+			var request UpdateProjectRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Name != "Renamed" {
+				http.Error(w, "unexpected update request", http.StatusBadRequest)
+				return
+			}
+			seen["update"] = true
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(Project{ID: "p2", Name: request.Name, Routing: "regional"})
 		case r.Method == http.MethodDelete && r.URL.EscapedPath() == "/api/projects/tunnels/p2":
 			seen["delete"] = true
 			w.WriteHeader(http.StatusNoContent)
@@ -157,17 +271,21 @@ func TestWorkspaceProjectCreationEndpoints(t *testing.T) {
 	if _, err := client.GetProjectPlan(context.Background(), "p1"); err != nil {
 		t.Fatalf("GetProjectPlan returned error: %v", err)
 	}
-	request := CreateProjectRequest{Name: "Created", Provider: "aws", Region: "eu-west-3", Plan: "basic", CreationFingerprint: "abc", IdempotencyKey: "idem"}
+	request := CreateProjectRequest{Name: "Created", Routing: "regional", Provider: "aws", Region: "eu-west-3", Plan: "basic", CreationFingerprint: "abc", IdempotencyKey: "idem"}
 	if _, err := client.CreateProject(context.Background(), workspaceID, request); err != nil {
 		t.Fatalf("CreateProject returned error: %v", err)
 	}
 	if _, err := client.CreateProjectCheckout(context.Background(), workspaceID, request); err != nil {
 		t.Fatalf("CreateProjectCheckout returned error: %v", err)
 	}
+	updated, err := client.UpdateProject(context.Background(), "p2", UpdateProjectRequest{Name: "Renamed"})
+	if err != nil || updated.Name != "Renamed" {
+		t.Fatalf("UpdateProject returned %+v, %v", updated, err)
+	}
 	if err := client.DeleteProject(context.Background(), "p2"); err != nil {
 		t.Fatalf("DeleteProject returned error: %v", err)
 	}
-	for _, key := range []string{"workspaces", "workspace_projects", "options", "project_plan", "create", "checkout", "delete"} {
+	for _, key := range []string{"workspaces", "workspace_projects", "options", "project_plan", "create", "checkout", "update", "delete"} {
 		if !seen[key] {
 			t.Fatalf("endpoint %q was not called", key)
 		}
@@ -614,7 +732,7 @@ func TestProjectOperationsAndWorkspaceMembersEndpoints(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.EscapedPath() == projectPrefix+"/domains":
 			seen["domain_create"] = true
 			var payload CreateProjectDomainRequest
-			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Hostname != "codex.example.com" {
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload.Hostname != "*.codex.example.com" || payload.Kind != ProjectDomainKindWildcard || payload.CertificateValidation != ProjectDomainCertificateValidationDNS01 {
 				http.Error(w, "unexpected domain create", http.StatusBadRequest)
 				return
 			}
@@ -693,7 +811,7 @@ func TestProjectOperationsAndWorkspaceMembersEndpoints(t *testing.T) {
 	if _, err := client.ListProjectDomains(context.Background(), projectID, ListProjectDomainsParams{Query: "codex", PageSize: &memberPageSize}); err != nil {
 		t.Fatalf("ListProjectDomains returned error: %v", err)
 	}
-	if _, err := client.CreateProjectDomain(context.Background(), projectID, CreateProjectDomainRequest{Hostname: "codex.example.com"}); err != nil {
+	if _, err := client.CreateProjectDomain(t.Context(), projectID, CreateProjectDomainRequest{Hostname: "*.codex.example.com", Kind: ProjectDomainKindWildcard, CertificateValidation: ProjectDomainCertificateValidationDNS01}); err != nil {
 		t.Fatalf("CreateProjectDomain returned error: %v", err)
 	}
 	if _, err := client.GetProjectDomain(context.Background(), projectID, domainID); err != nil {
@@ -956,7 +1074,7 @@ func TestListProjectsQueryParamsAndParsing(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(ListProjectsResponse{
-			Projects:   []Project{{ID: "p1", Name: "Acme", Endpoint: "acme:8443", Status: "active", Plan: "pro", Deployment: "shared", Provider: "aws"}},
+			Projects:   []Project{{ID: "p1", Name: "Acme", Endpoint: "acme:8443", Status: "active", Plan: "pro", Deployment: "shared", Provider: "aws", Routing: "regional"}},
 			Page:       2,
 			PageSize:   10,
 			Total:      1,

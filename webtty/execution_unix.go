@@ -7,7 +7,6 @@ package webtty
 import (
 	"fmt"
 	"os/user"
-	"strconv"
 )
 
 func executionCredentialRequired(mode ExecutionMode, ui *UserInfo, requested *UsernameVariant) (bool, error) {
@@ -29,17 +28,4 @@ func userInfoMatchesCurrent(ui *UserInfo, current *user.User) bool {
 		return false
 	}
 	return uid == ui.UID && gid == ui.GID
-}
-
-func usernameVariantDisplay(u *UsernameVariant) string {
-	if u == nil {
-		return ""
-	}
-	if u.Name != nil {
-		return *u.Name
-	}
-	if u.UID != nil {
-		return strconv.FormatUint(uint64(*u.UID), 10)
-	}
-	return ""
 }

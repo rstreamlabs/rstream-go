@@ -119,7 +119,7 @@ func FormatForwardedHostPort(host, port string, props TunnelProperties) (string,
 }
 
 func FormatForwardedAddr(addr net.TCPAddr, props TunnelProperties) (string, error) {
-	if addr.IP == nil || len(addr.IP) == 0 {
+	if len(addr.IP) == 0 {
 		return "", errors.New("invalid address: no IP")
 	}
 	if addr.Port == 0 {
@@ -142,27 +142,30 @@ func toClientDetailsPb(details *ClientDetails) *pb.ClientDetails {
 
 func toTunnelProperties(msg *pb.TunnelProperties) TunnelProperties {
 	return TunnelProperties{
-		ID:                         stringPtrFromPbValue(msg.Id),
-		CreationDate:               timePtrFromPbValue(msg.CreationDate),
-		Name:                       stringPtrFromPbValue(msg.Name),
-		Type:                       (*TunnelType)(stringPtrFromPbValue(msg.Type)),
-		Publish:                    boolPtrFromPbValue(msg.Publish),
-		Protocol:                   (*Protocol)(stringPtrFromPbValue(msg.Protocol)),
-		Labels:                     msg.Labels,
-		GeoIP:                      msg.Geoip,
-		TrustedIPs:                 msg.TrustedIps,
-		Host:                       stringPtrFromPbValue(msg.Host),
-		Hostname:                   stringPtrFromPbValue(msg.Hostname),
-		Port:                       uint32PtrFromPbValue(msg.Port),
-		TLSMode:                    (*TLSMode)(stringPtrFromPbValue(msg.TlsMode)),
-		TLSALPNs:                   msg.TlsAlpns,
-		TLSMinVersion:              stringPtrFromPbValue(msg.TlsMinVersion),
-		TLSCiphers:                 msg.TlsCiphers,
-		MTLSAuth:                   boolPtrFromPbValue(msg.MtlsAuth),
-		HTTPVersion:                (*HTTPVersion)(stringPtrFromPbValue(msg.HttpVersion)),
+		ID:           stringPtrFromPbValue(msg.Id),
+		CreationDate: timePtrFromPbValue(msg.CreationDate),
+		Name:         stringPtrFromPbValue(msg.Name),
+		Type:         (*TunnelType)(stringPtrFromPbValue(msg.Type)),
+		Publish:      boolPtrFromPbValue(msg.Publish),
+		Protocol:     (*Protocol)(stringPtrFromPbValue(msg.Protocol)),
+		Labels:       msg.Labels,
+		GeoIP:        msg.Geoip,
+		TrustedIPs:   msg.TrustedIps,
+		//lint:ignore SA1019 Legacy protobuf field remains readable for protocol compatibility.
+		Host:          stringPtrFromPbValue(msg.Host),
+		Hostname:      stringPtrFromPbValue(msg.Hostname),
+		Port:          uint32PtrFromPbValue(msg.Port),
+		TLSMode:       (*TLSMode)(stringPtrFromPbValue(msg.TlsMode)),
+		TLSALPNs:      msg.TlsAlpns,
+		TLSMinVersion: stringPtrFromPbValue(msg.TlsMinVersion),
+		TLSCiphers:    msg.TlsCiphers,
+		MTLSAuth:      boolPtrFromPbValue(msg.MtlsAuth),
+		HTTPVersion:   (*HTTPVersion)(stringPtrFromPbValue(msg.HttpVersion)),
+		//lint:ignore SA1019 Legacy protobuf field remains readable for protocol compatibility.
 		HTTPUseTLS:                 boolPtrFromPbValue(msg.HttpUseTls),
 		UpstreamTLS:                boolPtrFromPbValue(msg.UpstreamTls),
 		DatagramGuaranteedDelivery: boolPtrFromPbValue(msg.DatagramGuaranteedDelivery),
+		AllowCrossRegionRouting:    boolPtrFromPbValue(msg.AllowCrossRegionRouting),
 		TokenAuth:                  boolPtrFromPbValue(msg.TokenAuth),
 		RstreamAuth:                boolPtrFromPbValue(msg.RstreamAuth),
 		ChallengeMode:              boolPtrFromPbValue(msg.ChallengeMode),
@@ -192,6 +195,7 @@ func toTunnelPropertiesPb(props TunnelProperties) *pb.TunnelProperties {
 		HttpUseTls:                 boolPbValueOrNil(props.HTTPUseTLS),
 		UpstreamTls:                boolPbValueOrNil(props.UpstreamTLS),
 		DatagramGuaranteedDelivery: boolPbValueOrNil(props.DatagramGuaranteedDelivery),
+		AllowCrossRegionRouting:    boolPbValueOrNil(props.AllowCrossRegionRouting),
 		TokenAuth:                  boolPbValueOrNil(props.TokenAuth),
 		RstreamAuth:                boolPbValueOrNil(props.RstreamAuth),
 		ChallengeMode:              boolPbValueOrNil(props.ChallengeMode),

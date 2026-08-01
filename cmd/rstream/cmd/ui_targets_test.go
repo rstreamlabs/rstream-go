@@ -84,7 +84,7 @@ func TestUIRuntimeResolverDiscoversPaginatedProjectsAndWorkspaceNames(t *testing
 		case "/api/projects/tunnels":
 			requests++
 			page := r.URL.Query().Get("page")
-			project := controlplane.Project{ID: "project-" + page, WorkspaceID: "workspace-1", Name: "Project " + page, Endpoint: "project-" + page, Domain: "engine.example", EnginePort: 443, Status: "active"}
+			project := controlplane.Project{ID: "project-" + page, WorkspaceID: "workspace-1", Name: "Project " + page, Endpoint: "project-" + page, Domain: "engine.example", EnginePort: 443, Status: "active", Routing: "regional"}
 			_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{project}, Page: requests, PageSize: 100, Total: 2, TotalPages: 2})
 		default:
 			http.NotFound(w, r)
@@ -123,7 +123,7 @@ func TestUIRuntimeResolverToleratesWorkspaceLookupFailure(t *testing.T) {
 			return
 		}
 		if r.URL.Path == "/api/projects/tunnels" {
-			_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{{ID: "project-1", Name: "Project", Endpoint: "project", Domain: "engine.example"}}, TotalPages: 1})
+			_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{{ID: "project-1", Name: "Project", Endpoint: "project", Domain: "engine.example", Routing: "regional"}}, TotalPages: 1})
 			return
 		}
 		http.NotFound(w, r)
@@ -177,7 +177,7 @@ func TestUIRuntimeResolverTemporaryAndPersistentContextSelection(t *testing.T) {
 	}
 	resolver := newUIRuntimeResolver(path, uiRuntimeOptions{contextOverride: "first"})
 	target := uiTarget{Kind: uiTargetContext, Context: second}
-	runtime, connection, warning, persisted, err := resolver.prepareTarget(target, false)
+	runtime, connection, warning, persisted, err := resolver.prepareTarget(t.Context(), target, false)
 	if err != nil {
 		t.Fatalf("temporary prepareTarget() error = %v", err)
 	}
@@ -188,7 +188,7 @@ func TestUIRuntimeResolverTemporaryAndPersistentContextSelection(t *testing.T) {
 	if loaded.Defaults.Context == nil || loaded.Defaults.Context.Name != "first" {
 		t.Fatalf("temporary selection changed default: %#v", loaded.Defaults.Context)
 	}
-	_, connection, warning, persisted, err = resolver.prepareTarget(target, true)
+	_, connection, warning, persisted, err = resolver.prepareTarget(t.Context(), target, true)
 	if err != nil {
 		t.Fatalf("persistent prepareTarget() error = %v", err)
 	}
@@ -216,7 +216,7 @@ func TestUIRuntimeResolverTemporaryAndPersistentProjectSelection(t *testing.T) {
 	project := controlplane.Project{ID: "project-1", WorkspaceID: "workspace-1", Name: "New Project", Endpoint: "new-project", Domain: "engines.example", EnginePort: 443}
 	target := uiTarget{Kind: uiTargetProject, APIURL: apiURL, Project: project}
 	resolver := newUIRuntimeResolver(path, uiRuntimeOptions{})
-	runtime, connection, _, persisted, err := resolver.prepareTarget(target, false)
+	runtime, connection, _, persisted, err := resolver.prepareTarget(t.Context(), target, false)
 	if err != nil {
 		t.Fatalf("temporary project prepareTarget() error = %v", err)
 	}
@@ -227,7 +227,7 @@ func TestUIRuntimeResolverTemporaryAndPersistentProjectSelection(t *testing.T) {
 	if len(loaded.Contexts) != 1 || loaded.Defaults.Context.Name != "first" {
 		t.Fatalf("temporary project changed config: %#v", loaded)
 	}
-	_, connection, _, persisted, err = resolver.prepareTarget(target, true)
+	_, connection, _, persisted, err = resolver.prepareTarget(t.Context(), target, true)
 	if err != nil {
 		t.Fatalf("persistent project prepareTarget() error = %v", err)
 	}
@@ -244,7 +244,7 @@ func TestUIRuntimeResolverRejectsConflictingEngineOverride(t *testing.T) {
 		t.Fatalf("WriteAtomic() error = %v", err)
 	}
 	resolver := newUIRuntimeResolver(path, uiRuntimeOptions{environment: config.EnvSettings{Engine: "override.example:443"}})
-	_, _, _, _, err := resolver.prepareTarget(uiTarget{Kind: uiTargetContext, Context: contextValue}, false)
+	_, _, _, _, err := resolver.prepareTarget(t.Context(), uiTarget{Kind: uiTargetContext, Context: contextValue}, false)
 	if err == nil || !strings.Contains(err.Error(), "RSTREAM_ENGINE") {
 		t.Fatalf("prepareTarget() error = %v, want engine override error", err)
 	}

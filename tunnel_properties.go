@@ -62,6 +62,7 @@ type TunnelProperties struct {
 	HTTPUseTLS                 *bool             `json:"http_use_tls,omitempty"`
 	UpstreamTLS                *bool             `json:"upstream_tls,omitempty"`
 	DatagramGuaranteedDelivery *bool             `json:"datagram_guaranteed_delivery,omitempty"`
+	AllowCrossRegionRouting    *bool             `json:"allow_cross_region_routing,omitempty"`
 	TokenAuth                  *bool             `json:"token_auth,omitempty"`
 	RstreamAuth                *bool             `json:"rstream_auth,omitempty"`
 	ChallengeMode              *bool             `json:"challenge_mode,omitempty"`

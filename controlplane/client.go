@@ -3,6 +3,7 @@
 package controlplane
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -18,8 +19,9 @@ import (
 )
 
 var (
-	ErrForbidden    = errors.New("not authorized")
-	ErrUnauthorized = errors.New("not authenticated")
+	ErrAccessProtection = errors.New("control-plane access intercepted")
+	ErrForbidden        = errors.New("not authorized")
+	ErrUnauthorized     = errors.New("not authenticated")
 )
 
 type apiErrorResponse struct {
@@ -34,8 +36,10 @@ type oauthErrorResponse struct {
 type Client struct {
 	apiURL     string
 	token      string
+	headers    map[string]string
 	httpClient *http.Client
 	logger     *slog.Logger
+	configErr  error
 }
 
 type Option func(*Client)
@@ -56,6 +60,12 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
+func WithHeaders(headers map[string]string) Option {
+	return func(c *Client) {
+		c.headers, c.configErr = NormalizeHeaders(headers)
+	}
+}
+
 func NewClient(apiURL, token string, opts ...Option) *Client {
 	client := &Client{
 		apiURL:     strings.TrimRight(strings.TrimSpace(apiURL), "/"),
@@ -66,6 +76,9 @@ func NewClient(apiURL, token string, opts ...Option) *Client {
 	for _, opt := range opts {
 		opt(client)
 	}
+	configuredHTTPClient := *client.httpClient
+	configuredHTTPClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	client.httpClient = &configuredHTTPClient
 	return client
 }
 
@@ -116,6 +129,9 @@ func (c *Client) ListProjects(ctx context.Context, params ListProjectsParams) (L
 		query.Set("order", params.Order)
 	}
 	_, err := c.doJSON(ctx, http.MethodGet, "/api/projects/tunnels", query, &out)
+	if err == nil {
+		err = validateProjectListResponse(out)
+	}
 	return out, err
 }
 
@@ -123,6 +139,19 @@ func (c *Client) ResolveProjectByEndpoint(ctx context.Context, endpoint string) 
 	var out Project
 	escaped := url.PathEscape(endpoint)
 	_, err := c.doJSON(ctx, http.MethodGet, "/api/projects/tunnels/resolve/"+escaped, nil, &out)
+	if err == nil {
+		err = validateProjectResponse(out)
+	}
+	return out, err
+}
+
+func (c *Client) ResolveProjectByID(ctx context.Context, projectID string) (Project, error) {
+	var out Project
+	escaped := url.PathEscape(projectID)
+	_, err := c.doJSON(ctx, http.MethodGet, "/api/projects/tunnels/"+escaped, nil, &out)
+	if err == nil {
+		err = validateProjectResponse(out)
+	}
 	return out, err
 }
 
@@ -146,6 +175,9 @@ func (c *Client) ListWorkspaceProjects(ctx context.Context, workspaceID string, 
 	}
 	path := "/api/workspaces/" + url.PathEscape(workspaceID) + "/projects/tunnels"
 	_, err := c.doJSON(ctx, http.MethodGet, path, query, &out)
+	if err == nil {
+		err = validateProjectListResponse(out)
+	}
 	return out, err
 }
 
@@ -167,6 +199,9 @@ func (c *Client) CreateProject(ctx context.Context, workspaceID string, request 
 	var out Project
 	path := "/api/workspaces/" + url.PathEscape(workspaceID) + "/projects/tunnels"
 	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
+	if err == nil {
+		err = validateProjectResponse(out)
+	}
 	return out, err
 }
 
@@ -174,6 +209,16 @@ func (c *Client) CreateProjectCheckout(ctx context.Context, workspaceID string, 
 	var out CreateProjectCheckoutResponse
 	path := "/api/workspaces/" + url.PathEscape(workspaceID) + "/projects/tunnels/payment-checkout"
 	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
+	return out, err
+}
+
+func (c *Client) UpdateProject(ctx context.Context, projectID string, request UpdateProjectRequest) (Project, error) {
+	var out Project
+	path := "/api/projects/tunnels/" + url.PathEscape(projectID)
+	_, err := c.doJSONBody(ctx, http.MethodPut, path, nil, request, &out)
+	if err == nil {
+		err = validateProjectResponse(out)
+	}
 	return out, err
 }
 
@@ -461,35 +506,6 @@ func projectEventsQuery(params ProjectEventsParams) url.Values {
 	return query
 }
 
-func projectLogsQuery(params ProjectLogsParams) url.Values {
-	query := url.Values{}
-	if params.Timeline != "" {
-		query.Set("timeline", params.Timeline)
-	}
-	if params.Start != "" {
-		query.Set("start", params.Start)
-	}
-	if params.End != "" {
-		query.Set("end", params.End)
-	}
-	if params.EventType != "" {
-		query.Set("eventType", params.EventType)
-	}
-	if params.AfterEventID != "" {
-		query.Set("afterEventId", params.AfterEventID)
-	}
-	if params.Page != nil {
-		query.Set("page", strconv.Itoa(*params.Page))
-	}
-	if params.PageSize != nil {
-		query.Set("pageSize", strconv.Itoa(*params.PageSize))
-	}
-	if params.Order != "" {
-		query.Set("order", params.Order)
-	}
-	return query
-}
-
 func (c *Client) ListProjectWebhooks(ctx context.Context, projectID string, params ProjectWebhooksParams) (ProjectWebhooksResponse, error) {
 	var out ProjectWebhooksResponse
 	query := url.Values{}
@@ -697,22 +713,25 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 }
 
 func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.Values, body any, out any) (int, error) {
+	if c.configErr != nil {
+		return 0, c.configErr
+	}
 	fullURL, err := c.requestURL(path, query)
 	if err != nil {
 		return 0, err
 	}
 	c.logger.Debug("control-plane request", "method", method, "url", fullURL)
-	var reader *bytes.Reader
+	var requestBody *bytes.Reader
 	if body != nil {
 		payload, err := json.Marshal(body)
 		if err != nil {
 			return 0, err
 		}
-		reader = bytes.NewReader(payload)
+		requestBody = bytes.NewReader(payload)
 	} else {
-		reader = bytes.NewReader(nil)
+		requestBody = bytes.NewReader(nil)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, fullURL, reader)
+	req, err := http.NewRequestWithContext(ctx, method, fullURL, requestBody)
 	if err != nil {
 		return 0, err
 	}
@@ -722,14 +741,21 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
+	for name, value := range c.headers {
+		req.Header.Set(name, value)
+	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return 0, err
 	}
 	defer resp.Body.Close()
+	responseBody := bufio.NewReader(resp.Body)
+	if (resp.StatusCode < 300 || resp.StatusCode >= 400) && controlPlaneResponseIsHTML(resp.Header.Get("Content-Type"), responseBody) {
+		return resp.StatusCode, ErrAccessProtection
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		responseBody, _ := io.ReadAll(resp.Body)
-		message := controlPlaneErrorMessage(resp.Status, responseBody)
+		payload, _ := io.ReadAll(responseBody)
+		message := controlPlaneErrorMessage(resp.Status, payload)
 		if resp.StatusCode == http.StatusUnauthorized {
 			return resp.StatusCode, fmt.Errorf("%w: %s", ErrUnauthorized, message)
 		}
@@ -743,7 +769,7 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 	if out == nil {
 		return resp.StatusCode, nil
 	}
-	dec := json.NewDecoder(resp.Body)
+	dec := json.NewDecoder(responseBody)
 	if err := dec.Decode(out); err != nil {
 		return resp.StatusCode, err
 	}
@@ -751,6 +777,9 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 }
 
 func (c *Client) doForm(ctx context.Context, method, path string, form url.Values, out any) (int, error) {
+	if c.configErr != nil {
+		return 0, c.configErr
+	}
 	fullURL, err := c.requestURL(path, nil)
 	if err != nil {
 		return 0, err
@@ -762,14 +791,21 @@ func (c *Client) doForm(ctx context.Context, method, path string, form url.Value
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for name, value := range c.headers {
+		req.Header.Set(name, value)
+	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return 0, err
 	}
 	defer resp.Body.Close()
+	responseBody := bufio.NewReader(resp.Body)
+	if (resp.StatusCode < 300 || resp.StatusCode >= 400) && controlPlaneResponseIsHTML(resp.Header.Get("Content-Type"), responseBody) {
+		return resp.StatusCode, ErrAccessProtection
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		responseBody, _ := io.ReadAll(resp.Body)
-		message := oauthControlPlaneErrorMessage(resp.Status, responseBody)
+		payload, _ := io.ReadAll(responseBody)
+		message := oauthControlPlaneErrorMessage(resp.Status, payload)
 		c.logger.Debug("control-plane response", "status", resp.StatusCode, "statusText", resp.Status)
 		return resp.StatusCode, message
 	}
@@ -777,11 +813,19 @@ func (c *Client) doForm(ctx context.Context, method, path string, form url.Value
 	if out == nil {
 		return resp.StatusCode, nil
 	}
-	dec := json.NewDecoder(resp.Body)
+	dec := json.NewDecoder(responseBody)
 	if err := dec.Decode(out); err != nil {
 		return resp.StatusCode, err
 	}
 	return resp.StatusCode, nil
+}
+
+func controlPlaneResponseIsHTML(contentType string, reader *bufio.Reader) bool {
+	if strings.Contains(strings.ToLower(contentType), "text/html") {
+		return true
+	}
+	prefix, _ := reader.Peek(512)
+	return bytes.HasPrefix(bytes.TrimSpace(prefix), []byte("<"))
 }
 
 func controlPlaneErrorMessage(status string, body []byte) string {

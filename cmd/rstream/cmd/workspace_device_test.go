@@ -1146,7 +1146,7 @@ func TestRunWorkspaceDeviceEnrollInfersWorkspaceFromActiveProject(t *testing.T) 
 		switch {
 		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/api/projects/tunnels/resolve/demo":
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(controlplane.Project{ID: "project-1", WorkspaceID: "workspace-1", Endpoint: "demo"})
+			_ = json.NewEncoder(w).Encode(controlplane.Project{ID: "project-1", WorkspaceID: "workspace-1", Endpoint: "demo", Routing: "regional"})
 		case r.Method == http.MethodPost && r.URL.EscapedPath() == "/api/workspaces/workspace-1/enterprise/devices":
 			if got := r.Header.Get("Authorization"); got != "Bearer default-token" {
 				http.Error(w, "missing authorization", http.StatusUnauthorized)
@@ -1346,7 +1346,7 @@ func TestRunWorkspaceDeviceStatusInfersWorkspaceFromActiveProject(t *testing.T) 
 		switch {
 		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/api/projects/tunnels/resolve/demo":
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(controlplane.Project{ID: "project-1", WorkspaceID: "workspace-1", Endpoint: "demo"})
+			_ = json.NewEncoder(w).Encode(controlplane.Project{ID: "project-1", WorkspaceID: "workspace-1", Endpoint: "demo", Routing: "regional"})
 		case r.Method == http.MethodPost && r.URL.EscapedPath() == "/api/workspaces/workspace-1/enterprise/devices/lookup":
 			var seen controlplane.LookupWorkspaceDeviceKeysRequest
 			if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
@@ -1438,7 +1438,11 @@ func parseWorkspaceDeviceEncryptionPublicKey(t *testing.T, encoded string) []byt
 	if !ok || publicKey.Curve != elliptic.P256() {
 		t.Fatalf("unexpected encryption public key: %T", key)
 	}
-	return elliptic.Marshal(publicKey.Curve, publicKey.X, publicKey.Y)
+	raw, err := publicKey.Bytes()
+	if err != nil {
+		t.Fatalf("encode encryption public key: %v", err)
+	}
+	return raw
 }
 
 func verifyWorkspaceDeviceSignature(t *testing.T, key *ecdsa.PublicKey, payload any, signature string) bool {

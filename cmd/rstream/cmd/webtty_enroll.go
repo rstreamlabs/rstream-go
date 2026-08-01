@@ -149,10 +149,10 @@ func enrollWebTTYServer(ctx context.Context, runtime *resolvedRuntime, client *c
 	identityPath := strings.TrimSpace(options.IdentityPath)
 	enrollmentPath := strings.TrimSpace(options.EnrollmentPath)
 	if runtime == nil {
-		return webTTYServerEnrollmentFile{}, "", fmt.Errorf("Control plane runtime is required")
+		return webTTYServerEnrollmentFile{}, "", fmt.Errorf("control plane runtime is required")
 	}
 	if client == nil {
-		return webTTYServerEnrollmentFile{}, "", fmt.Errorf("Control plane client is required")
+		return webTTYServerEnrollmentFile{}, "", fmt.Errorf("control plane client is required")
 	}
 	if projectID == "" {
 		return webTTYServerEnrollmentFile{}, "", fmt.Errorf("--project-id is required")

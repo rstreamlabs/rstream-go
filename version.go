@@ -6,6 +6,7 @@ var (
 	Agent   = "rstream"
 	Channel = "dev"
 	Version = "development"
+	Commit  = "unknown"
 	OS      = ""
 	Arch    = ""
 )

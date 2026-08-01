@@ -32,6 +32,7 @@ func TestTunnelPropertiesProtoRoundTrip(t *testing.T) {
 		HTTPUseTLS:                 BoolPtr(true),
 		UpstreamTLS:                BoolPtr(true),
 		DatagramGuaranteedDelivery: BoolPtr(true),
+		AllowCrossRegionRouting:    BoolPtr(true),
 		TokenAuth:                  BoolPtr(true),
 		RstreamAuth:                BoolPtr(false),
 		ChallengeMode:              BoolPtr(true),

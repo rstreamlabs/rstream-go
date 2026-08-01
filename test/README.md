@@ -50,7 +50,8 @@ The stream and datagram suites each cover two connectivity modes:
 Runtime credential and permission suites also require:
 
 - A running Control plane API passed explicitly with `RSTREAM_RUNTIME_API_URL`.
-- A PAT in `RSTREAM_RUNTIME_CONTROL_TOKEN` with `account.projects.read-only`, `account.tokens.create`, and `account.credentials.read-write`. Use an unrestricted admin/dev PAT for the most complete runtime pass. The Control plane setup scripts do not reuse the engine context token implicitly.
+- A PAT in `RSTREAM_RUNTIME_CONTROL_TOKEN` with `account.projects.read-only`, `account.tokens.create`, `account.credentials.read-write`, `tunnels.resources.read-only`, `tunnels.tunnels.create-delete`, and `tunnels.streams.create-delete`. The tunnel permissions are required because the suites mint narrower child tokens and mTLS credentials. Use an unrestricted admin/dev PAT for the most complete runtime pass. The Control plane setup scripts do not reuse the engine context token implicitly.
+- `RSTREAM_CONTROL_PLANE_HEADERS` set to the same JSON object used by the CLI when the Control plane is protected by an upstream access gateway.
 - At least one Basic project for token/grant runtime checks. Set `RSTREAM_RUNTIME_BASIC_PROJECT_ENDPOINT` or `RSTREAM_RUNTIME_PROJECT_ENDPOINT` to make the selection explicit.
 - One Pro project for published tunnel mTLS checks. Set `RSTREAM_RUNTIME_PRO_PROJECT_ENDPOINT`.
 - An engine build with mTLS support enabled when running mTLS suites.
@@ -107,6 +108,28 @@ Before running cases, the script checks that all required binaries are executabl
 Private datagram cases also assert the selected tunnel packet path: stream framing over TLS transport, QUIC datagrams over QUIC transport, and stream framing when guaranteed delivery is requested. Nested QUIC and WebTransport cases use a 1200-byte initial packet size so their packets fit the QUIC datagram tunnel budget.
 
 The baseline command pins TLS so packet-path assertions remain deterministic. Use `bash run-e2e.sh --quic` for strict QUIC and `bash run-e2e.sh --auto` to verify that automatic selection prefers QUIC on a reachable local engine.
+
+To verify routing between distinct engines in the same regional pool, keep the
+normal context pointed at the regional ingress and explicitly select the tunnel
+owner for server processes:
+
+```bash
+export RSTREAM_E2E_OWNER_ENGINE=b43462b4.owner.example.com:8443
+export RSTREAM_E2E_OWNER_AUTHENTICATION_TOKEN="..."
+export RSTREAM_E2E_OWNER_STABLE_DOMAIN_ENGINE=b43462b4.pool.example.com:8443
+bash run-e2e.sh
+bash test/e2e/runtime-forward.sh --auto-transport
+```
+
+The explicit token is required so the harness cannot send stored credentials to
+an engine selected through an override. Client processes continue to use the
+normal context and therefore enter through the regional endpoint. The stable
+domain override is needed only by the CLI runtime matrix when the forced node
+endpoint differs from the regional serving endpoint.
+
+Set `RSTREAM_E2E_ALLOW_CROSS_REGION_ROUTING=true` or `false` to override the
+engine default for every matrix tunnel. Leave it unset to exercise the engine
+default.
 
 Run the runtime forwarding smoke suite:
 
@@ -242,7 +265,9 @@ bash test/e2e/webtty-cli-workflows.sh
 
 This suite validates local WebTTY identities, trust-store files, registered
 server config parsing, workspace-managed device config, public help output,
-runtime E2E inference, and WebDAV sidecar rejection when E2E is active.
+runtime E2E inference, WebDAV sidecar rejection when E2E is active, and
+non-interactive stdin semantics including empty input, large input, non-zero
+remote exits, and parallel clients.
 
 Run the WebTTY runtime matrix:
 
@@ -256,6 +281,22 @@ C++ binaries are available, explicit-key E2E, connection setup, command
 execution, and expected failure paths. It resolves companion repositories from
 sibling checkouts named `rstream-js` and `rstream-cpp`; override with
 `RSTREAM_JS_REPO` or `RSTREAM_CPP_REPO` when testing a different checkout.
+
+WebTTY coverage is organized by behavioral boundaries rather than by repeating
+every CLI flag combination:
+
+| Boundary | Runtime coverage |
+| --- | --- |
+| Transport | WebSocket, plain TCP, plain TLS, and WebTransport |
+| Security | unauthenticated local development, token rejection, explicit-key E2E, and workspace-managed E2E |
+| Session mode | interactive, non-interactive, spectator, control transfer, and recorded replay |
+| Input lifecycle | terminal input, reader input, piped input, EOF, large payloads, early remote exit, and parallel clients |
+| Runtime integration | direct servers, lightweight rstream tunnels, registered servers, engine reconnect, and parallel engine inventory resolution |
+| Interoperability | Go, JavaScript, C++, and Windows when their runtime prerequisites are available |
+
+The engine repository's `test/e2e/webtty-managed-engine-runtime.sh` complements
+this matrix with the local Enterprise Edition engine, PostgreSQL projections,
+managed sessions, and concurrent lightweight `/api/tunnels` resolution.
 
 The runtime scripts resolve the CLI in this order: `RSTREAM_BIN`, a built repository binary under `out/cmd/rstream`, then `rstream` from `PATH`. Set `RSTREAM_BIN` when you need to test a specific binary.
 

@@ -34,6 +34,7 @@ import (
 	"github.com/quic-go/quic-go"
 	rstream "github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/test/e2eenv"
 )
 
 const quicEchoALPN = "rstream-datagram-echo"
@@ -51,6 +52,14 @@ func dtlsALPNs(tlsALPN string) []string {
 		return []string{tlsALPN}
 	}
 	return nil
+}
+
+func dtlsServerOptions(certs []tls.Certificate, tlsALPN string) []dtls.ServerOption {
+	opts := []dtls.ServerOption{dtls.WithCertificates(certs...)}
+	if protocols := dtlsALPNs(tlsALPN); len(protocols) > 0 {
+		opts = append(opts, dtls.WithSupportedProtocols(protocols...))
+	}
+	return opts
 }
 
 func generateTLSConfig(tlsALPN string) (*tls.Config, error) {
@@ -161,7 +170,7 @@ func handleSCTPStream(stream *sctp.Stream) {
 
 func handleSCTPConn(conn net.Conn) {
 	defer conn.Close()
-	assoc, err := sctp.Server(sctp.Config{NetConn: conn})
+	assoc, err := sctp.ServerWithOptions(sctp.WithNetConn(conn))
 	if err != nil {
 		log.Printf("sctp: association error: %v", err)
 		return
@@ -177,7 +186,7 @@ func handleSCTPConn(conn net.Conn) {
 }
 
 func handleDTLSUpstreamConn(conn net.PacketConn, raddr net.Addr, certs []tls.Certificate, tlsALPN string) {
-	dtlsConn, err := dtls.Server(conn, raddr, &dtls.Config{Certificates: certs, SupportedProtocols: dtlsALPNs(tlsALPN)})
+	dtlsConn, err := dtls.ServerWithOptions(conn, raddr, dtlsServerOptions(certs, tlsALPN)...)
 	if err != nil {
 		log.Printf("dtls upstream: handshake error: %v", err)
 		conn.Close()
@@ -199,7 +208,7 @@ func handleDTLSUpstreamConn(conn net.PacketConn, raddr net.Addr, certs []tls.Cer
 }
 
 func handleSCTPDTLSUpstreamConn(conn net.PacketConn, raddr net.Addr, certs []tls.Certificate, tlsALPN string) {
-	dtlsConn, err := dtls.Server(conn, raddr, &dtls.Config{Certificates: certs, SupportedProtocols: dtlsALPNs(tlsALPN)})
+	dtlsConn, err := dtls.ServerWithOptions(conn, raddr, dtlsServerOptions(certs, tlsALPN)...)
 	if err != nil {
 		log.Printf("sctp dtls upstream: handshake error: %v", err)
 		conn.Close()
@@ -229,6 +238,11 @@ func createTunnel(ctx context.Context, client *rstream.Client, variant, name str
 		Name:    rstream.StringPtr(name),
 		Type:    rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
 		Publish: rstream.BoolPtr(publish),
+	}
+	props.AllowCrossRegionRouting, err = e2eenv.AllowCrossRegionRouting()
+	if err != nil {
+		ctrl.Close()
+		return nil, fmt.Errorf("cross-region routing: %w", err)
 	}
 	if guaranteedDelivery {
 		props.DatagramGuaranteedDelivery = rstream.BoolPtr(true)
