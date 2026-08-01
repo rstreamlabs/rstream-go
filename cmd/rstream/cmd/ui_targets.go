@@ -24,6 +24,7 @@ const (
 type uiRuntimeOptions struct {
 	apiURLScope     string
 	contextOverride string
+	region          string
 	tunnelTransport string
 	environment     config.EnvSettings
 }
@@ -53,10 +54,12 @@ func uiRuntimeOptionsFromCommand(cmd *cobra.Command) uiRuntimeOptions {
 	env := config.ReadEnv()
 	flagAPIURL, _ := cmd.Flags().GetString("api-url")
 	flagContext, _ := cmd.Flags().GetString("context")
+	flagRegion, _ := cmd.Flags().GetString("region")
 	flagTunnelTransport, _ := cmd.Flags().GetString("tunnel-transport")
 	return uiRuntimeOptions{
 		apiURLScope:     config.NormalizeAPIURL(uiFirstNonEmpty(flagAPIURL, env.APIURL)),
 		contextOverride: uiFirstNonEmpty(flagContext, env.Context),
+		region:          uiFirstNonEmpty(flagRegion, env.Region),
 		tunnelTransport: strings.TrimSpace(flagTunnelTransport),
 		environment:     env,
 	}
@@ -85,7 +88,13 @@ func (r *uiRuntimeResolver) discoverTargets(ctx context.Context, runtime *resolv
 		discovery.ProjectError = err
 		return discovery
 	}
-	client := controlplane.NewClient(apiURL, token)
+	environment, _ := cfg.FindEnvironment(apiURL)
+	headers, err := config.ResolveControlPlaneHeaders(environment, r.options.environment.ControlPlaneHeaders)
+	if err != nil {
+		discovery.ProjectError = err
+		return discovery
+	}
+	client := controlplane.NewClient(apiURL, token, controlplane.WithHeaders(headers))
 	workspaces, workspaceErr := client.ListWorkspaces(ctx)
 	if workspaceErr != nil {
 		discovery.WorkspaceWarning = fmt.Errorf("workspace names unavailable: %w", mapControlPlaneError(workspaceErr))
@@ -132,7 +141,7 @@ func (r *uiRuntimeResolver) projectTarget(cfg config.Config, runtime *resolvedRu
 	return target
 }
 
-func (r *uiRuntimeResolver) prepareTarget(target uiTarget, persist bool) (*resolvedRuntime, uiConnectionInfo, string, bool, error) {
+func (r *uiRuntimeResolver) prepareTarget(ctx context.Context, target uiTarget, persist bool) (*resolvedRuntime, uiConnectionInfo, string, bool, error) {
 	warning := ""
 	persisted := false
 	if persist {
@@ -154,7 +163,7 @@ func (r *uiRuntimeResolver) prepareTarget(target uiTarget, persist bool) (*resol
 	if err != nil {
 		return nil, uiConnectionInfo{}, warning, persisted, err
 	}
-	runtime, err := r.resolveContext(cfg, contextValue)
+	runtime, err := r.resolveContext(ctx, cfg, contextValue)
 	if err != nil {
 		return nil, uiConnectionInfo{}, warning, persisted, err
 	}
@@ -165,7 +174,7 @@ func (r *uiRuntimeResolver) prepareTarget(target uiTarget, persist bool) (*resol
 
 func (r *uiRuntimeResolver) persistTarget(target uiTarget) (uiTarget, error) {
 	if target.Kind == uiTargetProject {
-		contextValue, err := persistProjectContext(r.configPath, target.APIURL, target.Project, "", true)
+		contextValue, err := persistProjectContext(r.configPath, target.APIURL, target.Project, "", r.options.region, true)
 		if err != nil {
 			return uiTarget{}, err
 		}
@@ -199,14 +208,14 @@ func (r *uiRuntimeResolver) contextForTarget(cfg config.Config, target uiTarget)
 		}
 		return *contextValue, "", nil
 	}
-	contextValue, err := upsertProjectContext(&cfg, target.APIURL, target.Project, target.Context.Name, false)
+	contextValue, err := upsertProjectContext(&cfg, target.APIURL, target.Project, target.Context.Name, r.options.region, false)
 	if err != nil {
 		return config.Context{}, "", err
 	}
 	return *contextValue, target.Project.Name, nil
 }
 
-func (r *uiRuntimeResolver) resolveContext(cfg config.Config, contextValue config.Context) (*resolvedRuntime, error) {
+func (r *uiRuntimeResolver) resolveContext(ctx context.Context, cfg config.Config, contextValue config.Context) (*resolvedRuntime, error) {
 	if r.options.apiURLScope != "" && contextValue.APIURL != "" && config.NormalizeAPIURL(contextValue.APIURL) != r.options.apiURLScope {
 		return nil, fmt.Errorf("context %q belongs to API URL %q, outside the selected API URL %q", contextValue.Name, contextValue.APIURL, r.options.apiURLScope)
 	}
@@ -222,23 +231,30 @@ func (r *uiRuntimeResolver) resolveContext(cfg config.Config, contextValue confi
 		selectedAPIURL = r.options.apiURLScope
 	}
 	input := config.ResolveInput{
-		Config:              isolated,
-		FlagAPIURL:          selectedAPIURL,
-		FlagContext:         contextValue.Name,
-		EnvEngine:           env.Engine,
-		EnvToken:            env.Token,
-		EnvMTLSCert:         env.MTLSCert,
-		EnvMTLSKey:          env.MTLSKey,
-		FlagTunnelTransport: r.options.tunnelTransport,
-		EnvTunnelTransport:  env.TunnelTransport,
-		EnvUseQUIC:          env.UseQUIC,
-		RequireEngine:       true,
-		RequireToken:        true,
-		ResolveToken:        true,
+		Config:                 isolated,
+		FlagAPIURL:             selectedAPIURL,
+		FlagContext:            contextValue.Name,
+		EnvEngine:              env.Engine,
+		EnvToken:               env.Token,
+		EnvMTLSCert:            env.MTLSCert,
+		EnvMTLSKey:             env.MTLSKey,
+		FlagRegion:             r.options.region,
+		EnvControlPlaneHeaders: env.ControlPlaneHeaders,
+		FlagTunnelTransport:    r.options.tunnelTransport,
+		EnvTunnelTransport:     env.TunnelTransport,
+		EnvUseQUIC:             env.UseQUIC,
+		RequireEngine:          true,
+		RequireToken:           true,
+		ResolveToken:           true,
 	}
 	resolved, err := config.Resolve(input)
 	if err != nil {
 		return nil, fmt.Errorf("resolve context %q: %w", contextValue.Name, err)
+	}
+	if resolved.Region != "" {
+		if err := resolveRuntimeRegionContext(ctx, cfg, &resolved); err != nil {
+			return nil, fmt.Errorf("resolve context %q region: %w", contextValue.Name, err)
+		}
 	}
 	return &resolvedRuntime{ConfigPath: r.configPath, Config: cfg, Resolved: resolved}, nil
 }
@@ -249,7 +265,7 @@ func (r *uiRuntimeResolver) controlPlaneCredentials(cfg config.Config, runtime *
 		apiURL = config.NormalizeAPIURL(runtime.Resolved.Context.APIURL)
 	}
 	if apiURL == "" {
-		return "", "", errors.New("Control Plane is not configured for the current context; local contexts remain available")
+		return "", "", errors.New("control plane is not configured for the current context; local contexts remain available")
 	}
 	env := r.options.environment
 	resolved, err := config.Resolve(config.ResolveInput{Config: cfg, FlagAPIURL: apiURL, EnvToken: env.Token, IgnoreDefaultContext: true, RequireToken: true, ResolveToken: true})
@@ -260,9 +276,9 @@ func (r *uiRuntimeResolver) controlPlaneCredentials(cfg config.Config, runtime *
 		return apiURL, runtime.Resolved.Token, nil
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("Control Plane unavailable for %s: %w; local contexts remain available", apiURL, err)
+		return "", "", fmt.Errorf("control plane unavailable for %s: %w; local contexts remain available", apiURL, err)
 	}
-	return "", "", fmt.Errorf("Control Plane unavailable for %s: authentication is not configured; local contexts remain available", apiURL)
+	return "", "", fmt.Errorf("control plane unavailable for %s: authentication is not configured; local contexts remain available", apiURL)
 }
 
 func listAllUIProjects(ctx context.Context, client *controlplane.Client) ([]controlplane.Project, error) {

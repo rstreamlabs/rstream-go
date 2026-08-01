@@ -29,7 +29,7 @@ func NewSource(socket, network string, fallback runmodel.ResolvedContext, lookup
 	if logger == nil {
 		logger = slog.Default()
 	}
-	cli, err := client.NewClientWithOpts(client.WithHost(socket), client.WithAPIVersionNegotiation())
+	cli, err := client.New(client.WithHost(socket))
 	if err != nil {
 		return nil, err
 	}

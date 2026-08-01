@@ -8,8 +8,10 @@ BIN="${BIN:-$ROOT/out/test}"
 RSTREAM_BIN=$(resolve_rstream_cli "$ROOT")
 PYTHON="${PYTHON:-python3}"
 TIMEOUT_SECONDS="${RSTREAM_RUNTIME_TIMEOUT:-60}"
-NAME_PREFIX="${RSTREAM_RUNTIME_NAME_PREFIX:-runtime-forward-$$}"
+CASE_FILTER="${RSTREAM_RUNTIME_CASE_FILTER:-}"
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/rstream-go-runtime.XXXXXX")
+RUN_ID=$(printf '%s' "${TMP_DIR##*.}" | tr '[:upper:]' '[:lower:]')
+NAME_PREFIX="${RSTREAM_RUNTIME_NAME_PREFIX:-runtime-forward-$RUN_ID}"
 PASS=0
 FAIL=0
 PIDS=()
@@ -17,6 +19,46 @@ UPSTREAM_ADDR=
 FORWARD_PID=
 FORWARDING=
 FORWARD_LOG=
+FORWARD_ROUTING_ARGS=()
+OWNER_ENV=()
+
+case "${RSTREAM_E2E_ALLOW_CROSS_REGION_ROUTING:-}" in
+  1|true)
+    FORWARD_ROUTING_ARGS+=(--allow-cross-region-routing)
+    ;;
+  0|false)
+    FORWARD_ROUTING_ARGS+=(--allow-cross-region-routing=false)
+    ;;
+  "")
+    ;;
+  *)
+    printf "ERROR RSTREAM_E2E_ALLOW_CROSS_REGION_ROUTING must be a boolean\n" >&2
+    exit 2
+    ;;
+esac
+if [ -n "${RSTREAM_E2E_OWNER_ENGINE:-}" ] && [ -z "${RSTREAM_E2E_OWNER_AUTHENTICATION_TOKEN:-}" ]; then
+  printf "ERROR RSTREAM_E2E_OWNER_AUTHENTICATION_TOKEN is required with RSTREAM_E2E_OWNER_ENGINE\n" >&2
+  exit 2
+fi
+if [ -z "${RSTREAM_E2E_OWNER_ENGINE:-}" ] && [ -n "${RSTREAM_E2E_OWNER_AUTHENTICATION_TOKEN:-}" ]; then
+  printf "ERROR RSTREAM_E2E_OWNER_ENGINE is required with RSTREAM_E2E_OWNER_AUTHENTICATION_TOKEN\n" >&2
+  exit 2
+fi
+if [ -n "${RSTREAM_E2E_OWNER_STABLE_DOMAIN_ENGINE:-}" ] && [ -z "${RSTREAM_E2E_OWNER_ENGINE:-}" ]; then
+  printf "ERROR RSTREAM_E2E_OWNER_ENGINE is required with RSTREAM_E2E_OWNER_STABLE_DOMAIN_ENGINE\n" >&2
+  exit 2
+fi
+if [ -n "${RSTREAM_E2E_OWNER_ENGINE:-}" ]; then
+  OWNER_ENV+=("RSTREAM_ENGINE=$RSTREAM_E2E_OWNER_ENGINE")
+  OWNER_ENV+=("RSTREAM_AUTHENTICATION_TOKEN=$RSTREAM_E2E_OWNER_AUTHENTICATION_TOKEN")
+fi
+if [ -n "${RSTREAM_E2E_OWNER_CONTEXT:-}" ]; then
+  OWNER_ENV+=("RSTREAM_CONTEXT=$RSTREAM_E2E_OWNER_CONTEXT")
+fi
+
+owner_exec() {
+  exec env "${OWNER_ENV[@]}" "$@"
+}
 
 cleanup() {
   local pid
@@ -48,8 +90,10 @@ require_executable "$BIN/http/client"
 require_executable "$BIN/datagram/client"
 require_executable "$BIN/masque/client"
 require_executable "$BIN/connect/client"
-require_executable "$ROOT/out/examples/tcp-ssh-client"
-require_executable "$ROOT/out/examples/tcp-ssh-server"
+if [ "${RSTREAM_E2E_SKIP_PUBLISHED_TCP:-0}" != "1" ]; then
+  require_executable "$ROOT/out/examples/tcp-ssh-client"
+  require_executable "$ROOT/out/examples/tcp-ssh-server"
+fi
 
 make_cert() {
   openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
@@ -142,18 +186,46 @@ sys.exit(1)
 PY
 }
 
+generated_owner_stable_domain() {
+  local endpoint=${RSTREAM_E2E_OWNER_STABLE_DOMAIN_ENGINE:-}
+  local host=${endpoint#*://}
+  host=${host%%/*}
+  host=${host%%:*}
+  local project_endpoint=${host%%.*}
+  local cluster_domain=${host#*.}
+  if [ -z "$project_endpoint" ] || [ "$cluster_domain" = "$host" ]; then
+    printf "ERROR invalid RSTREAM_E2E_OWNER_STABLE_DOMAIN_ENGINE: %s\n" "$endpoint" >&2
+    return 1
+  fi
+  local slug
+  slug=$(printf '%s' "$NAME_PREFIX-$1" | shasum -a 256 | awk '{print substr($1, 1, 8)}')
+  printf 'r%s-%s.t.%s\n' "$slug" "$project_endpoint" "$cluster_domain"
+}
+
 start_forward() {
   local label=$1 target=$2 need_forwarding=$3
   shift 3
+  local arg has_host=0 published=0 tcp=0
+  for arg in "$@"; do
+    case "$arg" in
+    --host | --host=*) has_host=1 ;;
+    --publish) published=1 ;;
+    --tcp) tcp=1 ;;
+    esac
+  done
+  if [ -n "${RSTREAM_E2E_OWNER_STABLE_DOMAIN_ENGINE:-}" ] && [ "$published" -eq 1 ] && [ "$tcp" -eq 0 ] && [ "$has_host" -eq 0 ]; then
+    set -- "$@" --host "$(generated_owner_stable_domain "$label")"
+  fi
   FORWARD_LOG="$TMP_DIR/forward-$label.log"
   : >"$FORWARD_LOG"
-  "$RSTREAM_BIN" forward "$target" --output json --no-retry "$@" >"$FORWARD_LOG" 2>&1 &
+  owner_exec "$RSTREAM_BIN" forward "$target" --output json --no-retry "${FORWARD_ROUTING_ARGS[@]}" "$@" >"$FORWARD_LOG" 2>&1 &
   FORWARD_PID=$!
   PIDS+=("$FORWARD_PID")
 
   local deadline=$((SECONDS + TIMEOUT_SECONDS))
   while [ "$SECONDS" -lt "$deadline" ]; do
     if FORWARDING=$(extract_forwarding "$FORWARD_LOG" "$need_forwarding"); then
+      FORWARDING=$(rewrite_downstream_address "$FORWARDING")
       return 0
     fi
     if ! kill -0 "$FORWARD_PID" 2>/dev/null; then
@@ -182,6 +254,9 @@ stop_pid() {
 run_case() {
   local label=$1
   shift
+  if [ -n "$CASE_FILTER" ] && [[ "$label" != *"$CASE_FILTER"* ]]; then
+    return
+  fi
   if "$@"; then
     printf "PASS %-42s\n" "$label"
     PASS=$((PASS + 1))
@@ -258,7 +333,7 @@ case_published_tcp_ssh() {
   local password="runtime-tcp-ssh-password"
   local rc=0
   server_log="$TMP_DIR/published-tcp-ssh-server.log"
-  RSTREAM_SSH_PASSWORD="$password" "$ROOT/out/examples/tcp-ssh-server" \
+  owner_exec env RSTREAM_SSH_PASSWORD="$password" "$ROOT/out/examples/tcp-ssh-server" \
     -name "$NAME_PREFIX-published-tcp-ssh" >"$server_log" 2>&1 &
   server_pid=$!
   PIDS+=("$server_pid")
@@ -398,12 +473,13 @@ case_quic() {
   local server_pid server_log forwarding
   local rc=0
   server_log="$TMP_DIR/quic-server.log"
-  "$BIN/datagram/server" --variant quic --publish \
+  owner_exec "$BIN/datagram/server" --variant quic --publish \
     --tls-alpn rstream-runtime-quic \
     --name "$NAME_PREFIX-quic" >"$server_log" 2>&1 &
   server_pid=$!
   PIDS+=("$server_pid")
   forwarding=$(wait_ready "$server_pid" "$server_log" "quic")
+  forwarding=$(rewrite_downstream_address "$forwarding")
   "$BIN/datagram/client" --variant quic \
     --addr "$forwarding" \
     --tls-alpn rstream-runtime-quic || rc=$?
@@ -417,11 +493,13 @@ case_connect_udp() {
   start_upstream "connect-udp-target" udp
   upstream=$UPSTREAM_ADDR
   server_log="$TMP_DIR/connect-udp-server.log"
-  "$BIN/masque/server" --variant connect-udp \
-    --name "$NAME_PREFIX-connect-udp" >"$server_log" 2>&1 &
+  owner_exec "$BIN/masque/server" --variant connect-udp \
+    --name "$NAME_PREFIX-connect-udp" \
+    --public-port "${RSTREAM_E2E_DOWNSTREAM_PORT:-}" >"$server_log" 2>&1 &
   server_pid=$!
   PIDS+=("$server_pid")
   forwarding=$(wait_ready "$server_pid" "$server_log" "connect-udp")
+  forwarding=$(rewrite_downstream_address "$forwarding")
   "$BIN/masque/client" --variant connect-udp \
     --addr "$forwarding" \
     --target "$upstream" || rc=$?
@@ -433,11 +511,13 @@ case_connect_ip() {
   local server_pid server_log forwarding
   local rc=0
   server_log="$TMP_DIR/connect-ip-server.log"
-  "$BIN/masque/server" --variant connect-ip \
-    --name "$NAME_PREFIX-connect-ip" >"$server_log" 2>&1 &
+  owner_exec "$BIN/masque/server" --variant connect-ip \
+    --name "$NAME_PREFIX-connect-ip" \
+    --public-port "${RSTREAM_E2E_DOWNSTREAM_PORT:-}" >"$server_log" 2>&1 &
   server_pid=$!
   PIDS+=("$server_pid")
   forwarding=$(wait_ready "$server_pid" "$server_log" "connect-ip")
+  forwarding=$(rewrite_downstream_address "$forwarding")
   "$BIN/masque/client" --variant connect-ip \
     --addr "$forwarding" || rc=$?
   stop_pid "$server_pid"
@@ -452,11 +532,12 @@ case_plain_connect() {
   start_upstream "connect-$upstream-$downstream-target" tcp
   target=$UPSTREAM_ADDR
   server_log="$TMP_DIR/connect-$upstream-$downstream-server.log"
-  "$BIN/connect/server" --upstream "$upstream" \
+  owner_exec "$BIN/connect/server" --upstream "$upstream" \
     --name "$NAME_PREFIX-connect-$upstream-$downstream" >"$server_log" 2>&1 &
   server_pid=$!
   PIDS+=("$server_pid")
   forwarding=$(wait_ready "$server_pid" "$server_log" "connect-$upstream-$downstream")
+  forwarding=$(rewrite_downstream_address "$forwarding")
   "$BIN/connect/client" --downstream "$downstream" \
     --addr "$forwarding" \
     --target "$target" || rc=$?
@@ -469,8 +550,10 @@ run_case "forward/private bytestream plain" case_private_plain
 run_case "forward/tls terminated" case_tls_terminated
 run_case "forward/tls upstream tls" case_tls_upstream_tls
 run_case "forward/tls passthrough" case_tls_passthrough
-run_case "forward/published tcp" case_published_tcp
-run_case "forward/published tcp ssh" case_published_tcp_ssh
+if [ "${RSTREAM_E2E_SKIP_PUBLISHED_TCP:-0}" != "1" ]; then
+  run_case "forward/published tcp" case_published_tcp
+  run_case "forward/published tcp ssh" case_published_tcp_ssh
+fi
 run_case "forward/http h1" case_http_h1
 run_case "forward/http h2 reused connection" case_http_h2_reused_connection_routes
 run_case "forward/http h2 subpath" case_http_h2_subpath_preserves_request_path

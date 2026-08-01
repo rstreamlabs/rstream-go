@@ -15,11 +15,11 @@ import (
 )
 
 func mcpWebTTYControlPlaneProject(ctx context.Context, args map[string]json.RawMessage) (*resolvedRuntime, *controlplane.Client, controlplane.Project, error) {
-	runtime, err := resolveMCPControlPlaneRuntime(true)
+	runtime, err := resolveMCPControlPlaneRuntime(ctx, true)
 	if err != nil {
 		return nil, nil, controlplane.Project{}, err
 	}
-	client := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+	client := newRuntimeControlPlaneClient(runtime.Resolved)
 	project, err := mcpResolveRuntimeProject(ctx, client, runtime.Config, args)
 	if err != nil {
 		return nil, nil, controlplane.Project{}, err

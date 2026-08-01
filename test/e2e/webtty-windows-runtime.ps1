@@ -48,6 +48,7 @@ function Wait-Tcp {
         return
       }
     } catch {
+      Write-Debug ("TCP probe failed: {0}" -f $_.Exception.Message)
     } finally {
       $client.Dispose()
     }
@@ -56,7 +57,7 @@ function Wait-Tcp {
   throw "timeout waiting for $Address"
 }
 
-function Start-WebTTYProcess {
+function Invoke-WebTTYProcess {
   param([string] $Name, [string] $Executable, [string[]] $ServerArgs)
   $stdout = Join-Path $Root "$Name.out.log"
   $stderr = Join-Path $Root "$Name.err.log"
@@ -66,9 +67,9 @@ function Start-WebTTYProcess {
   return [pscustomobject]@{ Process = $process; Stdout = $stdout; Stderr = $stderr }
 }
 
-function Start-WebTTYServer {
+function Invoke-WebTTYServer {
   param([string] $Name, [string[]] $ServerArgs)
-  Start-WebTTYProcess $Name $Rstream $ServerArgs
+  Invoke-WebTTYProcess $Name $Rstream $ServerArgs
 }
 
 function Invoke-Case {
@@ -83,20 +84,26 @@ function Invoke-Case {
 
 function Invoke-ExpectFail {
   param([string] $Name, [string] $Expected, [scriptblock] $Body)
+  $output = @()
   try {
+    $global:LASTEXITCODE = 0
     $output = & $Body 2>&1
-    Write-Fail $Name ("command succeeded unexpectedly: " + ($output -join " "))
+    if ($LASTEXITCODE -eq 0) {
+      Write-Fail $Name ("command succeeded unexpectedly: " + ($output -join " "))
+      return
+    }
+    $message = $output -join " "
   } catch {
     $message = $_.Exception.Message
-    if ($message -like "*$Expected*") {
-      Write-Pass $Name
-    } else {
-      Write-Fail $Name $message
-    }
+  }
+  if ($message -like "*$Expected*") {
+    Write-Pass $Name
+  } else {
+    Write-Fail $Name $message
   }
 }
 
-function Assert-Contains {
+function Assert-ContainsText {
   param([string] $Value, [string] $Needle)
   if ($Value -notlike "*$Needle*") {
     throw "expected output to contain '$Needle', got: $Value"
@@ -117,7 +124,7 @@ function Invoke-WithHome {
   }
 }
 
-function New-WebTTYCertificate {
+function Write-WebTTYCertificate {
   param([string] $CertFile, [string] $KeyFile)
   if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
     throw "go is required to generate the local WebTTY test certificate"
@@ -191,30 +198,30 @@ try {
 
   $wsPort = Get-FreePort
   $wsAddr = "127.0.0.1:$wsPort"
-  Start-WebTTYServer "ws" @("webtty", "server", "-v", "--listen", $wsAddr, "--transport", "websocket", "--allow-unauthenticated") | Out-Null
+  Invoke-WebTTYServer "ws" @("webtty", "server", "-v", "--listen", $wsAddr, "--transport", "websocket", "--allow-unauthenticated") | Out-Null
   Wait-Tcp $wsAddr
   Invoke-Case "windows/ws/spawn/plaintext" {
     $out = & $Rstream webtty exec --url "ws://$wsAddr" --transport websocket -- powershell -NoProfile -Command "Write-Output go-ws" 2>&1
-    Assert-Contains ($out -join "`n") "go-ws"
+    Assert-ContainsText ($out -join "`n") "go-ws"
   }
 
   $plainPort = Get-FreePort
   $plainAddr = "127.0.0.1:$plainPort"
-  Start-WebTTYServer "plain" @("webtty", "server", "-v", "--listen", $plainAddr, "--transport", "plain", "--allow-unauthenticated") | Out-Null
+  Invoke-WebTTYServer "plain" @("webtty", "server", "-v", "--listen", $plainAddr, "--transport", "plain", "--allow-unauthenticated") | Out-Null
   Wait-Tcp $plainAddr
   Invoke-Case "windows/plain/spawn/plaintext" {
     $out = & $Rstream webtty exec --url $plainAddr --transport plain -- powershell -NoProfile -Command "Write-Output go-plain" 2>&1
-    Assert-Contains ($out -join "`n") "go-plain"
+    Assert-ContainsText ($out -join "`n") "go-plain"
   }
 
   $loginPort = Get-FreePort
   $loginAddr = "127.0.0.1:$loginPort"
   $currentUsername = [Environment]::UserName
-  Start-WebTTYServer "login" @("webtty", "server", "-v", "--listen", $loginAddr, "--transport", "websocket", "--allow-unauthenticated", "--execution-mode", "login", "--login-user", $currentUsername) | Out-Null
+  Invoke-WebTTYServer "login" @("webtty", "server", "-v", "--listen", $loginAddr, "--transport", "websocket", "--allow-unauthenticated", "--execution-mode", "login", "--login-user", $currentUsername) | Out-Null
   Wait-Tcp $loginAddr
   Invoke-Case "windows/ws/login-current-user" {
     $out = & $Rstream webtty exec --url "ws://$loginAddr" --transport websocket -- powershell -NoProfile -Command "Write-Output go-login" 2>&1
-    Assert-Contains ($out -join "`n") "go-login"
+    Assert-ContainsText ($out -join "`n") "go-login"
   }
 
   $serverIdentity = Join-Path $Root "server.identity.json"
@@ -230,15 +237,15 @@ try {
 
   $certFile = Join-Path $Root "webtty.crt"
   $keyFile = Join-Path $Root "webtty.key"
-  New-WebTTYCertificate $certFile $keyFile
+  Write-WebTTYCertificate $certFile $keyFile
 
   $plainTlsPort = Get-FreePort
   $plainTlsAddr = "127.0.0.1:$plainTlsPort"
-  Start-WebTTYServer "plain-tls" @("webtty", "server", "-v", "--listen", $plainTlsAddr, "--transport", "plain", "--allow-unauthenticated", "--tls-cert-file", $certFile, "--tls-key-file", $keyFile) | Out-Null
+  Invoke-WebTTYServer "plain-tls" @("webtty", "server", "-v", "--listen", $plainTlsAddr, "--transport", "plain", "--allow-unauthenticated", "--tls-cert-file", $certFile, "--tls-key-file", $keyFile) | Out-Null
   Wait-Tcp $plainTlsAddr
   Invoke-Case "windows/plain-tls/spawn/plaintext" {
     $out = & $Rstream webtty exec --url "tls://$plainTlsAddr" --transport plain --tls-ca-file $certFile -- powershell -NoProfile -Command "Write-Output go-plain-tls" 2>&1
-    Assert-Contains ($out -join "`n") "go-plain-tls"
+    Assert-ContainsText ($out -join "`n") "go-plain-tls"
   }
 
   $plainTlsE2EIdentity = Join-Path $Root "plain-tls.identity.json"
@@ -247,20 +254,20 @@ try {
   $plainTlsE2EKnown = $plainTlsE2EPublic.endpoint_identity
   $plainTlsE2EPort = Get-FreePort
   $plainTlsE2EAddr = "127.0.0.1:$plainTlsE2EPort"
-  Start-WebTTYServer "plain-tls-e2e" @("webtty", "server", "-v", "--listen", $plainTlsE2EAddr, "--transport", "plain", "--allow-unauthenticated", "--tls-cert-file", $certFile, "--tls-key-file", $keyFile, "--e2e", "--identity-file", $plainTlsE2EIdentity, "--authorized-client-key", $clientAuthorized) | Out-Null
+  Invoke-WebTTYServer "plain-tls-e2e" @("webtty", "server", "-v", "--listen", $plainTlsE2EAddr, "--transport", "plain", "--allow-unauthenticated", "--tls-cert-file", $certFile, "--tls-key-file", $keyFile, "--e2e", "--identity-file", $plainTlsE2EIdentity, "--authorized-client-key", $clientAuthorized) | Out-Null
   Wait-Tcp $plainTlsE2EAddr
   Invoke-Case "windows/plain-tls/e2e-authorized" {
     $out = & $Rstream webtty exec --url "tls://$plainTlsE2EAddr" --transport plain --tls-ca-file $certFile --known-server-key $plainTlsE2EKnown --identity-file $clientIdentity -- powershell -NoProfile -Command "Write-Output go-plain-tls-e2e" 2>&1
-    Assert-Contains ($out -join "`n") "go-plain-tls-e2e"
+    Assert-ContainsText ($out -join "`n") "go-plain-tls-e2e"
   }
 
   $wtPort = Get-FreePort
   $wtAddr = "127.0.0.1:$wtPort"
-  Start-WebTTYServer "webtransport" @("webtty", "server", "-v", "--listen", $wtAddr, "--transport", "webtransport", "--allow-unauthenticated", "--tls-cert-file", $certFile, "--tls-key-file", $keyFile) | Out-Null
+  Invoke-WebTTYServer "webtransport" @("webtty", "server", "-v", "--listen", $wtAddr, "--transport", "webtransport", "--allow-unauthenticated", "--tls-cert-file", $certFile, "--tls-key-file", $keyFile) | Out-Null
   Start-Sleep -Milliseconds 800
   Invoke-Case "windows/webtransport/spawn/plaintext" {
     $out = & $Rstream webtty exec --url "https://$wtAddr/" --transport webtransport --tls-insecure-skip-verify -- powershell -NoProfile -Command "Write-Output go-webtransport" 2>&1
-    Assert-Contains ($out -join "`n") "go-webtransport"
+    Assert-ContainsText ($out -join "`n") "go-webtransport"
   }
 
   $wtE2EIdentity = Join-Path $Root "webtransport.identity.json"
@@ -269,20 +276,20 @@ try {
   $wtE2EKnown = $wtE2EPublic.endpoint_identity
   $wtE2EPort = Get-FreePort
   $wtE2EAddr = "127.0.0.1:$wtE2EPort"
-  Start-WebTTYServer "webtransport-e2e" @("webtty", "server", "-v", "--listen", $wtE2EAddr, "--transport", "webtransport", "--allow-unauthenticated", "--tls-cert-file", $certFile, "--tls-key-file", $keyFile, "--e2e", "--identity-file", $wtE2EIdentity, "--authorized-client-key", $clientAuthorized) | Out-Null
+  Invoke-WebTTYServer "webtransport-e2e" @("webtty", "server", "-v", "--listen", $wtE2EAddr, "--transport", "webtransport", "--allow-unauthenticated", "--tls-cert-file", $certFile, "--tls-key-file", $keyFile, "--e2e", "--identity-file", $wtE2EIdentity, "--authorized-client-key", $clientAuthorized) | Out-Null
   Start-Sleep -Milliseconds 800
   Invoke-Case "windows/webtransport/e2e-authorized" {
     $out = & $Rstream webtty exec --url "https://$wtE2EAddr/" --transport webtransport --tls-insecure-skip-verify --known-server-key $wtE2EKnown --identity-file $clientIdentity -- powershell -NoProfile -Command "Write-Output go-webtransport-e2e" 2>&1
-    Assert-Contains ($out -join "`n") "go-webtransport-e2e"
+    Assert-ContainsText ($out -join "`n") "go-webtransport-e2e"
   }
 
   $e2ePort = Get-FreePort
   $e2eAddr = "127.0.0.1:$e2ePort"
-  $e2eServer = Start-WebTTYServer "e2e" @("webtty", "server", "-v", "--listen", $e2eAddr, "--transport", "websocket", "--allow-unauthenticated", "--e2e", "--identity-file", $serverIdentity, "--authorized-client-key", $clientAuthorized)
+  $e2eServer = Invoke-WebTTYServer "e2e" @("webtty", "server", "-v", "--listen", $e2eAddr, "--transport", "websocket", "--allow-unauthenticated", "--e2e", "--identity-file", $serverIdentity, "--authorized-client-key", $clientAuthorized)
   Wait-Tcp $e2eAddr
   Invoke-Case "windows/ws/e2e-authorized" {
     $out = & $Rstream webtty exec --url "ws://$e2eAddr" --transport websocket --e2e --identity-file $clientIdentity --known-server-key $serverKnown -- powershell -NoProfile -Command "Write-Output go-e2e" 2>&1
-    Assert-Contains ($out -join "`n") "go-e2e"
+    Assert-ContainsText ($out -join "`n") "go-e2e"
   }
   Invoke-ExpectFail "windows/ws/e2e-unauthorized" "not authorized" {
     & $Rstream webtty exec --url "ws://$e2eAddr" --transport websocket --e2e --identity-file $badIdentity --known-server-key $serverKnown -- powershell -NoProfile -Command "Write-Output no"
@@ -309,24 +316,24 @@ try {
 
     $cppWsPort = Get-FreePort
     $cppWsAddr = "127.0.0.1:$cppWsPort"
-    Start-WebTTYProcess "cpp-ws" $CppServer @("--uri=$cppWsAddr", "--transport=websocket", "--allow-unauthenticated") | Out-Null
+    Invoke-WebTTYProcess "cpp-ws" $CppServer @("--uri=$cppWsAddr", "--transport=websocket", "--allow-unauthenticated") | Out-Null
     Wait-Tcp $cppWsAddr
     Invoke-Case "windows/cpp-server/ws/plaintext" {
       $out = & $Rstream webtty exec --url "ws://$cppWsAddr" --transport websocket -- powershell -NoProfile -Command "Write-Output cpp-server-ws" 2>&1
-      Assert-Contains ($out -join "`n") "cpp-server-ws"
+      Assert-ContainsText ($out -join "`n") "cpp-server-ws"
     }
     Invoke-Case "windows/cpp-client/cpp-server/ws/plaintext" {
       $out = & $CppClient "--uri=$cppWsAddr" "--transport=websocket" -I -T -- powershell -NoProfile -Command "Write-Output cpp-client-ws" 2>&1
-      Assert-Contains ($out -join "`n") "cpp-client-ws"
+      Assert-ContainsText ($out -join "`n") "cpp-client-ws"
     }
 
     $goForCppPort = Get-FreePort
     $goForCppAddr = "127.0.0.1:$goForCppPort"
-    Start-WebTTYServer "go-for-cpp-ws" @("webtty", "server", "-v", "--listen", $goForCppAddr, "--transport", "websocket", "--allow-unauthenticated") | Out-Null
+    Invoke-WebTTYServer "go-for-cpp-ws" @("webtty", "server", "-v", "--listen", $goForCppAddr, "--transport", "websocket", "--allow-unauthenticated") | Out-Null
     Wait-Tcp $goForCppAddr
     Invoke-Case "windows/cpp-client/go-server/ws/plaintext" {
       $out = & $CppClient "--uri=$goForCppAddr" "--transport=websocket" -I -T -- powershell -NoProfile -Command "Write-Output go-server-ws" 2>&1
-      Assert-Contains ($out -join "`n") "go-server-ws"
+      Assert-ContainsText ($out -join "`n") "go-server-ws"
     }
 
     $cppE2EPort = Get-FreePort
@@ -335,21 +342,21 @@ try {
     & $Rstream webtty identity create --identity-file $cppServerIdentity -o json | Out-Null
     $cppServerPublic = (& $Rstream webtty identity show --identity-file $cppServerIdentity -o json | ConvertFrom-Json)
     $cppKnownServer = $cppServerPublic.endpoint_identity
-    Start-WebTTYProcess "cpp-e2e" $CppServer @("--uri=$cppE2EAddr", "--transport=websocket", "--allow-unauthenticated", "--e2e", "--identity-file=$cppServerIdentity", "--authorized-client-key=$clientAuthorized") | Out-Null
+    Invoke-WebTTYProcess "cpp-e2e" $CppServer @("--uri=$cppE2EAddr", "--transport=websocket", "--allow-unauthenticated", "--e2e", "--identity-file=$cppServerIdentity", "--authorized-client-key=$clientAuthorized") | Out-Null
     Wait-Tcp $cppE2EAddr
     Invoke-Case "windows/go-client/cpp-server/ws/e2e-authorized" {
       $out = & $Rstream webtty exec --url "ws://$cppE2EAddr" --transport websocket --e2e --identity-file $clientIdentity --known-server-key $cppKnownServer -- powershell -NoProfile -Command "Write-Output cpp-server-e2e" 2>&1
-      Assert-Contains ($out -join "`n") "cpp-server-e2e"
+      Assert-ContainsText ($out -join "`n") "cpp-server-e2e"
     }
     Invoke-Case "windows/cpp-client/cpp-server/ws/e2e-authorized" {
       $out = & $CppClient "--uri=$cppE2EAddr" "--transport=websocket" "--known-server-key=$cppKnownServer" "--identity-file=$clientIdentity" -I -T -- powershell -NoProfile -Command "Write-Output cpp-client-e2e" 2>&1
-      Assert-Contains ($out -join "`n") "cpp-client-e2e"
+      Assert-ContainsText ($out -join "`n") "cpp-client-e2e"
     }
 
     $goForCppE2EPort = Get-FreePort
     $goForCppE2EAddr = "127.0.0.1:$goForCppE2EPort"
     $goForCppIdentity = Join-Path $Root "go-for-cpp.identity.json"
-    Start-WebTTYServer "go-for-cpp-e2e" @("webtty", "server", "-v", "--listen", $goForCppE2EAddr, "--transport", "websocket", "--allow-unauthenticated", "--e2e", "--identity-file", $goForCppIdentity, "--authorized-client-key", $clientAuthorized) | Out-Null
+    Invoke-WebTTYServer "go-for-cpp-e2e" @("webtty", "server", "-v", "--listen", $goForCppE2EAddr, "--transport", "websocket", "--allow-unauthenticated", "--e2e", "--identity-file", $goForCppIdentity, "--authorized-client-key", $clientAuthorized) | Out-Null
     Wait-Tcp $goForCppE2EAddr
     $goForCppPublic = (& $Rstream webtty identity show --identity-file $goForCppIdentity -o json | ConvertFrom-Json)
     $goForCppKnownServer = $goForCppPublic.endpoint_identity
@@ -358,7 +365,7 @@ try {
     }
     Invoke-Case "windows/cpp-client/go-server/ws/e2e-authorized" {
       $out = & $CppClient "--uri=$goForCppE2EAddr" "--transport=websocket" "--known-server-key=$goForCppKnownServer" "--identity-file=$clientIdentity" -I -T -- powershell -NoProfile -Command "Write-Output go-server-e2e" 2>&1
-      Assert-Contains ($out -join "`n") "go-server-e2e"
+      Assert-ContainsText ($out -join "`n") "go-server-e2e"
     }
 
     $cppHome = Join-Path $Root "cpp-home"
@@ -382,7 +389,7 @@ try {
     Invoke-Case "windows/cpp-client/go-server/ws/e2e-known-server-client-identity" {
       Invoke-WithHome $cppHome {
         $out = & $CppClient "--uri=$goForCppE2EAddr" "--transport=websocket" "--e2e" "--known-server=go-for-cpp" -I -T -- powershell -NoProfile -Command "Write-Output go-server-known-identity" 2>&1
-        Assert-Contains ($out -join "`n") "go-server-known-identity"
+        Assert-ContainsText ($out -join "`n") "go-server-known-identity"
       }
     }
   } else {
@@ -400,6 +407,7 @@ try {
         Stop-Process -Id $item.Process.Id -Force -ErrorAction SilentlyContinue
       }
     } catch {
+      Write-Debug ("Unable to stop test process {0}: {1}" -f $item.Process.Id, $_.Exception.Message)
     }
   }
   Remove-Item -Recurse -Force $Root -ErrorAction SilentlyContinue

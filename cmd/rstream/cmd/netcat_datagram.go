@@ -17,6 +17,7 @@ import (
 	"time"
 
 	rstream "github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/netretry"
 )
 
 type netcatFraming string
@@ -25,7 +26,7 @@ const (
 	// netcatFramingRFC4571 frames each datagram with a 2-byte big-endian
 	// length prefix on stdio, as defined by RFC 4571.
 	netcatFramingRFC4571 netcatFraming = "rfc4571"
-	maxNetcatFrameSize                 = 65535
+	maxNetcatFrameSize   int           = 65535
 )
 
 type netcatManagedPacketListener struct {
@@ -301,18 +302,13 @@ func runNetcatDatagramServer(ctx context.Context, cfg *netcatServerConfig) error
 	if result.Generated {
 		fmt.Fprintln(cfg.Stderr, result.Display)
 	}
-	sessionCtx, cancelSessions := context.WithCancel(context.Background())
+	sessionCtx, cancelSessions := context.WithCancel(ctx)
 	defer cancelSessions()
-	go func() {
-		select {
-		case <-ctx.Done():
-			cancelSessions()
-			_ = result.Listener.Close()
-		case <-sessionCtx.Done():
-		}
-	}()
+	stopListener := context.AfterFunc(ctx, func() { _ = result.Listener.Close() })
+	defer stopListener()
 	var wg sync.WaitGroup
 	var slots chan struct{}
+	var acceptRetryDelay time.Duration
 	if cfg.MaxConnections > 0 {
 		slots = make(chan struct{}, cfg.MaxConnections)
 	}
@@ -322,15 +318,16 @@ func runNetcatDatagramServer(ctx context.Context, cfg *netcatServerConfig) error
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				break
 			}
-			var netErr net.Error
-			if errors.As(err, &netErr) && netErr.Temporary() {
-				time.Sleep(50 * time.Millisecond)
+			delay, retry := netretry.NextAcceptDelay(err, acceptRetryDelay, netcatAcceptRetryMaxDelay)
+			if retry && netretry.Wait(ctx, delay) {
+				acceptRetryDelay = delay
 				continue
 			}
 			cancelSessions()
 			wg.Wait()
 			return err
 		}
+		acceptRetryDelay = 0
 		acquiredSlot := false
 		if slots != nil {
 			select {

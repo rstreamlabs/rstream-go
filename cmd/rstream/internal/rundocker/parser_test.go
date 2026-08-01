@@ -180,9 +180,10 @@ func TestParseDesiredTunnelsPublishedTCP(t *testing.T) {
 		ID:   "abc",
 		Name: "ssh",
 		Labels: map[string]string{
-			"rstream.tunnel.ssh.forward":  "22",
-			"rstream.tunnel.ssh.protocol": "tcp",
-			"rstream.tunnel.ssh.port":     "10042",
+			"rstream.tunnel.ssh.forward":                    "22",
+			"rstream.tunnel.ssh.protocol":                   "tcp",
+			"rstream.tunnel.ssh.port":                       "10042",
+			"rstream.tunnel.ssh.allow-cross-region-routing": "true",
 		},
 		Networks: map[string]string{"backend": "10.0.0.8"},
 	}
@@ -196,6 +197,9 @@ func TestParseDesiredTunnelsPublishedTCP(t *testing.T) {
 	}
 	if props.Publish == nil || !*props.Publish || props.Port == nil || *props.Port != 10042 {
 		t.Fatalf("unexpected TCP publication properties: %#v", props)
+	}
+	if props.AllowCrossRegionRouting == nil || !*props.AllowCrossRegionRouting {
+		t.Fatalf("AllowCrossRegionRouting = %#v, want true", props.AllowCrossRegionRouting)
 	}
 }
 
@@ -220,6 +224,21 @@ func TestParseDesiredTunnelsRejectsPublishedTCPProtocolOptions(t *testing.T) {
 				t.Fatalf("expected published TCP option validation error, got %v", err)
 			}
 		})
+	}
+}
+
+func TestParseDesiredTunnelsAcceptsCrossRegionRoutingForHTTP(t *testing.T) {
+	labels := map[string]string{
+		"rstream.tunnel.web.forward":                    "8080",
+		"rstream.tunnel.web.protocol":                   "http",
+		"rstream.tunnel.web.allow-cross-region-routing": "true",
+	}
+	desired, err := ParseDesiredTunnels(ContainerInfo{Labels: labels, Networks: map[string]string{"backend": "10.0.0.8"}}, "", runmodel.ResolvedContext{})
+	if err != nil {
+		t.Fatalf("ParseDesiredTunnels() error = %v", err)
+	}
+	if len(desired) != 1 || desired[0].Props.AllowCrossRegionRouting == nil || !*desired[0].Props.AllowCrossRegionRouting {
+		t.Fatalf("unexpected routing properties: %#v", desired)
 	}
 }
 

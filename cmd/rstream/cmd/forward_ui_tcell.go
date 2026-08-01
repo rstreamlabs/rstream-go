@@ -197,7 +197,7 @@ func printWrappedLine(s tcell.Screen, start, left, right int, text string, maxRo
 	}
 	row, col := start, left
 	end := sw - right
-	for _, r := range []rune(text) {
+	for _, r := range text {
 		if col >= end {
 			row++
 			col = left

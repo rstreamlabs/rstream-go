@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/controlplane"
 )
 
 func TestResolveFromEnvLoadsConfiguredFileAndAppliesEnvOverrides(t *testing.T) {
@@ -66,6 +67,30 @@ func TestNewClientFromResolvedPropagatesTransportAndNoToken(t *testing.T) {
 	}
 	if client.NoToken == nil || !*client.NoToken {
 		t.Fatalf("NoToken = %#v, want true", client.NoToken)
+	}
+}
+
+func TestResolveProjectRegionKeepsGlobalStableDomainEndpoint(t *testing.T) {
+	resolved := Resolved{Region: "eu-west-3"}
+	project := controlplane.Project{
+		Endpoint:   "project",
+		Domain:     "global.example.test",
+		EnginePort: 443,
+		Routing:    "global",
+		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
+			Region:     "eu-west-3",
+			Domain:     "eu.example.test",
+			EnginePort: 8443,
+		}},
+	}
+	if err := ResolveProjectRegion(&resolved, project); err != nil {
+		t.Fatalf("ResolveProjectRegion() error = %v", err)
+	}
+	if resolved.Engine != "project.eu.example.test:8443" {
+		t.Fatalf("Engine = %q, want regional endpoint", resolved.Engine)
+	}
+	if resolved.StableDomainEndpoint() != "project.global.example.test:443" {
+		t.Fatalf("StableDomainEndpoint() = %q, want global endpoint", resolved.StableDomainEndpoint())
 	}
 }
 

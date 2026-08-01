@@ -349,7 +349,7 @@ func runWebTTYServerTrust(cmd *cobra.Command, serverID string) error {
 	if err != nil {
 		return err
 	}
-	client := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+	client := newRuntimeControlPlaneClient(runtime.Resolved)
 	if err := maybeApproveWorkspaceManagedWebTTYServerTrust(cmd.Context(), runtime, client, enrollmentPath, enrollment, nil); err != nil {
 		return mapWebTTYServerWriteError(err)
 	}
@@ -384,14 +384,14 @@ func webTTYRegisteredServerControlPlane(cmd *cobra.Command) (*resolvedRuntime, *
 		if err != nil {
 			return nil, nil, webTTYRegisteredServerProject{}, err
 		}
-		client := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+		client := newRuntimeControlPlaneClient(runtime.Resolved)
 		return runtime, client, webTTYRegisteredServerProject{ID: projectID, Source: "flag"}, nil
 	}
 	runtime, err := resolveRuntime(cmd, false, true)
 	if err != nil {
 		return nil, nil, webTTYRegisteredServerProject{}, err
 	}
-	client := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+	client := newRuntimeControlPlaneClient(runtime.Resolved)
 	project, err := webTTYRegisteredServerProjectFromFlags(cmd, runtime, client)
 	if err != nil {
 		return nil, nil, webTTYRegisteredServerProject{}, err

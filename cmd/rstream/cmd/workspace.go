@@ -54,7 +54,7 @@ func runWorkspaceList(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	client := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+	client := newRuntimeControlPlaneClient(runtime.Resolved)
 	if err := client.RequireToken(); err != nil {
 		return err
 	}

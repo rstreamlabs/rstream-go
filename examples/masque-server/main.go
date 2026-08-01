@@ -99,7 +99,7 @@ func connectIPTemplate(host string) (*uritemplate.Template, error) {
 }
 
 func writeParseError(w http.ResponseWriter, err error) {
-	var udpErr *masque.RequestParseError
+	var udpErr *masque.ProxyRequestParseError
 	if errors.As(err, &udpErr) {
 		http.Error(w, udpErr.Error(), udpErr.HTTPStatus)
 		return
@@ -119,7 +119,7 @@ func handleConnectUDP(proxy *masque.Proxy) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		req, err := masque.ParseRequest(r, tpl)
+		req, err := masque.ParseProxyRequest(r, tpl)
 		if err != nil {
 			writeParseError(w, err)
 			return

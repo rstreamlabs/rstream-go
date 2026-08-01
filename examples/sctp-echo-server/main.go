@@ -47,7 +47,7 @@ func handleStream(stream *sctp.Stream) {
 
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
-	assoc, err := sctp.Server(sctp.Config{NetConn: conn})
+	assoc, err := sctp.ServerWithOptions(sctp.WithNetConn(conn))
 	if err != nil {
 		log.Printf("SCTP association error: %v", err)
 		return

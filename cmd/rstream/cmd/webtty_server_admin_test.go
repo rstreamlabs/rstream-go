@@ -27,7 +27,7 @@ func TestRunWebTTYServerCreateInfersActiveProject(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/api/projects/tunnels/resolve/demo":
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(controlplane.Project{ID: "project-1", WorkspaceID: "workspace-1", Endpoint: "demo"})
+			_ = json.NewEncoder(w).Encode(controlplane.Project{ID: "project-1", WorkspaceID: "workspace-1", Endpoint: "demo", Routing: "regional"})
 		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/api/projects/tunnels/project-1/webtty/servers":
 			if r.URL.Query().Get("q") != "Prod Shell" || r.URL.Query().Get("pageSize") != "100" {
 				http.Error(w, "unexpected existing-server query", http.StatusBadRequest)
@@ -397,6 +397,7 @@ func TestRunWebTTYServerCreateWorkspaceManagedEnrollRequiresTrustedDeviceBeforeC
 					ID:          "project-1",
 					WorkspaceID: "workspace-1",
 					Endpoint:    "demo",
+					Routing:     "regional",
 				}},
 				Page:       1,
 				PageSize:   100,
@@ -492,6 +493,7 @@ func TestRunWebTTYServerCreateEnrollAutoPinsWorkspaceManagedTrust(t *testing.T) 
 					ID:          projectID,
 					WorkspaceID: workspaceID,
 					Endpoint:    "runtime-project",
+					Routing:     "regional",
 				}},
 				Page:       1,
 				PageSize:   100,

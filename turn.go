@@ -33,16 +33,17 @@ const (
 )
 
 type CreateTURNCredentialsOptions struct {
-	APIURL          string
-	Token           string
-	ProjectID       string
-	ProjectEndpoint string
-	ClusterDomain   string
-	TURNPort        int
-	TURNSPort       int
-	TTL             time.Duration
-	Mode            *TURNCredentialMode
-	HTTPClient      *http.Client
+	APIURL              string
+	Token               string
+	ProjectID           string
+	ProjectEndpoint     string
+	ClusterDomain       string
+	TURNPort            int
+	TURNSPort           int
+	TTL                 time.Duration
+	Mode                *TURNCredentialMode
+	HTTPClient          *http.Client
+	ControlPlaneHeaders map[string]string
 }
 
 type turnTokenClaims struct {
@@ -76,7 +77,8 @@ func createAPITURNCredentials(ctx context.Context, opts CreateTURNCredentialsOpt
 	if projectID == "" && projectEndpoint == "" {
 		return nil, errors.New("project ID or project endpoint is required for TURN API mode")
 	}
-	clientOpts := make([]controlplane.Option, 0, 1)
+	clientOpts := make([]controlplane.Option, 0, 2)
+	clientOpts = append(clientOpts, controlplane.WithHeaders(opts.ControlPlaneHeaders))
 	if opts.HTTPClient != nil {
 		clientOpts = append(clientOpts, controlplane.WithHTTPClient(opts.HTTPClient))
 	}

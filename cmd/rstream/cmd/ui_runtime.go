@@ -68,7 +68,7 @@ func (u *uiApp) switchTarget(target uiTarget, persist bool) {
 }
 
 func (u *uiApp) prepareRuntimeSwitch(ctx context.Context, cancel context.CancelFunc, target uiTarget, persist bool, transport string, readyTimeout time.Duration) (*uiRuntimeSwitchResult, error) {
-	runtime, connection, warning, persisted, err := u.resolver.prepareTarget(target, persist)
+	runtime, connection, warning, persisted, err := u.resolver.prepareTarget(ctx, target, persist)
 	result := &uiRuntimeSwitchResult{ctx: ctx, cancel: cancel, runtime: runtime, connection: connection, warning: warning, persisted: persisted}
 	if err != nil {
 		cancel()
@@ -98,7 +98,7 @@ func (u *uiApp) prepareRuntimeSwitch(ctx context.Context, cancel context.CancelF
 		return result, nil
 	case <-timer.C:
 		cancel()
-		return result, fmt.Errorf("Engine inventory did not become ready within %s", readyTimeout)
+		return result, fmt.Errorf("engine inventory did not become ready within %s", readyTimeout)
 	}
 }
 

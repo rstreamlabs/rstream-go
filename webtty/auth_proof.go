@@ -299,7 +299,7 @@ func validateWebTTYSigningPublicKey(publicKey *ecdsa.PublicKey) error {
 	if publicKey.Curve != elliptic.P256() {
 		return errors.New("WebTTY signing public key is not P-256 ECDSA")
 	}
-	if publicKey.X == nil || publicKey.Y == nil || !publicKey.Curve.IsOnCurve(publicKey.X, publicKey.Y) {
+	if _, err := publicKey.Bytes(); err != nil {
 		return errors.New("WebTTY signing public key is not on P-256")
 	}
 	return nil

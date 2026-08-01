@@ -192,6 +192,7 @@ type masqueUDPPacketConn struct {
 	readCancel        context.CancelFunc
 	readDeadline      time.Time
 	readDeadlineTimer *time.Timer
+	writeDeadline     *packetDeadline
 }
 
 var _ net.PacketConn = (*masqueUDPPacketConn)(nil)
@@ -199,12 +200,13 @@ var _ net.PacketConn = (*masqueUDPPacketConn)(nil)
 func newMASQUEUDPPacketConn(stream masqueUDPStream, localAddr net.Addr, remoteAddr net.Addr) *masqueUDPPacketConn {
 	ctx, cancel := context.WithCancel(context.Background())
 	conn := &masqueUDPPacketConn{
-		stream:     stream,
-		localAddr:  localAddr,
-		remoteAddr: remoteAddr,
-		readDone:   make(chan struct{}),
-		readCtx:    ctx,
-		readCancel: cancel,
+		stream:        stream,
+		localAddr:     localAddr,
+		remoteAddr:    remoteAddr,
+		readDone:      make(chan struct{}),
+		readCtx:       ctx,
+		readCancel:    cancel,
+		writeDeadline: newPacketDeadline(),
 	}
 	go conn.discardCapsules()
 	return conn
@@ -243,11 +245,23 @@ func (c *masqueUDPPacketConn) ReadFrom(b []byte) (int, net.Addr, error) {
 	}
 }
 
-func (c *masqueUDPPacketConn) WriteTo(p []byte, _ net.Addr) (int, error) {
+func (c *masqueUDPPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
+	if c.closed.Load() {
+		return 0, net.ErrClosed
+	}
+	if addr == nil || c.remoteAddr == nil || addr.String() != c.remoteAddr.String() {
+		return 0, fmt.Errorf("invalid remote address %v; expected %v", addr, c.remoteAddr)
+	}
+	if c.writeDeadline.expired() {
+		return 0, os.ErrDeadlineExceeded
+	}
 	data := make([]byte, 0, 1+len(p))
 	data = append(data, masqueHTTPDatagramContextID0)
 	data = append(data, p...)
-	return len(p), c.stream.SendDatagram(data)
+	if err := c.stream.SendDatagram(data); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
 
 func (c *masqueUDPPacketConn) Close() error {
@@ -271,11 +285,17 @@ func (c *masqueUDPPacketConn) LocalAddr() net.Addr {
 }
 
 func (c *masqueUDPPacketConn) SetDeadline(t time.Time) error {
-	_ = c.SetWriteDeadline(t)
+	if c.closed.Load() {
+		return net.ErrClosed
+	}
+	c.writeDeadline.set(t)
 	return c.SetReadDeadline(t)
 }
 
 func (c *masqueUDPPacketConn) SetReadDeadline(t time.Time) error {
+	if c.closed.Load() {
+		return net.ErrClosed
+	}
 	c.deadlineMu.Lock()
 	defer c.deadlineMu.Unlock()
 	c.readDeadline = t
@@ -328,7 +348,11 @@ func (c *masqueUDPPacketConn) resetReadContextLocked() {
 	c.readCtx, c.readCancel = context.WithCancel(context.Background())
 }
 
-func (c *masqueUDPPacketConn) SetWriteDeadline(time.Time) error {
+func (c *masqueUDPPacketConn) SetWriteDeadline(t time.Time) error {
+	if c.closed.Load() {
+		return net.ErrClosed
+	}
+	c.writeDeadline.set(t)
 	return nil
 }
 

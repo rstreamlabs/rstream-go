@@ -148,6 +148,10 @@ func socks5TargetAddress(ctx context.Context, target string, dnsOpts dnsResolver
 			return socks5Address{}, fmt.Errorf("failed to resolve SOCKS5 target address: %w", err)
 		}
 	}
+	return parseSOCKS5TargetAddress(addr)
+}
+
+func parseSOCKS5TargetAddress(addr string) (socks5Address, error) {
 	host, portRaw, err := net.SplitHostPort(addr)
 	if err != nil {
 		return socks5Address{}, fmt.Errorf("failed to split SOCKS5 target address %q: %w", addr, err)
@@ -461,9 +465,11 @@ func (c *socks5UDPConn) ReadFrom(b []byte) (int, net.Addr, error) {
 func (c *socks5UDPConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 	target := c.target
 	if addr != nil && addr.String() != "" {
-		if parsed, err := socks5TargetAddress(context.Background(), addr.String(), dnsResolverConfig{}); err == nil {
-			target = parsed
+		parsed, err := parseSOCKS5TargetAddress(addr.String())
+		if err != nil {
+			return 0, err
 		}
+		target = parsed
 	}
 	packet, err := socks5BuildUDPDatagram(target, p)
 	if err != nil {

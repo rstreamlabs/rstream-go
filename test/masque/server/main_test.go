@@ -25,3 +25,36 @@ func TestSameAuthority(t *testing.T) {
 		})
 	}
 }
+
+func TestForwardingAuthority(t *testing.T) {
+	tests := []struct {
+		name       string
+		forwarding string
+		publicPort string
+		want       string
+		wantErr    bool
+	}{
+		{name: "owner authority", forwarding: "https://proxy.example.com:8443", want: "proxy.example.com:8443"},
+		{name: "public port override", forwarding: "https://proxy.example.com:8443", publicPort: "443", want: "proxy.example.com:443"},
+		{name: "IPv6 public port override", forwarding: "https://[2001:db8::1]:8443", publicPort: "443", want: "[2001:db8::1]:443"},
+		{name: "invalid forwarding address", forwarding: "proxy.example.com", wantErr: true},
+		{name: "invalid public port", forwarding: "https://proxy.example.com", publicPort: "invalid", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := forwardingAuthority(tt.forwarding, tt.publicPort)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("forwardingAuthority() error = nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("forwardingAuthority() error = %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("forwardingAuthority() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

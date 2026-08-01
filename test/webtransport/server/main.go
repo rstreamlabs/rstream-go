@@ -54,6 +54,7 @@ import (
 	"github.com/quic-go/webtransport-go"
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/test/e2eenv"
 )
 
 func generateTLSConfig() (*tls.Config, error) {
@@ -345,16 +346,20 @@ func dispatch(ctx context.Context, sess *webtransport.Session, q url.Values) {
 	}
 }
 
-func run(ctx context.Context, client *rstream.Client, publish bool, publishedProtocol string, tokenAuth bool) error {
+func run(ctx context.Context, client *rstream.Client, publish bool, publishedProtocol string, tokenAuth bool, tunnelName string) error {
 	ctrl, err := client.Connect(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect to rstream engine server: %w", err)
 	}
 	defer ctrl.Close()
 	tunnelProps := rstream.TunnelProperties{
-		Name:    rstream.StringPtr("wt-matrix"),
+		Name:    rstream.StringPtr(tunnelName),
 		Type:    rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
 		Publish: rstream.BoolPtr(publish),
+	}
+	tunnelProps.AllowCrossRegionRouting, err = e2eenv.AllowCrossRegionRouting()
+	if err != nil {
+		return fmt.Errorf("cross-region routing: %w", err)
 	}
 	if tokenAuth {
 		tunnelProps.TokenAuth = rstream.BoolPtr(true)
@@ -428,6 +433,7 @@ func main() {
 	publish := flag.Bool("publish", false, "publish the tunnel")
 	publishedProtocol := flag.String("published-protocol", "quic", "published edge protocol when -publish=true (http or quic)")
 	tokenAuth := flag.Bool("token-auth", false, "require token auth on the published tunnel")
+	tunnelName := flag.String("name", "wt-matrix", "tunnel name")
 	flag.Parse()
 	client, err := config.NewClientFromEnv()
 	if err != nil {
@@ -442,7 +448,7 @@ func main() {
 		log.Println("Received shutdown signal, exiting...")
 		cancel()
 	}()
-	if err := run(ctx, client, *publish, *publishedProtocol, *tokenAuth); err != nil && err != http.ErrServerClosed {
+	if err := run(ctx, client, *publish, *publishedProtocol, *tokenAuth, *tunnelName); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
 }

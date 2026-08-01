@@ -179,6 +179,7 @@ func tunnelFlagsCommand() *cobra.Command {
 	command.Flags().Bool("quic", false, "")
 	command.Flags().Bool("http", false, "")
 	command.Flags().Uint32("tcp-port", 0, "")
+	command.Flags().Bool("allow-cross-region-routing", false, "")
 	command.Flags().StringArray("label", nil, "")
 	command.Flags().StringSlice("geoip", nil, "")
 	command.Flags().StringSlice("trusted-ips", nil, "")
@@ -202,6 +203,7 @@ func TestNewTunnelPropertiesFromFlagsPublishedTCP(t *testing.T) {
 	command := tunnelFlagsCommand()
 	mustSetFlag(t, command, "tcp", "true")
 	mustSetFlag(t, command, "tcp-port", "10042")
+	mustSetFlag(t, command, "allow-cross-region-routing", "true")
 	props, err := newTunnelPropertiesFromFlags(command)
 	if err != nil {
 		t.Fatalf("newTunnelPropertiesFromFlags() error = %v", err)
@@ -211,6 +213,25 @@ func TestNewTunnelPropertiesFromFlagsPublishedTCP(t *testing.T) {
 	}
 	if props.Publish == nil || !*props.Publish || props.Port == nil || *props.Port != 10042 {
 		t.Fatalf("unexpected TCP publication properties: %#v", props)
+	}
+	if props.AllowCrossRegionRouting == nil || !*props.AllowCrossRegionRouting {
+		t.Fatalf("AllowCrossRegionRouting = %#v, want true", props.AllowCrossRegionRouting)
+	}
+}
+
+func TestNewTunnelPropertiesFromFlagsCrossRegionRouting(t *testing.T) {
+	command := tunnelFlagsCommand()
+	mustSetFlag(t, command, "http", "true")
+	mustSetFlag(t, command, "allow-cross-region-routing", "true")
+	props, err := newTunnelPropertiesFromFlags(command)
+	if err != nil {
+		t.Fatalf("newTunnelPropertiesFromFlags() error = %v", err)
+	}
+	if props.Protocol == nil || *props.Protocol != rstream.ProtocolHTTP {
+		t.Fatalf("Protocol = %#v, want http", props.Protocol)
+	}
+	if props.AllowCrossRegionRouting == nil || !*props.AllowCrossRegionRouting {
+		t.Fatalf("AllowCrossRegionRouting = %#v, want true", props.AllowCrossRegionRouting)
 	}
 }
 

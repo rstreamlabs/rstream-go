@@ -107,28 +107,76 @@ func TestProjectContextHelpers(t *testing.T) {
 func TestUpsertProjectContextReusesAndRefreshesContext(t *testing.T) {
 	apiURL := "https://api.example.com"
 	cfg := &config.Config{Contexts: []config.Context{{Name: "existing", APIURL: apiURL + "/", ProjectEndpoint: "project", Engine: "old.example:443"}}}
-	project := controlplane.Project{Name: "Project", Endpoint: "project", Domain: "new.example", EnginePort: 8443, TurnPort: 3478, TurnsPort: 5349}
-	contextValue, err := upsertProjectContext(cfg, apiURL, project, "", true)
+	project := controlplane.Project{
+		Name:       "Project",
+		Endpoint:   "project",
+		Domain:     "new.example",
+		EnginePort: 8443,
+		Routing:    "global",
+		TurnPort:   3478,
+		TurnsPort:  5349,
+		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
+			Region:     "us-east-1",
+			Domain:     "us.example",
+			EnginePort: 8443,
+		}},
+	}
+	contextValue, err := upsertProjectContext(cfg, apiURL, project, "", "us-east-1", true)
 	if err != nil {
 		t.Fatalf("upsertProjectContext() error = %v", err)
 	}
 	if len(cfg.Contexts) != 1 || contextValue.Name != "existing" || contextValue.Engine != "project.new.example:8443" {
 		t.Fatalf("upserted context = %#v config=%#v", contextValue, cfg)
 	}
+	if contextValue.Region != "us-east-1" {
+		t.Fatalf("context region = %q, want us-east-1", contextValue.Region)
+	}
 	if cfg.Defaults.Context == nil || cfg.Defaults.Context.Name != "existing" {
 		t.Fatalf("default context = %#v, want existing", cfg.Defaults.Context)
 	}
 }
 
+func TestUpsertProjectContextClearsRegionForAutomaticSelection(t *testing.T) {
+	apiURL := "https://api.example.com"
+	cfg := &config.Config{Contexts: []config.Context{{Name: "existing", APIURL: apiURL, ProjectEndpoint: "project", Region: "us-east-1"}}}
+	project := controlplane.Project{Name: "Project", Endpoint: "project", Domain: "global.example", EnginePort: 443}
+	contextValue, err := upsertProjectContext(cfg, apiURL, project, "", "auto", true)
+	if err != nil {
+		t.Fatalf("upsertProjectContext() error = %v", err)
+	}
+	if contextValue.Region != "" {
+		t.Fatalf("context region = %q, want automatic selection", contextValue.Region)
+	}
+}
+
+func TestUpsertProjectContextRejectsUnavailableRegion(t *testing.T) {
+	project := controlplane.Project{
+		Name:       "Project",
+		Endpoint:   "project",
+		Domain:     "global.example",
+		EnginePort: 443,
+		Routing:    "global",
+		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
+			Region:     "eu-west-3",
+			Domain:     "eu.example",
+			EnginePort: 8443,
+		}},
+	}
+	_, err := upsertProjectContext(&config.Config{}, "https://api.example", project, "project-us", "us-east-1", true)
+	if err == nil || !strings.Contains(err.Error(), "available: eu-west-3") {
+		t.Fatalf("upsertProjectContext() error = %v, want unavailable region", err)
+	}
+}
+
 func TestUpsertProjectContextValidatesInputs(t *testing.T) {
 	project := controlplane.Project{Name: "Project", Endpoint: "project"}
-	if _, err := upsertProjectContext(nil, "https://api.example", project, "", true); err == nil {
+	if _, err := upsertProjectContext(nil, "https://api.example", project, "", "", true); err == nil {
 		t.Fatal("upsertProjectContext() accepted nil config")
 	}
-	if _, err := upsertProjectContext(&config.Config{}, "", project, "", true); err == nil {
+	if _, err := upsertProjectContext(&config.Config{}, "", project, "", "", true); err == nil {
 		t.Fatal("upsertProjectContext() accepted empty API URL")
 	}
-	if _, err := upsertProjectContext(&config.Config{}, "https://api.example", project, "", true); err == nil {
+	if _, err := upsertProjectContext(&config.Config{}, "https://api.example", project, "", "", true); err == nil {
 		t.Fatal("upsertProjectContext() accepted project without engine address")
 	}
 }
@@ -144,16 +192,39 @@ func TestWriteProjectsTableIncludesWorkspaceID(t *testing.T) {
 		Plan:        "pro",
 		Deployment:  "cloud",
 		Provider:    "aws",
+		Routing:     "global",
 		Region:      "eu-west-3",
+		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
+			Region: "us-east-1",
+		}},
 	}})
 	if err != nil {
 		t.Fatalf("writeProjectsTable() error = %v", err)
 	}
 	got := out.String()
-	for _, want := range []string{"WORKSPACE ID", "workspace-1", "project-1"} {
+	for _, want := range []string{"ROUTING", "REGIONS", "global", "eu-west-3, us-east-1", "WORKSPACE ID", "workspace-1", "project-1"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("project table missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestUpsertProjectContextRejectsRegionForRegionalProject(t *testing.T) {
+	project := controlplane.Project{
+		Name:       "Project",
+		Endpoint:   "project",
+		Domain:     "regional.example",
+		EnginePort: 443,
+		Routing:    "regional",
+		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
+			Region:     "eu-west-3",
+			Domain:     "regional.example",
+			EnginePort: 443,
+		}},
+	}
+	_, err := upsertProjectContext(&config.Config{}, "https://api.example", project, "", "eu-west-3", true)
+	if err == nil || !strings.Contains(err.Error(), "only available for global projects") {
+		t.Fatalf("upsertProjectContext() error = %v, want regional project rejection", err)
 	}
 }
 
@@ -163,8 +234,21 @@ func TestProjectUseHelpDescribesDefaultContext(t *testing.T) {
 	}
 }
 
+func TestProjectRenameHelpAndValidation(t *testing.T) {
+	if projectRenameCmd.Short != "Rename a project" {
+		t.Fatalf("project rename help = %q", projectRenameCmd.Short)
+	}
+	if err := projectRenameCmd.RunE(projectRenameCmd, []string{" "}); err == nil || err.Error() != "project name is required" {
+		t.Fatalf("project rename empty name error = %v", err)
+	}
+}
+
 func TestMapControlPlaneError(t *testing.T) {
-	err := mapControlPlaneError(controlplane.ErrUnauthorized)
+	err := mapControlPlaneError(controlplane.ErrAccessProtection)
+	if err == nil || !strings.Contains(err.Error(), "deployment protection") || !strings.Contains(err.Error(), "control-plane headers") {
+		t.Fatalf("access protection error not mapped: %v", err)
+	}
+	err = mapControlPlaneError(controlplane.ErrUnauthorized)
 	if err == nil || !strings.Contains(err.Error(), "not authenticated") {
 		t.Fatalf("unauthorized error not mapped: %v", err)
 	}

@@ -34,7 +34,7 @@ var projectListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		client := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+		client := newRuntimeControlPlaneClient(runtime.Resolved)
 		if err := client.RequireToken(); err != nil {
 			return err
 		}
@@ -86,7 +86,7 @@ var projectUseCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		client := controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token)
+		client := newRuntimeControlPlaneClient(runtime.Resolved)
 		if err := client.RequireToken(); err != nil {
 			return err
 		}
@@ -97,9 +97,19 @@ var projectUseCmd = &cobra.Command{
 		if err != nil {
 			return mapControlPlaneError(err)
 		}
+		regionValue, _ := cmd.Flags().GetString("region")
+		region, err := controlplane.NormalizeRegion(regionValue)
+		if err != nil {
+			return err
+		}
+		if region != "" {
+			if _, err := project.EngineAddressForRegion(region); err != nil {
+				return err
+			}
+		}
 		apiURL := runtime.Resolved.APIURL
 		nameFlag, _ := cmd.Flags().GetString("name")
-		ctx, err := persistProjectContext(runtime.ConfigPath, apiURL, project, nameFlag, true)
+		ctx, err := persistProjectContext(runtime.ConfigPath, apiURL, project, nameFlag, region, true)
 		if err != nil {
 			return err
 		}
@@ -112,10 +122,33 @@ var projectUseCmd = &cobra.Command{
 	},
 }
 
+var projectRenameCmd = &cobra.Command{
+	Use:          "rename <name>",
+	Short:        "Rename a project",
+	SilenceUsage: true,
+	Args:         cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := strings.TrimSpace(args[0])
+		if name == "" {
+			return errors.New("project name is required")
+		}
+		client, projectID, err := projectResourceClient(cmd)
+		if err != nil {
+			return err
+		}
+		project, err := client.UpdateProject(cmd.Context(), projectID, controlplane.UpdateProjectRequest{Name: name})
+		if err != nil {
+			return mapControlPlaneError(err)
+		}
+		return writeProjectResourceResult(cmd, project)
+	},
+}
+
 func init() {
 	projectCmd.Flags().SortFlags = false
 	projectCmd.PersistentFlags().SortFlags = false
 	projectCmd.AddCommand(projectListCmd)
+	projectCmd.AddCommand(projectRenameCmd)
 	projectCmd.AddCommand(projectUseCmd)
 	projectListCmd.Flags().SortFlags = false
 	projectListCmd.Flags().String("workspace", "", "workspace ID")
@@ -128,32 +161,62 @@ func init() {
 	projectUseCmd.Flags().SortFlags = false
 	projectUseCmd.Flags().String("name", "", "context name (defaults to a derived name)")
 	projectUseCmd.Flags().StringP("output", "o", "none", "output mode (none, json, yaml)")
+	projectRenameCmd.Flags().SortFlags = false
+	projectRenameCmd.Flags().String("project-id", "", "project ID (defaults to the current context)")
+	projectRenameCmd.Flags().StringP("output", "o", "table", "output mode (table, json, yaml)")
 	rootCmd.AddCommand(projectCmd)
 }
 
 func writeProjectsTable(out io.Writer, projects []controlplane.Project) error {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "NAME\tENDPOINT\tSTATUS\tPLAN\tDEPLOYMENT\tPROVIDER\tREGION\tWORKSPACE ID\tID")
+	_, _ = fmt.Fprintln(w, "NAME\tENDPOINT\tSTATUS\tPLAN\tDEPLOYMENT\tPROVIDER\tROUTING\tREGIONS\tWORKSPACE ID\tID")
 	for _, project := range projects {
-		region := project.Region
-		if region == "" {
-			region = "-"
-		}
 		_, _ = fmt.Fprintf(
 			w,
-			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			"%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			terminalSafeDefault(project.Name),
 			terminalSafeDefault(project.Endpoint),
 			terminalSafeDefault(project.Status),
 			terminalSafeDefault(project.Plan),
 			terminalSafeDefault(project.Deployment),
 			terminalSafeDefault(project.Provider),
-			terminalSafeDefault(region),
+			terminalSafeDefault(projectRouting(project)),
+			terminalSafeDefault(strings.Join(projectRegions(project), ", ")),
 			terminalSafeDefault(project.WorkspaceID),
 			terminalSafeDefault(project.ID),
 		)
 	}
 	return w.Flush()
+}
+
+func projectRouting(project controlplane.Project) string {
+	switch value := strings.ToLower(strings.TrimSpace(project.Routing)); value {
+	case "global", "regional":
+		return value
+	default:
+		return "-"
+	}
+}
+
+func projectRegions(project controlplane.Project) []string {
+	regions := make(map[string]struct{}, len(project.RegionalEndpoints)+1)
+	if region := strings.ToLower(strings.TrimSpace(project.Region)); region != "" {
+		regions[region] = struct{}{}
+	}
+	for _, endpoint := range project.RegionalEndpoints {
+		if region := strings.ToLower(strings.TrimSpace(endpoint.Region)); region != "" {
+			regions[region] = struct{}{}
+		}
+	}
+	if len(regions) == 0 {
+		return []string{"-"}
+	}
+	values := make([]string, 0, len(regions))
+	for region := range regions {
+		values = append(values, region)
+	}
+	sort.Strings(values)
+	return values
 }
 
 func listProjectsParamsFromFlags(cmd *cobra.Command) (controlplane.ListProjectsParams, bool, error) {
@@ -215,6 +278,9 @@ func isAllowed(value string, allowed ...string) bool {
 }
 
 func mapControlPlaneError(err error) error {
+	if errors.Is(err, controlplane.ErrAccessProtection) {
+		return errors.New("control plane access was intercepted by deployment protection (configure the required control-plane headers for this context)")
+	}
 	if errors.Is(err, controlplane.ErrUnauthorized) {
 		return errors.New("not authenticated (run rstream login or set RSTREAM_AUTHENTICATION_TOKEN)")
 	}
@@ -234,10 +300,10 @@ func findContextByProjectEndpoint(cfg *config.Config, apiURL, endpoint string) *
 	return nil
 }
 
-func persistProjectContext(path, apiURL string, project controlplane.Project, name string, setDefault bool) (config.Context, error) {
+func persistProjectContext(path, apiURL string, project controlplane.Project, name, region string, setDefault bool) (config.Context, error) {
 	var persisted config.Context
 	err := config.UpdateAtomic(path, func(cfg *config.Config) error {
-		ctx, err := upsertProjectContext(cfg, apiURL, project, name, setDefault)
+		ctx, err := upsertProjectContext(cfg, apiURL, project, name, region, setDefault)
 		if err != nil {
 			return err
 		}
@@ -247,13 +313,22 @@ func persistProjectContext(path, apiURL string, project controlplane.Project, na
 	return persisted, err
 }
 
-func upsertProjectContext(cfg *config.Config, apiURL string, project controlplane.Project, name string, setDefault bool) (*config.Context, error) {
+func upsertProjectContext(cfg *config.Config, apiURL string, project controlplane.Project, name, region string, setDefault bool) (*config.Context, error) {
 	if cfg == nil {
 		return nil, errors.New("config is nil")
 	}
 	apiURL = config.NormalizeAPIURL(apiURL)
 	if apiURL == "" {
 		return nil, errors.New("project context requires a Control Plane API URL")
+	}
+	region, err := controlplane.NormalizeRegion(region)
+	if err != nil {
+		return nil, err
+	}
+	if region != "" {
+		if _, err := project.EngineAddressForRegion(region); err != nil {
+			return nil, err
+		}
 	}
 	engine := project.EngineAddress()
 	if engine == "" {
@@ -267,6 +342,7 @@ func upsertProjectContext(cfg *config.Config, apiURL string, project controlplan
 	ctx.APIURL = apiURL
 	ctx.ProjectEndpoint = project.Endpoint
 	ctx.Engine = engine
+	ctx.Region = region
 	ctx.TURNDomain = project.Domain
 	ctx.TURNPort = project.TurnPort
 	ctx.TURNSPort = project.TurnsPort

@@ -34,12 +34,12 @@ func mcpLoadConfig() (string, config.Config, error) {
 	return path, cfg, nil
 }
 
-func mcpControlPlaneClient() (*controlplane.Client, *resolvedRuntime, error) {
-	runtime, err := resolveMCPControlPlaneRuntime(true)
+func mcpControlPlaneClient(ctx context.Context) (*controlplane.Client, *resolvedRuntime, error) {
+	runtime, err := resolveMCPControlPlaneRuntime(ctx, true)
 	if err != nil {
 		return nil, nil, err
 	}
-	return controlplane.NewClient(runtime.Resolved.APIURL, runtime.Resolved.Token), runtime, nil
+	return newRuntimeControlPlaneClient(runtime.Resolved), runtime, nil
 }
 
 func mcpContextList(args map[string]json.RawMessage) (map[string]any, error) {
@@ -90,13 +90,13 @@ func mcpContextGet(args map[string]json.RawMessage) (map[string]any, error) {
 	return mcpJSONResult(redactContext(*ctx), false)
 }
 
-func mcpRuntimeStatus() (map[string]any, error) {
+func mcpRuntimeStatus(ctx context.Context) (map[string]any, error) {
 	path, cfg, err := mcpLoadConfig()
 	if err != nil {
 		return nil, err
 	}
-	runtime, resolveErr := resolveMCPRuntime(false, false)
-	controlRuntime, controlErr := resolveMCPControlPlaneRuntime(false)
+	runtime, resolveErr := resolveMCPRuntime(ctx, false, false)
+	controlRuntime, controlErr := resolveMCPControlPlaneRuntime(ctx, false)
 	defaultContext := ""
 	if cfg.Defaults.Context != nil {
 		defaultContext = cfg.Defaults.Context.Name
@@ -167,7 +167,7 @@ func mcpSelectedContextName(cfg config.Config) string {
 }
 
 func mcpWorkspaceList(ctx context.Context) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -179,7 +179,7 @@ func mcpWorkspaceList(ctx context.Context) (map[string]any, error) {
 }
 
 func mcpProjectList(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +215,7 @@ func mcpProjectList(ctx context.Context, args map[string]json.RawMessage) (map[s
 }
 
 func mcpProjectCreationOptions(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +231,7 @@ func mcpProjectCreationOptions(ctx context.Context, args map[string]json.RawMess
 }
 
 func mcpProjectCreate(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -257,8 +257,28 @@ func mcpProjectCreate(ctx context.Context, args map[string]json.RawMessage) (map
 	return mcpJSONResult(map[string]any{"action": "created", "project": project}, false)
 }
 
+func mcpProjectUpdate(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
+	client, _, err := mcpControlPlaneClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	projectID, err := mcpRequiredStringArg(args, "project_id")
+	if err != nil {
+		return nil, err
+	}
+	name, err := mcpRequiredStringArg(args, "name")
+	if err != nil {
+		return nil, err
+	}
+	project, err := client.UpdateProject(ctx, projectID, controlplane.UpdateProjectRequest{Name: strings.TrimSpace(name)})
+	if err != nil {
+		return nil, mapControlPlaneError(err)
+	}
+	return mcpJSONResult(map[string]any{"project": project}, false)
+}
+
 func mcpProjectDelete(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +293,7 @@ func mcpProjectDelete(ctx context.Context, args map[string]json.RawMessage) (map
 }
 
 func mcpProjectLogs(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -293,7 +313,7 @@ func mcpProjectLogs(ctx context.Context, args map[string]json.RawMessage) (map[s
 }
 
 func mcpProjectEventsList(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +333,7 @@ func mcpProjectEventsList(ctx context.Context, args map[string]json.RawMessage) 
 }
 
 func mcpProjectWebhooksList(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +353,7 @@ func mcpProjectWebhooksList(ctx context.Context, args map[string]json.RawMessage
 }
 
 func mcpProjectWebhookDeliveriesList(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -357,7 +377,7 @@ func mcpProjectWebhookDeliveriesList(ctx context.Context, args map[string]json.R
 }
 
 func mcpProjectWebhookDeliveryGet(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -381,7 +401,7 @@ func mcpProjectWebhookDeliveryGet(ctx context.Context, args map[string]json.RawM
 }
 
 func mcpProjectUsage(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -397,7 +417,7 @@ func mcpProjectUsage(ctx context.Context, args map[string]json.RawMessage) (map[
 }
 
 func mcpProjectPlanGet(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -413,7 +433,7 @@ func mcpProjectPlanGet(ctx context.Context, args map[string]json.RawMessage) (ma
 }
 
 func mcpProjectTURNUsage(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -429,7 +449,7 @@ func mcpProjectTURNUsage(ctx context.Context, args map[string]json.RawMessage) (
 }
 
 func mcpProjectTURNCredentialsCreate(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -462,7 +482,7 @@ func mcpProjectTURNCredentialsCreate(ctx context.Context, args map[string]json.R
 }
 
 func mcpProjectDomainsList(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +502,7 @@ func mcpProjectDomainsList(ctx context.Context, args map[string]json.RawMessage)
 }
 
 func mcpProjectDomainCreate(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -494,7 +514,20 @@ func mcpProjectDomainCreate(ctx context.Context, args map[string]json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	domain, err := client.CreateProjectDomain(ctx, projectID, controlplane.CreateProjectDomainRequest{Hostname: hostname})
+	kind, err := mcpOptionalStringArg(args, "kind", "hostname")
+	if err != nil {
+		return nil, err
+	}
+	validation, err := mcpOptionalStringArg(args, "certificate_validation", "tls_alpn_01")
+	if err != nil {
+		return nil, err
+	}
+	_, validationExplicit := args["certificate_validation"]
+	request, err := newProjectDomainCreateRequest(hostname, kind, validation, validationExplicit)
+	if err != nil {
+		return nil, err
+	}
+	domain, err := client.CreateProjectDomain(ctx, projectID, request)
 	if err != nil {
 		return nil, mapControlPlaneError(err)
 	}
@@ -550,7 +583,7 @@ func mcpProjectDomainConnect(ctx context.Context, args map[string]json.RawMessag
 }
 
 func mcpProjectTCPAddressesList(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -566,7 +599,7 @@ func mcpProjectTCPAddressesList(ctx context.Context, args map[string]json.RawMes
 }
 
 func mcpProjectTCPAddressReserve(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -582,7 +615,7 @@ func mcpProjectTCPAddressReserve(ctx context.Context, args map[string]json.RawMe
 }
 
 func mcpProjectTCPAddressRelease(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -606,7 +639,7 @@ func mcpProjectTCPAddressRelease(ctx context.Context, args map[string]json.RawMe
 }
 
 func mcpProjectSettingsGet(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -622,7 +655,7 @@ func mcpProjectSettingsGet(ctx context.Context, args map[string]json.RawMessage)
 }
 
 func mcpProjectSettingsPatch(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -642,7 +675,7 @@ func mcpProjectSettingsPatch(ctx context.Context, args map[string]json.RawMessag
 }
 
 func mcpProjectSettingsReset(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -658,7 +691,7 @@ func mcpProjectSettingsReset(ctx context.Context, args map[string]json.RawMessag
 }
 
 func mcpTokenCreate(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -760,7 +793,7 @@ func mcpTokenCreateErrorNeedsResourceHelp(message string) bool {
 }
 
 func mcpWorkspaceMembersList(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -1005,7 +1038,7 @@ func mcpProjectSettingsPatchArg(args map[string]json.RawMessage) (controlplane.P
 }
 
 func mcpProjectDomainClientAndID(ctx context.Context, args map[string]json.RawMessage) (*controlplane.Client, string, string, error) {
-	client, _, err := mcpControlPlaneClient()
+	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, "", "", err
 	}
@@ -1033,11 +1066,31 @@ func mcpCreateProjectArgs(args map[string]json.RawMessage) (string, controlplane
 	if request.Name, err = mcpRequiredStringArg(args, "name"); err != nil {
 		return "", request, err
 	}
-	if request.Provider, err = mcpRequiredStringArg(args, "provider"); err != nil {
+	routing, err := mcpOptionalStringArg(args, "routing", "")
+	if err != nil {
 		return "", request, err
 	}
-	if request.Region, err = mcpRequiredStringArg(args, "region"); err != nil {
+	request.Routing = routing
+	if request.Routing == "" {
+		request.Routing = "regional"
+	}
+	if request.Provider, err = mcpOptionalStringArg(args, "provider", ""); err != nil {
 		return "", request, err
+	}
+	if request.Region, err = mcpOptionalStringArg(args, "region", ""); err != nil {
+		return "", request, err
+	}
+	if request.Routing != "regional" && request.Routing != "global" {
+		return "", request, fmt.Errorf("routing must be global or regional")
+	}
+	if request.Provider == "" {
+		return "", request, fmt.Errorf("provider is required")
+	}
+	if request.Routing == "regional" && request.Region == "" {
+		return "", request, fmt.Errorf("provider and region are required for regional routing")
+	}
+	if request.Routing == "global" && request.Region != "" {
+		return "", request, fmt.Errorf("region must be omitted for global routing")
 	}
 	if request.Plan, err = mcpRequiredStringArg(args, "plan"); err != nil {
 		return "", request, err

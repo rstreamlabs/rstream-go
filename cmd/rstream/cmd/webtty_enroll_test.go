@@ -491,15 +491,6 @@ func TestLoadWebTTYServerEnrollmentFileRejectsWeakPermissions(t *testing.T) {
 	}
 }
 
-func mustReadFile(t *testing.T, path string) []byte {
-	t.Helper()
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read file: %v", err)
-	}
-	return data
-}
-
 func testWorkspaceKeyEnvelopeForDevice(t *testing.T, device workspaceDeviceFile, keysetID string) (*ecdsa.PrivateKey, string, *workspacePrivateBundle, controlplane.WorkspaceKeyEnvelope) {
 	t.Helper()
 	keysetEncryptionPrivate, err := ecdh.P256().GenerateKey(rand.Reader)
@@ -509,6 +500,14 @@ func testWorkspaceKeyEnvelopeForDevice(t *testing.T, device workspaceDeviceFile,
 	keysetSigningPrivate, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("generate keyset signing key: %v", err)
+	}
+	keysetSigningPublic, err := keysetSigningPrivate.PublicKey.Bytes()
+	if err != nil {
+		t.Fatalf("encode keyset signing public key: %v", err)
+	}
+	keysetSigningScalar, err := keysetSigningPrivate.Bytes()
+	if err != nil {
+		t.Fatalf("encode keyset signing private key: %v", err)
 	}
 	keysetPublicEncryption, err := x509.MarshalPKIXPublicKey(keysetEncryptionPrivate.PublicKey())
 	if err != nil {
@@ -527,9 +526,9 @@ func testWorkspaceKeyEnvelopeForDevice(t *testing.T, device workspaceDeviceFile,
 		SigningPrivateKeyJWK: workspaceECKeyJWK{
 			Kty: "EC",
 			Crv: "P-256",
-			X:   workspaceBase64URL(testPaddedBigInt(keysetSigningPrivate.X, 32)),
-			Y:   workspaceBase64URL(testPaddedBigInt(keysetSigningPrivate.Y, 32)),
-			D:   workspaceBase64URL(testPaddedBigInt(keysetSigningPrivate.D, 32)),
+			X:   workspaceBase64URL(keysetSigningPublic[1:33]),
+			Y:   workspaceBase64URL(keysetSigningPublic[33:]),
+			D:   workspaceBase64URL(keysetSigningScalar),
 			Ext: &ext,
 		},
 	}
@@ -644,11 +643,4 @@ func testEncryptWorkspaceKeyEnvelope(t *testing.T, device workspaceDeviceFile, k
 		},
 		CreatedAt: "2026-06-06T12:00:00.000Z",
 	}
-}
-
-func testPaddedBigInt(value interface{ Bytes() []byte }, size int) []byte {
-	raw := value.Bytes()
-	padded := make([]byte, size)
-	copy(padded[size-len(raw):], raw)
-	return padded
 }

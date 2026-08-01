@@ -16,6 +16,8 @@ import (
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/cmd/logging"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/netretry"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/streamrelay"
 	"github.com/spf13/cobra"
 )
 
@@ -129,6 +131,7 @@ func init() {
 	forwardCmd.Flags().Bool("http", false, "use HTTP protocol")
 	forwardCmd.MarkFlagsMutuallyExclusive("tls", "tcp", "dtls", "quic", "http")
 	forwardCmd.Flags().Uint32("tcp-port", 0, "use a reserved published TCP port")
+	forwardCmd.Flags().Bool("allow-cross-region-routing", false, "allow cross-region routing when ingress and tunnel owner are in different regions")
 	forwardCmd.Flags().StringArray("label", nil, "set tunnel labels (key=value, might be specified multiple times)")
 	forwardCmd.Flags().String("geoip", "", "comma-separated allowed countries (ISO 3166-1 alpha-2)")
 	forwardCmd.Flags().String("trusted-ips", "", "comma-separated allowed IP/CIDR ranges")
@@ -165,7 +168,7 @@ func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := rstream.MaybeSetGeneratedStableDomain(props, runtime.Resolved.Engine); err != nil {
+	if err := rstream.MaybeSetGeneratedStableDomain(props, runtime.Resolved.StableDomainEndpoint()); err != nil {
 		return nil, fmt.Errorf("failed to generate stable domain: %w", err)
 	}
 	retryPtr := getBoolPtr(cmd, "retry")
@@ -210,9 +213,9 @@ func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {
 		return nil, fmt.Errorf("invalid output: %s (valid: text, json, xterm)", outStr)
 	}
 	if out == forwardOutputFormatXTerm {
-		if logging.IsTerminal(os.Stdout) == false {
+		if !logging.IsTerminal(os.Stdout) {
 			return nil, fmt.Errorf("output mode 'xterm' requires a terminal")
-		} else if flagVerbose == true {
+		} else if flagVerbose {
 			return nil, fmt.Errorf("output mode 'xterm' is not compatible with verbose mode")
 		}
 	}
@@ -274,6 +277,9 @@ func (s *forwardCtx) run(ctx context.Context) error {
 		if err == nil {
 			return nil
 		}
+		if !forwardRetryableError(err) {
+			return err
+		}
 		if s.AutoReconnect != nil && !*s.AutoReconnect {
 			return err
 		}
@@ -286,6 +292,17 @@ func (s *forwardCtx) run(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+}
+
+func forwardRetryableError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var engineErr *rstream.EngineError
+	if errors.As(err, &engineErr) {
+		return engineErr.Retryable()
+	}
+	return true
 }
 
 func (s *forwardCtx) runOnce(ctx context.Context) error {
@@ -340,10 +357,10 @@ func (s *forwardCtx) runOnce(ctx context.Context) error {
 	onlineStatus.Forwarded = &forwarded
 	s.setStatus(onlineStatus)
 	if l, ok := tunnel.(interface{ net.Listener }); ok {
-		return s.serveWithCtx(ctx, l.Close, func() error { return s.serveTCP(l) })
+		return s.serveWithCtx(ctx, l.Close, func() error { return s.serveTCP(ctx, l) })
 	}
 	if pl, ok := tunnel.(rstream.PacketListener); ok {
-		return s.serveWithCtx(ctx, pl.Close, func() error { return s.serveUDP(pl) })
+		return s.serveWithCtx(ctx, pl.Close, func() error { return s.serveUDP(ctx, pl) })
 	}
 	return fmt.Errorf("tunnel does not implement net.Listener or rstream.PacketListener")
 }
@@ -398,10 +415,7 @@ func (s *forwardCtx) proxyTCP(inbound net.Conn) {
 			s.Logger.Error("Dial error", slog.String("host", s.Host), slog.String("port", s.Port), slog.String("error", err.Error()))
 		} else {
 			defer outbound.Close()
-			done := make(chan struct{}, 2)
-			go func() { _, _ = io.Copy(outbound, inbound); done <- struct{}{} }()
-			go func() { _, _ = io.Copy(inbound, outbound); done <- struct{}{} }()
-			<-done
+			streamrelay.Bidirectional(inbound, outbound)
 		}
 	})
 }
@@ -451,30 +465,36 @@ func (s *forwardCtx) proxyUDP(inbound net.PacketConn, remote net.Addr) {
 	})
 }
 
-func (s *forwardCtx) serveTCP(l net.Listener) error {
+func (s *forwardCtx) serveTCP(ctx context.Context, l net.Listener) error {
+	var acceptRetryDelay time.Duration
 	for {
 		inbound, err := l.Accept()
 		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
-				time.Sleep(50 * time.Millisecond)
+			delay, retry := netretry.NextAcceptDelay(err, acceptRetryDelay, netcatAcceptRetryMaxDelay)
+			if retry && netretry.Wait(ctx, delay) {
+				acceptRetryDelay = delay
 				continue
 			}
 			return err
 		}
+		acceptRetryDelay = 0
 		s.proxyTCP(inbound)
 	}
 }
 
-func (s *forwardCtx) serveUDP(l rstream.PacketListener) error {
+func (s *forwardCtx) serveUDP(ctx context.Context, l rstream.PacketListener) error {
+	var acceptRetryDelay time.Duration
 	for {
 		inbound, raddr, err := l.Accept()
 		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Temporary() {
-				time.Sleep(50 * time.Millisecond)
+			delay, retry := netretry.NextAcceptDelay(err, acceptRetryDelay, netcatAcceptRetryMaxDelay)
+			if retry && netretry.Wait(ctx, delay) {
+				acceptRetryDelay = delay
 				continue
 			}
 			return err
 		}
+		acceptRetryDelay = 0
 		s.proxyUDP(inbound, raddr)
 	}
 }

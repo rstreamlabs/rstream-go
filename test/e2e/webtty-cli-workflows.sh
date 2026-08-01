@@ -5,6 +5,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 TIMEOUT_SECONDS="${RSTREAM_WEBTTY_RUNTIME_TIMEOUT_SECONDS:-30}"
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/rstream-webtty-cli.XXXXXX")
+KEEP_RUNTIME="${RSTREAM_KEEP_RUNTIME:-0}"
 PIDS=()
 PASS=0
 FAIL=0
@@ -16,7 +17,11 @@ cleanup() {
     wait "$pid" 2>/dev/null || true
   done
   chmod -R u+w "$TMP_DIR" 2>/dev/null || true
-  rm -rf "$TMP_DIR"
+  if [ "$KEEP_RUNTIME" = "1" ]; then
+    printf "kept runtime directory: %s\n" "$TMP_DIR" >&2
+  else
+    rm -rf "$TMP_DIR"
+  fi
 }
 trap cleanup EXIT
 
@@ -249,7 +254,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("content-type", "application/json")
             self.end_headers()
-            payload = {"id": "project-runtime", "workspaceId": "workspace-runtime", "endpoint": "runtime-project"}
+            payload = {
+                "id": "project-runtime",
+                "workspaceId": "workspace-runtime",
+                "endpoint": "runtime-project",
+                "routing": "regional",
+            }
             self.wfile.write(json.dumps(payload).encode())
             return
         self.send_error(404)
@@ -313,9 +323,134 @@ exec_text() {
   printf "%s" "$out" | grep -q "$expected"
 }
 
+exec_pipe_text() {
+  local expected=$1
+  local input=$2
+  shift 2
+  local out
+  out=$(printf "%s" "$input" | "$RSTREAM" webtty exec --output text "$@" 2>&1)
+  printf "%s" "$out" | grep -q "$expected"
+}
+
+exec_pipe_json() {
+  local expected=$1
+  local input=$2
+  shift 2
+  local out
+  if ! out=$(printf "%s" "$input" | "$RSTREAM" webtty exec --output json "$@" 2>&1); then
+    printf "%s" "$out"
+    return 1
+  fi
+  python3 -c 'import json, sys; assert json.loads(sys.stdin.read())["stdout"] == sys.argv[1]' "$expected" <<<"$out"
+}
+
+exec_empty_pipe_json() {
+  local out
+  if ! out=$(printf "%s" "" | "$RSTREAM" webtty exec --output json "$@" 2>&1); then
+    printf "%s" "$out"
+    return 1
+  fi
+  python3 -c 'import json, sys; payload = json.loads(sys.stdin.read()); assert payload["exit_code"] == 0 and payload["stdout"] == "" and payload["stderr"] == ""' <<<"$out"
+}
+
+exec_large_pipe_json() {
+  local expected_size=$1
+  shift
+  local out
+  if ! out=$(python3 -c 'import sys; sys.stdout.buffer.write(b"x" * int(sys.argv[1]))' "$expected_size" | "$RSTREAM" webtty exec --output json "$@" 2>&1); then
+    printf "%s" "$out"
+    return 1
+  fi
+  python3 -c 'import json, sys; payload = json.loads(sys.stdin.read()); assert payload["exit_code"] == 0 and int(payload["stdout"].strip()) == int(sys.argv[1]) and payload["stderr"] == ""' "$expected_size" <<<"$out"
+}
+
+exec_binary_pipe_json() {
+  local expected_size=$1
+  shift
+  local expected_digest
+  local out
+  expected_digest=$(python3 -c 'import hashlib, sys; payload = bytes(range(256)) * (int(sys.argv[1]) // 256); print(hashlib.sha256(payload).hexdigest())' "$expected_size")
+  if ! out=$(python3 -c 'import sys; sys.stdout.buffer.write(bytes(range(256)) * (int(sys.argv[1]) // 256))' "$expected_size" | "$RSTREAM" webtty exec --output json "$@" 2>&1); then
+    printf "%s" "$out"
+    return 1
+  fi
+  python3 -c 'import json, sys; payload = json.loads(sys.stdin.read()); assert payload["exit_code"] == 0 and payload["stdout"].strip() == sys.argv[1] and payload["stderr"] == ""' "$expected_digest" <<<"$out"
+}
+
+exec_remote_exit_with_open_stdin() {
+  local fifo="$TMP_DIR/open-stdin.fifo"
+  local stdout_file="$TMP_DIR/open-stdin-stdout.json"
+  local stderr_file="$TMP_DIR/open-stdin-stderr.txt"
+  local pid
+  local hold_fd
+  local deadline
+  mkfifo "$fifo"
+  exec {hold_fd}<>"$fifo"
+  "$RSTREAM" webtty exec --output json "$@" <"$fifo" >"$stdout_file" 2>"$stderr_file" &
+  pid=$!
+  deadline=$((SECONDS + 5))
+  while kill -0 "$pid" 2>/dev/null && [ "$SECONDS" -lt "$deadline" ]; do
+    sleep 0.05
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    exec {hold_fd}>&-
+    cat "$stderr_file"
+    return 1
+  fi
+  if ! wait "$pid"; then
+    exec {hold_fd}>&-
+    cat "$stderr_file"
+    return 1
+  fi
+  exec {hold_fd}>&-
+  python3 -c 'import json, sys; payload = json.load(open(sys.argv[1], encoding="utf-8")); assert payload["exit_code"] == 0 and payload["stdout"] == "remote-exit" and payload["stderr"] == ""' "$stdout_file"
+}
+
+exec_runtime_config_json() {
+  local expected_workdir=$1
+  shift
+  local out
+  if ! out=$("$RSTREAM" webtty exec --output json "$@" 2>&1); then
+    printf "%s" "$out"
+    return 1
+  fi
+  python3 -c 'import json, os, sys; payload = json.loads(sys.stdin.read()); env, workdir = payload["stdout"].splitlines(); assert payload["exit_code"] == 0 and env == "runtime-flags" and os.path.realpath(workdir) == os.path.realpath(sys.argv[1]) and payload["stderr"] == ""' "$expected_workdir" <<<"$out"
+}
+
+exec_pipe_json_with_exit() {
+  local expected_stdout=$1
+  local expected_stderr=$2
+  local expected_exit=$3
+  local input=$4
+  shift 4
+  local stdout_file="$TMP_DIR/nonzero-stdout.json"
+  local stderr_file="$TMP_DIR/nonzero-stderr.txt"
+  local status
+  set +e
+  printf "%s" "$input" | "$RSTREAM" webtty exec --output json "$@" >"$stdout_file" 2>"$stderr_file"
+  status=$?
+  set -e
+  if [ "$status" -ne "$expected_exit" ]; then
+    cat "$stderr_file"
+    return 1
+  fi
+  python3 - "$stdout_file" "$expected_stdout" "$expected_stderr" "$expected_exit" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as stream:
+    payload = json.load(stream)
+assert payload["stdout"] == sys.argv[2]
+assert payload["stderr"] == sys.argv[3]
+assert payload["exit_code"] == int(sys.argv[4])
+PY
+}
+
 RSTREAM=$(build_rstream)
 HOME="$TMP_DIR/home"
 export HOME
+unset RSTREAM_API_URL RSTREAM_AUTHENTICATION_TOKEN RSTREAM_CONFIG RSTREAM_CONTEXT
 mkdir -p "$HOME"
 
 echo "=== local identity and trust store ==="
@@ -402,9 +537,31 @@ start_server "named-identity-e2e" --listen "$addr" --allow-unauthenticated --ide
 wait_tcp "$addr"
 run_case "server identity implies E2E" exec_text "named-e2e" --url "ws://$addr" --identity operator --e2e -- /bin/sh -c "printf named-e2e"
 run_case "direct known key infers E2E" exec_text "named-e2e-auto" --url "ws://$addr" --identity operator --known-server-key "$endpoint_identity" -- /bin/sh -c "printf named-e2e-auto"
+run_case "non-interactive text exec forwards piped stdin and EOF" exec_pipe_text "piped-text" "piped-text" --url "ws://$addr" --identity operator --e2e -- cat
+run_case "non-interactive JSON exec forwards piped stdin and EOF" exec_pipe_json "piped-json" "piped-json" --url "ws://$addr" --identity operator --e2e -- cat
+run_case "empty pipe sends EOF without waiting" exec_empty_pipe_json --url "ws://$addr" --identity operator --e2e -- cat
+run_case "large pipe is not truncated" exec_large_pipe_json 2097152 --url "ws://$addr" --identity operator --e2e -- wc -c
+run_case "binary pipe preserves every byte" exec_binary_pipe_json 1048576 --url "ws://$addr" --identity operator --e2e -- python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+run_case "remote exit does not wait for open stdin" exec_remote_exit_with_open_stdin --url "ws://$addr" --identity operator --e2e -- /bin/sh -c 'printf remote-exit'
+runtime_workdir="$TMP_DIR/runtime-workdir"
+mkdir -p "$runtime_workdir"
+# shellcheck disable=SC2016
+run_case "exec applies env workdir and no-TTY mode" exec_runtime_config_json "$runtime_workdir" --url "ws://$addr" --identity operator --e2e --no-tty --env RSTREAM_RUNTIME_FLAG=runtime-flags --workdir "$runtime_workdir" -- /bin/sh -c 'test ! -t 0; printf "%s\n%s" "$RSTREAM_RUNTIME_FLAG" "$PWD"'
+run_case "exec allocates a PTY on request" exec_text "runtime-tty" --url "ws://$addr" --identity operator --e2e --tty -- /bin/sh -c 'test -t 0 && test -t 1 && printf runtime-tty'
+run_case "JSON preserves streams and remote exit status" exec_pipe_json_with_exit "input" "failure" 17 "input" --url "ws://$addr" --identity operator --e2e -- /bin/sh -c 'cat; printf failure >&2; exit 17'
 untrusted_home="$TMP_DIR/untrusted-home"
 mkdir -p "$untrusted_home"
 run_case_expect_fail "E2E client fails closed without trust store" "known server endpoint identity" env HOME="$untrusted_home" "$RSTREAM" webtty exec --url "ws://$addr" -- /bin/sh -c "printf no"
+
+echo "=== bearer authentication ==="
+auth_token_file="$TMP_DIR/webtty-token"
+printf "runtime-secret\n" >"$auth_token_file"
+auth_port=$(reserve_port)
+auth_addr="127.0.0.1:$auth_port"
+start_server "bearer-auth" --listen "$auth_addr" --auth-token-file "$auth_token_file"
+wait_tcp "$auth_addr"
+run_case_expect_fail "server rejects a missing bearer token" "status 401" "$RSTREAM" webtty exec --url "ws://$auth_addr" -- /bin/sh -c "printf no"
+run_case "server accepts the configured bearer token" exec_text "bearer-authenticated" --url "ws://$auth_addr" --auth-token-file "$auth_token_file" -- /bin/sh -c "printf bearer-authenticated"
 
 echo "=== env runtime config ==="
 env_identity_json="$TMP_DIR/env-identity.json"
@@ -497,16 +654,18 @@ run_case_expect_fail "E2E refuses WebDAV filesystem sidecar from config" "filesy
 
 echo "=== public CLI surface ==="
 help_output="$TMP_DIR/help.txt"
-"$RSTREAM" webtty --help >"$help_output"
-"$RSTREAM" webtty server --help >>"$help_output"
-"$RSTREAM" webtty client --help >>"$help_output"
-"$RSTREAM" webtty exec --help >>"$help_output"
-"$RSTREAM" webtty server create --help >>"$help_output"
-"$RSTREAM" webtty server list --help >>"$help_output"
-"$RSTREAM" webtty server show --help >>"$help_output"
-"$RSTREAM" webtty server delete --help >>"$help_output"
-"$RSTREAM" webtty list --help >>"$help_output"
-"$RSTREAM" webtty sessions list --help >>"$help_output"
+{
+  "$RSTREAM" webtty --help
+  "$RSTREAM" webtty server --help
+  "$RSTREAM" webtty client --help
+  "$RSTREAM" webtty exec --help
+  "$RSTREAM" webtty server create --help
+  "$RSTREAM" webtty server list --help
+  "$RSTREAM" webtty server show --help
+  "$RSTREAM" webtty server delete --help
+  "$RSTREAM" webtty list --help
+  "$RSTREAM" webtty sessions list --help
+} >"$help_output"
 run_case "webtty help has no deprecated protocol flag" assert_not_contains "--protocol" "$help_output"
 run_case "webtty help has no e2e-policy flag" assert_not_contains "e2e-policy" "$help_output"
 run_case "webtty help has no server-binding flag" assert_not_contains "server-binding" "$help_output"
