@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -178,14 +179,14 @@ func TestUISwitchTargetActivatesPreparedRuntimeInRunningApplication(t *testing.T
 			width := 120 + index%7
 			height := 36 + index%5
 			screen.SetSize(width, height)
-			if err := screen.PostEvent(tcell.NewEventResize(width, height)); err != nil {
+			if err := postUIEventWithBackpressure(screen, tcell.NewEventResize(width, height), 2*time.Second); err != nil {
 				resizeDone <- err
 				return
 			}
 			time.Sleep(2 * time.Millisecond)
 		}
 		screen.SetSize(172, 56)
-		resizeDone <- screen.PostEvent(tcell.NewEventResize(172, 56))
+		resizeDone <- postUIEventWithBackpressure(screen, tcell.NewEventResize(172, 56), 2*time.Second)
 	}()
 	pendingState := make(chan string, 1)
 	app.app.QueueUpdateDraw(func() {
@@ -262,6 +263,20 @@ func TestUISwitchTargetActivatesPreparedRuntimeInRunningApplication(t *testing.T
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("ui Run() did not stop")
+	}
+}
+
+func postUIEventWithBackpressure(screen tcell.Screen, event tcell.Event, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		err := screen.PostEvent(event)
+		if err == nil || !errors.Is(err, tcell.ErrEventQFull) {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
