@@ -134,6 +134,9 @@ only when the enrollment file is not at the default path.
 Registered servers default to `login` execution mode. Configure `--login-user`
 or `--allow-client-user` explicitly, or set `--execution-mode=spawn` when the
 server should intentionally run commands as children of the server process.
+The `--login-user` value is the username of an existing account on the server
+machine. It selects the OS identity, home directory, and shell used for every
+session; it is not the rstream account or the remote caller's username.
 
 ### Trust a CLI for Workspace-Managed WebTTY
 
@@ -432,13 +435,30 @@ servers use managed rstream WebTTY through the engine.
 
 ## Execution Modes
 
-`spawn` starts commands as children of the WebTTY server process.
+`spawn` starts commands as children of the WebTTY server process. It preserves
+client working-directory and environment overrides and uses the server process
+identity.
 
-`login` is passwordless. On Unix-like systems, switching to a different
-configured or client-requested OS user applies the target uid, primary gid, and
-supplementary groups, and requires the server process to have the corresponding
-OS privileges. On Windows, run the server under the Windows account that should
-own sessions.
+`login` is passwordless but it is not userless. Configure the username of an
+existing local account with `--login-user <username>` (or `loginUser` in YAML).
+Every session is resolved against that account and receives its OS identity,
+home directory, and shell. Registered servers default to `login`, but still
+require a configured target user unless `--allow-client-user` is explicitly
+enabled.
+
+On Unix-like systems, switching to a different account applies the target uid,
+primary gid, and supplementary groups and requires the server process to have
+the corresponding privileges. On Windows, `login` supports the same Windows
+account that runs the server; switching to a different account is not supported.
+
+The server builds a conservative administrative environment instead of copying
+its complete environment. Sessions receive `PATH`, locale and timezone values,
+and the resolved identity/home/shell. Linux also receives a validated
+`XDG_RUNTIME_DIR` and user D-Bus address when the account has an active user
+runtime; macOS preserves the current user's `TMPDIR` and Core Foundation text
+encoding; Windows receives the standard profile, system, temp, and PowerShell
+module variables. SSH agent sockets, cloud credentials, and rstream tokens are
+not forwarded automatically.
 
 ## E2E Crypto
 

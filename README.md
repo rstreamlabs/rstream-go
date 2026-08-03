@@ -326,11 +326,15 @@ that API, while unlinked contexts remain selectable. `RSTREAM_ENGINE` remains a
 hard override: the UI rejects a switch to a context that targets a different
 engine. Close an active WebTTY session with `Ctrl+g q` before changing context.
 
-Login execution mode is passwordless. On Unix-like systems, switching to a
-different configured or client-requested OS user applies the target uid, primary
-gid, and supplementary groups, and requires the WebTTY server process to have
-the corresponding OS privileges. On Windows, run the server under the desired
-Windows account; password-based user switching is not supported.
+Login execution mode is passwordless. `--login-user <username>` names the
+existing **operating-system account that will own every remote session**; it is
+not an rstream account or the user connecting from the WebTTY client. For
+example, `--login-user alice` runs commands with the local `alice`
+home, shell, and identity. On Unix-like systems, selecting a different OS user
+applies the target uid, primary gid, and supplementary groups, so the WebTTY
+server process needs the corresponding privileges. On Windows, set
+`--login-user` to the same Windows account that runs the server; switching to a
+different account or using a password is not supported.
 
 Published WebTTY tunnels can be reached either through their forwarding `wss://` address or through the native `rstrm://<tunnel-id-or-name>` form. Private WebTTY tunnels are reachable only through the native `rstrm://` form. WebTTY servers advertise capabilities, execution mode, and endpoint paths through labels: command execution uses `exec_path`, currently `/` by default, and the optional filesystem sidecar uses `fs_path`, currently `/fs` when `--fs-root` is set. Filesystem paths are relative to that configured root: if the server starts with `--fs-root "$HOME/project"`, read `compose.yaml` as `/compose.yaml`, not `/home/user/project/compose.yaml`. The sidecar rejects symlinks that resolve outside the configured root, but it is not a sandbox and still uses the WebTTY server process permissions. The filesystem sidecar is a separate WebDAV surface and is rejected when WebTTY E2E payload encryption is active.
 

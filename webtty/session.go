@@ -10,7 +10,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -658,20 +657,7 @@ func (s *session) prepareOpen(openCfg *pb.Open) (*sessionOpenResources, error) {
 	cmd := exec.Command(exePath, args...)
 	cmd.Dir = workdir
 	env := BuildEnvironment(openCfg.Config.EnvVars)
-	if p := os.Getenv("PATH"); p != "" {
-		AddEnvironmentVariable(&env, "PATH", p, false)
-	}
-	if runtime.GOOS == "windows" {
-		for _, key := range []string{"ALLUSERSPROFILE", "COMPUTERNAME", "COMSPEC", "CYGWIN", "OS", "PATHEXT", "PROGRAMFILES", "SYSTEMDRIVE", "SYSTEMROOT", "TEMP", "TMP", "USERNAME", "USERPROFILE", "WINDIR"} {
-			if value := os.Getenv(key); value != "" {
-				AddEnvironmentVariable(&env, key, value, false)
-			}
-		}
-	} else {
-		AddEnvironmentVariable(&env, "USER", ui.Name, false)
-		AddEnvironmentVariable(&env, "SHELL", ui.Shell, false)
-		AddEnvironmentVariable(&env, "HOME", ui.Home, false)
-	}
+	addExecutionEnvironment(&env, identity)
 	for key, value := range *s.cfg.EnvVars {
 		AddEnvironmentVariable(&env, key, value, false)
 	}

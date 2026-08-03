@@ -290,6 +290,65 @@ func TestWebTTYHandlerPassesStdinWorkdirAndEnvironment(t *testing.T) {
 	}
 }
 
+func TestWebTTYHandlerLoginProvidesResolvedAdministrativeEnvironment(t *testing.T) {
+	zero := time.Duration(0)
+	mode := WebTTYExecutionModeLogin
+	userInfo, err := GetUserInfo(nil)
+	if err != nil {
+		t.Fatalf("GetUserInfo() error = %v", err)
+	}
+	username := userInfo.Name
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval: &zero,
+		ExecutionMode:     &mode,
+		DefaultUsername:   &username,
+	}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL: testWebTTYURL(server.URL),
+		EnvVars: []string{
+			"USER=client-user",
+			"LOGNAME=client-user",
+			"HOME=client-home",
+			"SHELL=client-shell",
+			"USERNAME=client-user",
+			"USERPROFILE=client-home",
+			"COMSPEC=client-shell",
+		},
+		CmdArgs: testShellCommand(
+			`printf "%s|%s|%s|%s" "$USER" "$LOGNAME" "$HOME" "$SHELL"`,
+			`[Console]::Write($env:USERNAME + '|' + $env:USERPROFILE + '|' + $env:HOME + '|' + $env:COMSPEC)`,
+		),
+		OpenDeadline:  durationPtr(time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	stdout, stderr, exitCode, err := collectClientSessionOutput(t, session)
+	if err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v, stderr=%q", exitCode, err, stderr)
+	}
+	parts := strings.Split(strings.TrimSpace(stdout), "|")
+	if len(parts) != 4 {
+		t.Fatalf("administrative environment output = %q", stdout)
+	}
+	if parts[0] != userInfo.Name {
+		t.Fatalf("session username = %q, want %q", parts[0], userInfo.Name)
+	}
+	if runtime.GOOS != "windows" && parts[1] != userInfo.Name {
+		t.Fatalf("session LOGNAME = %q, want %q", parts[1], userInfo.Name)
+	}
+	if !testPathEqual(parts[2], userInfo.Home) {
+		t.Fatalf("session home = %q, want %q", parts[2], userInfo.Home)
+	}
+	if !testPathEqual(parts[3], userInfo.Shell) {
+		t.Fatalf("session shell = %q, want %q", parts[3], userInfo.Shell)
+	}
+}
+
 func TestWebTTYHandlerPayloadCryptoRoundTrip(t *testing.T) {
 	zero := time.Duration(0)
 	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
