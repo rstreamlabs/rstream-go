@@ -198,7 +198,7 @@ func mcpWebTTYServerCreate(ctx context.Context, args map[string]json.RawMessage)
 		"server":  response.Server,
 		"commands": map[string]any{
 			"enroll": webTTYServerEnrollCommand(runtime, project.ID, response.Server.ID),
-			"run":    "rstream webtty server -v --server-id " + response.Server.ID + " --login-user <os-user>",
+			"run":    "rstream webtty server -v --server-id " + response.Server.ID + " --login-user <local-username>",
 		},
 		"project": projectRef,
 	}, false)

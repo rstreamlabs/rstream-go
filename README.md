@@ -330,7 +330,10 @@ Login execution mode is passwordless. `--login-user <username>` names the
 existing **operating-system account that will own every remote session**; it is
 not an rstream account or the user connecting from the WebTTY client. For
 example, `--login-user pierrepele` runs commands with the local `pierrepele`
-home, shell, and identity. On Unix-like systems, selecting a different OS user
+home, shell, and identity. Run `id -un` on Linux or macOS, or `$env:USERNAME` in
+Windows PowerShell, to print the local username to pass to this option. rstream
+does not create the account, and the server refuses to start when the configured
+account cannot be resolved. On Unix-like systems, selecting a different OS user
 applies the target uid, primary gid, and supplementary groups, so the WebTTY
 server process needs the corresponding privileges. On Windows, set
 `--login-user` to the same Windows account that runs the server; switching to a

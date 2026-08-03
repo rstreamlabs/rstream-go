@@ -75,7 +75,7 @@ func TestRunWebTTYServerCreateInfersActiveProject(t *testing.T) {
 		"Enroll command:",
 		"Run command:",
 		"rstream --api-url " + server.URL + " webtty server enroll prod-shell --project-id project-1",
-		"rstream webtty server -v --server-id prod-shell --login-user <os-user>",
+		"rstream webtty server -v --server-id prod-shell --login-user <local-username>",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("create output missing %q: %s", want, text)
@@ -147,7 +147,7 @@ func TestRunWebTTYServerCreateJSONIncludesActionableCommands(t *testing.T) {
 	if decoded.EnrollCommand != wantEnroll {
 		t.Fatalf("json enroll_command = %q, want %q", decoded.EnrollCommand, wantEnroll)
 	}
-	if decoded.RunCommand != "rstream webtty server -v --server-id prod-shell --login-user <os-user>" {
+	if decoded.RunCommand != "rstream webtty server -v --server-id prod-shell --login-user <local-username>" {
 		t.Fatalf("json run_command = %q", decoded.RunCommand)
 	}
 }

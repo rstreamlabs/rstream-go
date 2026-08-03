@@ -306,9 +306,10 @@ func TestWebTTYServerHelpShowsPrimaryWorkflowsWithoutNoisyFlags(t *testing.T) {
 	text := out.String()
 	for _, want := range []string{
 		"rstream webtty server -v --rstream --name shell",
-		"rstream webtty server -v --server-id server_id",
+		"rstream webtty server -v --server-id server_id --login-user <local-username>",
 		"rstream webtty server -v --webtty-config /etc/rstream/webtty/prod-shell.yaml",
 		"rstream webtty server -v --listen 127.0.0.1:8080 --allow-unauthenticated",
+		"existing local OS username used for every login session",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("server help missing workflow example %q: %s", want, text)
@@ -1048,6 +1049,13 @@ func TestValidateWebTTYServerFlags(t *testing.T) {
 			name: "login settings require login mode",
 			config: func(cmd *cobra.Command) error {
 				return cmd.Flags().Set("login-user", "alice")
+			},
+			wantErr: true,
+		},
+		{
+			name: "login mode requires a local user policy",
+			config: func(cmd *cobra.Command) error {
+				return cmd.Flags().Set("execution-mode", "login")
 			},
 			wantErr: true,
 		},

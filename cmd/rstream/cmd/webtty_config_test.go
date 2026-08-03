@@ -126,7 +126,7 @@ server:
 		t.Fatalf("execution-mode = %q, want login", got)
 	}
 	err := validateWebTTYServerFlags(cmd)
-	if err == nil || !strings.Contains(err.Error(), "registered WebTTY servers default to login") {
+	if err == nil || !strings.Contains(err.Error(), "login execution mode requires --login-user") {
 		t.Fatalf("validateWebTTYServerFlags() error = %v", err)
 	}
 }
