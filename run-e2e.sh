@@ -162,7 +162,8 @@ run_client() {
   if out=$("$exe" "$@" 2>&1); then
     log_pass "$label"
   else
-    log_fail "$label" "$(echo "$out" | tail -3 | tr '\n' ' ')"
+    log_fail "$label" "client exited non-zero"
+    printf '%s\n' "$out" | sed 's/^/  /'
   fi
 }
 
