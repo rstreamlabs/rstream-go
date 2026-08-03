@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.2](https://github.com/rstreamlabs/rstream-go/compare/v1.26.1...v1.26.2) (2026-08-03)
+
+
+### Bug Fixes
+
+* **webtty:** provide administrative login environment ([5524669](https://github.com/rstreamlabs/rstream-go/commit/5524669248609f2f3dc7884ea3158863c4c7f03e))
+
 ## [1.26.1](https://github.com/rstreamlabs/rstream-go/compare/v1.26.0...v1.26.1) (2026-08-03)
 
 
