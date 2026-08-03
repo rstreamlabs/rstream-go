@@ -23,6 +23,7 @@ const (
 	EngineErrorCodeFeatureNotAvailable         EngineErrorCode = EngineErrorCode(pb.ErrorCode_ERROR_CODE_FEATURE_NOT_AVAILABLE)
 	EngineErrorCodeServiceUnavailable          EngineErrorCode = EngineErrorCode(pb.ErrorCode_ERROR_CODE_SERVICE_UNAVAILABLE)
 	EngineErrorCodeCapacityExhausted           EngineErrorCode = EngineErrorCode(pb.ErrorCode_ERROR_CODE_CAPACITY_EXHAUSTED)
+	EngineErrorCodeResourceConflict            EngineErrorCode = EngineErrorCode(pb.ErrorCode_ERROR_CODE_RESOURCE_CONFLICT)
 	EngineErrorCodeInternal                    EngineErrorCode = EngineErrorCode(pb.ErrorCode_ERROR_CODE_INTERNAL)
 )
 
@@ -36,7 +37,7 @@ func (e *EngineError) Error() string {
 }
 
 func (e *EngineError) Retryable() bool {
-	return e != nil && (e.Code == EngineErrorCodeServiceUnavailable || e.Code == EngineErrorCodeCapacityExhausted || e.Code == EngineErrorCodeInternal)
+	return e != nil && (e.Code == EngineErrorCodeServiceUnavailable || e.Code == EngineErrorCodeCapacityExhausted || e.Code == EngineErrorCodeResourceConflict || e.Code == EngineErrorCodeInternal)
 }
 
 func newEngineError(value *pb.Error) error {

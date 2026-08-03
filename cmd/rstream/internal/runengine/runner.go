@@ -125,9 +125,26 @@ func retryableTunnelError(err error) bool {
 	}
 	var engineErr *rstream.EngineError
 	if errors.As(err, &engineErr) {
-		return engineErr.Retryable()
+		if engineErr.Retryable() {
+			return true
+		}
+		// Engines released before ERROR_CODE_RESOURCE_CONFLICT represented
+		// ownership conflicts as INVALID_REQUEST. Keep watch-mode recovery
+		// compatible while mixed-version deployments are upgraded.
+		return engineErr.Code == rstream.EngineErrorCodeInvalidRequest && legacyResourceConflictMessage(engineErr.Message)
 	}
 	return true
+}
+
+func legacyResourceConflictMessage(message string) bool {
+	switch strings.TrimSpace(message) {
+	case "Hostname is already in use.",
+		"TCP port is already in use.",
+		"Registered WebTTY server is already online.":
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *Runner) runOnce(ctx context.Context, desired runmodel.DesiredTunnel, logger *slog.Logger) error {

@@ -267,6 +267,11 @@ func TestRetryableTunnelError(t *testing.T) {
 	}{
 		{name: "network error", err: errors.New("connection reset"), want: true},
 		{name: "service unavailable", err: fmt.Errorf("create tunnel: %w", &rstream.EngineError{Code: rstream.EngineErrorCodeServiceUnavailable}), want: true},
+		{name: "resource conflict", err: fmt.Errorf("create tunnel: %w", &rstream.EngineError{Code: rstream.EngineErrorCodeResourceConflict}), want: true},
+		{name: "legacy hostname conflict", err: fmt.Errorf("create tunnel: %w", &rstream.EngineError{Code: rstream.EngineErrorCodeInvalidRequest, Message: "Hostname is already in use."}), want: true},
+		{name: "legacy TCP conflict", err: &rstream.EngineError{Code: rstream.EngineErrorCodeInvalidRequest, Message: "TCP port is already in use."}, want: true},
+		{name: "legacy WebTTY conflict", err: &rstream.EngineError{Code: rstream.EngineErrorCodeInvalidRequest, Message: "Registered WebTTY server is already online."}, want: true},
+		{name: "other invalid request", err: &rstream.EngineError{Code: rstream.EngineErrorCodeInvalidRequest, Message: "Invalid hostname."}},
 		{name: "internal", err: &rstream.EngineError{Code: rstream.EngineErrorCodeInternal}, want: true},
 		{name: "feature unavailable", err: &rstream.EngineError{Code: rstream.EngineErrorCodeFeatureNotAvailable}},
 		{name: "unauthorized", err: &rstream.EngineError{Code: rstream.EngineErrorCodeUnauthorized}},

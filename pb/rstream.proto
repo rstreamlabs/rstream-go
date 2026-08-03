@@ -37,6 +37,7 @@ message IpAddress {
 //   4000-4999: Invalid state / stream
 //   5000-5999: Feature / plan / config not available
 //   6000-6999: Service dependency unavailable
+//   8000-8999: Resource ownership conflicts
 //   9000-9999: Internal errors
 enum ErrorCode {
   ERROR_CODE_UNSPECIFIED = 0;
@@ -64,6 +65,11 @@ enum ErrorCode {
 
   // 7000-7999: Runtime capacity exhausted
   ERROR_CODE_CAPACITY_EXHAUSTED = 7000;
+
+  // 8000-8999: A hostname, port, or registered endpoint is still owned by
+  // another live resource. Declarative reconcilers may retry after its lease
+  // has been released.
+  ERROR_CODE_RESOURCE_CONFLICT = 8000;
 
   // 9000-9999: Internal errors
   ERROR_CODE_INTERNAL = 9000;
