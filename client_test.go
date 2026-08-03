@@ -839,6 +839,79 @@ func TestControlChannelAcceptsProxyConnectionAtIngressEndpoint(t *testing.T) {
 	testControlChannelAcceptsProxyConnection(t, "ingress.example.com:443")
 }
 
+func TestProxyConnectionRetriesTimedOutDial(t *testing.T) {
+	next := newQueuedDialer(1)
+	next.enqueue(func(conn net.Conn) error {
+		reader := bufio.NewReader(conn)
+		writer := bufio.NewWriter(conn)
+		msg, err := readPbMessage(reader)
+		if err != nil {
+			return err
+		}
+		proxyReq := msg.GetProxyReq()
+		if proxyReq == nil || proxyReq.StreamId != "stream-1" {
+			return errUnexpectedTestMessage("ProxyReq for stream-1")
+		}
+		if got := proxyReq.GetClientDetails().GetToken().GetValue(); got != "proxy-secret" {
+			return fmt.Errorf("ProxyReq token = %q, want proxy-secret", got)
+		}
+		return writePbMessage(writer, &pb.Message{Payload: &pb.Message_ProxyRsp{ProxyRsp: &pb.ProxyRsp{}}})
+	})
+	dialer := &timeoutOnceDialer{next: next}
+	client := newTestClientWithDialer(next)
+	client.Transport = dialer
+	channel := &controlChannelImpl{
+		client: client,
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	secret := "proxy-secret"
+	conn, err := channel.dialProxyConnectionWithPolicy(
+		t.Context(),
+		nil,
+		Addr{IdOrName: "stream-1"},
+		&secret,
+		nil,
+		20*time.Millisecond,
+		2,
+	)
+	if err != nil {
+		t.Fatalf("dialProxyConnectionWithPolicy() error = %v", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("proxy connection close error = %v", err)
+	}
+	if calls := dialer.calls.Load(); calls != 2 {
+		t.Fatalf("proxy dial calls = %d, want 2", calls)
+	}
+	next.wait(t, 1)
+}
+
+func TestProxyConnectionDoesNotRetryPermanentDialError(t *testing.T) {
+	dialer := &countingFailDialer{}
+	client := newTestClientWithDialer(newQueuedDialer(0))
+	client.Transport = dialer
+	channel := &controlChannelImpl{
+		client: client,
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	secret := "proxy-secret"
+	_, err := channel.dialProxyConnectionWithPolicy(
+		t.Context(),
+		nil,
+		Addr{IdOrName: "stream-1"},
+		&secret,
+		nil,
+		20*time.Millisecond,
+		2,
+	)
+	if err == nil || !strings.Contains(err.Error(), "unexpected dial") {
+		t.Fatalf("dialProxyConnectionWithPolicy() error = %v, want permanent dial error", err)
+	}
+	if calls := dialer.calls.Load(); calls != 1 {
+		t.Fatalf("proxy dial calls = %d, want 1", calls)
+	}
+}
+
 func TestControlChannelLossCancelsRedirectedProxyDial(t *testing.T) {
 	dialer := newControlThenBlockingDialer()
 	client := newTestClientWithDialer(&dialer.queuedDialer)
@@ -1582,6 +1655,19 @@ type countingFailDialer struct {
 func (d *countingFailDialer) Dial(context.Context, string, *tls.Config) (net.Conn, error) {
 	d.calls.Add(1)
 	return nil, errors.New("unexpected dial")
+}
+
+type timeoutOnceDialer struct {
+	calls atomic.Int64
+	next  Dialer
+}
+
+func (d *timeoutOnceDialer) Dial(ctx context.Context, address string, config *tls.Config) (net.Conn, error) {
+	if d.calls.Add(1) == 1 {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return d.next.Dial(ctx, address, config)
 }
 
 func (d pipeDialer) Dial(_ context.Context, _ string, _ *tls.Config) (net.Conn, error) {

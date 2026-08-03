@@ -40,6 +40,7 @@ import (
 	"io"
 	"log"
 	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -56,6 +57,17 @@ import (
 	"github.com/rstreamlabs/rstream-go/config"
 	"github.com/rstreamlabs/rstream-go/test/e2eenv"
 )
+
+type readinessPacketConn struct {
+	net.PacketConn
+	ready chan struct{}
+	once  sync.Once
+}
+
+func (c *readinessPacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
+	c.once.Do(func() { close(c.ready) })
+	return c.PacketConn.ReadFrom(p)
+}
 
 func generateTLSConfig() (*tls.Config, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
@@ -388,7 +400,6 @@ func run(ctx context.Context, client *rstream.Client, publish bool, publishedPro
 	if !ok {
 		return fmt.Errorf("tunnel does not implement rstream.PacketListener")
 	}
-	fmt.Printf("READY %s\n", forwardingAddr)
 	tlsCfg, err := generateTLSConfig()
 	if err != nil {
 		return fmt.Errorf("failed to generate TLS config: %w", err)
@@ -419,7 +430,22 @@ func run(ctx context.Context, client *rstream.Client, publish bool, publishedPro
 		go dispatch(sess.Context(), sess, r.URL.Query())
 	})
 	errCh := make(chan error, 1)
-	go func() { errCh <- server.Serve(rstream.PacketConnFromPacketListener(packetListener)) }()
+	ready := make(chan struct{})
+	packetConn := &readinessPacketConn{
+		PacketConn: rstream.PacketConnFromPacketListener(packetListener),
+		ready:      ready,
+	}
+	go func() { errCh <- server.Serve(packetConn) }()
+	select {
+	case <-ready:
+	case err := <-errCh:
+		return fmt.Errorf("WebTransport server failed before becoming ready: %w", err)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	// READY is emitted only after the WebTransport server starts reading from
+	// the packet listener, so the test harness cannot race its first request.
+	fmt.Printf("READY %s\n", forwardingAddr)
 	select {
 	case <-ctx.Done():
 		log.Println("Shutting down WebTransport matrix server...")
