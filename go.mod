@@ -89,3 +89,8 @@ require (
 	golang.org/x/term v0.45.0
 	golang.org/x/text v0.40.0 // indirect
 )
+
+retract (
+	v1.26.3 // Superseded after a documentation correction.
+	v1.26.2 // Superseded after a documentation correction.
+)
