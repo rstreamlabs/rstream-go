@@ -21,6 +21,7 @@ func TestEngineError(t *testing.T) {
 		{name: "feature unavailable", code: EngineErrorCodeFeatureNotAvailable},
 		{name: "service unavailable", code: EngineErrorCodeServiceUnavailable, retryable: true},
 		{name: "capacity exhausted", code: EngineErrorCodeCapacityExhausted, retryable: true},
+		{name: "resource conflict", code: EngineErrorCodeResourceConflict, retryable: true},
 		{name: "internal", code: EngineErrorCodeInternal, retryable: true},
 		{name: "unknown", code: EngineErrorCode(12345)},
 	}

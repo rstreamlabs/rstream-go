@@ -2,6 +2,12 @@
 
 `rstream run` keeps tunnels in sync from a YAML file (`--apply`) or Docker labels (`--docker`), with optional watch/reconcile.
 
+In watch mode the reconciler keeps retrying temporary Engine failures and
+resource conflicts with bounded backoff. This matters during container or
+agent restarts: an earlier control channel can retain a hostname or port until
+its lease closes, and the desired tunnel must recover without another manual
+restart.
+
 ## Quick Start
 
 ```bash
