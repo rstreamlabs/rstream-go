@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.5](https://github.com/rstreamlabs/rstream-go/compare/v1.26.4...v1.26.5) (2026-08-03)
+
+
+### Bug Fixes
+
+* **module:** retract superseded documentation releases ([22d569d](https://github.com/rstreamlabs/rstream-go/commit/22d569d4776ccea1b9c15a561763ff2475f142b7))
+
 ## [1.26.4](https://github.com/rstreamlabs/rstream-go/compare/v1.26.3...v1.26.4) (2026-08-03)
 
 
