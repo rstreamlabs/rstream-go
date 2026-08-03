@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.26.4](https://github.com/rstreamlabs/rstream-go/compare/v1.26.3...v1.26.4) (2026-08-03)
+
+
+### Bug Fixes
+
+* **tunnel:** retry timed-out proxy connections ([7c2c65e](https://github.com/rstreamlabs/rstream-go/commit/7c2c65ecc0cd49b6cb356e54d9b3d7c0338b05d4))
+* **webtty:** honor exec terminal flags ([2e133ba](https://github.com/rstreamlabs/rstream-go/commit/2e133ba7f95d54748cd7adf70fca5f6239df4525))
+
 ## [1.26.3](https://github.com/rstreamlabs/rstream-go/compare/v1.26.2...v1.26.3) (2026-08-03)
 
 
