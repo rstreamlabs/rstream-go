@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.26.3](https://github.com/rstreamlabs/rstream-go/compare/v1.26.2...v1.26.3) (2026-08-03)
+
+
+### Bug Fixes
+
+* **tunnel:** prefer confirmed close result ([4825d2d](https://github.com/rstreamlabs/rstream-go/commit/4825d2d812fb50d82994ccb40e9979df6dcb70f5))
+* **webtty:** validate login accounts at startup ([256891b](https://github.com/rstreamlabs/rstream-go/commit/256891b73fa38ea375daa2fc2f5811a3d70feafe))
+
 ## [1.26.2](https://github.com/rstreamlabs/rstream-go/compare/v1.26.1...v1.26.2) (2026-08-03)
 
 
