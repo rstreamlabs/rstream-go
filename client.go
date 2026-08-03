@@ -223,10 +223,12 @@ func datagramTransport(transport Dialer) (datagramChannelRegistry, DatagramProvi
 type dialType string
 
 const (
-	dialTypeProxyReq               dialType = "proxy_req"
-	dialTypeStreamReq              dialType = "stream_req"
-	proxyConnectionDeliveryTimeout          = 5 * time.Second
-	defaultCloseTimeout                     = 5 * time.Second
+	dialTypeProxyReq                  dialType = "proxy_req"
+	dialTypeStreamReq                 dialType = "stream_req"
+	proxyConnectionDeliveryTimeout             = 5 * time.Second
+	proxyConnectionDialAttemptTimeout          = 10 * time.Second
+	proxyConnectionDialAttempts                = 2
+	defaultCloseTimeout                        = 5 * time.Second
 )
 
 func (c *Client) dial(ctx context.Context, dialType dialType, raddr Addr, token *string) (net.Conn, error) {
@@ -982,7 +984,7 @@ func (c *controlChannelImpl) handleProxyConnReq(req *pb.ProxyConnReq) {
 	go func() {
 		laddr := Addr{IdOrName: req.StreamId, SourceIP: NetIPFromPbValue(req.SourceIp)}
 		raddr := Addr{IdOrName: tunnelId}
-		conn, err := c.client.dialEndpoint(proxyCtx, dialTypeProxyReq, proxyEndpoint, laddr, proxySecret, proxyTransport)
+		conn, err := c.dialProxyConnection(proxyCtx, proxyEndpoint, laddr, proxySecret, proxyTransport)
 		if err != nil {
 			c.logger.Error("failed to dial proxy connection", "error", err)
 			c.sendProxyConnRsp(req.StreamId, err)
@@ -1002,6 +1004,41 @@ func (c *controlChannelImpl) handleProxyConnReq(req *pb.ProxyConnReq) {
 		}
 		c.sendProxyConnRsp(req.StreamId, nil)
 	}()
+}
+
+func (c *controlChannelImpl) dialProxyConnection(ctx context.Context, endpoint *string, laddr Addr, secret *string, transport Dialer) (net.Conn, error) {
+	return c.dialProxyConnectionWithPolicy(ctx, endpoint, laddr, secret, transport, proxyConnectionDialAttemptTimeout, proxyConnectionDialAttempts)
+}
+
+func (c *controlChannelImpl) dialProxyConnectionWithPolicy(ctx context.Context, endpoint *string, laddr Addr, secret *string, transport Dialer, attemptTimeout time.Duration, attempts int) (net.Conn, error) {
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(ctx, attemptTimeout)
+		conn, err := c.client.dialEndpoint(attemptCtx, dialTypeProxyReq, endpoint, laddr, secret, transport)
+		cancel()
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+		if ctx.Err() != nil || attempt == attempts || !isRetryableProxyDialError(err) {
+			break
+		}
+		if c.logger != nil {
+			c.logger.Warn("retrying proxy connection dial", "stream_id", laddr.IdOrName, "attempt", attempt+1, "error", err)
+		}
+	}
+	return nil, lastErr
+}
+
+func isRetryableProxyDialError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var networkErr net.Error
+	return errors.As(err, &networkErr) && networkErr.Timeout()
 }
 
 func (c *controlChannelImpl) deliverDatagramProxyConnection(ctx context.Context, tunnel *bytestreamTunnelImpl, listener *quicDatagramListener, conn net.PacketConn) error {
