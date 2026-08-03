@@ -329,8 +329,8 @@ engine. Close an active WebTTY session with `Ctrl+g q` before changing context.
 Login execution mode is passwordless. `--login-user <username>` names the
 existing **operating-system account that will own every remote session**; it is
 not an rstream account or the user connecting from the WebTTY client. For
-example, `--login-user alice` runs commands with the local `alice`
-home, shell, and identity. Run `id -un` on Linux or macOS, or `$env:USERNAME` in
+example, `--login-user alice` runs commands with the local `alice` home, shell,
+and identity. Run `id -un` on Linux or macOS, or `$env:USERNAME` in
 Windows PowerShell, to print the local username to pass to this option. rstream
 does not create the account, and the server refuses to start when the configured
 account cannot be resolved. On Unix-like systems, selecting a different OS user
