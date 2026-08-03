@@ -1403,6 +1403,21 @@ func TestControlChannelRedirectedDatagramProxyUsesFramedStream(t *testing.T) {
 	}
 }
 
+func TestTunnelClosePrefersConfirmedTunnelResultOverControlChannelEOF(t *testing.T) {
+	ctrl := &controlChannelImpl{err: io.EOF}
+	tunnel := &bytestreamTunnelImpl{ctrl: ctrl}
+	closedCh := make(chan struct{})
+	close(closedCh)
+
+	if err := tunnel.closeResultAfterControlClosed(closedCh); err != nil {
+		t.Fatalf("close result = %v, want confirmed tunnel success", err)
+	}
+	tunnel.err = errors.New("tunnel rejected close")
+	if err := tunnel.closeResultAfterControlClosed(closedCh); err == nil || err.Error() != "tunnel rejected close" {
+		t.Fatalf("close result = %v, want tunnel-specific error", err)
+	}
+}
+
 func TestControlChannelProxyTransportUsesOneQUICTransportPerEndpoint(t *testing.T) {
 	tlsProxyConfig := &tls.Config{ServerName: "proxy.example.com"}
 	selected := &QUICTransport{ForceIPv4: BoolPtr(true), ProxyHTTPHeaders: map[string]string{"X-Test": "value"}, TLSProxyConfig: tlsProxyConfig}

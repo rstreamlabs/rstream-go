@@ -123,33 +123,42 @@ func (t *bytestreamTunnelImpl) Close() error {
 	}
 	select {
 	case <-closedCh:
-		t.ctrl.mu.Lock()
-		err := t.err
-		t.ctrl.mu.Unlock()
-		return err
+		return t.closeResult()
 	case <-t.ctrl.closedCh:
-		if err := t.ctrl.Err(); err != nil {
-			return fmt.Errorf("control channel closed: %w", err)
-		}
-		return errors.New("control channel closed")
+		return t.closeResultAfterControlClosed(closedCh)
 	case <-ctx.Done():
 		select {
 		case <-closedCh:
-			t.ctrl.mu.Lock()
-			err := t.err
-			t.ctrl.mu.Unlock()
-			return err
+			return t.closeResult()
 		case <-t.ctrl.closedCh:
-			if err := t.ctrl.Err(); err != nil {
-				return fmt.Errorf("control channel closed: %w", err)
-			}
-			return errors.New("control channel closed")
+			return t.closeResultAfterControlClosed(closedCh)
 		default:
 		}
 		closeErr := fmt.Errorf("timed out waiting for tunnel %q to close: %w", t.tunnelID, context.Cause(ctx))
 		t.ctrl.onError(closeErr)
 		return closeErr
 	}
+}
+
+func (t *bytestreamTunnelImpl) closeResult() error {
+	t.ctrl.mu.Lock()
+	defer t.ctrl.mu.Unlock()
+	return t.err
+}
+
+func (t *bytestreamTunnelImpl) closeResultAfterControlClosed(closedCh <-chan struct{}) error {
+	// A CloseTunnelRsp and the subsequent control-channel shutdown can become
+	// visible to this goroutine at the same time. The tunnel acknowledgement is
+	// the more specific result and must win over the transport EOF.
+	select {
+	case <-closedCh:
+		return t.closeResult()
+	default:
+	}
+	if err := t.ctrl.Err(); err != nil {
+		return fmt.Errorf("control channel closed: %w", err)
+	}
+	return errors.New("control channel closed")
 }
 
 func (t *bytestreamTunnelImpl) onCloseLocked() tunnelCleanup {
