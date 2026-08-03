@@ -76,6 +76,38 @@ func newTestWebTTYClientCommand() *cobra.Command {
 	return cmd
 }
 
+func TestWebTTYClientTerminalModesHonorExplicitExecFlags(t *testing.T) {
+	tests := []struct {
+		name            string
+		args            []string
+		options         webTTYClientRunOptions
+		flags           map[string]string
+		wantInteractive bool
+		wantTTY         bool
+	}{
+		{name: "client shell defaults interactive with tty", wantInteractive: true, wantTTY: true},
+		{name: "client command defaults non-interactive without tty", args: []string{"true"}},
+		{name: "exec command defaults non-interactive without tty", args: []string{"true"}, options: webTTYClientRunOptions{ForceNoInteractive: true, ForceNoTTY: true}},
+		{name: "exec tty override", args: []string{"true"}, options: webTTYClientRunOptions{ForceNoInteractive: true, ForceNoTTY: true}, flags: map[string]string{"tty": "true"}, wantTTY: true},
+		{name: "exec interactive override", args: []string{"true"}, options: webTTYClientRunOptions{ForceNoInteractive: true, ForceNoTTY: true}, flags: map[string]string{"interactive": "true"}, wantInteractive: true},
+		{name: "exec interactive tty overrides", args: []string{"true"}, options: webTTYClientRunOptions{ForceNoInteractive: true, ForceNoTTY: true}, flags: map[string]string{"interactive": "true", "tty": "true"}, wantInteractive: true, wantTTY: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := newTestWebTTYClientCommand()
+			for name, value := range tt.flags {
+				if err := cmd.Flags().Set(name, value); err != nil {
+					t.Fatalf("set --%s: %v", name, err)
+				}
+			}
+			interactive, allocateTTY := webTTYClientTerminalModes(cmd, tt.args, tt.options)
+			if interactive != tt.wantInteractive || allocateTTY != tt.wantTTY {
+				t.Fatalf("terminal modes = interactive %t, tty %t; want interactive %t, tty %t", interactive, allocateTTY, tt.wantInteractive, tt.wantTTY)
+			}
+		})
+	}
+}
+
 func TestWebTTYCommandGroupsRejectPositionalArgs(t *testing.T) {
 	tests := []struct {
 		name string
