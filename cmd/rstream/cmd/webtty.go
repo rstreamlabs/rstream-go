@@ -2601,6 +2601,35 @@ func runWebTTYClient(cmd *cobra.Command, urlOverride string, args []string) erro
 	return runWebTTYClientWithOptions(cmd, urlOverride, args, webTTYClientRunOptions{DefaultOutput: "text", Subcommand: "client"})
 }
 
+func webTTYClientTerminalModes(cmd *cobra.Command, args []string, options webTTYClientRunOptions) (interactive bool, allocateTTY bool) {
+	interactivePtr := getBoolPtr(cmd, "interactive")
+	noInteractivePtr := getBoolPtr(cmd, "no-interactive")
+	switch {
+	case interactivePtr != nil && *interactivePtr:
+		interactive = true
+	case noInteractivePtr != nil && *noInteractivePtr:
+		interactive = false
+	case options.ForceNoInteractive:
+		interactive = false
+	default:
+		interactive = len(args) == 0
+	}
+
+	ttyPtr := getBoolPtr(cmd, "tty")
+	noTTYPtr := getBoolPtr(cmd, "no-tty")
+	switch {
+	case ttyPtr != nil && *ttyPtr:
+		allocateTTY = true
+	case noTTYPtr != nil && *noTTYPtr:
+		allocateTTY = false
+	case options.ForceNoTTY:
+		allocateTTY = false
+	default:
+		allocateTTY = len(args) == 0
+	}
+	return interactive, allocateTTY
+}
+
 func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []string, options webTTYClientRunOptions) error {
 	ctx := cmd.Context()
 	logger := slog.With("cmd", "webtty", "subcmd", options.Subcommand)
@@ -2626,32 +2655,7 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 			return err
 		}
 	}
-	interactivePtr := getBoolPtr(cmd, "interactive")
-	noInteractivePtr := getBoolPtr(cmd, "no-interactive")
-	interactive := false
-	switch {
-	case options.ForceNoInteractive:
-		interactive = false
-	case interactivePtr != nil && *interactivePtr:
-		interactive = true
-	case noInteractivePtr != nil && *noInteractivePtr:
-		interactive = false
-	default:
-		interactive = len(args) == 0
-	}
-	ttyPtr := getBoolPtr(cmd, "tty")
-	noTTYPtr := getBoolPtr(cmd, "no-tty")
-	allocateTTY := false
-	switch {
-	case options.ForceNoTTY:
-		allocateTTY = false
-	case ttyPtr != nil && *ttyPtr:
-		allocateTTY = true
-	case noTTYPtr != nil && *noTTYPtr:
-		allocateTTY = false
-	default:
-		allocateTTY = len(args) == 0
-	}
+	interactive, allocateTTY := webTTYClientTerminalModes(cmd, args, options)
 	envVars, _ := cmd.Flags().GetStringArray("env")
 	workdir := getStringPtr(cmd, "workdir")
 	username := getStringPtr(cmd, "user")
