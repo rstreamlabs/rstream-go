@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.1](https://github.com/rstreamlabs/rstream-go/compare/v1.26.0...v1.26.1) (2026-08-03)
+
+
+### Bug Fixes
+
+* **cli:** retry declarative resource conflicts ([f2ee08b](https://github.com/rstreamlabs/rstream-go/commit/f2ee08b4c42ca47466301fe8a7434e3efdf4084b))
+
 ## [1.26.0](https://github.com/rstreamlabs/rstream-go/compare/v1.25.1...v1.26.0) (2026-08-01)
 
 
