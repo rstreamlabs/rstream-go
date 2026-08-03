@@ -34,6 +34,7 @@ const (
 //	4000-4999: Invalid state / stream
 //	5000-5999: Feature / plan / config not available
 //	6000-6999: Service dependency unavailable
+//	8000-8999: Resource ownership conflicts
 //	9000-9999: Internal errors
 type ErrorCode int32
 
@@ -56,6 +57,10 @@ const (
 	ErrorCode_ERROR_CODE_SERVICE_UNAVAILABLE ErrorCode = 6000
 	// 7000-7999: Runtime capacity exhausted
 	ErrorCode_ERROR_CODE_CAPACITY_EXHAUSTED ErrorCode = 7000
+	// 8000-8999: A hostname, port, or registered endpoint is still owned by
+	// another live resource. Declarative reconcilers may retry after its lease
+	// has been released.
+	ErrorCode_ERROR_CODE_RESOURCE_CONFLICT ErrorCode = 8000
 	// 9000-9999: Internal errors
 	ErrorCode_ERROR_CODE_INTERNAL ErrorCode = 9000
 )
@@ -74,6 +79,7 @@ var (
 		5000: "ERROR_CODE_FEATURE_NOT_AVAILABLE",
 		6000: "ERROR_CODE_SERVICE_UNAVAILABLE",
 		7000: "ERROR_CODE_CAPACITY_EXHAUSTED",
+		8000: "ERROR_CODE_RESOURCE_CONFLICT",
 		9000: "ERROR_CODE_INTERNAL",
 	}
 	ErrorCode_value = map[string]int32{
@@ -88,6 +94,7 @@ var (
 		"ERROR_CODE_FEATURE_NOT_AVAILABLE":         5000,
 		"ERROR_CODE_SERVICE_UNAVAILABLE":           6000,
 		"ERROR_CODE_CAPACITY_EXHAUSTED":            7000,
+		"ERROR_CODE_RESOURCE_CONFLICT":             8000,
 		"ERROR_CODE_INTERNAL":                      9000,
 	}
 )
@@ -2197,7 +2204,7 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\theartbeat\x18\x0f \x01(\v2$.rstream.io_rstrm.protobuf.HeartbeatH\x00R\theartbeat\x12Q\n" +
 	"\x0eserver_message\x18\x10 \x01(\v2(.rstream.io_rstrm.protobuf.ServerMessageH\x00R\rserverMessage\x12g\n" +
 	"\x16datagram_channel_close\x18\x11 \x01(\v2/.rstream.io_rstrm.protobuf.DatagramChannelCloseH\x00R\x14datagramChannelCloseB\t\n" +
-	"\apayload*\xb5\x03\n" +
+	"\apayload*\xd8\x03\n" +
 	"\tErrorCode\x12\x1a\n" +
 	"\x16ERROR_CODE_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x17ERROR_CODE_UNAUTHORIZED\x10\xe8\a\x12\x1f\n" +
@@ -2209,7 +2216,8 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\x19ERROR_CODE_INVALID_STREAM\x10\xa0\x1f\x12%\n" +
 	" ERROR_CODE_FEATURE_NOT_AVAILABLE\x10\x88'\x12#\n" +
 	"\x1eERROR_CODE_SERVICE_UNAVAILABLE\x10\xf0.\x12\"\n" +
-	"\x1dERROR_CODE_CAPACITY_EXHAUSTED\x10\xd86\x12\x18\n" +
+	"\x1dERROR_CODE_CAPACITY_EXHAUSTED\x10\xd86\x12!\n" +
+	"\x1cERROR_CODE_RESOURCE_CONFLICT\x10\xc0>\x12\x18\n" +
 	"\x13ERROR_CODE_INTERNAL\x10\xa8F:I\n" +
 	"\x10protocol_version\x12\x1c.google.protobuf.FileOptions\x18\xb8\x8e\x03 \x01(\tR\x0fprotocolVersion:7\n" +
 	"\x06access\x12\x1d.google.protobuf.FieldOptions\x18\xa2\x90\x03 \x01(\tR\x06accessB\x0f\xc2\xf3\x18\x051.4.4Z\x04./pbb\x06proto3"
