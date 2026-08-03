@@ -30,6 +30,7 @@ func ParseExecutionMode(raw string) (ExecutionMode, error) {
 type executionIdentity struct {
 	userInfo           *UserInfo
 	credentialRequired bool
+	mode               ExecutionMode
 }
 
 func resolveExecutionIdentity(cfg *ServerConfig, requested *UsernameVariant) (*executionIdentity, error) {
@@ -64,7 +65,7 @@ func resolveExecutionIdentity(cfg *ServerConfig, requested *UsernameVariant) (*e
 	if err != nil {
 		return nil, err
 	}
-	return &executionIdentity{userInfo: ui, credentialRequired: required}, nil
+	return &executionIdentity{userInfo: ui, credentialRequired: required, mode: mode}, nil
 }
 
 func serverExecutionMode(cfg *ServerConfig) (ExecutionMode, error) {

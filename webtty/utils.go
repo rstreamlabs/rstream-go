@@ -27,16 +27,16 @@ func BuildEnvironment(src []*pb.Environment) []string {
 }
 
 func AddEnvironmentVariable(env *[]string, key, value string, force bool) {
-	prefix := key + "="
 	for i, kv := range *env {
-		if strings.HasPrefix(kv, prefix) {
+		existingKey, _, ok := strings.Cut(kv, "=")
+		if ok && environmentKeyEqual(existingKey, key) {
 			if force {
-				(*env)[i] = prefix + value
+				(*env)[i] = key + "=" + value
 			}
 			return
 		}
 	}
-	*env = append(*env, prefix+value)
+	*env = append(*env, key+"="+value)
 }
 
 func DefaultLabels() map[string]string {
