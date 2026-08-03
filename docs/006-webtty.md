@@ -136,7 +136,9 @@ or `--allow-client-user` explicitly, or set `--execution-mode=spawn` when the
 server should intentionally run commands as children of the server process.
 The `--login-user` value is the username of an existing account on the server
 machine. It selects the OS identity, home directory, and shell used for every
-session; it is not the rstream account or the remote caller's username.
+session; it is not the rstream account or the remote caller's username. Run
+`id -un` on the server to discover its current local username, then pass that
+exact value unless the service is deliberately configured to switch accounts.
 
 ### Trust a CLI for Workspace-Managed WebTTY
 
@@ -445,6 +447,23 @@ Every session is resolved against that account and receives its OS identity,
 home directory, and shell. Registered servers default to `login`, but still
 require a configured target user unless `--allow-client-user` is explicitly
 enabled.
+
+Run the discovery command **on the machine that hosts the WebTTY server**, then
+use its output as `<username>`:
+
+```bash
+# Linux and macOS
+id -un
+```
+
+```powershell
+# Windows PowerShell
+$env:USERNAME
+```
+
+rstream does not create this account. A fixed `--login-user` is resolved when
+the server starts, so an unknown or unsupported username fails immediately
+instead of waiting for the first remote session.
 
 On Unix-like systems, switching to a different account applies the target uid,
 primary gid, and supplementary groups and requires the server process to have

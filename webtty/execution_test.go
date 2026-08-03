@@ -51,6 +51,43 @@ func TestResolveExecutionIdentityLoginRequiresUser(t *testing.T) {
 	}
 }
 
+func TestValidateExecutionPolicyRejectsMissingLoginUser(t *testing.T) {
+	mode := WebTTYExecutionModeLogin
+	err := ValidateExecutionPolicy(&ServerConfig{ExecutionMode: &mode})
+	if err == nil || !strings.Contains(err.Error(), "existing local OS username") {
+		t.Fatalf("ValidateExecutionPolicy() error = %v", err)
+	}
+}
+
+func TestValidateExecutionPolicyAcceptsClientSelectedUserPolicy(t *testing.T) {
+	mode := WebTTYExecutionModeLogin
+	allowClientUser := true
+	if err := ValidateExecutionPolicy(&ServerConfig{ExecutionMode: &mode, AllowClientUser: &allowClientUser}); err != nil {
+		t.Fatalf("ValidateExecutionPolicy() error = %v", err)
+	}
+}
+
+func TestValidateExecutionPolicyResolvesConfiguredLoginUser(t *testing.T) {
+	current, err := user.Current()
+	if err != nil {
+		t.Fatalf("user.Current() error = %v", err)
+	}
+	mode := WebTTYExecutionModeLogin
+	username := current.Username
+	if err := ValidateExecutionPolicy(&ServerConfig{ExecutionMode: &mode, DefaultUsername: &username}); err != nil {
+		t.Fatalf("ValidateExecutionPolicy() error = %v", err)
+	}
+}
+
+func TestValidateExecutionPolicyRejectsUnknownLoginUser(t *testing.T) {
+	mode := WebTTYExecutionModeLogin
+	username := "rstream-webtty-user-that-must-not-exist"
+	err := ValidateExecutionPolicy(&ServerConfig{ExecutionMode: &mode, DefaultUsername: &username})
+	if err == nil || !strings.Contains(err.Error(), "not a usable local OS account") {
+		t.Fatalf("ValidateExecutionPolicy() error = %v", err)
+	}
+}
+
 func TestResolveExecutionIdentityLoginRejectsClientUserByDefault(t *testing.T) {
 	mode := WebTTYExecutionModeLogin
 	name := "alice"

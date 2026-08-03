@@ -153,8 +153,9 @@ var webttyServerCmd = &cobra.Command{
 # Start a WebTTY server through the current rstream project
 rstream webtty server -v --rstream --name shell
 
-# Start a registered WebTTY server after enrollment
-rstream webtty server -v --server-id server_id
+# Start a registered WebTTY server after enrollment. Replace the placeholder
+# with an existing username on this machine (for example, the output of id -un).
+rstream webtty server -v --server-id server_id --login-user <local-username>
 
 # Start from a service-manager friendly runtime config
 rstream webtty server -v --webtty-config /etc/rstream/webtty/prod-shell.yaml
@@ -272,9 +273,21 @@ func webTTYServerRetryableError(err error) bool {
 }
 
 func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.Logger, shutdownTimeout time.Duration, stableHostname **string) error {
+	executionMode, err := webTTYExecutionModeFromFlag(cmd)
+	if err != nil {
+		return err
+	}
+	loginUser := getStringPtr(cmd, "login-user")
+	allowClientUser, _ := cmd.Flags().GetBool("allow-client-user")
+	if err := webtty.ValidateExecutionPolicy(&webtty.ServerConfig{
+		ExecutionMode:   &executionMode,
+		DefaultUsername: loginUser,
+		AllowClientUser: &allowClientUser,
+	}); err != nil {
+		return err
+	}
 	useRstream := webttyServerUsesRstream(cmd)
 	var runtime *resolvedRuntime
-	var err error
 	if useRstream {
 		runtime, err = resolveRuntime(cmd, true, true)
 		if err != nil {
@@ -290,10 +303,6 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 		return err
 	}
 	if err := validateRegisteredWebTTYServerEnrollment(serverEnrollment); err != nil {
-		return err
-	}
-	executionMode, err := webTTYExecutionModeFromFlag(cmd)
-	if err != nil {
 		return err
 	}
 	authToken, err := readWebTTYAuthToken(cmd)
@@ -360,8 +369,6 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 		}
 	}
 	requireSessionKeyGrant := payloadCryptoConfig.Resolver != nil
-	loginUser := getStringPtr(cmd, "login-user")
-	allowClientUser, _ := cmd.Flags().GetBool("allow-client-user")
 	terminalHandler := webtty.NewWebTTYHandler(&webtty.ServerConfig{
 		SessionCloseDeadline:        &shutdownTimeout,
 		AuthToken:                   authToken,
@@ -739,7 +746,7 @@ func init() {
 	webttyServerCmd.Flags().Bool("allow-unauthenticated", false, "allow unauthenticated local WebTTY access")
 	webttyServerCmd.Flags().StringArray("allowed-origin", nil, "allow a browser Origin for local WebTTY WebSocket/WebTransport access (may be specified multiple times)")
 	webttyServerCmd.Flags().String("execution-mode", "", "server execution mode (spawn, login); defaults to login for registered servers and spawn otherwise")
-	webttyServerCmd.Flags().String("login-user", "", "default OS user for login execution mode")
+	webttyServerCmd.Flags().String("login-user", "", "existing local OS username used for every login session")
 	webttyServerCmd.Flags().Bool("allow-client-user", false, "allow clients to request an OS user in login execution mode")
 	webttyServerCmd.Flags().String("transport", string(webtty.WebTTYTransportWebSocket), "WebTTY transport (plain, websocket, webtransport)")
 	webttyServerCmd.Flags().String("tls-cert-file", "", "TLS certificate file for local plain TLS or WebTransport")
@@ -893,11 +900,11 @@ func validateWebTTYServerFlags(cmd *cobra.Command) error {
 		if cmd.Flags().Changed("login-user") || cmd.Flags().Changed("allow-client-user") {
 			return fmt.Errorf("--login-user and --allow-client-user require --execution-mode=login")
 		}
-	} else if registeredWebTTYServerRequested(cmd) {
+	} else {
 		loginUser, _ := cmd.Flags().GetString("login-user")
 		allowClientUser, _ := cmd.Flags().GetBool("allow-client-user")
 		if strings.TrimSpace(loginUser) == "" && !allowClientUser {
-			return fmt.Errorf("registered WebTTY servers default to login execution mode; set --login-user, --allow-client-user, or --execution-mode=spawn")
+			return fmt.Errorf("login execution mode requires --login-user <local-username> for an existing account on this machine, or --allow-client-user")
 		}
 	}
 	return nil

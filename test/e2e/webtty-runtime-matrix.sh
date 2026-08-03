@@ -363,7 +363,7 @@ start_go_server "go-config-e2e" --webtty-config "$go_cfg"
 wait_tcp "$go_cfg_addr"
 go_cfg_known_server=$(known_server_from_identity "$go_cfg_identity")
 run_case "go/config/ws/e2e" go_exec_text "go-config-e2e" --url "ws://$go_cfg_addr" --known-server-key "$go_cfg_known_server" --identity-file "$runtime_client_identity" -- /bin/sh -c "printf go-config-e2e"
-run_case_expect_fail "go/registered/requires-os-policy" "registered WebTTY servers default to login" "$RSTREAM" webtty server --server-id runtime-missing
+run_case_expect_fail "go/registered/requires-os-policy" "login execution mode requires --login-user" "$RSTREAM" webtty server --server-id runtime-missing
 run_case_expect_fail "go/registered/missing-enrollment" "no such file or directory" env RSTREAM_ENGINE=127.0.0.1:1 RSTREAM_AUTHENTICATION_TOKEN=token "$RSTREAM" webtty server --server-id runtime-missing --execution-mode spawn
 
 echo "=== js client against go server ==="
@@ -431,11 +431,7 @@ if [ -x "${CPP_SERVER:-}" ] && [ -x "${CPP_CLIENT:-}" ]; then
   wait_tcp "$cpp_login_addr"
   run_case "go-client/cpp-server/ws/login-current-user" go_exec_text "cpp-server-login" --url "ws://$cpp_login_addr" -- /bin/sh -c "printf cpp-server-login"
 
-  cpp_login_missing_port=$(reserve_port)
-  cpp_login_missing_addr="127.0.0.1:$cpp_login_missing_port"
-  start_cpp_server "cpp-ws-login-missing-user" --uri="$cpp_login_missing_addr" --transport=websocket --allow-unauthenticated --execution-mode=login
-  wait_tcp "$cpp_login_missing_addr"
-  run_case_expect_fail "cpp-server/login-requires-os-policy" "login execution mode requires a default user" "$RSTREAM" webtty exec --url "ws://$cpp_login_missing_addr" -- /bin/sh -c "printf no"
+  run_case_expect_fail "cpp-server/login-requires-os-policy" "login execution mode requires --login-user" "$CPP_SERVER" --uri=127.0.0.1:0 --transport=websocket --allow-unauthenticated --execution-mode=login
 
   go_cpp_ws_port=$(reserve_port)
   go_cpp_ws_addr="127.0.0.1:$go_cpp_ws_port"
