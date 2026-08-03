@@ -667,7 +667,7 @@ func printWebTTYServerCreateText(out io.Writer, runtime *resolvedRuntime, projec
 	fmt.Fprintf(out, "Server ID: %s\n", response.Server.ID)
 	fmt.Fprintf(out, "Status: %s\n", response.Server.Status)
 	fmt.Fprintf(out, "Enroll command: %s\n", webTTYServerEnrollCommand(runtime, project.ID, response.Server.ID))
-	fmt.Fprintf(out, "Run command: rstream webtty server -v --server-id %s --login-user <os-user>\n", response.Server.ID)
+	fmt.Fprintf(out, "Run command: rstream webtty server -v --server-id %s --login-user <local-username>\n", response.Server.ID)
 }
 
 func printWebTTYServerCreateEnrolledText(out io.Writer, project webTTYRegisteredServerProject, response controlplane.CreateWebTTYServerResponse, enrollmentPath string, enrollment *webTTYServerEnrollmentFile, reusedExisting bool) {
@@ -684,14 +684,14 @@ func printWebTTYServerCreateEnrolledText(out io.Writer, project webTTYRegistered
 		fmt.Fprintf(out, "Fingerprint: %s\n", enrollment.ServerFingerprint)
 		printWebTTYServerEnrollmentWorkspaceTrust(out, enrollment)
 	}
-	fmt.Fprintf(out, "Run command: rstream webtty server -v --server-id %s --login-user <os-user>\n", response.Server.ID)
+	fmt.Fprintf(out, "Run command: rstream webtty server -v --server-id %s --login-user <local-username>\n", response.Server.ID)
 }
 
 func webTTYServerEnrollmentCommandOutput(runtime *resolvedRuntime, project webTTYRegisteredServerProject, response controlplane.CreateWebTTYServerResponse) map[string]any {
 	output := map[string]any{
 		"server":         response.Server,
 		"enroll_command": webTTYServerEnrollCommand(runtime, project.ID, response.Server.ID),
-		"run_command":    "rstream webtty server -v --server-id " + response.Server.ID + " --login-user <os-user>",
+		"run_command":    "rstream webtty server -v --server-id " + response.Server.ID + " --login-user <local-username>",
 		"project":        project,
 	}
 	if runtime != nil && runtime.Resolved.APIURL != "" {

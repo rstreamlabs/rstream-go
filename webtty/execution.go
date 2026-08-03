@@ -27,6 +27,38 @@ func ParseExecutionMode(raw string) (ExecutionMode, error) {
 	}
 }
 
+// ValidateExecutionPolicy resolves the configured login identity before the
+// server starts accepting connections. This keeps a misspelled or unsupported
+// local account from turning into a failure only when the first client opens a
+// session.
+func ValidateExecutionPolicy(cfg *ServerConfig) error {
+	mode, err := serverExecutionMode(cfg)
+	if err != nil {
+		return err
+	}
+	if mode != WebTTYExecutionModeLogin {
+		return nil
+	}
+	if cfg == nil {
+		return fmt.Errorf("login execution mode requires an existing local OS username")
+	}
+	username := ""
+	if cfg.DefaultUsername != nil {
+		username = strings.TrimSpace(*cfg.DefaultUsername)
+	}
+	allowClientUser := cfg.AllowClientUser != nil && *cfg.AllowClientUser
+	if username == "" {
+		if allowClientUser {
+			return nil
+		}
+		return fmt.Errorf("login execution mode requires an existing local OS username")
+	}
+	if _, err := resolveExecutionIdentity(cfg, nil); err != nil {
+		return fmt.Errorf("login user %q is not a usable local OS account: %w", username, err)
+	}
+	return nil
+}
+
 type executionIdentity struct {
 	userInfo           *UserInfo
 	credentialRequired bool
