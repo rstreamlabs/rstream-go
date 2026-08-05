@@ -1,0 +1,50 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.rstreamlabs/rstream",
+  "title": "rstream CLI MCP",
+  "description": "Local stdio MCP server for rstream setup, tunnels, WebTTY, and remote operations.",
+  "version": "1.26.5",
+  "websiteUrl": "https://rstream.io",
+  "repository": {
+    "url": "https://github.com/rstreamlabs/rstream-go",
+    "source": "github",
+    "id": "992059940"
+  },
+  "icons": [
+    {
+      "src": "https://rstream.io/images/brand/rstream-logo-square-light.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "1024x1024"
+      ],
+      "theme": "light"
+    },
+    {
+      "src": "https://rstream.io/images/brand/rstream-logo-square-dark.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "1024x1024"
+      ],
+      "theme": "dark"
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "oci",
+      "identifier": "docker.io/rstream/rstream:1.26.5",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        },
+        {
+          "type": "positional",
+          "value": "serve"
+        }
+      ]
+    }
+  ]
+}
