@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.26.6](https://github.com/rstreamlabs/rstream-go/compare/v1.26.5...v1.26.6) (2026-08-05)
+
+
+### Bug Fixes
+
+* **mcp:** publish CLI server metadata ([d279aad](https://github.com/rstreamlabs/rstream-go/commit/d279aaddff7f7bc5fc3d0814664ef7b0354ac2a3))
+
 ## [1.26.5](https://github.com/rstreamlabs/rstream-go/compare/v1.26.4...v1.26.5) (2026-08-03)
 
 
