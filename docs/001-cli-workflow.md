@@ -302,9 +302,25 @@ For a Codex workstation, either complete the normal developer-machine path first
 
 ```bash
 rstream codex setup
+
+# Verify the configured MCP process and essential local tool surface.
+rstream codex setup --verify
 ```
 
-`rstream codex setup` writes a Codex MCP server entry that runs `rstream mcp serve`. The local MCP server reuses the selected rstream configuration and can expose OAuth login start/poll tools, runtime preparation for a selected project, runtime status, workspace/project discovery, project creation options, explicit project creation or checkout start, project plan inspection, project logs, usage, TURN usage, short-lived TURN credential minting, stable domain inspection and management, project settings, short-lived delegated token creation, managed local tunnels, WebTTY command execution, WebTTY filesystem sidecar operations, remote network exposure through WebTTY, and remote MCP surface discovery and invocation.
+`rstream codex setup` writes a Codex MCP server entry that runs `rstream mcp serve`. It validates that the command is executable and that an explicitly inherited `RSTREAM_CONFIG` is a readable file. The local MCP server reuses explicit `RSTREAM_API_URL`, `RSTREAM_CONFIG`, and `RSTREAM_CONTEXT` overrides and can expose OAuth login start/poll tools, runtime preparation for a selected project, runtime status, workspace/project discovery, project creation options, explicit project creation or checkout start, project plan inspection, project logs, usage, TURN usage, short-lived TURN credential minting, stable domain inspection and management, project settings, short-lived delegated token creation, managed local tunnels, WebTTY command execution, WebTTY filesystem sidecar operations, remote network exposure through WebTTY, and remote MCP surface discovery and invocation.
+
+Setup is diagnostic and idempotent:
+
+- `installed` means the entry was added;
+- `repaired` means a standard but unusable or incomplete entry was replaced, including a missing executable or unreadable stale `RSTREAM_CONFIG`;
+- `already_configured` means the existing entry is semantically equivalent and usable, so `changed=false`;
+- `conflict` is an error for an intentional-looking custom command, arguments, timeout, environment, or descendant table. Re-run with `--force` only when replacing that customization is intended.
+
+JSON and YAML output contain at least `changed`, `status`, `config`, `command`, `reload_required`, and safe diagnostics. Paths or values found in stale environment entries are not copied into diagnostics, and token-like environment values are never emitted.
+
+`--force` replaces the complete TOML subtree rooted at `[mcp_servers.rstream]`, including immediate or later `[mcp_servers.rstream.*]` descendants. It does not rewrite other MCP servers, Codex settings, or comments. The edit preserves the existing file permissions and uses an atomic replacement. After an installation or repair, open a new Codex task or reload Codex so the MCP configuration is loaded.
+
+`--verify` starts the configured process with a bounded timeout, performs `initialize` using protocol `2025-06-18`, sends `notifications/initialized`, then calls `tools/list`. It checks for `rstream_runtime_status`, `rstream_context_list`, `rstream_webtty_list`, and `rstream_webtty_exec`. Verification only inspects the local MCP surface: it does not call those tools and therefore needs neither rstream login nor network access.
 
 Use rstream CLI 1.18.1 or later for the full Codex MCP workflow, including runtime preparation, WebTTY filesystem tools, remote exposure, and longer MCP tool timeouts for user-approved login.
 

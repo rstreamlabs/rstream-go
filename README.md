@@ -290,6 +290,9 @@ rstream workspace device status
 # Register local rstream MCP tools for Codex
 rstream codex setup
 
+# Also start the configured server and verify the MCP handshake and tools
+rstream codex setup --verify
+
 # From Codex MCP, expose a service that is local to the remote WebTTY host
 # rstream_remote_expose webtty_url=rstrm://shell port=8765 protocol=http
 # For a direct authenticated-E2E WebTTY URL, also pass known_server=shell
@@ -456,7 +459,13 @@ Go WebTTY `tls://` plain transport and local WebTransport use TLS 1.3 minimum.
 See [docs/006-webtty.md](docs/006-webtty.md) for the complete WebTTY CLI, local file,
 runtime config, and E2E workflow reference.
 
-`rstream codex setup` preserves an explicit `RSTREAM_CONFIG` in the generated MCP server entry when one is set. `rstream mcp serve` exposes local rstream tools over MCP stdio for Codex and other local agent runtimes. The tool surface includes OAuth login start/poll tools, runtime preparation for a selected project, local context/status inspection, workspace and tunnel project discovery, project creation options, explicit project creation or checkout start, project plan inspection, project logs, usage, TURN usage, short-lived TURN credential minting, stable domain inspection and management, project settings, short-lived delegated auth token minting, managed local tunnels that can be listed and stopped across Codex sessions, WebTTY inventory, WebTTY command execution, WebDAV filesystem sidecar access, remote service exposure through WebTTY, and remote MCP surface discovery and invocation. `rstream mcp publish` serves the same local tools over Streamable HTTP at `/mcp` and publishes them through a token-protected HTTP tunnel.
+`rstream codex setup` preserves explicit `RSTREAM_API_URL`, `RSTREAM_CONFIG`, and `RSTREAM_CONTEXT` overrides in the generated MCP server entry. An explicit `RSTREAM_CONFIG` must name a readable file, and the configured command must be executable. Setup reports `installed`, `repaired`, or `already_configured`; JSON and YAML output include `changed`, `status`, `config`, `command`, `reload_required`, and safe diagnostics. A missing configured executable or stale `RSTREAM_CONFIG` is diagnosed and repaired when the entry otherwise has the standard shape. Intentional-looking custom commands, arguments, timeouts, environment values, or child tables are left unchanged unless `--force` is supplied.
+
+`rstream codex setup --force` replaces the complete `mcp_servers.rstream` TOML subtree, including `[mcp_servers.rstream.env]` and any other descendant tables, wherever they occur. Other MCP servers, Codex settings, comments, and the existing file permissions are preserved. Writes use an atomic file replacement. After an installation or repair, open a new Codex task or reload Codex so it loads the MCP server.
+
+Use `rstream codex setup --verify` for a bounded, local verification. It starts the configured command, performs `initialize` with MCP protocol `2025-06-18`, sends `notifications/initialized`, calls `tools/list`, and requires `rstream_runtime_status`, `rstream_context_list`, `rstream_webtty_list`, and `rstream_webtty_exec`. This check does not require login or network access and does not invoke the tools themselves.
+
+`rstream mcp serve` exposes local rstream tools over MCP stdio for Codex and other local agent runtimes. The tool surface includes OAuth login start/poll tools, runtime preparation for a selected project, local context/status inspection, workspace and tunnel project discovery, project creation options, explicit project creation or checkout start, project plan inspection, project logs, usage, TURN usage, short-lived TURN credential minting, stable domain inspection and management, project settings, short-lived delegated auth token minting, managed local tunnels that can be listed and stopped across Codex sessions, WebTTY inventory, WebTTY command execution, WebDAV filesystem sidecar access, remote service exposure through WebTTY, and remote MCP surface discovery and invocation. `rstream mcp publish` serves the same local tools over Streamable HTTP at `/mcp` and publishes them through a token-protected HTTP tunnel.
 
 Use rstream CLI 1.18.1 or later for the full Codex MCP workflow, including runtime preparation, WebTTY filesystem tools, remote exposure, and longer MCP tool timeouts for user-approved login.
 
