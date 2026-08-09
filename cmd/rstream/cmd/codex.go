@@ -392,7 +392,7 @@ func parseCodexRstreamConfig(content string) (codexRstreamConfig, bool, error) {
 	}
 	var document map[string]any
 	if err := toml.Unmarshal([]byte(content), &document); err != nil {
-		return codexRstreamConfig{}, false, errors.New("Codex config.toml is invalid TOML; fix its syntax before running setup")
+		return codexRstreamConfig{}, false, errors.New("codex config.toml is invalid TOML; fix its syntax before running setup")
 	}
 	mcpServers, ok := document["mcp_servers"].(map[string]any)
 	if !ok {
