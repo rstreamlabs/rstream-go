@@ -112,6 +112,83 @@ func TestForwardRetryableError(t *testing.T) {
 	}
 }
 
+func TestRunForwardWithUIRestoresTerminalAfterNonRetryableError(t *testing.T) {
+	ui := newForwardLifecycleTestUI()
+	wantErr := statusReportedError{err: &rstream.EngineError{
+		Code:    rstream.EngineErrorCodeInvalidRequest,
+		Message: "Custom hostname is not verified for this project.",
+	}}
+
+	err := runForwardWithUI(context.Background(), ui, func(context.Context) error {
+		return wantErr
+	})
+	if !errors.Is(err, wantErr.err) {
+		t.Fatalf("runForwardWithUI() error = %v, want %v", err, wantErr)
+	}
+	ui.assertStopped(t)
+}
+
+func TestRunForwardWithUIRestoresTerminalAfterUserExit(t *testing.T) {
+	ui := newForwardLifecycleTestUI()
+
+	err := runForwardWithUI(context.Background(), ui, func(ctx context.Context) error {
+		close(ui.exit)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("runForwardWithUI() error = %v, want context.Canceled", err)
+	}
+	ui.assertStopped(t)
+}
+
+type forwardLifecycleTestUI struct {
+	exit      chan struct{}
+	done      chan struct{}
+	stopCount int
+}
+
+func newForwardLifecycleTestUI() *forwardLifecycleTestUI {
+	return &forwardLifecycleTestUI{
+		exit: make(chan struct{}),
+		done: make(chan struct{}),
+	}
+}
+
+func (u *forwardLifecycleTestUI) Start(ctx context.Context) <-chan struct{} {
+	go func() {
+		select {
+		case <-ctx.Done():
+		case <-u.exit:
+		}
+		close(u.done)
+	}()
+	return u.done
+}
+
+func (u *forwardLifecycleTestUI) Stop() error {
+	u.stopCount++
+	return nil
+}
+
+func (u *forwardLifecycleTestUI) SetStatus(forwardStatus) {}
+
+func (u *forwardLifecycleTestUI) AddConn(forwardConnInfo) int { return 0 }
+
+func (u *forwardLifecycleTestUI) CloseConn(int) {}
+
+func (u *forwardLifecycleTestUI) assertStopped(t *testing.T) {
+	t.Helper()
+	if u.stopCount != 1 {
+		t.Fatalf("UI Stop() calls = %d, want 1", u.stopCount)
+	}
+	select {
+	case <-u.done:
+	case <-time.After(time.Second):
+		t.Fatal("UI context was not canceled")
+	}
+}
+
 func TestNewForwardCtxBuildsRuntimeAndOutputConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	if err := config.WriteAtomic(path, config.Config{

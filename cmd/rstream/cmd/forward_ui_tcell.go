@@ -12,11 +12,14 @@ import (
 )
 
 type forwardUITCell struct {
-	mu     sync.Mutex
-	screen tcell.Screen
-	done   chan struct{}
-	status forwardStatus
-	conns  []forwardConnInfo
+	mu        sync.Mutex
+	screen    tcell.Screen
+	startOnce sync.Once
+	stopOnce  sync.Once
+	stop      chan struct{}
+	done      chan struct{}
+	status    forwardStatus
+	conns     []forwardConnInfo
 }
 
 func newForwardUITCell() (forwardUI, error) {
@@ -30,6 +33,7 @@ func newForwardUITCell() (forwardUI, error) {
 	s.SetStyle(tcell.StyleDefault.Background(tcell.ColorBlack).Foreground(tcell.ColorWhite))
 	return &forwardUITCell{
 		screen: s,
+		stop:   make(chan struct{}),
 		done:   make(chan struct{}),
 		status: forwardStatus{},
 		conns:  make([]forwardConnInfo, 0),
@@ -37,49 +41,55 @@ func newForwardUITCell() (forwardUI, error) {
 }
 
 func (u *forwardUITCell) Start(ctx context.Context) <-chan struct{} {
-	go func() {
-		evch := make(chan tcell.Event, 8)
-		go func() {
-			for {
-				evch <- u.screen.PollEvent()
-			}
-		}()
-		tick := time.NewTicker(100 * time.Millisecond)
-		defer tick.Stop()
-		for {
-			u.draw()
-			u.screen.Show()
-			select {
-			case <-ctx.Done():
-				u.screen.Fini()
-				u.done <- struct{}{}
-				return
-			case ev := <-evch:
-				switch e := ev.(type) {
-				case *tcell.EventKey:
-					switch e.Key() {
-					case tcell.KeyCtrlC:
-						u.screen.Fini()
-						u.done <- struct{}{}
-						return
-					case tcell.KeyRune:
-						if e.Rune() == 'q' || e.Rune() == 'Q' {
-							u.screen.Fini()
-							u.done <- struct{}{}
-							return
-						}
-					}
-				case *tcell.EventResize:
-					u.screen.Sync()
-				}
-			case <-tick.C:
-			}
-		}
-	}()
+	u.startOnce.Do(func() { go u.run(ctx) })
 	return u.done
 }
 
-func (u *forwardUITCell) Stop() error { u.screen.Fini(); return nil }
+func (u *forwardUITCell) run(ctx context.Context) {
+	defer func() {
+		u.screen.Fini()
+		close(u.done)
+	}()
+	events := make(chan tcell.Event, 8)
+	go u.screen.ChannelEvents(events, u.stop)
+	tick := time.NewTicker(100 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		u.draw()
+		u.screen.Show()
+		select {
+		case <-ctx.Done():
+			return
+		case <-u.stop:
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			switch event := event.(type) {
+			case *tcell.EventKey:
+				switch event.Key() {
+				case tcell.KeyCtrlC:
+					return
+				case tcell.KeyRune:
+					if event.Rune() == 'q' || event.Rune() == 'Q' {
+						return
+					}
+				}
+			case *tcell.EventResize:
+				u.screen.Sync()
+			}
+		case <-tick.C:
+		}
+	}
+}
+
+func (u *forwardUITCell) Stop() error {
+	u.stopOnce.Do(func() { close(u.stop) })
+	<-u.done
+	return nil
+}
+
 func (u *forwardUITCell) SetStatus(s forwardStatus) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -104,6 +114,7 @@ func (u *forwardUITCell) CloseConn(idx int) {
 
 func (u *forwardUITCell) draw() {
 	s := u.screen
+	status, conns := u.snapshot()
 	s.Clear()
 	sw, sh := s.Size()
 	if sw <= 0 || sh <= 0 {
@@ -127,15 +138,15 @@ func (u *forwardUITCell) draw() {
 		return *p
 	}
 	rows := [][2]string{
-		{"version", val(u.status.Version)},
-		{"update", val(u.status.Update)},
-		{"status", val(u.status.Status)},
-		{"plan", val(u.status.Plan)},
-		{"provider", val(u.status.Provider)},
-		{"region", val(u.status.Region)},
-		{"tunnel ID", val(u.status.TunnelID)},
-		{"forwarding", val(u.status.Forwarding)},
-		{"forwarded", val(u.status.Forwarded)},
+		{"version", val(status.Version)},
+		{"update", val(status.Update)},
+		{"status", val(status.Status)},
+		{"plan", val(status.Plan)},
+		{"provider", val(status.Provider)},
+		{"region", val(status.Region)},
+		{"tunnel ID", val(status.TunnelID)},
+		{"forwarding", val(status.Forwarding)},
+		{"forwarded", val(status.Forwarded)},
 	}
 	lines := make([]string, 0, len(rows)+3)
 	for _, r := range rows {
@@ -149,7 +160,7 @@ func (u *forwardUITCell) draw() {
 		printLineTruncated(s, row, left, right, t)
 		row++
 	}
-	if len(u.conns) == 0 {
+	if len(conns) == 0 {
 		if row <= maxRow {
 			printLineTruncated(s, row, left, right, "no connection")
 			row++
@@ -174,7 +185,7 @@ func (u *forwardUITCell) draw() {
 			}
 		}
 		var actives, inactives []forwardConnInfo
-		for _, c := range u.conns {
+		for _, c := range conns {
 			if c.Active {
 				actives = append(actives, c)
 			} else {
@@ -188,6 +199,12 @@ func (u *forwardUITCell) draw() {
 		clearLine(s, foot-1, left, sw-right)
 		printLineTruncated(s, foot, left, right, "press 'q' or 'Ctrl-C' to exit")
 	}
+}
+
+func (u *forwardUITCell) snapshot() (forwardStatus, []forwardConnInfo) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.status, append([]forwardConnInfo(nil), u.conns...)
 }
 
 func printWrappedLine(s tcell.Screen, start, left, right int, text string, maxRow int) int {

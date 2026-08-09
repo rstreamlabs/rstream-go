@@ -97,20 +97,34 @@ var forwardCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		if s.UI != nil {
-			uidone := s.UI.Start(cmd.Context())
-			ctx, cancel := context.WithCancel(cmd.Context())
-			defer cancel()
-			go func() { <-uidone; cancel() }()
-			err = s.run(ctx)
-		} else {
-			err = s.run(cmd.Context())
-		}
+		err = runForwardWithUI(cmd.Context(), s.UI, s.run)
 		if err != nil && errors.Is(err, context.Canceled) {
 			return nil
 		}
 		return err
 	},
+}
+
+func runForwardWithUI(ctx context.Context, ui forwardUI, run func(context.Context) error) (err error) {
+	if ui == nil {
+		return run(ctx)
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer func() {
+		cancel()
+		if stopErr := ui.Stop(); stopErr != nil {
+			err = errors.Join(err, fmt.Errorf("failed to stop forward UI: %w", stopErr))
+		}
+	}()
+	uidone := ui.Start(runCtx)
+	go func() {
+		select {
+		case <-uidone:
+			cancel()
+		case <-runCtx.Done():
+		}
+	}()
+	return run(runCtx)
 }
 
 func init() {
