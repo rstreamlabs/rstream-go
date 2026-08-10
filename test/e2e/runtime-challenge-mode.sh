@@ -132,10 +132,12 @@ run_case() {
 
 case_challenge_api_route_exists() {
   local status
+  control_plane_curl_headers
   status=$(curl -sS -o "$TMP_DIR/challenge-api-body.txt" -w "%{http_code}" \
     -X POST "$API_URL/api/rstream/challenge/requests" \
     -H "Authorization: Bearer invalid" \
     -H "Content-Type: application/json" \
+    "${CONTROL_PLANE_CURL_ARGS[@]}" \
     --data '{"returnUrl":"https://app.example.com/api/challenge/callback","destination":[{"key":"targetUrl","value":"https://app.example.com/"},{"key":"tunnelHost","value":"app.example.com"}]}' || true)
   if [ "$status" != "401" ]; then
     printf "expected challenge API route to exist and reject bad auth with 401, got %s\n" "$status" >&2
@@ -165,14 +167,15 @@ case_http_challenge_h2_redirects() {
 }
 
 case_http_challenge_h3_redirects() {
-  local expected
+  local expected status=0
   expected="${API_URL%/}/rstream/challenge?request="
   start_upstream "challenge-h3"
   start_challenge_forward "challenge-h3"
   "$BIN/http/client" \
     --h3-redirect-url "$FORWARDING/ping" \
-    --location-contains "$expected"
+    --location-contains "$expected" || status=$?
   stop_pid "$FORWARD_PID"
+  return "$status"
 }
 
 run_case "challenge/api route" case_challenge_api_route_exists

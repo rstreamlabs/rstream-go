@@ -43,17 +43,18 @@ require_executable() {
 
 rewrite_downstream_address() {
   local address=$1
+  local host=${RSTREAM_E2E_DOWNSTREAM_HOST:-}
   local port=${RSTREAM_E2E_DOWNSTREAM_PORT:-}
   local port_map=${RSTREAM_E2E_DOWNSTREAM_PORT_MAP:-}
-  if { [ -z "$port" ] && [ -z "$port_map" ]; } || [[ "$address" == rstrm://* ]]; then
+  if { [ -z "$host" ] && [ -z "$port" ] && [ -z "$port_map" ]; } || [[ "$address" == rstrm://* ]]; then
     printf "%s\n" "$address"
     return
   fi
-  python3 - "$address" "$port" "$port_map" <<'PY'
+  python3 - "$address" "$host" "$port" "$port_map" <<'PY'
 import sys
 import urllib.parse
 
-address, fallback_port, mapping_spec = sys.argv[1:]
+address, override_host, fallback_port, mapping_spec = sys.argv[1:]
 for suffix in (" (tls)", " (tcp)", " (dtls)", " (quic)", " (webtty)"):
     if address.endswith(suffix):
         address = address[:-len(suffix)]
@@ -68,13 +69,14 @@ for mapping in mapping_spec.split(","):
 if "://" in address:
     parsed = urllib.parse.urlsplit(address)
     port = port_map.get(str(parsed.port), fallback_port)
-    if not port:
+    if not port and not override_host:
         print(address)
         raise SystemExit
-    host = parsed.hostname or ""
+    port = port or str(parsed.port or "")
+    host = override_host or parsed.hostname or ""
     if ":" in host:
         host = f"[{host}]"
-    netloc = f"{host}:{port}"
+    netloc = f"{host}:{port}" if port else host
     if parsed.username:
         credentials = parsed.username
         if parsed.password:
@@ -84,17 +86,14 @@ if "://" in address:
 else:
     parsed = urllib.parse.urlsplit(f"//{address}")
     port = port_map.get(str(parsed.port), fallback_port)
-    if not port:
+    if not port and not override_host:
         print(address)
         raise SystemExit
-    host = address
-    if address.startswith("["):
-        closing = address.find("]")
-        if closing >= 0:
-            host = address[:closing + 1]
-    elif ":" in address:
-        host = address.rsplit(":", 1)[0]
-    print(f"{host}:{port}")
+    port = port or str(parsed.port or "")
+    host = override_host or parsed.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    print(f"{host}:{port}" if port else host)
 PY
 }
 
@@ -112,6 +111,44 @@ require_control_plane_token() {
     printf "Do not rely on the engine context token for Control plane setup checks.\n" >&2
     exit 2
   fi
+}
+
+control_plane_curl_headers() {
+  local name value parsed=false
+  CONTROL_PLANE_CURL_ARGS=()
+  while IFS= read -r -d '' name && IFS= read -r -d '' value; do
+    if [ "$name" = __RSTREAM_HEADERS_OK__ ]; then
+      parsed=true
+      continue
+    fi
+    CONTROL_PLANE_CURL_ARGS+=("-H" "$name: $value")
+  done < <(python3 - <<'PY'
+import json
+import os
+import sys
+
+raw = os.environ.get("RSTREAM_CONTROL_PLANE_HEADERS", "").strip()
+if raw:
+    try:
+        headers = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("RSTREAM_CONTROL_PLANE_HEADERS must contain a JSON object") from exc
+else:
+    headers = {}
+if not isinstance(headers, dict):
+    raise RuntimeError("RSTREAM_CONTROL_PLANE_HEADERS must contain a JSON object")
+for name, value in headers.items():
+    if not isinstance(name, str) or not isinstance(value, str):
+        raise RuntimeError("RSTREAM_CONTROL_PLANE_HEADERS keys and values must be strings")
+    if name.lower() == "authorization":
+        raise RuntimeError("RSTREAM_CONTROL_PLANE_HEADERS cannot override authorization")
+    if not name or ":" in name or "\r" in name or "\n" in name or "\r" in value or "\n" in value:
+        raise RuntimeError("RSTREAM_CONTROL_PLANE_HEADERS contains an invalid HTTP header")
+    sys.stdout.buffer.write(name.encode() + b"\0" + value.encode() + b"\0")
+sys.stdout.buffer.write(b"__RSTREAM_HEADERS_OK__\0\0")
+PY
+  )
+  [ "$parsed" = true ]
 }
 
 require_runtime_project_engine_match() {
@@ -142,6 +179,20 @@ request = urllib.request.Request(
     f"{api_url}/api/projects/tunnels/{project_id}",
     headers={"authorization": f"Bearer {token}"},
 )
+raw_headers = os.environ.get("RSTREAM_CONTROL_PLANE_HEADERS", "").strip()
+if raw_headers:
+    try:
+        extra_headers = json.loads(raw_headers)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("RSTREAM_CONTROL_PLANE_HEADERS must contain a JSON object") from exc
+    if not isinstance(extra_headers, dict):
+        raise RuntimeError("RSTREAM_CONTROL_PLANE_HEADERS must contain a JSON object")
+    for name, value in extra_headers.items():
+        if not isinstance(name, str) or not isinstance(value, str):
+            raise RuntimeError("RSTREAM_CONTROL_PLANE_HEADERS keys and values must be strings")
+        if name.lower() == "authorization":
+            raise RuntimeError("RSTREAM_CONTROL_PLANE_HEADERS cannot override authorization")
+        request.add_header(name, value)
 with urllib.request.urlopen(request, timeout=20) as response:
     project_endpoint = json.load(response)["endpoint"]
 

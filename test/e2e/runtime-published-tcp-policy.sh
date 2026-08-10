@@ -54,16 +54,35 @@ api_url = os.environ["RSTREAM_RUNTIME_API_URL"].rstrip("/")
 token = os.environ["RSTREAM_RUNTIME_CONTROL_TOKEN"]
 project_id = os.environ["RSTREAM_RUNTIME_PROJECT_ID"]
 
+def control_plane_headers():
+    raw = os.environ.get("RSTREAM_CONTROL_PLANE_HEADERS", "").strip()
+    if not raw:
+        return {}
+    try:
+        values = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("RSTREAM_CONTROL_PLANE_HEADERS must contain a JSON object") from exc
+    if not isinstance(values, dict):
+        raise RuntimeError("RSTREAM_CONTROL_PLANE_HEADERS must contain a JSON object")
+    for name, value in values.items():
+        if not isinstance(name, str) or not isinstance(value, str):
+            raise RuntimeError("RSTREAM_CONTROL_PLANE_HEADERS keys and values must be strings")
+        if name.lower() == "authorization":
+            raise RuntimeError("RSTREAM_CONTROL_PLANE_HEADERS cannot override authorization")
+    return values
+
 def request(method, body=None):
     data = None if body is None else json.dumps(body).encode()
+    headers = control_plane_headers()
+    headers.update({
+        "authorization": "Bearer " + token,
+        "content-type": "application/json",
+    })
     req = urllib.request.Request(
         f"{api_url}/api/projects/tunnels/{project_id}/settings",
         data=data,
         method=method,
-        headers={
-            "authorization": "Bearer " + token,
-            "content-type": "application/json",
-        },
+        headers=headers,
     )
     with urllib.request.urlopen(req, timeout=20) as response:
         payload = response.read().decode()

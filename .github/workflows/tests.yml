@@ -60,6 +60,8 @@ jobs:
         run: staticcheck ./...
       - name: Build runtime test binaries
         run: make test-bins
+      - name: Test runtime harness helpers
+        run: ./test/e2e/runtime-common-unit.sh
       - name: Test
         run: go test -shuffle=on -count=1 ./...
   race:
