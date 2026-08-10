@@ -145,7 +145,7 @@ start_upstream() {
   local label=$1 mode=$2
   local log="$TMP_DIR/upstream-$label.log"
   case "$mode" in
-  tcp | http | udp)
+  tcp | tcp-eof-reply | http | udp)
     "$PYTHON" "$ROOT/test/e2e/runtime_harness.py" serve "$mode" >"$log" 2>&1 &
     ;;
   tls)
@@ -324,6 +324,17 @@ case_published_tcp() {
   start_forward "published-tcp" "$UPSTREAM_ADDR" 1 \
     --tcp --name "$NAME_PREFIX-published-tcp"
   "$BIN/stream/client" --variant plain --addr "$FORWARDING" || rc=$?
+  stop_pid "$FORWARD_PID"
+  return "$rc"
+}
+
+case_published_tcp_half_close() {
+  local rc=0
+  start_upstream "published-tcp-half-close" tcp-eof-reply
+  start_forward "published-tcp-half-close" "$UPSTREAM_ADDR" 1 \
+    --tcp --name "$NAME_PREFIX-published-tcp-half-close"
+  "$PYTHON" "$ROOT/test/e2e/runtime_harness.py" check tcp-half-close \
+    --addr "$FORWARDING" || rc=$?
   stop_pid "$FORWARD_PID"
   return "$rc"
 }
@@ -552,6 +563,7 @@ run_case "forward/tls upstream tls" case_tls_upstream_tls
 run_case "forward/tls passthrough" case_tls_passthrough
 if [ "${RSTREAM_E2E_SKIP_PUBLISHED_TCP:-0}" != "1" ]; then
   run_case "forward/published tcp" case_published_tcp
+  run_case "forward/published tcp half-close" case_published_tcp_half_close
   run_case "forward/published tcp ssh" case_published_tcp_ssh
 fi
 run_case "forward/http h1" case_http_h1

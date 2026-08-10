@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 
 PAYLOAD = b"ping-stream\n"
+HALF_CLOSE_REPLY = b"reply-after-eof:" + PAYLOAD
 
 
 class ThreadingTCPServer(socketserver.ThreadingTCPServer):
@@ -28,6 +29,23 @@ class EchoTCPHandler(socketserver.BaseRequestHandler):
             if not data:
                 return
             self.request.sendall(data)
+
+
+class EOFReplyTCPHandler(socketserver.BaseRequestHandler):
+    def handle(self):
+        received = bytearray()
+        while True:
+            data = self.request.recv(65536)
+            if not data:
+                break
+            received.extend(data)
+            if len(received) > len(PAYLOAD):
+                raise RuntimeError("half-close probe exceeded its bounded payload")
+        if bytes(received) != PAYLOAD:
+            raise RuntimeError(
+                f"half-close payload mismatch: got {bytes(received)!r}, want {PAYLOAD!r}"
+            )
+        self.request.sendall(HALF_CLOSE_REPLY)
 
 
 class ThreadingTLSServer(ThreadingTCPServer):
@@ -79,6 +97,12 @@ class ThreadingHTTPServer(http.server.ThreadingHTTPServer):
 
 def serve_tcp(args):
     server = ThreadingTCPServer((args.host, args.port), EchoTCPHandler)
+    print(f"READY {server.server_address[0]}:{server.server_address[1]}", flush=True)
+    server.serve_forever()
+
+
+def serve_tcp_eof_reply(args):
+    server = ThreadingTCPServer((args.host, args.port), EOFReplyTCPHandler)
     print(f"READY {server.server_address[0]}:{server.server_address[1]}", flush=True)
     server.serve_forever()
 
@@ -172,6 +196,27 @@ def check_https_ping(args):
             raise RuntimeError(f"body mismatch: got {body!r}, want b'pong\\n'")
     finally:
         conn.close()
+
+
+def check_tcp_half_close(args):
+    host, port = parse_host_port(args.addr, args.default_port)
+    with socket.create_connection((host, port), timeout=args.timeout) as conn:
+        conn.settimeout(args.timeout)
+        conn.sendall(PAYLOAD)
+        conn.shutdown(socket.SHUT_WR)
+        received = bytearray()
+        while True:
+            data = conn.recv(65536)
+            if not data:
+                break
+            received.extend(data)
+            if len(received) > len(HALF_CLOSE_REPLY):
+                raise RuntimeError("half-close response exceeded its bounded payload")
+        if bytes(received) != HALF_CLOSE_REPLY:
+            raise RuntimeError(
+                f"half-close response mismatch: got {bytes(received)!r}, "
+                f"want {HALF_CLOSE_REPLY!r}"
+            )
 
 
 def h2_frame(frame_type, flags, stream_id, payload=b""):
@@ -350,7 +395,12 @@ def main():
 
     serve = subcommands.add_parser("serve")
     serve_subcommands = serve.add_subparsers(dest="mode", required=True)
-    for mode, handler in (("tcp", serve_tcp), ("http", serve_http), ("udp", serve_udp)):
+    for mode, handler in (
+        ("tcp", serve_tcp),
+        ("tcp-eof-reply", serve_tcp_eof_reply),
+        ("http", serve_http),
+        ("udp", serve_udp),
+    ):
         sub = serve_subcommands.add_parser(mode)
         sub.add_argument("--host", default="127.0.0.1")
         sub.add_argument("--port", type=int, default=0)
@@ -379,6 +429,11 @@ def main():
     https_ping.add_argument("--default-port", default="443")
     https_ping.add_argument("--timeout", type=float, default=15.0)
     https_ping.set_defaults(func=check_https_ping)
+    tcp_half_close = check_subcommands.add_parser("tcp-half-close")
+    tcp_half_close.add_argument("--addr", required=True)
+    tcp_half_close.add_argument("--default-port", default="443")
+    tcp_half_close.add_argument("--timeout", type=float, default=15.0)
+    tcp_half_close.set_defaults(func=check_tcp_half_close)
     h2_reuse = check_subcommands.add_parser("h2-reuse-routes")
     h2_reuse.add_argument("--first", required=True)
     h2_reuse.add_argument("--second", required=True)
