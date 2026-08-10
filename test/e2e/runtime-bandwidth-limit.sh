@@ -12,6 +12,7 @@ MIN_DURATION="${RSTREAM_BANDWIDTH_MIN_DURATION:-1500ms}"
 MAX_DURATION="${RSTREAM_BANDWIDTH_MAX_DURATION:-3250ms}"
 PAYLOAD_SIZE="${RSTREAM_BANDWIDTH_PAYLOAD_SIZE:-1000}"
 ITERATIONS="${RSTREAM_BANDWIDTH_ITERATIONS:-256}"
+DATAGRAM_WINDOW="${RSTREAM_BANDWIDTH_DATAGRAM_WINDOW:-16}"
 SERVER_PID=
 SERVER_LOG=
 PASS=0
@@ -82,6 +83,9 @@ run_case() {
   )
   if [ -n "$expected_path" ]; then
     client_args+=(--expect-tunnel-packet-path "$expected_path")
+  fi
+  if [ "$type" = datagram ]; then
+    client_args+=(--datagram-window "$DATAGRAM_WINDOW")
   fi
   RSTREAM_TUNNEL_TRANSPORT="$dialer_transport" "$BIN/bandwidth/client" "${client_args[@]}"
   printf 'PASS %-32s owner=%s dialer=%s\n' "$label" "$owner_transport" "$dialer_transport"
