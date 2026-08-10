@@ -143,7 +143,7 @@ func mcpRemoteMCPDiscover(ctx context.Context, args map[string]json.RawMessage) 
 	if err != nil {
 		return nil, err
 	}
-	return mcpJSONResult(remoteMCPEndpointsFromTunnels(*tunnels), false)
+	return mcpJSONResult(map[string]any{"endpoints": remoteMCPEndpointsFromTunnels(*tunnels)}, false)
 }
 
 func mcpRemoteMCPTools(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {

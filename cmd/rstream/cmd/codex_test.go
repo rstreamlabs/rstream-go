@@ -415,7 +415,7 @@ func TestVerifyCodexMCPHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatalf("verifyCodexMCP returned error: %v", err)
 	}
-	if verification.Status != "verified" || verification.ProtocolVersion != "2025-06-18" || verification.ServerName != "rstream" || verification.ServerVersion == "" || verification.ToolCount < len(codexEssentialTools) {
+	if verification.Status != "verified" || verification.ProtocolVersion != mcpProtocolVersion || verification.ServerName != "rstream" || verification.ServerVersion == "" || verification.ToolCount < len(codexEssentialTools) {
 		t.Fatalf("unexpected verification result: %#v", verification)
 	}
 	if !stringSlicesEqual(verification.RequiredTools, codexEssentialTools) {

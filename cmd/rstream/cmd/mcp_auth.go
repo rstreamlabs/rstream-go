@@ -197,7 +197,7 @@ func mcpAuthExchangeRaw(ctx context.Context, session mcpAuthSession) (map[string
 			return nil, true, err
 		}
 		_ = mcpAuthRemoveSession(mcpAuthRegistryPath(session.ConfigPath), session.ID)
-		return map[string]any{"authenticated": true, "api_url": session.APIURL, "config_path": session.ConfigPath, "auth_flow": loginAuthFlowOAuth}, true, nil
+		return map[string]any{"authenticated": true, "status": "authenticated", "api_url": session.APIURL, "config_path": session.ConfigPath, "auth_flow": loginAuthFlowOAuth}, true, nil
 	}
 	result, pending, pollErr := mcpAuthPollResult(ctx, session, err)
 	if pollErr != nil {

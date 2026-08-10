@@ -80,7 +80,7 @@ func TestMCPAuthStartAndPollStoresTokenWithoutReturningIt(t *testing.T) {
 		t.Fatalf("mcpAuthPoll returned error: %v", err)
 	}
 	pollText := mcpResultText(t, poll)
-	if strings.Contains(pollText, "approved-token") || !strings.Contains(pollText, `"authenticated": true`) {
+	if strings.Contains(pollText, "approved-token") || !strings.Contains(pollText, `"authenticated": true`) || !strings.Contains(pollText, `"status": "authenticated"`) {
 		t.Fatalf("unexpected poll response: %s", pollText)
 	}
 	cfg, err := config.Load(configPath)

@@ -320,7 +320,7 @@ JSON and YAML output contain at least `changed`, `status`, `config`, `command`, 
 
 `--force` replaces the complete TOML subtree rooted at `[mcp_servers.rstream]`, including immediate or later `[mcp_servers.rstream.*]` descendants. It does not rewrite other MCP servers, Codex settings, or comments. The edit preserves the existing file permissions and uses an atomic replacement. After an installation or repair, open a new Codex task or reload Codex so the MCP configuration is loaded.
 
-`--verify` starts the configured process with a bounded timeout, performs `initialize` using protocol `2025-06-18`, sends `notifications/initialized`, then calls `tools/list`. It checks for `rstream_runtime_status`, `rstream_context_list`, `rstream_webtty_list`, and `rstream_webtty_exec`. Verification only inspects the local MCP surface: it does not call those tools and therefore needs neither rstream login nor network access.
+`--verify` starts the configured process with a bounded timeout, performs `initialize` using protocol `2025-11-25`, sends `notifications/initialized`, then calls `tools/list`. It checks for `rstream_runtime_status`, `rstream_context_list`, `rstream_webtty_list`, and `rstream_webtty_exec`. Verification only inspects the local MCP surface: it does not call those tools and therefore needs neither rstream login nor network access.
 
 Use rstream CLI 1.18.1 or later for the full Codex MCP workflow, including runtime preparation, WebTTY filesystem tools, remote exposure, and longer MCP tool timeouts for user-approved login.
 

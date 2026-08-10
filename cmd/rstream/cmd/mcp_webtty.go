@@ -196,7 +196,7 @@ func mcpWebTTYServerCreate(ctx context.Context, args map[string]json.RawMessage)
 	return mcpJSONResult(map[string]any{
 		"surface": "cli",
 		"server":  response.Server,
-		"commands": map[string]any{
+		"enrollment": map[string]any{
 			"enroll": webTTYServerEnrollCommand(runtime, project.ID, response.Server.ID),
 			"run":    "rstream webtty server -v --server-id " + response.Server.ID + " --login-user <local-username>",
 		},
@@ -264,7 +264,7 @@ func mcpWebTTYServerDelete(ctx context.Context, args map[string]json.RawMessage)
 	if err := client.DeleteWebTTYServer(ctx, project.ID, serverID); err != nil {
 		return nil, mapWebTTYServerWriteError(err)
 	}
-	return mcpJSONResult(map[string]any{"deleted": true, "server_id": serverID, "project_id": project.ID}, false)
+	return mcpJSONResult(map[string]any{"surface": "cli", "deleted": true, "server_id": serverID, "project_id": project.ID}, false)
 }
 
 func mcpWebTTYServerEnrollmentGet(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
@@ -283,9 +283,9 @@ func mcpWebTTYServerEnrollmentGet(ctx context.Context, args map[string]json.RawM
 	response := controlplane.CreateWebTTYServerResponse{Server: server}
 	projectRef := webTTYRegisteredServerProject{ID: project.ID, Source: "mcp", ProjectEndpoint: project.Endpoint, WorkspaceID: project.WorkspaceID}
 	return mcpJSONResult(map[string]any{
-		"surface":  "cli",
-		"server":   server,
-		"commands": webTTYServerEnrollmentCommandOutput(runtime, projectRef, response),
+		"surface":    "cli",
+		"server":     server,
+		"enrollment": webTTYServerEnrollmentCommandOutput(runtime, projectRef, response),
 	}, false)
 }
 
@@ -303,9 +303,9 @@ func mcpWebTTYSessionsList(ctx context.Context, args map[string]json.RawMessage)
 		return nil, err
 	}
 	if sessions == nil {
-		return mcpJSONResult(map[string]any{"sessions": []rstream.WebTTYSession{}}, false)
+		return mcpJSONResult(map[string]any{"surface": "cli", "sessions": []rstream.WebTTYSession{}}, false)
 	}
-	return mcpJSONResult(map[string]any{"sessions": *sessions}, false)
+	return mcpJSONResult(map[string]any{"surface": "cli", "sessions": *sessions}, false)
 }
 
 func mcpWebTTYSessionGet(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
@@ -321,7 +321,7 @@ func mcpWebTTYSessionGet(ctx context.Context, args map[string]json.RawMessage) (
 	if err != nil {
 		return nil, err
 	}
-	return mcpJSONResult(map[string]any{"session": session}, false)
+	return mcpJSONResult(map[string]any{"surface": "cli", "session": session}, false)
 }
 
 func mcpWebTTYSessionEvents(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
@@ -342,9 +342,9 @@ func mcpWebTTYSessionEvents(ctx context.Context, args map[string]json.RawMessage
 		return nil, err
 	}
 	if events == nil {
-		return mcpJSONResult(map[string]any{"events": []rstream.WebTTYSessionEvent{}}, false)
+		return mcpJSONResult(map[string]any{"surface": "cli", "events": []rstream.WebTTYSessionEvent{}}, false)
 	}
-	return mcpJSONResult(map[string]any{"events": *events}, false)
+	return mcpJSONResult(map[string]any{"surface": "cli", "events": *events}, false)
 }
 
 func mcpWebTTYSessionExport(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
@@ -380,6 +380,7 @@ func mcpWebTTYSessionExport(ctx context.Context, args map[string]json.RawMessage
 	case webTTYSessionExportFormatText:
 		textExport := webTTYRenderSessionTextExport(events, exported, options)
 		return mcpJSONResult(map[string]any{
+			"surface":                   "cli",
 			"format":                    "text",
 			"session_id":                sessionID,
 			"text":                      textExport.Text,
@@ -388,7 +389,8 @@ func mcpWebTTYSessionExport(ctx context.Context, args map[string]json.RawMessage
 		}, false)
 	case webTTYSessionExportFormatJSON:
 		return mcpJSONResult(map[string]any{
-			"format": "raw",
+			"surface": "cli",
+			"format":  "raw",
 			"export": webTTYSessionJSONExport{
 				ExportVersion: 1,
 				GeneratedAt:   time.Now().UTC(),
@@ -415,9 +417,9 @@ func mcpWebTTYSessionParticipants(ctx context.Context, args map[string]json.RawM
 		return nil, err
 	}
 	if participants == nil {
-		return mcpJSONResult(map[string]any{"participants": []rstream.WebTTYParticipant{}}, false)
+		return mcpJSONResult(map[string]any{"surface": "cli", "participants": []rstream.WebTTYParticipant{}}, false)
 	}
-	return mcpJSONResult(map[string]any{"participants": *participants}, false)
+	return mcpJSONResult(map[string]any{"surface": "cli", "participants": *participants}, false)
 }
 
 func mcpWebTTYControlRequestsList(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
@@ -438,9 +440,9 @@ func mcpWebTTYControlRequestsList(ctx context.Context, args map[string]json.RawM
 		return nil, err
 	}
 	if requests == nil {
-		return mcpJSONResult(map[string]any{"control_requests": []rstream.WebTTYControlRequest{}}, false)
+		return mcpJSONResult(map[string]any{"surface": "cli", "control_requests": []rstream.WebTTYControlRequest{}}, false)
 	}
-	return mcpJSONResult(map[string]any{"control_requests": *requests}, false)
+	return mcpJSONResult(map[string]any{"surface": "cli", "control_requests": *requests}, false)
 }
 
 func mcpWebTTYControlRequestCreate(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
@@ -460,7 +462,7 @@ func mcpWebTTYControlRequestCreate(ctx context.Context, args map[string]json.Raw
 	if err != nil {
 		return nil, err
 	}
-	return mcpJSONResult(map[string]any{"control_request": created}, false)
+	return mcpJSONResult(map[string]any{"surface": "cli", "control_request": created}, false)
 }
 
 func mcpWebTTYControlRequestResolve(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
@@ -496,7 +498,7 @@ func mcpWebTTYControlRequestResolve(ctx context.Context, args map[string]json.Ra
 	if err != nil {
 		return nil, err
 	}
-	return mcpJSONResult(map[string]any{"control_request": resolved}, false)
+	return mcpJSONResult(map[string]any{"surface": "cli", "control_request": resolved}, false)
 }
 
 func mcpListRegisteredWebTTYServers(ctx context.Context, client *controlplane.Client, projectID string, args map[string]json.RawMessage) (controlplane.ListWebTTYServersResponse, error) {

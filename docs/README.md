@@ -10,3 +10,4 @@ Read these documents in order:
 6. [WebTTY](006-webtty.md) documents terminal workflows and security boundaries.
 7. [Webhooks](007-webhooks.md) documents webhook helpers.
 8. [Command runner](008-cmd-run.md) documents embedded command execution.
+9. [MCP](009-mcp.md) defines the local and hosted agent-connectivity contract.

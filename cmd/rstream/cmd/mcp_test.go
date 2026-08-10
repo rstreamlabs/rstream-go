@@ -62,6 +62,54 @@ func TestMCPReadLineDelimitedJSON(t *testing.T) {
 	}
 }
 
+func TestServeMCPRecoversAfterInvalidJSONRPCMessages(t *testing.T) {
+	input := strings.Join([]string{
+		`{"jsonrpc":`,
+		`[]`,
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+		"",
+	}, "\n")
+	var output bytes.Buffer
+	if err := serveMCP(t.Context(), strings.NewReader(input), &output); err != nil {
+		t.Fatalf("serveMCP returned error: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 3 {
+		t.Fatalf("serveMCP wrote %d responses, want 3: %q", len(lines), output.String())
+	}
+	var responses []mcpResponse
+	for _, line := range lines {
+		var response mcpResponse
+		if err := json.Unmarshal([]byte(line), &response); err != nil {
+			t.Fatalf("response is not valid JSON: %v (%q)", err, line)
+		}
+		responses = append(responses, response)
+	}
+	if responses[0].Error == nil || responses[0].Error.Code != -32700 || string(responses[0].ID) != "null" {
+		t.Fatalf("malformed JSON response = %#v", responses[0])
+	}
+	if responses[1].Error == nil || responses[1].Error.Code != -32600 || string(responses[1].ID) != "null" {
+		t.Fatalf("invalid request response = %#v", responses[1])
+	}
+	if responses[2].Error != nil || responses[2].Result == nil || string(responses[2].ID) != "1" {
+		t.Fatalf("tools/list response = %#v", responses[2])
+	}
+}
+
+func TestMCPRejectsInvalidRequestShape(t *testing.T) {
+	for _, message := range []mcpMessage{
+		{JSONRPC: "1.0", ID: json.RawMessage("1"), Method: "tools/list"},
+		{JSONRPC: "2.0", ID: json.RawMessage("true"), Method: "tools/list"},
+		{JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "tools/call", Params: json.RawMessage(`[]`)},
+	} {
+		response := handleMCPMessage(t.Context(), message)
+		if response.Error == nil || response.Error.Code != -32600 || string(response.ID) != "null" {
+			t.Fatalf("invalid message response = %#v", response)
+		}
+	}
+}
+
 func TestServeMCPReturnsWhenContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	inputReader, inputWriter := io.Pipe()
@@ -108,44 +156,61 @@ func TestMCPToolsListContainsAgentNativeTools(t *testing.T) {
 	if !strings.Contains(string(payload), `"title":"Prepare rstream runtime"`) || !strings.Contains(string(payload), `"annotations"`) || !strings.Contains(string(payload), `"readOnlyHint"`) {
 		t.Fatalf("tools/list does not expose MCP title and annotations: %s", string(payload))
 	}
+	type listedTool struct {
+		Annotations  map[string]any `json:"annotations"`
+		Meta         map[string]any `json:"_meta"`
+		Name         string         `json:"name"`
+		OutputSchema map[string]any `json:"outputSchema"`
+	}
 	var listed struct {
-		Tools []struct {
-			Annotations map[string]any `json:"annotations"`
-			Name        string         `json:"name"`
-		} `json:"tools"`
+		Tools []listedTool `json:"tools"`
 	}
 	if err := json.Unmarshal(payload, &listed); err != nil {
 		t.Fatalf("tools/list JSON is invalid: %v", err)
 	}
-	toolsByName := map[string]map[string]any{}
-	for _, tool := range listed.Tools {
-		toolsByName[tool.Name] = tool.Annotations
+	if len(listed.Tools) != len(mcpToolBehaviors) {
+		t.Fatalf("tools/list returned %d tools for %d declared behaviors", len(listed.Tools), len(mcpToolBehaviors))
 	}
-	for _, check := range []struct {
-		Key  string
-		Name string
-		Want bool
-	}{{"destructiveHint", "rstream_webtty_exec", true}, {"destructiveHint", "rstream_webtty_fs_write", true}, {"destructiveHint", "rstream_webtty_control_request_create", true}, {"destructiveHint", "rstream_webtty_control_request_resolve", true}, {"destructiveHint", "rstream_remote_mcp_call", true}, {"idempotentHint", "rstream_project_update", true}, {"openWorldHint", "rstream_project_list", true}, {"readOnlyHint", "rstream_project_creation_options", true}, {"readOnlyHint", "rstream_project_domain_connect", true}, {"readOnlyHint", "rstream_webtty_session_export", true}} {
-		if got := toolsByName[check.Name][check.Key]; got != check.Want {
-			t.Fatalf("%s %s = %#v, want %v", check.Name, check.Key, got, check.Want)
+	toolsByName := map[string]listedTool{}
+	for _, tool := range listed.Tools {
+		behavior, ok := mcpToolBehaviors[tool.Name]
+		if !ok {
+			t.Fatalf("tool %q has no declared behavior", tool.Name)
+		}
+		for key, want := range map[string]bool{"readOnlyHint": behavior.ReadOnly, "destructiveHint": behavior.Destructive, "idempotentHint": behavior.Idempotent, "openWorldHint": behavior.OpenWorld} {
+			if got := tool.Annotations[key]; got != want {
+				t.Fatalf("%s %s = %#v, want %v", tool.Name, key, got, want)
+			}
+		}
+		if tool.Annotations["title"] != behavior.Title {
+			t.Fatalf("%s annotation title = %#v, want %q", tool.Name, tool.Annotations["title"], behavior.Title)
+		}
+		if tool.OutputSchema["type"] != "object" {
+			t.Fatalf("%s output schema must have an object root: %#v", tool.Name, tool.OutputSchema)
+		}
+		for _, key := range []string{"openai/toolInvocation/invoking", "openai/toolInvocation/invoked"} {
+			status, ok := tool.Meta[key].(string)
+			if !ok || strings.TrimSpace(status) == "" || len(status) > 64 {
+				t.Fatalf("%s %s must be a non-empty status of at most 64 characters: %#v", tool.Name, key, tool.Meta[key])
+			}
+		}
+		toolsByName[tool.Name] = tool
+	}
+	if got := toolsByName["rstream_webtty_control_request_create"].Annotations["destructiveHint"]; got != false {
+		t.Fatalf("control request creation must not be advertised as destructive: %#v", got)
+	}
+	for _, name := range []string{"rstream_auth_poll", "rstream_project_update", "rstream_webtty_server_update", "rstream_webtty_exec", "rstream_webtty_fs_download"} {
+		if got := toolsByName[name].Annotations["destructiveHint"]; got != true {
+			t.Fatalf("%s destructiveHint = %#v, want true", name, got)
 		}
 	}
 	if !strings.Contains(string(payload), `"outputSchema"`) || !strings.Contains(string(payload), `"login_url"`) || !strings.Contains(string(payload), `"suggested_next_tool"`) {
 		t.Fatalf("tools/list does not expose key output schemas: %s", string(payload))
 	}
-	for _, want := range []string{"rstream_webtty_list", "rstream_webtty_exec", "rstream_webtty_servers_list", "rstream_webtty_sessions_list", "rstream_webtty_session_export", "rstream_webtty_fs_read"} {
-		needle := fmt.Sprintf(`"name":%q`, want)
-		index := strings.Index(string(payload), needle)
-		if index < 0 {
-			t.Fatalf("tools/list missing %q: %s", want, string(payload))
-		}
-		nextName := strings.Index(string(payload)[index+len(needle):], `"name":`)
-		chunk := string(payload)[index:]
-		if nextName >= 0 {
-			chunk = string(payload)[index : index+len(needle)+nextName]
-		}
-		if !strings.Contains(chunk, `"outputSchema"`) {
-			t.Fatalf("tools/list tool %q does not expose outputSchema: %s", want, chunk)
+	for name, key := range map[string]string{"rstream_workspace_list": "workspaces", "rstream_project_list": "projects", "rstream_remote_mcp_discover": "endpoints", "rstream_webtty_list": "servers", "rstream_webtty_fs_list": "entries"} {
+		properties, ok := toolsByName[name].OutputSchema["properties"].(map[string]any)
+		if !ok || properties[key] == nil {
+			t.Fatalf("%s output schema does not declare semantic key %q: %#v", name, key, toolsByName[name].OutputSchema)
 		}
 	}
 	if !strings.Contains(string(payload), "read-only project token") || !strings.Contains(string(payload), "tunnels.resources.read-only requires list") {
@@ -443,7 +508,12 @@ func TestMCPPersonalWorkspaceMembersPayloadIsStructured(t *testing.T) {
 }
 
 func TestMCPInitializeProtocolVersion(t *testing.T) {
-	response := handleMCPMessage(t.Context(), mcpMessage{JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "initialize"})
+	response := handleMCPMessage(t.Context(), mcpMessage{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "initialize",
+		Params:  json.RawMessage(`{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}`),
+	})
 	if response.Error != nil {
 		t.Fatalf("unexpected error: %#v", response.Error)
 	}
@@ -451,11 +521,23 @@ func TestMCPInitializeProtocolVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal returned error: %v", err)
 	}
-	if !strings.Contains(string(payload), `"protocolVersion":"2025-06-18"`) {
+	if !strings.Contains(string(payload), `"protocolVersion":"`+mcpProtocolVersion+`"`) {
 		t.Fatalf("initialize returned unexpected protocol version: %s", string(payload))
 	}
 	if !strings.Contains(string(payload), `"title":"rstream"`) || !strings.Contains(string(payload), "rstream_runtime_prepare") || !strings.Contains(string(payload), "call rstream_auth_poll with wait=true") || !strings.Contains(string(payload), "do not infer or recommend") {
 		t.Fatalf("initialize missing display title or instructions: %s", string(payload))
+	}
+}
+
+func TestMCPInitializeRejectsMissingRequiredParams(t *testing.T) {
+	response := handleMCPMessage(t.Context(), mcpMessage{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage("1"),
+		Method:  "initialize",
+		Params:  json.RawMessage(`{}`),
+	})
+	if response.Error == nil || response.Error.Code != -32602 || response.Error.Message != "Invalid params" {
+		t.Fatalf("initialize response = %#v", response)
 	}
 }
 
@@ -643,6 +725,69 @@ func TestMCPJSONResultUsesStructuredObjectForStructs(t *testing.T) {
 	}
 }
 
+func TestMCPJSONResultRejectsNonObjectStructuredContent(t *testing.T) {
+	if _, err := mcpJSONResult([]string{"one", "two"}, false); err == nil || !strings.Contains(err.Error(), "JSON object") {
+		t.Fatalf("mcpJSONResult array error = %v", err)
+	}
+	if _, err := mcpJSONResult("value", false); err == nil || !strings.Contains(err.Error(), "JSON object") {
+		t.Fatalf("mcpJSONResult scalar error = %v", err)
+	}
+}
+
+func TestMCPWebTTYExecResultPreservesCapturedOutput(t *testing.T) {
+	base := webTTYClientResult{URL: "rstrm://shell", Command: []string{"sh", "-lc", "build"}, ExitCode: 0, Stdout: "partial stdout", Stderr: "partial stderr", DurationMS: 42}
+	nonzero := base
+	nonzero.ExitCode = 7
+	tests := []struct {
+		name      string
+		result    webTTYClientResult
+		runErr    error
+		errorKind string
+		wantError bool
+	}{
+		{name: "success", result: base},
+		{name: "nonzero exit", result: nonzero, wantError: true},
+		{name: "session failure", result: base, runErr: errors.New("connection closed"), errorKind: "session", wantError: true},
+		{name: "cancelled", result: base, runErr: context.Canceled, errorKind: "cancelled", wantError: true},
+		{name: "timeout", result: base, runErr: context.DeadlineExceeded, errorKind: "timeout", wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			result, err := mcpWebTTYExecResult(&test.result, test.runErr)
+			if err != nil {
+				t.Fatalf("mcpWebTTYExecResult returned error: %v", err)
+			}
+			if result["isError"] != test.wantError {
+				t.Fatalf("isError = %#v, want %v", result["isError"], test.wantError)
+			}
+			structured, ok := result["structuredContent"].(map[string]any)
+			if !ok {
+				t.Fatalf("structured content is not an object: %#v", result["structuredContent"])
+			}
+			command, commandOK := structured["command"].([]any)
+			if structured["surface"] != "cli" || structured["url"] != base.URL || !commandOK || len(command) != len(base.Command) || structured["stdout"] != base.Stdout || structured["stderr"] != base.Stderr || structured["duration_ms"] != float64(base.DurationMS) || structured["truncated"] != false {
+				t.Fatalf("captured output was not preserved: %#v", structured)
+			}
+			if test.runErr == nil {
+				if structured["error"] != nil || structured["error_kind"] != nil {
+					t.Fatalf("nonzero exit should not be reported as a session error: %#v", structured)
+				}
+				return
+			}
+			if structured["error"] != "WebTTY command execution failed." || structured["error_kind"] != test.errorKind {
+				t.Fatalf("unexpected execution error payload: %#v", structured)
+			}
+		})
+	}
+}
+
+func TestMCPWebTTYExecResultRejectsMissingCapture(t *testing.T) {
+	runErr := errors.New("capture failed")
+	if _, err := mcpWebTTYExecResult(nil, runErr); !errors.Is(err, runErr) {
+		t.Fatalf("mcpWebTTYExecResult error = %v, want %v", err, runErr)
+	}
+}
+
 func TestMCPContentReaderSupportsTextAndBase64(t *testing.T) {
 	reader, err := mcpContentReader(map[string]json.RawMessage{}, "hello")
 	if err != nil {
@@ -691,6 +836,18 @@ func TestMCPCreateProjectArgsRequiresExplicitBillingInputs(t *testing.T) {
 	if globalRequest.Routing != "global" || globalRequest.Provider != "aws" || globalRequest.Region != "" {
 		t.Fatalf("unexpected global request: %#v", globalRequest)
 	}
+	enterpriseArgs := map[string]json.RawMessage{"workspace_id": json.RawMessage(`"ws1"`), "name": json.RawMessage(`"Enterprise"`), "plan": json.RawMessage(`"enterprise"`), "creation_fingerprint": json.RawMessage(`"fingerprint"`)}
+	_, enterpriseRequest, err := mcpCreateProjectArgs(enterpriseArgs)
+	if err != nil {
+		t.Fatalf("mcpCreateProjectArgs(enterprise) returned error: %v", err)
+	}
+	if enterpriseRequest.Provider != "" || enterpriseRequest.Region != "" {
+		t.Fatalf("unexpected enterprise request: %#v", enterpriseRequest)
+	}
+	enterpriseArgs["provider"] = json.RawMessage(`"aws"`)
+	if _, _, err := mcpCreateProjectArgs(enterpriseArgs); err == nil {
+		t.Fatal("expected enterprise provider without region error")
+	}
 	delete(globalArgs, "routing")
 	delete(globalArgs, "provider")
 	if _, _, err := mcpCreateProjectArgs(globalArgs); err == nil {
@@ -725,12 +882,8 @@ func TestMCPControlPlaneArgs(t *testing.T) {
 	if settings["publicAccessPolicy"] != "forbidden" {
 		t.Fatalf("unexpected settings: %#v", settings)
 	}
-	settings, err = mcpProjectSettingsPatchArg(map[string]json.RawMessage{"settings_json": json.RawMessage(`"{\"minimumTlsVersion\":\"tls1.3\"}"`)})
-	if err != nil {
-		t.Fatalf("mcpProjectSettingsPatchArg(json) returned error: %v", err)
-	}
-	if settings["minimumTlsVersion"] != "tls1.3" {
-		t.Fatalf("unexpected settings json: %#v", settings)
+	if _, err := mcpProjectSettingsPatchArg(map[string]json.RawMessage{}); err == nil || !strings.Contains(err.Error(), "settings") {
+		t.Fatalf("missing settings error = %v", err)
 	}
 	members, err := mcpWorkspaceMembersParams(map[string]json.RawMessage{"q": json.RawMessage(`"admin"`), "page_size": json.RawMessage(`10`)})
 	if err != nil {

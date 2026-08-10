@@ -166,12 +166,19 @@ func mcpSelectedContextName(cfg config.Config) string {
 	return ""
 }
 
-func mcpWorkspaceList(ctx context.Context) (map[string]any, error) {
+func mcpWorkspaceList(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
 	client, _, err := mcpControlPlaneClient(ctx)
 	if err != nil {
 		return nil, err
 	}
-	workspaces, err := client.ListWorkspaces(ctx)
+	params := controlplane.ListWorkspacesParams{}
+	if params.Type, err = mcpOptionalStringArg(args, "type", ""); err != nil {
+		return nil, err
+	}
+	if params.MembershipStatus, err = mcpOptionalStringArg(args, "membershipStatus", ""); err != nil {
+		return nil, err
+	}
+	workspaces, err := client.ListWorkspaces(ctx, params)
 	if err != nil {
 		return nil, mapControlPlaneError(err)
 	}
@@ -1013,26 +1020,16 @@ func mcpWorkspaceMembersParams(args map[string]json.RawMessage) (controlplane.Wo
 }
 
 func mcpProjectSettingsPatchArg(args map[string]json.RawMessage) (controlplane.ProjectSettings, error) {
-	if raw, ok := args["settings"]; ok {
-		var settings controlplane.ProjectSettings
-		if err := json.Unmarshal(raw, &settings); err != nil {
-			return nil, fmt.Errorf("argument %q must be an object", "settings")
-		}
-		if settings == nil {
-			return nil, fmt.Errorf("argument %q must be an object", "settings")
-		}
-		return settings, nil
-	}
-	settingsJSON, err := mcpRequiredStringArg(args, "settings_json")
-	if err != nil {
-		return nil, err
+	raw, ok := args["settings"]
+	if !ok {
+		return nil, fmt.Errorf("missing required argument %q", "settings")
 	}
 	var settings controlplane.ProjectSettings
-	if err := json.Unmarshal([]byte(settingsJSON), &settings); err != nil {
-		return nil, fmt.Errorf("invalid settings_json: %w", err)
+	if err := json.Unmarshal(raw, &settings); err != nil {
+		return nil, fmt.Errorf("argument %q must be an object", "settings")
 	}
 	if settings == nil {
-		return nil, fmt.Errorf("settings_json must be an object")
+		return nil, fmt.Errorf("argument %q must be an object", "settings")
 	}
 	return settings, nil
 }
@@ -1046,11 +1043,18 @@ func mcpProjectDomainClientAndID(ctx context.Context, args map[string]json.RawMe
 	if err != nil {
 		return nil, "", "", err
 	}
-	hostname, err := mcpRequiredStringArg(args, "hostname")
+	domainID, err := mcpOptionalStringArg(args, "domain_id", "")
 	if err != nil {
 		return nil, "", "", err
 	}
-	domainID, err := resolveProjectDomainID(ctx, client, projectID, hostname)
+	if strings.TrimSpace(domainID) != "" {
+		return client, projectID, strings.TrimSpace(domainID), nil
+	}
+	hostname, err := mcpRequiredStringArg(args, "hostname")
+	if err != nil {
+		return nil, "", "", fmt.Errorf("domain_id or hostname is required")
+	}
+	domainID, err = resolveProjectDomainID(ctx, client, projectID, hostname)
 	if err != nil {
 		return nil, "", "", mapControlPlaneError(err)
 	}
@@ -1080,20 +1084,24 @@ func mcpCreateProjectArgs(args map[string]json.RawMessage) (string, controlplane
 	if request.Region, err = mcpOptionalStringArg(args, "region", ""); err != nil {
 		return "", request, err
 	}
+	if request.Plan, err = mcpRequiredStringArg(args, "plan"); err != nil {
+		return "", request, err
+	}
 	if request.Routing != "regional" && request.Routing != "global" {
 		return "", request, fmt.Errorf("routing must be global or regional")
 	}
-	if request.Provider == "" {
+	if request.Routing == "global" && request.Provider == "" {
 		return "", request, fmt.Errorf("provider is required")
 	}
-	if request.Routing == "regional" && request.Region == "" {
+	requiresLocation := request.Routing == "regional" && request.Plan != "enterprise"
+	if requiresLocation && (request.Provider == "" || request.Region == "") {
 		return "", request, fmt.Errorf("provider and region are required for regional routing")
 	}
 	if request.Routing == "global" && request.Region != "" {
 		return "", request, fmt.Errorf("region must be omitted for global routing")
 	}
-	if request.Plan, err = mcpRequiredStringArg(args, "plan"); err != nil {
-		return "", request, err
+	if request.Routing == "regional" && (request.Provider == "") != (request.Region == "") {
+		return "", request, fmt.Errorf("provider and region must be provided together")
 	}
 	if request.CreationFingerprint, err = mcpRequiredStringArg(args, "creation_fingerprint"); err != nil {
 		return "", request, err
