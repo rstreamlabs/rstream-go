@@ -4,9 +4,11 @@ package runengine
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -240,6 +242,61 @@ func TestRunnerRunOnceCreatesTunnelAndClosesOnContextCancel(t *testing.T) {
 	dialer.wait(t)
 }
 
+func TestRunnerRunCoalescesRetryFailuresAndLogsRecovery(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logs, nil))
+	tunnelReady := make(chan struct{})
+	delegate := newRunEnginePipeDialer(func(conn net.Conn) error { return serveRunEngineTunnelLifecycle(conn, tunnelReady) })
+	dialer := &flakyRunEngineDialer{remaining: 3, delegate: delegate}
+	desired := runmodel.DesiredTunnel{Name: "web", Forward: runmodel.ForwardTarget{Host: "127.0.0.1", Port: "1"}, Context: runmodel.ResolvedContext{Engine: "engine.example.com:443", Token: "token", Transport: dialer}, Props: rstream.TunnelProperties{Type: rstream.TunnelTypePtr(rstream.TunnelTypeBytestream)}}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		New(WithLogger(logger), WithRetry(time.Millisecond, 2*time.Millisecond)).run(ctx, desired)
+		close(done)
+	}()
+	select {
+	case <-tunnelReady:
+	case <-time.After(runEngineTestTimeout):
+		t.Fatal("timed out waiting for retry recovery")
+	}
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(runEngineTestTimeout):
+		t.Fatal("runner did not stop after cancellation")
+	}
+	dialer.delegate.wait(t)
+	warnings := 0
+	recoveries := 0
+	scanner := bufio.NewScanner(&logs)
+	for scanner.Scan() {
+		var entry struct {
+			Message        string `json:"msg"`
+			FailedAttempts uint64 `json:"failed_attempts"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			t.Fatalf("decode log entry: %v", err)
+		}
+		if entry.Message == "Tunnel unavailable; retrying" {
+			warnings++
+		}
+		if entry.Message == "Tunnel connection recovered" {
+			recoveries++
+			if entry.FailedAttempts != 3 {
+				t.Fatalf("recovery failed_attempts = %d, want 3", entry.FailedAttempts)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan logs: %v", err)
+	}
+	if warnings != 1 || recoveries != 1 {
+		t.Fatalf("retry transition logs = %d warnings, %d recoveries, want 1 and 1", warnings, recoveries)
+	}
+}
+
 func TestBackoffAndStringHelpers(t *testing.T) {
 	backoff := newBackoff(10*time.Millisecond, 25*time.Millisecond)
 	values := []time.Duration{backoff.Next(), backoff.Next(), backoff.Next(), backoff.Next()}
@@ -249,9 +306,30 @@ func TestBackoffAndStringHelpers(t *testing.T) {
 			t.Fatalf("backoff[%d] = %s, want %s", i, values[i], want[i])
 		}
 	}
+	backoff.Reset()
+	if got := backoff.Next(); got != 10*time.Millisecond {
+		t.Fatalf("backoff after Reset() = %s, want 10ms", got)
+	}
 	defaulted := newBackoff(0, 0)
 	if got := defaulted.Next(); got != time.Second {
 		t.Fatalf("default backoff first value = %s, want 1s", got)
+	}
+	normalized := newBackoff(20*time.Millisecond, 10*time.Millisecond)
+	if got := normalized.Next(); got != 20*time.Millisecond {
+		t.Fatalf("normalized backoff first value = %s, want 20ms", got)
+	}
+	overflowSafe := newBackoff(time.Duration(1<<62+1), time.Duration(1<<63-1))
+	if first, second := overflowSafe.Next(), overflowSafe.Next(); first <= 0 || second != time.Duration(1<<63-1) {
+		t.Fatalf("overflow-safe backoff values = %s, %s", first, second)
+	}
+	for range 100 {
+		got := jitterRetry(100 * time.Millisecond)
+		if got < 80*time.Millisecond || got > 100*time.Millisecond {
+			t.Fatalf("jitterRetry() = %s, want [80ms, 100ms]", got)
+		}
+	}
+	if got := jitterRetry(time.Nanosecond); got != time.Nanosecond {
+		t.Fatalf("jitterRetry(1ns) = %s, want 1ns", got)
 	}
 	value := "id"
 	if str(nil) != "" || str(&value) != "id" {
@@ -361,6 +439,22 @@ func (c *udpProxyPacketConn) SetWriteDeadline(time.Time) error { return nil }
 type runEnginePipeDialer struct {
 	serve func(net.Conn) error
 	errCh chan error
+}
+
+type flakyRunEngineDialer struct {
+	mu        sync.Mutex
+	remaining int
+	delegate  *runEnginePipeDialer
+}
+
+func (d *flakyRunEngineDialer) Dial(ctx context.Context, addr string, tlsConfig *tls.Config) (net.Conn, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.remaining > 0 {
+		d.remaining--
+		return nil, errors.New("temporary dial failure")
+	}
+	return d.delegate.Dial(ctx, addr, tlsConfig)
 }
 
 func newRunEnginePipeDialer(serve func(net.Conn) error) *runEnginePipeDialer {

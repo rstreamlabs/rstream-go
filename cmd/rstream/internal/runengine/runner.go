@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"strings"
 	"time"
@@ -23,6 +24,11 @@ type Runner struct {
 	logger       *slog.Logger
 	retryInitial time.Duration
 	retryMax     time.Duration
+}
+
+type retryFailureLog struct {
+	startedAt time.Time
+	attempts  uint64
 }
 
 type Option func(*Runner)
@@ -90,12 +96,16 @@ func (r *Runner) run(ctx context.Context, desired runmodel.DesiredTunnel) {
 		"source", desired.Source,
 	)
 	backoff := newBackoff(r.retryInitial, r.retryMax)
+	failures := &retryFailureLog{}
 	for {
 		if ctx.Err() != nil {
 			logger.Info("Tunnel stopped")
 			return
 		}
-		err := r.runOnce(ctx, desired, logger)
+		err := r.runOnceReady(ctx, desired, logger, func() {
+			backoff.Reset()
+			failures.Recovered(logger)
+		})
 		if err == nil {
 			logger.Info("Tunnel closed")
 			return
@@ -108,15 +118,30 @@ func (r *Runner) run(ctx context.Context, desired runmodel.DesiredTunnel) {
 			logger.Error("Tunnel stopped", "error", err)
 			return
 		}
-		retry := backoff.Next()
-		logger.Warn("Retrying in", "error", err, "retry_in", retry)
-		select {
-		case <-time.After(retry):
-		case <-ctx.Done():
+		retry := jitterRetry(backoff.Next())
+		failures.Failed(logger, err, retry)
+		if !netretry.Wait(ctx, retry) {
 			logger.Info("Tunnel stopped")
 			return
 		}
 	}
+}
+
+func (l *retryFailureLog) Failed(logger *slog.Logger, err error, retry time.Duration) {
+	if l.attempts == 0 {
+		l.startedAt = time.Now()
+		logger.Warn("Tunnel unavailable; retrying", "error", err, "retry_in", retry)
+	}
+	l.attempts++
+}
+
+func (l *retryFailureLog) Recovered(logger *slog.Logger) {
+	if l.attempts == 0 {
+		return
+	}
+	logger.Info("Tunnel connection recovered", "failed_attempts", l.attempts, "outage_ms", time.Since(l.startedAt).Milliseconds())
+	l.startedAt = time.Time{}
+	l.attempts = 0
 }
 
 func retryableTunnelError(err error) bool {
@@ -148,6 +173,10 @@ func legacyResourceConflictMessage(message string) bool {
 }
 
 func (r *Runner) runOnce(ctx context.Context, desired runmodel.DesiredTunnel, logger *slog.Logger) error {
+	return r.runOnceReady(ctx, desired, logger, nil)
+}
+
+func (r *Runner) runOnceReady(ctx context.Context, desired runmodel.DesiredTunnel, logger *slog.Logger, ready func()) error {
 	opts := rstream.ClientOptions{
 		Engine: desired.Context.Engine,
 		Token:  desired.Context.Token,
@@ -183,6 +212,9 @@ func (r *Runner) runOnce(ctx context.Context, desired runmodel.DesiredTunnel, lo
 		return fmt.Errorf("failed to get forwarding address: %w", err)
 	}
 	logger.Info("Tunnel created", "tunnel_id", str(props.ID), "forwarding", forwarding)
+	if ready != nil {
+		ready()
+	}
 	if l, ok := tunnel.(net.Listener); ok {
 		return r.serveWithCtx(ctx, l.Close, func() error { return r.serveTCP(ctx, l, desired.Forward, logger) })
 	}
@@ -313,7 +345,18 @@ func newBackoff(initial, max time.Duration) *backoff {
 	if max <= 0 {
 		max = 30 * time.Second
 	}
+	if max < initial {
+		max = initial
+	}
 	return &backoff{current: initial, initial: initial, max: max}
+}
+
+func jitterRetry(delay time.Duration) time.Duration {
+	spread := delay / 5
+	if spread <= 0 {
+		return delay
+	}
+	return delay - spread + time.Duration(rand.Uint64N(uint64(spread)+1))
 }
 
 func (b *backoff) Next() time.Duration {
@@ -321,9 +364,14 @@ func (b *backoff) Next() time.Duration {
 		b.current = b.initial
 	}
 	val := b.current
-	b.current *= 2
-	if b.current > b.max {
+	if b.current >= b.max-b.current {
 		b.current = b.max
+	} else {
+		b.current *= 2
 	}
 	return val
+}
+
+func (b *backoff) Reset() {
+	b.current = b.initial
 }
