@@ -131,9 +131,10 @@ run_case() {
 }
 
 case_challenge_api_route_exists() {
-  local status
+  local headers status
+  headers="$TMP_DIR/challenge-api-headers.txt"
   control_plane_curl_headers
-  status=$(curl -sS -o "$TMP_DIR/challenge-api-body.txt" -w "%{http_code}" \
+  status=$(curl -sS -D "$headers" -o "$TMP_DIR/challenge-api-body.txt" -w "%{http_code}" \
     -X POST "$API_URL/api/rstream/challenge/requests" \
     -H "Authorization: Bearer invalid" \
     -H "Content-Type: application/json" \
@@ -141,6 +142,12 @@ case_challenge_api_route_exists() {
     --data '{"returnUrl":"https://app.example.com/api/challenge/callback","destination":[{"key":"targetUrl","value":"https://app.example.com/"},{"key":"tunnelHost","value":"app.example.com"}]}' || true)
   if [ "$status" != "401" ]; then
     printf "expected challenge API route to exist and reject bad auth with 401, got %s\n" "$status" >&2
+    sed -n '1,20p' "$TMP_DIR/challenge-api-body.txt" >&2 || true
+    return 1
+  fi
+  if ! grep -Fqi 'content-type: application/json' "$headers" || ! grep -Fq '"error":"Unauthorized."' "$TMP_DIR/challenge-api-body.txt"; then
+    printf "expected challenge API application rejection, got an upstream or malformed 401\n" >&2
+    sed -n '1,20p' "$headers" >&2 || true
     sed -n '1,20p' "$TMP_DIR/challenge-api-body.txt" >&2 || true
     return 1
   fi

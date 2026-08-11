@@ -11,14 +11,15 @@ find_rstream_cli() {
   fi
 
   while IFS= read -r candidate; do
-    if [ -x "$candidate" ]; then
+    if [ -x "$candidate" ] && "$candidate" --help >/dev/null 2>&1; then
       printf "%s\n" "$candidate"
       return
     fi
-  done < <(find "$root/out/cmd/rstream" -type f -name rstream 2>/dev/null | sort)
+  done < <(find "$root/out/cmd/rstream" -type f -name rstream 2>/dev/null | sort -r)
 
-  if command -v rstream >/dev/null 2>&1; then
-    command -v rstream
+  candidate=$(command -v rstream 2>/dev/null || true)
+  if [ -n "$candidate" ] && "$candidate" --help >/dev/null 2>&1; then
+    printf "%s\n" "$candidate"
   fi
 }
 
@@ -27,8 +28,8 @@ resolve_rstream_cli() {
   local binary
 
   binary=$(find_rstream_cli "$root" || true)
-  if [ -z "$binary" ] || [ ! -x "$binary" ]; then
-    printf "ERROR missing rstream binary; set RSTREAM_BIN or build the CLI first\n" >&2
+  if [ -z "$binary" ] || [ ! -x "$binary" ] || ! "$binary" --help >/dev/null 2>&1; then
+    printf "ERROR missing or unusable rstream binary; set RSTREAM_BIN or build the CLI for this host first\n" >&2
     exit 2
   fi
   printf "%s\n" "$binary"

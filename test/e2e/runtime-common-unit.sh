@@ -5,6 +5,8 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 . "$ROOT/test/e2e/runtime_common.sh"
 PASS=0
+TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/rstream-runtime-common.XXXXXX")
+trap 'rm -rf "$TMP_DIR"' EXIT
 
 expect_equal() {
   local label=$1 actual=$2 expected=$3
@@ -32,6 +34,14 @@ if RSTREAM_CONTROL_PLANE_HEADERS='not-json' control_plane_curl_headers 2>/dev/nu
   exit 1
 fi
 PASS=$((PASS + 1))
+mkdir -p "$TMP_DIR/out/cmd/rstream/a" "$TMP_DIR/out/cmd/rstream/b"
+printf '#!/bin/sh\nexit 126\n' >"$TMP_DIR/out/cmd/rstream/a/rstream"
+printf '%s\n' '#!/bin/sh' "[ \"\$1\" = --help ]" >"$TMP_DIR/out/cmd/rstream/b/rstream"
+chmod +x "$TMP_DIR/out/cmd/rstream/a/rstream" "$TMP_DIR/out/cmd/rstream/b/rstream"
+expect_equal \
+  "skip unusable rstream binary" \
+  "$(RSTREAM_BIN='' find_rstream_cli "$TMP_DIR")" \
+  "$TMP_DIR/out/cmd/rstream/b/rstream"
 RSTREAM_E2E_DOWNSTREAM_HOST=203.0.113.10 expect_equal \
   "downstream host rewrite" \
   "$(RSTREAM_E2E_DOWNSTREAM_HOST=203.0.113.10 rewrite_downstream_address 'https://edge.example.test:443/path?q=1')" \
