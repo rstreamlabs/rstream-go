@@ -1039,7 +1039,7 @@ func newTestMASQUEProxyWithOptions(t *testing.T, options testMASQUEProxyOptions)
 	proxy := &masque.Proxy{}
 	server := &http3.Server{
 		TLSConfig:       testQUICServerTLSConfig(t, http3.NextProtoH3),
-		QUICConfig:      &quic.Config{EnableDatagrams: true},
+		QUICConfig:      &quic.Config{EnableDatagrams: true, InitialPacketSize: masqueProxyInitialPacketSize},
 		EnableDatagrams: true,
 		Handler:         mux,
 	}
