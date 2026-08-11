@@ -230,11 +230,13 @@ find_cpp_binary() {
     if [ ! -e "$root" ]; then
       continue
     fi
-    found=$(find "$root" -path "*/$name" -type f -perm -111 2>/dev/null | head -1)
-    if [ -n "$found" ]; then
-      printf "%s\n" "$found"
-      return 0
-    fi
+    while IFS= read -r found; do
+      if "$found" --help >/dev/null 2>&1; then
+        printf "%s\n" "$found"
+        return 0
+      fi
+      printf "Ignoring unusable C++ runtime binary: %s\n" "$found" >&2
+    done < <(find "$root" -path "*/$name" -type f -perm -111 2>/dev/null | sort)
   done
   return 1
 }
