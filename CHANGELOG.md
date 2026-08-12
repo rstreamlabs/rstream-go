@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.27.0](https://github.com/rstreamlabs/rstream-go/compare/v1.26.6...v1.27.0) (2026-08-12)
+
+
+### Features
+
+* **mcp:** align device and hosted contracts ([8bcda36](https://github.com/rstreamlabs/rstream-go/commit/8bcda36b5414bfb5c8670daa1fed2e9dec9e89e8))
+
+
+### Bug Fixes
+
+* **api:** retry transient read-only failures ([ba50846](https://github.com/rstreamlabs/rstream-go/commit/ba50846438548f231bc4a894d9a4574b1cf7bff8))
+* **cli:** own concurrent runtime work ([76f662a](https://github.com/rstreamlabs/rstream-go/commit/76f662aa7e16c1994204924f2453c5b73b8084d8))
+* **cli:** restore terminal after forward errors ([44c7c42](https://github.com/rstreamlabs/rstream-go/commit/44c7c4271c9b54c8d9d8bc9a0ae3768e0876b2a4))
+* **codex:** harden MCP setup workflow ([208b91e](https://github.com/rstreamlabs/rstream-go/commit/208b91ebb7cb1d784c5a2d7a2d012d9b77d427b6))
+* **codex:** satisfy staticcheck error style ([eb8e7d4](https://github.com/rstreamlabs/rstream-go/commit/eb8e7d460452b0458b8a4753c3a0a03ac376497c))
+* **mcp:** bound concurrent stdio requests ([e1d4071](https://github.com/rstreamlabs/rstream-go/commit/e1d4071714c836b47cfd8f55753a60159d6b82c4))
+* **mcp:** isolate explicit control plane contexts ([3e86fec](https://github.com/rstreamlabs/rstream-go/commit/3e86fec7be1c88feead68917d485263d236e6642))
+* **run:** coalesce and jitter reconnect retries ([0c69ffb](https://github.com/rstreamlabs/rstream-go/commit/0c69ffb781f7026e7c2e85dcf2f2b756fd24eecb))
+* **sdk:** make async lifecycles deterministic ([3fd96c5](https://github.com/rstreamlabs/rstream-go/commit/3fd96c50bc5deb0589a0d5b93d2b9529a8a9beb3))
+
 ## [1.26.6](https://github.com/rstreamlabs/rstream-go/compare/v1.26.5...v1.26.6) (2026-08-05)
 
 
