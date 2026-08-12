@@ -72,6 +72,7 @@ func runMCPPublish(cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("failed to create rstream client: %w", err)
 	}
+	defer closeRstreamClientLogged(client, logger)
 	ctrl, err := client.Connect(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect to rstream engine server: %w", err)
@@ -229,7 +230,9 @@ func serveMCPHTTP(ctx context.Context, server *http.Server, listener net.Listene
 		})
 	}
 	stopShutdownWatcher := make(chan struct{})
+	shutdownWatcherDone := make(chan struct{})
 	go func() {
+		defer close(shutdownWatcherDone)
 		select {
 		case <-ctx.Done():
 			shutdown("context canceled")
@@ -238,6 +241,7 @@ func serveMCPHTTP(ctx context.Context, server *http.Server, listener net.Listene
 	}()
 	err := server.Serve(listener)
 	close(stopShutdownWatcher)
+	<-shutdownWatcherDone
 	shutdown("serve loop ended")
 	if err == nil || errors.Is(err, http.ErrServerClosed) {
 		return nil

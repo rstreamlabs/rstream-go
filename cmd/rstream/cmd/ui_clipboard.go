@@ -3,7 +3,7 @@
 package cmd
 
 import (
-	"io"
+	"context"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -15,22 +15,46 @@ type uiClipboardCommand struct {
 	Args []string
 }
 
+type uiClipboard struct {
+	ctx        context.Context
+	command    uiClipboardCommand
+	enabled    bool
+	queue      chan string
+	runCommand func(context.Context, uiClipboardCommand, string)
+}
+
 var (
 	uiClipboardOnce    sync.Once
 	uiClipboardProgram uiClipboardCommand
 	uiClipboardEnabled bool
 )
 
-func uiCopyToClipboard(text string) bool {
-	if strings.TrimSpace(text) == "" {
-		return false
-	}
+func newUIClipboard(ctx context.Context) *uiClipboard {
 	command, ok := uiClipboardProgramForRuntime()
-	if !ok {
+	return &uiClipboard{ctx: ctx, command: command, enabled: ok, queue: make(chan string, 1), runCommand: uiRunClipboardCommand}
+}
+
+func (c *uiClipboard) Copy(text string) bool {
+	if c == nil || !c.enabled || strings.TrimSpace(text) == "" {
 		return false
 	}
-	go uiRunClipboardCommand(command, text)
-	return true
+	select {
+	case c.queue <- text:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *uiClipboard) run() {
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case text := <-c.queue:
+			c.runCommand(c.ctx, c.command, text)
+		}
+	}
 }
 
 func uiClipboardProgramForRuntime() (uiClipboardCommand, bool) {
@@ -61,17 +85,8 @@ func uiClipboardCandidates() []uiClipboardCommand {
 	}
 }
 
-func uiRunClipboardCommand(command uiClipboardCommand, text string) {
-	cmd := exec.Command(command.Name, command.Args...)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return
-	}
-	if err := cmd.Start(); err != nil {
-		_ = stdin.Close()
-		return
-	}
-	_, _ = io.WriteString(stdin, text)
-	_ = stdin.Close()
-	_ = cmd.Wait()
+func uiRunClipboardCommand(ctx context.Context, command uiClipboardCommand, text string) {
+	cmd := exec.CommandContext(ctx, command.Name, command.Args...)
+	cmd.Stdin = strings.NewReader(text)
+	_ = cmd.Run()
 }

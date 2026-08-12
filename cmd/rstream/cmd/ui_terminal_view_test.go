@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,7 +53,7 @@ func TestUIReadableTerminalColorKeepsReadablePaletteGreen(t *testing.T) {
 
 func TestUITerminalViewHandleLocalKeyScrollsScrollback(t *testing.T) {
 	t.Parallel()
-	view := &uiTerminalView{Box: tview.NewBox(), app: tview.NewApplication(), term: vt.NewSafeEmulator(6, 3), height: 3}
+	view := &uiTerminalView{Box: tview.NewBox(), term: vt.NewSafeEmulator(6, 3), height: 3, requestDraw: immediateUITestDraw}
 	view.term.SetScrollbackSize(32)
 	view.term.Resize(6, 3)
 	if _, err := view.term.Write([]byte("1\n2\n3\n4\n5\n")); err != nil {
@@ -71,7 +72,7 @@ func TestUITerminalViewHandleLocalKeyScrollsScrollback(t *testing.T) {
 
 func TestUITerminalViewHandleLocalKeyUsesFineAndPageSteps(t *testing.T) {
 	t.Parallel()
-	view := &uiTerminalView{Box: tview.NewBox(), app: tview.NewApplication(), term: vt.NewSafeEmulator(6, 8), height: 8}
+	view := &uiTerminalView{Box: tview.NewBox(), term: vt.NewSafeEmulator(6, 8), height: 8, requestDraw: immediateUITestDraw}
 	view.term.SetScrollbackSize(64)
 	view.term.Resize(6, 8)
 	data := ""
@@ -97,7 +98,7 @@ func TestUITerminalViewHandleLocalKeyUsesFineAndPageSteps(t *testing.T) {
 
 func TestUITerminalViewDisablesLocalScrollInAltScreen(t *testing.T) {
 	t.Parallel()
-	view := &uiTerminalView{Box: tview.NewBox(), app: tview.NewApplication(), term: vt.NewSafeEmulator(6, 3), height: 3}
+	view := &uiTerminalView{Box: tview.NewBox(), term: vt.NewSafeEmulator(6, 3), height: 3, requestDraw: immediateUITestDraw}
 	view.term.SetScrollbackSize(32)
 	view.term.Resize(6, 3)
 	if _, err := view.term.Write([]byte("\x1b[?1049h")); err != nil {
@@ -117,7 +118,7 @@ func TestUITerminalViewDisablesLocalScrollInAltScreen(t *testing.T) {
 
 func TestUITerminalViewMouseScrollStepSupportsFineAndPageModes(t *testing.T) {
 	t.Parallel()
-	view := &uiTerminalView{Box: tview.NewBox(), app: tview.NewApplication(), term: vt.NewSafeEmulator(6, 8), height: 8}
+	view := &uiTerminalView{Box: tview.NewBox(), term: vt.NewSafeEmulator(6, 8), height: 8, requestDraw: immediateUITestDraw}
 	if got := view.mouseScrollStep(tcell.ModNone); got != 3 {
 		t.Fatalf("mouseScrollStep() = %d, want 3", got)
 	}
@@ -131,7 +132,7 @@ func TestUITerminalViewMouseScrollStepSupportsFineAndPageModes(t *testing.T) {
 
 func TestUITerminalViewSendKeyResetsScrollbackPosition(t *testing.T) {
 	t.Parallel()
-	view := &uiTerminalView{Box: tview.NewBox(), app: tview.NewApplication(), term: vt.NewSafeEmulator(80, 24)}
+	view := &uiTerminalView{Box: tview.NewBox(), term: vt.NewSafeEmulator(80, 24), requestDraw: immediateUITestDraw}
 	view.scroll = 5
 	readDone := make(chan struct{}, 1)
 	go func() {
@@ -156,12 +157,12 @@ func TestUITerminalViewFinishSelectionCopiesSelection(t *testing.T) {
 	t.Parallel()
 	var copied string
 	view := &uiTerminalView{
-		Box:      tview.NewBox(),
-		app:      tview.NewApplication(),
-		term:     vt.NewSafeEmulator(8, 2),
-		copyText: func(value string) bool { copied = value; return true },
-		width:    8,
-		height:   2,
+		Box:         tview.NewBox(),
+		term:        vt.NewSafeEmulator(8, 2),
+		copyText:    func(value string) bool { copied = value; return true },
+		requestDraw: immediateUITestDraw,
+		width:       8,
+		height:      2,
 	}
 	view.term.Resize(8, 2)
 	if _, err := view.term.Write([]byte("hello\n")); err != nil {
@@ -184,12 +185,12 @@ func TestUITerminalViewFinishSelectionCopiesSelection(t *testing.T) {
 func TestUITerminalViewPasteHandlerPastesText(t *testing.T) {
 	t.Parallel()
 	view := &uiTerminalView{
-		Box:    tview.NewBox(),
-		app:    tview.NewApplication(),
-		term:   vt.NewSafeEmulator(20, 4),
-		width:  20,
-		height: 4,
-		scroll: 3,
+		Box:         tview.NewBox(),
+		term:        vt.NewSafeEmulator(20, 4),
+		requestDraw: immediateUITestDraw,
+		width:       20,
+		height:      4,
+		scroll:      3,
 	}
 	view.selectionActive = true
 	view.selectionStart = uiTerminalPoint{Line: 0, Column: 0}
@@ -232,12 +233,12 @@ func TestUITerminalViewMouseDragSelectsTerminalText(t *testing.T) {
 	t.Parallel()
 	var copied string
 	view := &uiTerminalView{
-		Box:      tview.NewBox(),
-		app:      tview.NewApplication(),
-		term:     vt.NewSafeEmulator(5, 2),
-		copyText: func(value string) bool { copied = value; return true },
-		width:    5,
-		height:   2,
+		Box:         tview.NewBox(),
+		term:        vt.NewSafeEmulator(5, 2),
+		copyText:    func(value string) bool { copied = value; return true },
+		requestDraw: immediateUITestDraw,
+		width:       5,
+		height:      2,
 	}
 	view.SetRect(0, 0, 5, 2)
 	view.term.Resize(5, 2)
@@ -263,12 +264,12 @@ func TestUITerminalViewMouseDoubleClickSelectsWord(t *testing.T) {
 	t.Parallel()
 	var copied string
 	view := &uiTerminalView{
-		Box:      tview.NewBox(),
-		app:      tview.NewApplication(),
-		term:     vt.NewSafeEmulator(11, 2),
-		copyText: func(value string) bool { copied = value; return true },
-		width:    11,
-		height:   2,
+		Box:         tview.NewBox(),
+		term:        vt.NewSafeEmulator(11, 2),
+		copyText:    func(value string) bool { copied = value; return true },
+		requestDraw: immediateUITestDraw,
+		width:       11,
+		height:      2,
 	}
 	view.SetRect(0, 0, 11, 2)
 	view.term.Resize(11, 2)
@@ -291,11 +292,11 @@ func TestUITerminalViewMouseDoubleClickSelectsWord(t *testing.T) {
 func TestUITerminalViewAltScreenUsesModifierForLocalSelection(t *testing.T) {
 	t.Parallel()
 	view := &uiTerminalView{
-		Box:    tview.NewBox(),
-		app:    tview.NewApplication(),
-		term:   vt.NewSafeEmulator(10, 4),
-		width:  10,
-		height: 4,
+		Box:         tview.NewBox(),
+		term:        vt.NewSafeEmulator(10, 4),
+		requestDraw: immediateUITestDraw,
+		width:       10,
+		height:      4,
 	}
 	view.SetRect(0, 0, 10, 4)
 	view.term.Resize(10, 4)
@@ -320,11 +321,11 @@ func TestUITerminalViewAltScreenUsesModifierForLocalSelection(t *testing.T) {
 func TestUITerminalViewAltScreenPlainClickGoesToRemoteTerminal(t *testing.T) {
 	t.Parallel()
 	view := &uiTerminalView{
-		Box:    tview.NewBox(),
-		app:    tview.NewApplication(),
-		term:   vt.NewSafeEmulator(10, 4),
-		width:  10,
-		height: 4,
+		Box:         tview.NewBox(),
+		term:        vt.NewSafeEmulator(10, 4),
+		requestDraw: immediateUITestDraw,
+		width:       10,
+		height:      4,
 	}
 	view.SetRect(0, 0, 10, 4)
 	view.term.Resize(10, 4)
@@ -354,4 +355,33 @@ func TestUITerminalViewAltScreenPlainClickGoesToRemoteTerminal(t *testing.T) {
 	case <-time.After(200 * time.Millisecond):
 		t.Fatalf("Read() timed out")
 	}
+}
+
+func TestUITerminalViewConcurrentCloseStopsPendingDraw(t *testing.T) {
+	drawn := make(chan struct{}, 1)
+	view := &uiTerminalView{Box: tview.NewBox(), term: vt.NewSafeEmulator(10, 4), requestDraw: func(update func()) bool { update(); drawn <- struct{}{}; return true }}
+	view.scheduleDraw()
+	var wg sync.WaitGroup
+	for index := 0; index < 64; index++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); view.Close() }()
+	}
+	wg.Wait()
+	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-drawn:
+		t.Fatal("pending draw ran after Close()")
+	default:
+	}
+	view.mu.Lock()
+	closed, redraw, timer := view.closed, view.redraw, view.redrawTimer
+	view.mu.Unlock()
+	if !closed || redraw || timer != nil {
+		t.Fatalf("closed terminal state = closed %v redraw %v timer %v", closed, redraw, timer)
+	}
+}
+
+func immediateUITestDraw(update func()) bool {
+	update()
+	return true
 }

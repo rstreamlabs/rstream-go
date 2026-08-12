@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -49,6 +50,7 @@ var webttySessionsListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeRstreamClientLogged(client, slog.Default())
 		params, err := webTTYSessionsListParamsFromFlags(cmd)
 		if err != nil {
 			return err
@@ -82,6 +84,7 @@ var webttySessionsShowCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeRstreamClientLogged(client, slog.Default())
 		session, err := client.GetWebTTYSession(cmd.Context(), args[0])
 		if err != nil {
 			return fmt.Errorf("failed to read WebTTY session: %w", err)
@@ -109,6 +112,7 @@ var webttySessionsEventsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeRstreamClientLogged(client, slog.Default())
 		params, err := webTTYSessionEventsParamsFromFlags(cmd)
 		if err != nil {
 			return err
@@ -151,6 +155,7 @@ var webttySessionsParticipantsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeRstreamClientLogged(client, slog.Default())
 		participants, err := client.ListWebTTYParticipants(cmd.Context(), args[0])
 		if err != nil {
 			return fmt.Errorf("failed to list WebTTY participants: %w", err)
@@ -191,6 +196,7 @@ var webttySessionsControlRequestsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeRstreamClientLogged(client, slog.Default())
 		params, err := webTTYControlRequestsParamsFromFlags(cmd)
 		if err != nil {
 			return err
@@ -224,6 +230,7 @@ var webttySessionsRequestControlCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeRstreamClientLogged(client, slog.Default())
 		capabilities, err := client.GetWebTTYCapabilities(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("failed to read WebTTY capabilities: %w", err)
@@ -267,6 +274,7 @@ var webttySessionsResolveControlCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeRstreamClientLogged(client, slog.Default())
 		capabilities, err := client.GetWebTTYCapabilities(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("failed to read WebTTY capabilities: %w", err)
@@ -517,6 +525,7 @@ func runWebTTYSessionExport(cmd *cobra.Command, sessionID string) error {
 	if err != nil {
 		return err
 	}
+	defer closeRstreamClientLogged(client, slog.Default())
 	session, err := client.GetWebTTYSession(cmd.Context(), sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to read WebTTY session: %w", err)
@@ -898,6 +907,7 @@ func runWebTTYSessionAttach(cmd *cobra.Command, sessionID string) error {
 	if err != nil {
 		return err
 	}
+	defer closeRstreamClientLogged(client, slog.Default())
 	capabilities, err := client.GetWebTTYCapabilities(cmd.Context())
 	if err != nil {
 		return fmt.Errorf("failed to read WebTTY capabilities: %w", err)

@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"sync"
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
@@ -151,6 +153,40 @@ func resolveControlPlane(cmd *cobra.Command, requireToken bool) (*resolvedRuntim
 
 func newClientFromResolved(resolved config.Resolved) (*rstream.Client, error) {
 	return config.NewClientFromResolved(resolved)
+}
+
+func closeRstreamClient(client *rstream.Client) error {
+	if client == nil {
+		return nil
+	}
+	return client.Close()
+}
+
+type ownedRstreamClient struct {
+	client *rstream.Client
+	err    error
+	once   sync.Once
+}
+
+func ownRstreamClient(client *rstream.Client) *ownedRstreamClient {
+	if client == nil {
+		return nil
+	}
+	return &ownedRstreamClient{client: client}
+}
+
+func (c *ownedRstreamClient) Close() error {
+	if c == nil {
+		return nil
+	}
+	c.once.Do(func() { c.err = closeRstreamClient(c.client) })
+	return c.err
+}
+
+func closeRstreamClientLogged(client *rstream.Client, logger *slog.Logger) {
+	if err := closeRstreamClient(client); err != nil {
+		logger.Warn("failed to close rstream client transport", "error", err)
+	}
 }
 
 func setEnvironmentToken(env *config.Environment, token string) error {

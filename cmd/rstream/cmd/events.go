@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -71,6 +72,7 @@ var eventsCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeRstreamClientLogged(client, slog.Default())
 		output, _ := cmd.Flags().GetString("output")
 		if output != "json" && output != "ndjson" {
 			return validateOutputMode(output, "json", "ndjson")

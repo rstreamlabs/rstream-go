@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -22,9 +23,24 @@ import (
 )
 
 type webTTYFSClient struct {
-	client    *http.Client
-	baseURL   string
-	authToken *string
+	client        *http.Client
+	baseURL       string
+	authToken     *string
+	rstreamClient *ownedRstreamClient
+}
+
+func (c *webTTYFSClient) Close() error {
+	if c == nil || c.rstreamClient == nil {
+		return nil
+	}
+	c.client.CloseIdleConnections()
+	return c.rstreamClient.Close()
+}
+
+func closeWebTTYFSClientLogged(client *webTTYFSClient) {
+	if err := client.Close(); err != nil {
+		slog.Warn("failed to close WebTTY filesystem client", "error", err)
+	}
 }
 
 type webTTYFSItem struct {
@@ -85,6 +101,7 @@ var webttyFSListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeWebTTYFSClientLogged(client)
 		items, err := client.list(cmd.Context(), remotePath)
 		if err != nil {
 			return err
@@ -111,6 +128,7 @@ var webttyFSReadCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeWebTTYFSClientLogged(client)
 		return client.read(cmd.Context(), args[0], os.Stdout)
 	},
 }
@@ -125,6 +143,7 @@ var webttyFSWriteCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeWebTTYFSClientLogged(client)
 		return client.write(cmd.Context(), args[0], os.Stdin)
 	},
 }
@@ -139,6 +158,7 @@ var webttyFSUploadCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeWebTTYFSClientLogged(client)
 		file, err := os.Open(args[0])
 		if err != nil {
 			return fmt.Errorf("failed to open local file: %w", err)
@@ -158,6 +178,7 @@ var webttyFSDownloadCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeWebTTYFSClientLogged(client)
 		if args[1] == "-" {
 			return client.read(cmd.Context(), args[0], os.Stdout)
 		}
@@ -180,6 +201,7 @@ var webttyFSMkdirCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeWebTTYFSClientLogged(client)
 		return client.mkcol(cmd.Context(), args[0])
 	},
 }
@@ -195,6 +217,7 @@ var webttyFSRemoveCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeWebTTYFSClientLogged(client)
 		return client.delete(cmd.Context(), args[0])
 	},
 }
@@ -216,7 +239,7 @@ func init() {
 	webttyCmd.AddCommand(webttyFSCmd)
 }
 
-func newWebTTYFSClient(cmd *cobra.Command) (*webTTYFSClient, error) {
+func newWebTTYFSClient(cmd *cobra.Command) (result *webTTYFSClient, err error) {
 	rawURL, _ := cmd.Flags().GetString("url")
 	fsPath, _ := cmd.Flags().GetString("fs-path")
 	baseURL, target, err := resolveWebTTYFSBaseURL(rawURL, fsPath)
@@ -228,6 +251,14 @@ func newWebTTYFSClient(cmd *cobra.Command) (*webTTYFSClient, error) {
 		return nil, err
 	}
 	httpClient := http.DefaultClient
+	var rstreamClient *ownedRstreamClient
+	defer func() {
+		if err != nil {
+			if closeErr := rstreamClient.Close(); closeErr != nil {
+				slog.Warn("failed to close WebTTY filesystem client", "error", closeErr)
+			}
+		}
+	}()
 	if target != "" {
 		runtime, err := resolveRuntime(cmd, true, true)
 		if err != nil {
@@ -237,6 +268,7 @@ func newWebTTYFSClient(cmd *cobra.Command) (*webTTYFSClient, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create rstream client: %w", err)
 		}
+		rstreamClient = ownRstreamClient(client)
 		serverInfo, err := resolveWebTTYRuntimeServerInfo(cmd.Context(), client, target)
 		if err != nil {
 			return nil, err
@@ -258,7 +290,7 @@ func newWebTTYFSClient(cmd *cobra.Command) (*webTTYFSClient, error) {
 		}
 		httpClient = &http.Client{Transport: &http.Transport{DialContext: newWebTTYFSDialContext(client, target)}}
 	}
-	return &webTTYFSClient{client: httpClient, baseURL: baseURL, authToken: authToken}, nil
+	return &webTTYFSClient{client: httpClient, baseURL: baseURL, authToken: authToken, rstreamClient: rstreamClient}, nil
 }
 
 func validateWebTTYFilesystemCapability(target string, serverInfo *webtty.ServerInfo) error {

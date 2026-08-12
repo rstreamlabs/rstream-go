@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -106,6 +107,39 @@ func TestRunNetcatDatagramSessionBridgesFrames(t *testing.T) {
 	}
 }
 
+func TestRunNetcatDatagramSessionJoinsContextInputReader(t *testing.T) {
+	started := make(chan struct{})
+	stopped := make(chan struct{})
+	var startedOnce sync.Once
+	var stoppedOnce sync.Once
+	session := &netcatDatagramSession{
+		Conn:       &netcatFakePacketConn{},
+		RemoteAddr: netcatTestAddr("remote"),
+		In:         strings.NewReader(""),
+		InReadContext: func(ctx context.Context, _ []byte) (int, error) {
+			startedOnce.Do(func() { close(started) })
+			<-ctx.Done()
+			stoppedOnce.Do(func() { close(stopped) })
+			return 0, ctx.Err()
+		},
+		Out:    io.Discard,
+		Logger: slog.Default(),
+	}
+	if err := runNetcatDatagramSession(t.Context(), session); err != nil {
+		t.Fatalf("runNetcatDatagramSession() error = %v", err)
+	}
+	select {
+	case <-started:
+	default:
+		t.Fatal("input reader did not start")
+	}
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("runNetcatDatagramSession returned before its input reader stopped")
+	}
+}
+
 func TestNetcatDatagramRecvLoopIdleTimeout(t *testing.T) {
 	conn := newNetcatTestUDPConn(t)
 	start := time.Now()
@@ -179,6 +213,24 @@ func TestRunNetcatDatagramClientClosesTransport(t *testing.T) {
 	}
 	if !closed {
 		t.Fatalf("transport was not closed")
+	}
+}
+
+func TestRunNetcatDatagramClientRejectsUncancelableStdinBeforeDial(t *testing.T) {
+	dialed := false
+	err := runNetcatDatagramClient(t.Context(), &netcatClientConfig{
+		Interactive: true,
+		Stdin:       uncancelableNetcatReader{},
+		PacketDial: func(context.Context) (net.PacketConn, net.Addr, error) {
+			dialed = true
+			return nil, nil, errors.New("unexpected dial")
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "stdin reader must support cancellation") {
+		t.Fatalf("runNetcatDatagramClient() error = %v, want cancellable stdin error", err)
+	}
+	if dialed {
+		t.Fatal("runNetcatDatagramClient dialed before validating stdin cancellation")
 	}
 }
 

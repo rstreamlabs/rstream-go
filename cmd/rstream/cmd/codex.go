@@ -878,6 +878,7 @@ func verifyCodexMCP(ctx context.Context, command string, args []string, env map[
 	go func() { done <- process.Wait() }()
 	defer func() {
 		_ = stdin.Close()
+		_ = stdout.Close()
 		select {
 		case <-done:
 		case <-time.After(time.Second):
@@ -900,7 +901,7 @@ func verifyCodexMCP(ctx context.Context, command string, args []string, env map[
 	if err := writeCodexMCPJSON(stdin, initialize); err != nil {
 		return verification, errors.New("failed to send MCP initialize")
 	}
-	initializeResponse, err := readCodexMCPResponse(verifyCtx, reader)
+	initializeResponse, err := readCodexMCPResponse(verifyCtx, reader, stdout)
 	if err != nil {
 		return verification, safeMCPVerificationError("initialize", err)
 	}
@@ -930,7 +931,7 @@ func verifyCodexMCP(ctx context.Context, command string, args []string, env map[
 	if err := writeCodexMCPJSON(stdin, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": map[string]any{}}); err != nil {
 		return verification, errors.New("failed to send MCP tools/list")
 	}
-	toolsResponse, err := readCodexMCPResponse(verifyCtx, reader)
+	toolsResponse, err := readCodexMCPResponse(verifyCtx, reader, stdout)
 	if err != nil {
 		return verification, safeMCPVerificationError("tools/list", err)
 	}
@@ -982,7 +983,7 @@ func writeCodexMCPJSON(writer io.Writer, value any) error {
 	return err
 }
 
-func readCodexMCPResponse(ctx context.Context, reader *bufio.Reader) (codexMCPResponse, error) {
+func readCodexMCPResponse(ctx context.Context, reader *bufio.Reader, source io.ReadCloser) (codexMCPResponse, error) {
 	type readResult struct {
 		response codexMCPResponse
 		err      error
@@ -994,6 +995,8 @@ func readCodexMCPResponse(ctx context.Context, reader *bufio.Reader) (codexMCPRe
 	}()
 	select {
 	case <-ctx.Done():
+		_ = source.Close()
+		<-result
 		return codexMCPResponse{}, ctx.Err()
 	case read := <-result:
 		return read.response, read.err

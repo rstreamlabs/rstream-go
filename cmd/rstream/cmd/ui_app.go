@@ -25,6 +25,8 @@ const (
 	uiPageHelp           = "help"
 	uiPageIdentityPicker = "identity-picker"
 	uiPageTargetPicker   = "target-picker"
+	uiUpdateQueueSize    = 64
+	uiUpdateKey          = tcell.KeyF64
 )
 
 var (
@@ -71,12 +73,51 @@ type uiApp struct {
 	activePage    string
 	sessionLeader bool
 	runtimeCancel context.CancelFunc
+	runtimeClient *ownedRstreamClient
+	runtimeDone   <-chan struct{}
 	runtimeGen    uint64
 	switchCancel  context.CancelFunc
 	switchGen     uint64
 	switchingTo   string
+	updatesOnce   sync.Once
+	updates       chan uiUpdate
+	async         uiAsyncGroup
 	targetPicker  *uiTargetPicker
 	readyTimeout  time.Duration
+	clipboard     *uiClipboard
+}
+
+type uiUpdate struct {
+	apply   func()
+	discard func()
+}
+
+type uiAsyncGroup struct {
+	mu      sync.Mutex
+	stopped bool
+	wg      sync.WaitGroup
+}
+
+func (g *uiAsyncGroup) Go(fn func()) bool {
+	g.mu.Lock()
+	if g.stopped {
+		g.mu.Unlock()
+		return false
+	}
+	g.wg.Add(1)
+	g.mu.Unlock()
+	go func() {
+		defer g.wg.Done()
+		fn()
+	}()
+	return true
+}
+
+func (g *uiAsyncGroup) StopAndWait() {
+	g.mu.Lock()
+	g.stopped = true
+	g.mu.Unlock()
+	g.wg.Wait()
 }
 
 type uiConnectionInfo struct {
@@ -132,6 +173,7 @@ func newUIApp(ctx context.Context, cancel context.CancelFunc, client *rstream.Cl
 		state:        uiState{Detail: uiDetailModeSummary},
 		activePage:   uiPageInventory,
 		readyTimeout: 20 * time.Second,
+		clipboard:    newUIClipboard(ctx),
 	}
 	if app.resolver == nil {
 		app.resolver = newUIRuntimeResolver(runtime.ConfigPath, uiRuntimeOptions{})
@@ -150,9 +192,13 @@ func newUIApp(ctx context.Context, cancel context.CancelFunc, client *rstream.Cl
 	app.refreshSnapshot(store.snapshot())
 	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 	app.runtimeCancel = runtimeCancel
+	app.runtimeClient = ownRstreamClient(client)
 	app.runtimeGen = 1
-	go store.run(runtimeCtx, client, nil)
-	go app.watchStore(runtimeCtx, app.runtimeGen, store)
+	app.runtimeDone = startUIStore(runtimeCtx, store, client, nil)
+	app.async.Go(func() { app.watchStore(runtimeCtx, app.runtimeGen, store) })
+	if app.clipboard.enabled {
+		app.async.Go(app.clipboard.run)
+	}
 	return app, nil
 }
 
@@ -174,6 +220,9 @@ func (u *uiApp) Run() error {
 
 func (u *uiApp) shutdown() {
 	u.closeSession("")
+	if u.cancel != nil {
+		u.cancel()
+	}
 	if u.switchCancel != nil {
 		u.switchCancel()
 		u.switchCancel = nil
@@ -182,7 +231,86 @@ func (u *uiApp) shutdown() {
 		u.runtimeCancel()
 		u.runtimeCancel = nil
 	}
+	if err := u.runtimeClient.Close(); err != nil {
+		slog.Warn("failed to close UI runtime client", "error", err)
+	}
+	if u.runtimeDone != nil {
+		<-u.runtimeDone
+		u.runtimeDone = nil
+	}
+	u.runtimeClient = nil
 	u.closeTargetPicker()
+	u.async.StopAndWait()
+	u.drainUpdates(false)
+}
+
+func (u *uiApp) initUpdates() {
+	u.updatesOnce.Do(func() { u.updates = make(chan uiUpdate, uiUpdateQueueSize) })
+}
+
+func (u *uiApp) postUpdate(ctx context.Context, update uiUpdate) bool {
+	if ctx == nil {
+		if update.discard != nil {
+			update.discard()
+		}
+		return false
+	}
+	if u == nil || u.screen == nil || update.apply == nil {
+		if update.discard != nil {
+			update.discard()
+		}
+		return false
+	}
+	u.initUpdates()
+	var appDone <-chan struct{}
+	if u.ctx != nil {
+		appDone = u.ctx.Done()
+	}
+	select {
+	case u.updates <- update:
+	case <-ctx.Done():
+		if update.discard != nil {
+			update.discard()
+		}
+		return false
+	case <-appDone:
+		if update.discard != nil {
+			update.discard()
+		}
+		return false
+	}
+	wake := tcell.NewEventKey(uiUpdateKey, 0, tcell.ModNone)
+	for {
+		if err := u.screen.PostEvent(wake); err == nil {
+			return true
+		}
+		timer := time.NewTimer(time.Millisecond)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			timer.Stop()
+			return false
+		case <-appDone:
+			timer.Stop()
+			return false
+		}
+	}
+}
+
+func (u *uiApp) drainUpdates(apply bool) {
+	u.initUpdates()
+	for {
+		select {
+		case update := <-u.updates:
+			if apply {
+				update.apply()
+			} else if update.discard != nil {
+				update.discard()
+			}
+		default:
+			return
+		}
+	}
 }
 
 func (u *uiApp) buildInventoryPage() {
@@ -271,12 +399,12 @@ func (u *uiApp) watchStore(ctx context.Context, generation uint64, store *uiStor
 			return
 		case <-store.Changes():
 			snapshot := store.snapshot()
-			u.app.QueueUpdateDraw(func() {
+			u.postUpdate(ctx, uiUpdate{apply: func() {
 				if u.runtimeGen != generation || u.store != store {
 					return
 				}
 				u.refreshSnapshot(snapshot)
-			})
+			}})
 		}
 	}
 }
@@ -678,7 +806,9 @@ func (u *uiApp) openWebTTY(server webtty.ServerInfo, selectedIdentity string, re
 	handle.info.SetBackgroundColor(uiColorPanel)
 	handle.info.SetBorder(true).SetBorderColor(uiColorBorder).SetTitle(" Details ").SetTitleColor(uiColorText)
 	handle.info.SetText(formatSessionInfo(server))
-	handle.view = newUITerminalView(u.app, session, u.copyTerminalSelection)
+	handle.view = newUITerminalView(session, u.copyTerminalSelection, func(update func()) bool {
+		return u.postUpdate(sessionCtx, uiUpdate{apply: update, discard: update})
+	})
 	handle.root = u.buildSessionPage(handle)
 	u.session = handle
 	u.state.Message = rememberMessage
@@ -688,10 +818,10 @@ func (u *uiApp) openWebTTY(server webtty.ServerInfo, selectedIdentity string, re
 	u.app.SetFocus(handle.view)
 	u.refreshChrome()
 	sessionID := server.TunnelID
-	go func() {
+	u.async.Go(func() {
 		exitCode, err := session.Wait()
-		u.app.QueueUpdateDraw(func() {
-			if u.session == nil || u.session.server.TunnelID != sessionID {
+		u.postUpdate(sessionCtx, uiUpdate{apply: func() {
+			if u.session != handle || u.session.server.TunnelID != sessionID {
 				return
 			}
 			if err != nil {
@@ -707,8 +837,8 @@ func (u *uiApp) openWebTTY(server webtty.ServerInfo, selectedIdentity string, re
 				return
 			}
 			u.closeSession(fmt.Sprintf("Session closed for %s", server.Target))
-		})
-	}()
+		}})
+	})
 }
 
 func (u *uiApp) webTTYSessionConfig(ctx context.Context, server webtty.ServerInfo, logger *slog.Logger, selectedIdentity string, rememberIdentity bool) (*uiWebTTYSessionPlan, *uiWebTTYIdentitySelection, error) {
@@ -968,7 +1098,7 @@ func (u *uiApp) setMessage(message string) {
 }
 
 func (u *uiApp) copyTerminalSelection(text string) bool {
-	if uiCopyToClipboard(text) {
+	if u.clipboard != nil && u.clipboard.Copy(text) {
 		return true
 	}
 	if u.screen != nil && len(text) > 0 {
@@ -1003,6 +1133,10 @@ func (u *uiApp) switchView(view uiView) {
 }
 
 func (u *uiApp) captureInput(event *tcell.EventKey) *tcell.EventKey {
+	if event.Key() == uiUpdateKey {
+		u.drainUpdates(true)
+		return nil
+	}
 	if u.helpVisible {
 		switch event.Key() {
 		case tcell.KeyF1:

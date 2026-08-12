@@ -6,8 +6,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,7 +19,6 @@ import (
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
-	"github.com/rstreamlabs/rstream-go/webtty"
 )
 
 const (
@@ -67,8 +68,17 @@ type remoteExposeResult struct {
 }
 
 type remoteMCPEndpoint struct {
-	Client *http.Client
-	URL    string
+	Client        *http.Client
+	URL           string
+	rstreamClient *ownedRstreamClient
+}
+
+func (e remoteMCPEndpoint) Close() error {
+	if e.rstreamClient == nil {
+		return nil
+	}
+	e.Client.CloseIdleConnections()
+	return e.rstreamClient.Close()
 }
 
 func mcpRemoteExpose(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
@@ -131,6 +141,7 @@ func mcpRemoteMCPDiscover(ctx context.Context, args map[string]json.RawMessage) 
 	if err != nil {
 		return nil, err
 	}
+	defer closeRstreamClientLogged(client, slog.Default())
 	filter, err := mcpOptionalStringArg(args, "filter", "")
 	if err != nil {
 		return nil, err
@@ -159,15 +170,15 @@ func mcpRemoteMCPTools(ctx context.Context, args map[string]json.RawMessage) (ma
 }
 
 func mcpRemoteMCPCall(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	endpoint, token, err := remoteMCPEndpointFromArgs(ctx, args)
-	if err != nil {
-		return nil, err
-	}
 	tool, err := mcpRequiredStringArg(args, "tool")
 	if err != nil {
 		return nil, err
 	}
 	arguments, err := remoteMCPArguments(args)
+	if err != nil {
+		return nil, err
+	}
+	endpoint, token, err := remoteMCPEndpointFromArgs(ctx, args)
 	if err != nil {
 		return nil, err
 	}
@@ -392,10 +403,11 @@ func runMCPWebTTYCommand(ctx context.Context, runtimeArgs map[string]json.RawMes
 	if err != nil {
 		return nil, err
 	}
-	return runWebTTYClientCapture(ctx, cfg)
+	result, runErr := runWebTTYClientCapture(ctx, cfg.ClientConfig)
+	return result, errors.Join(runErr, cfg.Close())
 }
 
-func mcpWebTTYCommandClientConfig(ctx context.Context, runtimeArgs map[string]json.RawMessage, rawURL string, execPath string, command []string, envVars []string, workdir *string, username *string) (*webtty.ClientConfig, error) {
+func mcpWebTTYCommandClientConfig(ctx context.Context, runtimeArgs map[string]json.RawMessage, rawURL string, execPath string, command []string, envVars []string, workdir *string, username *string) (*mcpWebTTYClientConfig, error) {
 	args, err := mcpWebTTYCommandArgs(runtimeArgs, rawURL, execPath, envVars, workdir, username)
 	if err != nil {
 		return nil, err
@@ -582,7 +594,7 @@ func resolveRemoteMCPEndpoint(ctx context.Context, rawURL string, args map[strin
 		httpClient := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return client.Dial(ctx, rstream.Addr{IdOrName: target})
 		}}}
-		return remoteMCPEndpoint{Client: httpClient, URL: "http://" + target + normalizeRemoteMCPPath(remotePath)}, nil
+		return remoteMCPEndpoint{Client: httpClient, URL: "http://" + target + normalizeRemoteMCPPath(remotePath), rstreamClient: ownRstreamClient(client)}, nil
 	case "http", "https":
 		if u.EscapedPath() == "" || u.EscapedPath() == "/" {
 			remotePath, err := mcpOptionalStringArg(args, "path", "")
@@ -619,7 +631,8 @@ func remoteMCPArguments(args map[string]json.RawMessage) (map[string]any, error)
 	return values, nil
 }
 
-func remoteMCPJSONRPC(ctx context.Context, endpoint remoteMCPEndpoint, token string, request map[string]any) (map[string]any, error) {
+func remoteMCPJSONRPC(ctx context.Context, endpoint remoteMCPEndpoint, token string, request map[string]any) (result map[string]any, err error) {
+	defer func() { err = errors.Join(err, endpoint.Close()) }()
 	client := endpoint.Client
 	if client == nil {
 		client = http.DefaultClient
@@ -649,11 +662,11 @@ func remoteMCPJSONRPC(ctx context.Context, endpoint remoteMCPEndpoint, token str
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("remote MCP request returned %s: %s", resp.Status, strings.TrimSpace(string(data)))
 	}
-	out := map[string]any{}
-	if err := json.Unmarshal(data, &out); err != nil {
+	result = map[string]any{}
+	if err := json.Unmarshal(data, &result); err != nil {
 		return nil, fmt.Errorf("failed to decode remote MCP response: %w", err)
 	}
-	return out, nil
+	return result, nil
 }
 
 func mcpOptionalLabelMap(args map[string]json.RawMessage) (map[string]string, error) {

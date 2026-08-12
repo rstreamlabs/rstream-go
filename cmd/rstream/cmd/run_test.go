@@ -15,20 +15,21 @@ import (
 	"github.com/rstreamlabs/rstream-go/config"
 )
 
-func TestRunLoopAppliesDesiredStateAndReturnsOnCancel(t *testing.T) {
+func TestRunLoopDoesNotStartDesiredStateAfterCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	starter := &runLoopStarter{}
 	recon := reconciler.New(ctx, starter, nil)
+	defer recon.Stop()
 	source := &runLoopSource{listFunc: func(context.Context) ([]runmodel.DesiredTunnel, error) {
 		cancel()
 		return []runmodel.DesiredTunnel{{Name: "api", Forward: runmodel.ForwardTarget{Host: "127.0.0.1", Port: "8080"}}}, nil
 	}}
 	err := runLoop(ctx, source, recon, false, slog.Default())
-	if err != nil {
-		t.Fatalf("runLoop() error = %v", err)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("runLoop() error = %v, want context.Canceled", err)
 	}
-	if got := starter.startCount("api"); got != 1 {
-		t.Fatalf("started tunnels = %d, want 1", got)
+	if got := starter.startCount("api"); got != 0 {
+		t.Fatalf("started tunnels = %d, want 0 after cancellation", got)
 	}
 }
 

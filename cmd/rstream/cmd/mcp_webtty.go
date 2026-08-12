@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -72,6 +73,7 @@ func mcpWebTTYServersList(ctx context.Context, args map[string]json.RawMessage) 
 			}
 			payload["lightweight_error"] = err.Error()
 		} else {
+			defer closeRstreamClientLogged(client, slog.Default())
 			filter, nameFilter, err := mcpWebTTYFilterArgs(args)
 			if err != nil {
 				return nil, err
@@ -125,6 +127,7 @@ func mcpWebTTYServerGet(ctx context.Context, args map[string]json.RawMessage) (m
 	if err != nil {
 		return nil, err
 	}
+	defer closeRstreamClientLogged(client, slog.Default())
 	filter, nameFilter, err := mcpWebTTYFilterArgs(args)
 	if err != nil {
 		return nil, err
@@ -294,6 +297,7 @@ func mcpWebTTYSessionsList(ctx context.Context, args map[string]json.RawMessage)
 	if err != nil {
 		return nil, err
 	}
+	defer closeRstreamClientLogged(client, slog.Default())
 	params, err := mcpWebTTYSessionsListParams(args)
 	if err != nil {
 		return nil, err
@@ -313,6 +317,7 @@ func mcpWebTTYSessionGet(ctx context.Context, args map[string]json.RawMessage) (
 	if err != nil {
 		return nil, err
 	}
+	defer closeRstreamClientLogged(client, slog.Default())
 	sessionID, err := mcpRequiredStringArg(args, "session_id")
 	if err != nil {
 		return nil, err
@@ -329,6 +334,7 @@ func mcpWebTTYSessionEvents(ctx context.Context, args map[string]json.RawMessage
 	if err != nil {
 		return nil, err
 	}
+	defer closeRstreamClientLogged(client, slog.Default())
 	sessionID, err := mcpRequiredStringArg(args, "session_id")
 	if err != nil {
 		return nil, err
@@ -352,6 +358,7 @@ func mcpWebTTYSessionExport(ctx context.Context, args map[string]json.RawMessage
 	if err != nil {
 		return nil, err
 	}
+	defer closeRstreamClientLogged(client, slog.Default())
 	sessionID, err := mcpRequiredStringArg(args, "session_id")
 	if err != nil {
 		return nil, err
@@ -408,6 +415,7 @@ func mcpWebTTYSessionParticipants(ctx context.Context, args map[string]json.RawM
 	if err != nil {
 		return nil, err
 	}
+	defer closeRstreamClientLogged(client, slog.Default())
 	sessionID, err := mcpRequiredStringArg(args, "session_id")
 	if err != nil {
 		return nil, err
@@ -427,6 +435,7 @@ func mcpWebTTYControlRequestsList(ctx context.Context, args map[string]json.RawM
 	if err != nil {
 		return nil, err
 	}
+	defer closeRstreamClientLogged(client, slog.Default())
 	sessionID, err := mcpRequiredStringArg(args, "session_id")
 	if err != nil {
 		return nil, err
@@ -450,6 +459,7 @@ func mcpWebTTYControlRequestCreate(ctx context.Context, args map[string]json.Raw
 	if err != nil {
 		return nil, err
 	}
+	defer closeRstreamClientLogged(client, slog.Default())
 	sessionID, err := mcpRequiredStringArg(args, "session_id")
 	if err != nil {
 		return nil, err
@@ -470,6 +480,7 @@ func mcpWebTTYControlRequestResolve(ctx context.Context, args map[string]json.Ra
 	if err != nil {
 		return nil, err
 	}
+	defer closeRstreamClientLogged(client, slog.Default())
 	sessionID, err := mcpRequiredStringArg(args, "session_id")
 	if err != nil {
 		return nil, err

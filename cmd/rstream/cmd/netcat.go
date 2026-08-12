@@ -42,19 +42,20 @@ type netcatPacketListenerResult struct {
 type netcatPacketListenerFactory func(context.Context) (*netcatPacketListenerResult, error)
 
 type netcatClientConfig struct {
-	Target         string
-	Interactive    bool
-	HalfClose      bool
-	Datagram       bool
-	IdleTimeout    time.Duration
-	Dial           netcatDialer
-	PacketDial     netcatPacketDialer
-	CloseTransport func() error
-	Exec           *netcatExecConfig
-	Stdin          io.Reader
-	Stdout         io.Writer
-	Stderr         io.Writer
-	Logger         *slog.Logger
+	Target           string
+	Interactive      bool
+	HalfClose        bool
+	Datagram         bool
+	IdleTimeout      time.Duration
+	Dial             netcatDialer
+	PacketDial       netcatPacketDialer
+	CloseTransport   func() error
+	Exec             *netcatExecConfig
+	Stdin            io.Reader
+	StdinReadContext func(context.Context, []byte) (int, error)
+	Stdout           io.Writer
+	Stderr           io.Writer
+	Logger           *slog.Logger
 }
 
 type netcatExecConfig struct {
@@ -333,6 +334,10 @@ func newNetcatClientConfig(cmd *cobra.Command, logger *slog.Logger, rawTarget st
 }
 
 func newNetcatServerConfig(cmd *cobra.Command, logger *slog.Logger) (*netcatServerConfig, error) {
+	return newNetcatServerConfigWithClientFactory(cmd, logger, newNetcatRstreamClient)
+}
+
+func newNetcatServerConfigWithClientFactory(cmd *cobra.Command, logger *slog.Logger, clientFactory func(*cobra.Command, bool) (*rstream.Client, error)) (*netcatServerConfig, error) {
 	rawListen, _ := cmd.Flags().GetString("listen")
 	listenTarget, err := parseNetcatListenTarget(rawListen)
 	if err != nil {
@@ -357,7 +362,21 @@ func newNetcatServerConfig(cmd *cobra.Command, logger *slog.Logger) (*netcatServ
 			return nil, err
 		}
 		usesRstream = usesRstream || remoteTarget.Kind == netcatEndpointRstream
-		rstreamClient, err := newNetcatRstreamClient(cmd, usesRstream)
+		switch {
+		case listenTarget.Kind == netcatEndpointUDP:
+			if remoteTarget.Kind != netcatEndpointRstream {
+				return nil, fmt.Errorf("udp listen endpoints require an rstream --remote (rstrm://<id-or-name>)")
+			}
+		case datagram:
+			if remoteTarget.Kind != netcatEndpointUDP {
+				return nil, fmt.Errorf("datagram server mode requires a udp --remote (udp://host:port) or --exec/--sh-exec")
+			}
+		default:
+			if remoteTarget.Kind == netcatEndpointUDP {
+				return nil, fmt.Errorf("udp endpoints require --datagram")
+			}
+		}
+		rstreamClient, err := clientFactory(cmd, usesRstream)
 		if err != nil {
 			return nil, err
 		}
@@ -371,22 +390,13 @@ func newNetcatServerConfig(cmd *cobra.Command, logger *slog.Logger) (*netcatServ
 		}
 		switch {
 		case listenTarget.Kind == netcatEndpointUDP:
-			if remoteTarget.Kind != netcatEndpointRstream {
-				return nil, fmt.Errorf("udp listen endpoints require an rstream --remote (rstrm://<id-or-name>)")
-			}
 			cfg.UDPListen = listenTarget.Address
 			cfg.UDPPeer = udpPeer
 			cfg.PacketDial = newNetcatPacketDialer(remoteTarget, rstreamClient)
 		case datagram:
-			if remoteTarget.Kind != netcatEndpointUDP {
-				return nil, fmt.Errorf("datagram server mode requires a udp --remote (udp://host:port) or --exec/--sh-exec")
-			}
 			cfg.PacketListen = newNetcatPacketListenerFactory(listenTarget, rstreamClient, datagramGuaranteedDeliveryPtr)
 			cfg.UpstreamUDP = remoteTarget.Address
 		default:
-			if remoteTarget.Kind == netcatEndpointUDP {
-				return nil, fmt.Errorf("udp endpoints require --datagram")
-			}
 			cfg.Listen = newNetcatListenerFactory(listenTarget, rstreamClient)
 			cfg.DownstreamHalfClose = listenTarget.Kind == netcatEndpointTCP
 			cfg.UpstreamHalfClose = remoteTarget.Kind == netcatEndpointTCP
@@ -398,7 +408,7 @@ func newNetcatServerConfig(cmd *cobra.Command, logger *slog.Logger) (*netcatServ
 	if listenTarget.Kind == netcatEndpointUDP {
 		return nil, fmt.Errorf("udp listen endpoints require an rstream --remote (rstrm://<id-or-name>)")
 	}
-	rstreamClient, err := newNetcatRstreamClient(cmd, usesRstream)
+	rstreamClient, err := clientFactory(cmd, usesRstream)
 	if err != nil {
 		return nil, err
 	}
@@ -433,13 +443,7 @@ func newNetcatTransportCloser(client *rstream.Client) func() error {
 	if client == nil {
 		return nil
 	}
-	return func() error {
-		closer, ok := client.Transport.(io.Closer)
-		if !ok {
-			return nil
-		}
-		return closer.Close()
-	}
+	return func() error { return closeRstreamClient(client) }
 }
 
 func closeNetcatTransport(closeTransport func() error, logger *slog.Logger) {

@@ -279,7 +279,9 @@ func TestForwardProxyTCPForwardsBytes(t *testing.T) {
 		t.Fatalf("SetDeadline() error = %v", err)
 	}
 	ctx := &forwardCtx{Host: "127.0.0.1", Port: port, OutputFormat: forwardOutputFormatNone, Logger: slog.Default()}
-	ctx.proxyTCP(inbound)
+	sessions := newForwardSessionGroup(t.Context())
+	defer sessions.close()
+	ctx.proxyTCP(sessions, inbound)
 	if _, err := client.Write([]byte("ping")); err != nil {
 		t.Fatalf("client Write() error = %v", err)
 	}
@@ -319,7 +321,9 @@ func TestForwardProxyUDPForwardsPackets(t *testing.T) {
 	inbound := newForwardUDPProxyPacketConn(forwardStubAddr("client"))
 	inbound.reads <- []byte("ping")
 	ctx := &forwardCtx{Host: "127.0.0.1", Port: port, OutputFormat: forwardOutputFormatNone, Logger: slog.Default()}
-	ctx.proxyUDP(inbound, forwardStubAddr("client"))
+	sessions := newForwardSessionGroup(t.Context())
+	defer sessions.close()
+	ctx.proxyUDP(sessions, inbound, forwardStubAddr("client"))
 	select {
 	case got := <-inbound.writes:
 		if string(got) != "echo:ping" {
@@ -330,6 +334,47 @@ func TestForwardProxyUDPForwardsPackets(t *testing.T) {
 	}
 	if err := <-serverErr; err != nil {
 		t.Fatalf("udp server error = %v", err)
+	}
+}
+
+type forwardTestCloser struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (c *forwardTestCloser) Close() error {
+	c.once.Do(func() { close(c.closed) })
+	return nil
+}
+
+func TestForwardSessionGroupCloseJoinsActiveSessions(t *testing.T) {
+	sessions := newForwardSessionGroup(t.Context())
+	closer := &forwardTestCloser{closed: make(chan struct{})}
+	started := make(chan struct{})
+	stopped := make(chan struct{})
+	if !sessions.start(closer, func(ctx context.Context) {
+		close(started)
+		<-ctx.Done()
+		<-closer.closed
+		close(stopped)
+	}) {
+		t.Fatal("start() rejected an active session group")
+	}
+	<-started
+	sessions.close()
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("close() returned before the active session stopped")
+	}
+	late := &forwardTestCloser{closed: make(chan struct{})}
+	if sessions.start(late, func(context.Context) {}) {
+		t.Fatal("start() accepted a session after close")
+	}
+	select {
+	case <-late.closed:
+	default:
+		t.Fatal("rejected session connection was not closed")
 	}
 }
 

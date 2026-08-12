@@ -16,17 +16,36 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
+	"github.com/rstreamlabs/rstream-go/config"
 	"github.com/rstreamlabs/rstream-go/pb"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
 const runEngineTestTimeout = 10 * time.Second
+
+type lifecycleDialer struct {
+	started   chan struct{}
+	startOnce sync.Once
+	closed    atomic.Int32
+}
+
+func (d *lifecycleDialer) Dial(ctx context.Context, _ string, _ *tls.Config) (net.Conn, error) {
+	d.startOnce.Do(func() { close(d.started) })
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (d *lifecycleDialer) Close() error {
+	d.closed.Add(1)
+	return nil
+}
 
 func TestRunnerStartValidation(t *testing.T) {
 	runner := New()
@@ -57,6 +76,47 @@ func TestRunnerStartValidation(t *testing.T) {
 	configured := New(WithRetry(2*time.Millisecond, 8*time.Millisecond))
 	if configured.retryInitial != 2*time.Millisecond || configured.retryMax != 8*time.Millisecond {
 		t.Fatalf("WithRetry not applied: %#v", configured)
+	}
+}
+
+func TestRunnerOwnsTransportAndStopIsConcurrentRepeatSafe(t *testing.T) {
+	dialer := &lifecycleDialer{started: make(chan struct{})}
+	var created atomic.Int32
+	runner := New(withTransportFactory(func(*config.TransportConfig) (rstream.Dialer, error) {
+		created.Add(1)
+		return dialer, nil
+	}))
+	h, err := runner.Start(context.Background(), runmodel.DesiredTunnel{Name: "web", Context: runmodel.ResolvedContext{Engine: "engine.example.com:443", Token: "token"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-dialer.started:
+	case <-time.After(runEngineTestTimeout):
+		t.Fatal("transport dial did not start")
+	}
+	const callers = 64
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- h.Stop()
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := created.Load(); got != 1 {
+		t.Fatalf("transport creations = %d, want 1", got)
+	}
+	if got := dialer.closed.Load(); got != 1 {
+		t.Fatalf("transport closes = %d, want 1", got)
 	}
 }
 
@@ -128,7 +188,7 @@ func TestProxyTCPForwardsBytes(t *testing.T) {
 	if err := client.SetDeadline(time.Now().Add(time.Second)); err != nil {
 		t.Fatalf("SetDeadline() error = %v", err)
 	}
-	go New(WithLogger(slog.Default())).proxyTCP(inbound, runmodel.ForwardTarget{Host: "127.0.0.1", Port: port}, slog.Default())
+	go New(WithLogger(slog.Default())).proxyTCP(t.Context(), inbound, runmodel.ForwardTarget{Host: "127.0.0.1", Port: port}, slog.Default())
 	if _, err := client.Write([]byte("ping")); err != nil {
 		t.Fatalf("client Write() error = %v", err)
 	}
@@ -169,7 +229,7 @@ func TestProxyUDPForwardsPackets(t *testing.T) {
 	inbound.reads <- []byte("ping")
 	done := make(chan struct{})
 	go func() {
-		New().proxyUDP(inbound, stubAddr("client"), runmodel.ForwardTarget{Host: "127.0.0.1", Port: port}, slog.Default())
+		New().proxyUDP(t.Context(), inbound, stubAddr("client"), runmodel.ForwardTarget{Host: "127.0.0.1", Port: port}, slog.Default())
 		close(done)
 	}()
 	select {
@@ -187,6 +247,68 @@ func TestProxyUDPForwardsPackets(t *testing.T) {
 	}
 	if err := <-serverErr; err != nil {
 		t.Fatalf("udp server error = %v", err)
+	}
+}
+
+func TestTCPAndUDPProxiesStopOnContextCancellation(t *testing.T) {
+	tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tcpListener.Close()
+	_, tcpPort, err := net.SplitHostPort(tcpListener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tcpAccepted := make(chan net.Conn, 1)
+	go func() {
+		conn, acceptErr := tcpListener.Accept()
+		if acceptErr == nil {
+			tcpAccepted <- conn
+		}
+	}()
+	tcpCtx, cancelTCP := context.WithCancel(t.Context())
+	tcpClient, tcpInbound := net.Pipe()
+	tcpDone := make(chan struct{})
+	go func() {
+		New().proxyTCP(tcpCtx, tcpInbound, runmodel.ForwardTarget{Host: "127.0.0.1", Port: tcpPort}, slog.Default())
+		close(tcpDone)
+	}()
+	var backend net.Conn
+	select {
+	case backend = <-tcpAccepted:
+	case <-time.After(time.Second):
+		t.Fatal("TCP proxy did not connect to backend")
+	}
+	defer backend.Close()
+	cancelTCP()
+	select {
+	case <-tcpDone:
+	case <-time.After(time.Second):
+		t.Fatal("TCP proxy did not stop after cancellation")
+	}
+	_ = tcpClient.Close()
+	udpServer, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer udpServer.Close()
+	_, udpPort, err := net.SplitHostPort(udpServer.LocalAddr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	udpCtx, cancelUDP := context.WithCancel(t.Context())
+	udpInbound := newUDPProxyPacketConn(stubAddr("client"))
+	udpDone := make(chan struct{})
+	go func() {
+		New().proxyUDP(udpCtx, udpInbound, stubAddr("client"), runmodel.ForwardTarget{Host: "127.0.0.1", Port: udpPort}, slog.Default())
+		close(udpDone)
+	}()
+	cancelUDP()
+	select {
+	case <-udpDone:
+	case <-time.After(time.Second):
+		t.Fatal("UDP proxy did not stop after cancellation")
 	}
 }
 

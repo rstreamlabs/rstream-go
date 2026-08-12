@@ -3,10 +3,13 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -432,6 +435,29 @@ func TestVerifyCodexMCPDoesNotExposeServerStderr(t *testing.T) {
 	_, err := verifyCodexMCP(t.Context(), script, []string{"mcp", "serve"}, nil, time.Second)
 	if err == nil || strings.Contains(err.Error(), secret) {
 		t.Fatalf("verification error exposed server stderr: %v", err)
+	}
+}
+
+func TestReadCodexMCPResponseCancellationClosesAndJoinsReader(t *testing.T) {
+	reader, writer := io.Pipe()
+	defer writer.Close()
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() {
+		_, err := readCodexMCPResponse(ctx, bufio.NewReader(reader), reader)
+		result <- err
+	}()
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("readCodexMCPResponse returned %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("readCodexMCPResponse did not join the canceled reader")
+	}
+	if _, err := writer.Write([]byte("late response\n")); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("source remained open after cancellation: %v", err)
 	}
 }
 

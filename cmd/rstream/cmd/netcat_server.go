@@ -160,8 +160,13 @@ func runNetcatProxySession(ctx context.Context, downstream net.Conn, dialUpstrea
 	defer upstream.Close()
 	logger.Debug("netcat proxy session connected", "upstream", upstream.RemoteAddr().String())
 	doneCh := make(chan struct{})
-	defer close(doneCh)
+	watcherDone := make(chan struct{})
+	defer func() {
+		close(doneCh)
+		<-watcherDone
+	}()
 	go func() {
+		defer close(watcherDone)
 		select {
 		case <-ctx.Done():
 			_ = downstream.Close()
@@ -219,8 +224,13 @@ func runNetcatExecSession(ctx context.Context, downstream net.Conn, execCfg *net
 		_ = downstream.Close()
 	})
 	doneCh := make(chan struct{})
-	defer close(doneCh)
+	watcherDone := make(chan struct{})
+	defer func() {
+		close(doneCh)
+		<-watcherDone
+	}()
 	go func() {
+		defer close(watcherDone)
 		select {
 		case <-ctx.Done():
 			closeStdin()

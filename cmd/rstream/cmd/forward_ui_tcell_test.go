@@ -80,6 +80,30 @@ func TestForwardUITCellFinalizesScreenOnce(t *testing.T) {
 	}
 }
 
+func TestForwardUITCellStopBeforeStartDoesNotBlock(t *testing.T) {
+	screen := newCountingForwardScreen(t)
+	ui := &forwardUITCell{screen: screen, stop: make(chan struct{}), done: make(chan struct{}), conns: make([]forwardConnInfo, 0)}
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- ui.Stop() }()
+	select {
+	case err := <-stopDone:
+		if err != nil {
+			t.Fatalf("Stop() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Stop() blocked before Start()")
+	}
+	done := ui.Start(t.Context())
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Start() did not observe the prior stop")
+	}
+	if got := screen.finiCalls.Load(); got != 1 {
+		t.Fatalf("screen Fini() calls = %d, want 1", got)
+	}
+}
+
 type countingForwardScreen struct {
 	tcell.Screen
 	finiCalls atomic.Int32

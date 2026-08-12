@@ -407,6 +407,7 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 		if err != nil {
 			return fmt.Errorf("failed to create rstream client: %w", err)
 		}
+		defer closeRstreamClientLogged(client, logger)
 		ctrl, err := client.Connect(ctx, nil)
 		if err != nil {
 			return fmt.Errorf("failed to connect to rstream engine server: %w", err)
@@ -494,7 +495,9 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 		})
 	}
 	stopShutdownWatcher := make(chan struct{})
+	shutdownWatcherDone := make(chan struct{})
 	go func() {
+		defer close(shutdownWatcherDone)
 		select {
 		case <-ctx.Done():
 			shutdown("context canceled")
@@ -504,6 +507,7 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 	err = server.Serve(listener)
 	close(stopShutdownWatcher)
 	shutdown("serve loop ended")
+	<-shutdownWatcherDone
 	if err == nil || errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
@@ -533,24 +537,35 @@ func servePlainWebTTY(ctx context.Context, listener net.Listener, terminalHandle
 		})
 	}
 	stopShutdownWatcher := make(chan struct{})
+	shutdownWatcherDone := make(chan struct{})
 	go func() {
+		defer close(shutdownWatcherDone)
 		select {
 		case <-ctx.Done():
 			shutdown("context canceled")
 		case <-stopShutdownWatcher:
 		}
 	}()
+	var serveWG sync.WaitGroup
+	defer func() {
+		shutdown("serve loop ended")
+		close(stopShutdownWatcher)
+		<-shutdownWatcherDone
+		serveWG.Wait()
+	}()
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			close(stopShutdownWatcher)
-			shutdown("serve loop ended")
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return nil
 			}
 			return err
 		}
-		go terminalHandler.ServeConn(conn)
+		serveWG.Add(1)
+		go func() {
+			defer serveWG.Done()
+			terminalHandler.ServeConn(conn)
+		}()
 	}
 }
 
@@ -587,6 +602,7 @@ func serveWebTransportWebTTYOnPacketConn(ctx context.Context, packetConn net.Pac
 		},
 	}
 	webtransport.ConfigureHTTP3Server(server.H3)
+	var sessionWG sync.WaitGroup
 	mux.Handle("/", webtty.NewBearerAuthHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session, err := server.Upgrade(w, r)
 		if err != nil {
@@ -594,7 +610,11 @@ func serveWebTransportWebTTYOnPacketConn(ctx context.Context, packetConn net.Pac
 			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 			return
 		}
-		go terminalHandler.ServeWebTransportSession(session.Context(), session)
+		sessionWG.Add(1)
+		go func() {
+			defer sessionWG.Done()
+			terminalHandler.ServeWebTransportSession(session.Context(), session)
+		}()
 	}), authToken, allowUnauthenticated))
 	shutdownOnce := sync.Once{}
 	shutdown := func(reason string) {
@@ -603,16 +623,19 @@ func serveWebTransportWebTTYOnPacketConn(ctx context.Context, packetConn net.Pac
 			shutdownCtx, cancel := webTTYShutdownContext(ctx, shutdownTimeout)
 			defer cancel()
 			terminalHandler.BeginDrain()
-			if err := terminalHandler.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				logger.Warn("webtransport session shutdown failed", "error", err)
-			}
 			if err := server.Close(); err != nil {
 				logger.Warn("webtransport server shutdown failed", "error", err)
 			}
+			if err := terminalHandler.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+				logger.Warn("webtransport session shutdown failed", "error", err)
+			}
+			sessionWG.Wait()
 		})
 	}
 	stopShutdownWatcher := make(chan struct{})
+	shutdownWatcherDone := make(chan struct{})
 	go func() {
+		defer close(shutdownWatcherDone)
 		select {
 		case <-ctx.Done():
 			shutdown("context canceled")
@@ -622,6 +645,7 @@ func serveWebTransportWebTTYOnPacketConn(ctx context.Context, packetConn net.Pac
 	err := server.Serve(packetConn)
 	close(stopShutdownWatcher)
 	shutdown("serve loop ended")
+	<-shutdownWatcherDone
 	if err == nil || ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 		return nil
 	}
@@ -2698,6 +2722,7 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 		if err != nil {
 			return fmt.Errorf("failed to create rstream client: %w", err)
 		}
+		defer closeRstreamClientLogged(rstreamClient, logger)
 		rstreamResolution, err := resolveWebTTYClientRstream(ctx, runtime, rstreamClient, urlValue)
 		if err != nil {
 			return err
@@ -2723,6 +2748,7 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 			runtimeClient, clientErr := newClientFromResolved(runtime.Resolved)
 			if clientErr == nil {
 				publishedResolution, resolutionErr := resolveWebTTYClientPublished(ctx, runtime, runtimeClient, urlValue)
+				closeRstreamClientLogged(runtimeClient, logger)
 				if publishedResolution != nil {
 					if resolutionErr != nil {
 						return resolutionErr

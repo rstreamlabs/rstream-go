@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
@@ -40,6 +41,12 @@ var uiCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		clientCloser := ownRstreamClient(client)
+		defer func() {
+			if err := clientCloser.Close(); err != nil {
+				slog.Warn("failed to close UI client", "error", err)
+			}
+		}()
 		store := newUIStore(transport)
 		ctx, cancel := context.WithCancel(cmd.Context())
 		defer cancel()

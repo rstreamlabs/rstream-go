@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1181,6 +1182,7 @@ func mcpWebTTYList(ctx context.Context, args map[string]json.RawMessage) (map[st
 	if err != nil {
 		return nil, err
 	}
+	defer closeRstreamClientLogged(client, slog.Default())
 	filter, nameFilter, err := mcpWebTTYFilterArgs(args)
 	if err != nil {
 		return nil, err
@@ -1265,7 +1267,8 @@ func mcpWebTTYExec(ctx context.Context, args map[string]json.RawMessage) (map[st
 	if err != nil {
 		return nil, err
 	}
-	result, err := runWebTTYClientCapture(ctx, cfg)
+	result, runErr := runWebTTYClientCapture(ctx, cfg.ClientConfig)
+	err = errors.Join(runErr, cfg.Close())
 	return mcpWebTTYExecResult(result, err)
 }
 
@@ -1304,7 +1307,19 @@ func mcpWebTTYExecErrorKind(err error) string {
 	}
 }
 
-func mcpWebTTYExecClientConfig(ctx context.Context, args map[string]json.RawMessage, command []string) (*webtty.ClientConfig, error) {
+type mcpWebTTYClientConfig struct {
+	*webtty.ClientConfig
+	rstreamClient *ownedRstreamClient
+}
+
+func (c *mcpWebTTYClientConfig) Close() error {
+	if c == nil {
+		return nil
+	}
+	return c.rstreamClient.Close()
+}
+
+func mcpWebTTYExecClientConfig(ctx context.Context, args map[string]json.RawMessage, command []string) (result *mcpWebTTYClientConfig, err error) {
 	urlValue, err := mcpRequiredStringArg(args, "url")
 	if err != nil {
 		return nil, err
@@ -1333,7 +1348,13 @@ func mcpWebTTYExecClientConfig(ctx context.Context, args map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	cfg := &webtty.ClientConfig{URL: urlValue, Interactive: false, AllocateTTY: false, SendHeartbeat: true, EnvVars: envVars, Workdir: workdir, Username: username, CmdArgs: command}
+	result = &mcpWebTTYClientConfig{ClientConfig: &webtty.ClientConfig{URL: urlValue, Interactive: false, AllocateTTY: false, SendHeartbeat: true, EnvVars: envVars, Workdir: workdir, Username: username, CmdArgs: command}}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, result.Close())
+			result = nil
+		}
+	}()
 	var runtimeE2E *webTTYClientRuntimeE2EContext
 	var securityScope webTTYClientSecurityScope
 	if webttyClientUsesRstream(urlValue) {
@@ -1345,15 +1366,16 @@ func mcpWebTTYExecClientConfig(ctx context.Context, args map[string]json.RawMess
 		if err != nil {
 			return nil, err
 		}
+		result.rstreamClient = ownRstreamClient(client)
 		rstreamResolution, err := resolveWebTTYClientRstream(ctx, runtime, client, urlValue)
 		if err != nil {
 			return nil, err
 		}
 		urlValue = rstreamResolution.URL
-		cfg.URL = urlValue
+		result.URL = urlValue
 		runtimeE2E = rstreamResolution.RuntimeE2E
 		securityScope = rstreamResolution.Scope
-		cfg.DialContext = newWebTTYClientDialContext(client)
+		result.DialContext = newWebTTYClientDialContext(client)
 	}
 	sources, serverKeysConfigured, err := webTTYKnownServerSourcesFromMCPEnvironment(knownServer)
 	if err != nil {
@@ -1363,25 +1385,25 @@ func mcpWebTTYExecClientConfig(ctx context.Context, args map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	cfg.PayloadCrypto = cryptoConfig.PayloadCrypto
-	cfg.EndpointIdentity = cryptoConfig.EndpointIdentity
-	if cryptoConfig.ExpectedServerIdentity != nil && cfg.EndpointIdentity == nil && strings.TrimSpace(cryptoConfig.ClientIdentityName) != "" {
-		cfg.EndpointIdentity, err = webTTYClientEndpointIdentityByName(cryptoConfig.ClientIdentityName)
+	result.PayloadCrypto = cryptoConfig.PayloadCrypto
+	result.EndpointIdentity = cryptoConfig.EndpointIdentity
+	if cryptoConfig.ExpectedServerIdentity != nil && result.EndpointIdentity == nil && strings.TrimSpace(cryptoConfig.ClientIdentityName) != "" {
+		result.EndpointIdentity, err = webTTYClientEndpointIdentityByName(cryptoConfig.ClientIdentityName)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if cryptoConfig.ExpectedServerIdentity != nil && cfg.EndpointIdentity == nil {
-		cfg.EndpointIdentity, _, err = webTTYClientEndpointIdentityFromExplicitSources(nil)
+	if cryptoConfig.ExpectedServerIdentity != nil && result.EndpointIdentity == nil {
+		result.EndpointIdentity, _, err = webTTYClientEndpointIdentityFromExplicitSources(nil)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if cryptoConfig.ExpectedServerIdentity != nil && cfg.EndpointIdentity == nil {
+	if cryptoConfig.ExpectedServerIdentity != nil && result.EndpointIdentity == nil {
 		return nil, webTTYMissingClientEndpointIdentityError(securityScope, cryptoConfig)
 	}
-	cfg.ExpectedServerIdentity = cryptoConfig.ExpectedServerIdentity
-	return cfg, nil
+	result.ExpectedServerIdentity = cryptoConfig.ExpectedServerIdentity
+	return result, nil
 }
 func webTTYKnownServerSourcesFromMCPEnvironment(knownServer string) ([]webTTYKnownServerSource, bool, error) {
 	knownServer = strings.TrimSpace(knownServer)
@@ -1411,6 +1433,7 @@ func mcpWebTTYFSList(ctx context.Context, args map[string]json.RawMessage) (map[
 	if err != nil {
 		return nil, err
 	}
+	defer closeWebTTYFSClientLogged(client)
 	remotePath, err := mcpOptionalStringArg(args, "path", "/")
 	if err != nil {
 		return nil, err
@@ -1426,6 +1449,7 @@ func mcpWebTTYFSRead(ctx context.Context, args map[string]json.RawMessage) (map[
 	if err != nil {
 		return nil, err
 	}
+	defer closeWebTTYFSClientLogged(client)
 	remotePath, err := mcpRequiredStringArg(args, "path")
 	if err != nil {
 		return nil, err
@@ -1454,6 +1478,7 @@ func mcpWebTTYFSDownload(ctx context.Context, args map[string]json.RawMessage) (
 	if err != nil {
 		return nil, err
 	}
+	defer closeWebTTYFSClientLogged(client)
 	remotePath, err := mcpRequiredStringArg(args, "path")
 	if err != nil {
 		return nil, err
@@ -1488,6 +1513,7 @@ func mcpWebTTYFSWrite(ctx context.Context, args map[string]json.RawMessage) (map
 	if err != nil {
 		return nil, err
 	}
+	defer closeWebTTYFSClientLogged(client)
 	remotePath, err := mcpRequiredStringArg(args, "path")
 	if err != nil {
 		return nil, err
@@ -1510,6 +1536,7 @@ func mcpWebTTYFSMkdir(ctx context.Context, args map[string]json.RawMessage) (map
 	if err != nil {
 		return nil, err
 	}
+	defer closeWebTTYFSClientLogged(client)
 	remotePath, err := mcpRequiredStringArg(args, "path")
 	if err != nil {
 		return nil, err
@@ -1524,6 +1551,7 @@ func mcpWebTTYFSDelete(ctx context.Context, args map[string]json.RawMessage) (ma
 	if err != nil {
 		return nil, err
 	}
+	defer closeWebTTYFSClientLogged(client)
 	remotePath, err := mcpRequiredStringArg(args, "path")
 	if err != nil {
 		return nil, err
@@ -1568,7 +1596,7 @@ func mcpContentReader(args map[string]json.RawMessage, content string) (io.Reade
 		return nil, fmt.Errorf("invalid encoding %q (valid: text, base64)", encoding)
 	}
 }
-func newWebTTYFSMCPClient(ctx context.Context, args map[string]json.RawMessage) (*webTTYFSClient, error) {
+func newWebTTYFSMCPClient(ctx context.Context, args map[string]json.RawMessage) (result *webTTYFSClient, err error) {
 	rawURL, err := mcpRequiredStringArg(args, "url")
 	if err != nil {
 		return nil, err
@@ -1582,6 +1610,14 @@ func newWebTTYFSMCPClient(ctx context.Context, args map[string]json.RawMessage) 
 		return nil, err
 	}
 	httpClient := http.DefaultClient
+	var rstreamClient *ownedRstreamClient
+	defer func() {
+		if err != nil {
+			if closeErr := rstreamClient.Close(); closeErr != nil {
+				slog.Warn("failed to close MCP WebTTY filesystem client", "error", closeErr)
+			}
+		}
+	}()
 	if target != "" {
 		runtime, err := resolveMCPRuntimeForArgs(ctx, args)
 		if err != nil {
@@ -1591,9 +1627,10 @@ func newWebTTYFSMCPClient(ctx context.Context, args map[string]json.RawMessage) 
 		if err != nil {
 			return nil, err
 		}
+		rstreamClient = ownRstreamClient(client)
 		httpClient = &http.Client{Transport: &http.Transport{DialContext: newWebTTYFSDialContext(client, target)}}
 	}
-	return &webTTYFSClient{client: httpClient, baseURL: baseURL}, nil
+	return &webTTYFSClient{client: httpClient, baseURL: baseURL, rstreamClient: rstreamClient}, nil
 }
 func resolveMCPRuntime(ctx context.Context, requireEngine bool, requireToken bool) (*resolvedRuntime, error) {
 	env := config.ReadEnv()

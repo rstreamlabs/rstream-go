@@ -13,6 +13,7 @@ import (
 	"time"
 
 	rstream "github.com/rstreamlabs/rstream-go"
+	"github.com/spf13/cobra"
 )
 
 func TestNetcatEndpointStringAndRejectedRstreamForms(t *testing.T) {
@@ -100,6 +101,24 @@ func TestNewNetcatServerConfigForTCPRemoteAndExec(t *testing.T) {
 	}
 	if cfg.Exec == nil || cfg.Exec.Command != "printf ok" || !cfg.Exec.Shell || cfg.Upstream != nil {
 		t.Fatalf("unexpected exec server config: %#v", cfg)
+	}
+}
+
+func TestNewNetcatServerConfigValidatesBeforeCreatingRstreamClient(t *testing.T) {
+	command := newTestNetcatCommand()
+	mustSetFlag(t, command, "listen", "udp://127.0.0.1:0")
+	mustSetFlag(t, command, "remote", "127.0.0.1:1")
+	mustSetFlag(t, command, "datagram", "true")
+	created := 0
+	factory := func(*cobra.Command, bool) (*rstream.Client, error) {
+		created++
+		return &rstream.Client{}, nil
+	}
+	if _, err := newNetcatServerConfigWithClientFactory(command, slog.Default(), factory); err == nil || !strings.Contains(err.Error(), "udp listen endpoints require") {
+		t.Fatalf("newNetcatServerConfigWithClientFactory() error = %v", err)
+	}
+	if created != 0 {
+		t.Fatalf("rstream clients created for invalid config = %d, want 0", created)
 	}
 }
 

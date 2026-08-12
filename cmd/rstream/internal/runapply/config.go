@@ -260,14 +260,19 @@ func resolveInlineContext(engine, token string, transport *config.TransportConfi
 	if token == "" {
 		return runmodel.ResolvedContext{}, fmt.Errorf("token is required")
 	}
-	dialer, err := config.FlattenTransportWithError(transport)
+	probe, err := config.FlattenTransportWithError(transport)
 	if err != nil {
 		return runmodel.ResolvedContext{}, err
 	}
+	if closer, ok := probe.(interface{ Close() error }); ok {
+		if err := closer.Close(); err != nil {
+			return runmodel.ResolvedContext{}, fmt.Errorf("failed to close transport validation probe: %w", err)
+		}
+	}
 	return runmodel.ResolvedContext{
-		Engine:    engine,
-		Token:     token,
-		Transport: dialer,
+		Engine:          engine,
+		Token:           token,
+		TransportConfig: config.MergeTransport(nil, transport),
 	}, nil
 }
 

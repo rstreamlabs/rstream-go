@@ -71,6 +71,15 @@ func newUIStore(transport string) *uiStore {
 	}
 }
 
+func startUIStore(ctx context.Context, store *uiStore, client *rstream.Client, ready chan<- error) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		store.run(ctx, client, ready)
+	}()
+	return done
+}
+
 func (s *uiStore) Changes() <-chan struct{} { return s.updates }
 
 func (s *uiStore) run(ctx context.Context, client *rstream.Client, ready chan<- error) {

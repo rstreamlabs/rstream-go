@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -38,6 +39,7 @@ var webttyListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeRstreamClientLogged(client, slog.Default())
 		list, err := listWebTTYServers(cmd.Context(), client, webttyListFilter)
 		if err != nil {
 			return fmt.Errorf("failed to list webtty servers: %w", err)

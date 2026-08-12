@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strconv"
@@ -46,6 +47,7 @@ var tunnelListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeRstreamClientLogged(client, slog.Default())
 		params, err := buildTunnelListParams(tunnelListFilter)
 		if err != nil {
 			return fmt.Errorf("invalid --filter: %w", err)

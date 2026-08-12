@@ -32,8 +32,13 @@ func runNetcatUDPUpstreamSession(ctx context.Context, conn net.PacketConn, raddr
 	defer udpConn.Close()
 	defer conn.Close()
 	doneCh := make(chan struct{})
-	defer close(doneCh)
+	watcherDone := make(chan struct{})
+	defer func() {
+		close(doneCh)
+		<-watcherDone
+	}()
 	go func() {
+		defer close(watcherDone)
 		select {
 		case <-ctx.Done():
 			_ = conn.Close()
@@ -88,8 +93,9 @@ func runNetcatUDPUpstreamSession(ctx context.Context, conn net.PacketConn, raddr
 	err = <-errCh
 	_ = conn.Close()
 	_ = udpConn.Close()
-	if err != nil {
-		return err
+	secondErr := <-errCh
+	if resultErr := firstNetcatError(err, secondErr); resultErr != nil {
+		return resultErr
 	}
 	return ctx.Err()
 }

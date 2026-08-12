@@ -533,7 +533,7 @@ func TestResolveNamedContextsErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected inline context error: %v", err)
 	}
-	if ctx.Engine != "engine" || ctx.Token != "token" || ctx.Transport == nil {
+	if ctx.Engine != "engine" || ctx.Token != "token" || ctx.Transport != nil || ctx.TransportConfig == nil || ctx.TransportConfig.UseQUIC == nil || !*ctx.TransportConfig.UseQUIC {
 		t.Fatalf("unexpected inline context: %#v", ctx)
 	}
 }

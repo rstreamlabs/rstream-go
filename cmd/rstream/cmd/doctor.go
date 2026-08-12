@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -351,6 +352,7 @@ func checkDoctorEngine(ctx context.Context, report *doctorReport, resolved confi
 		report.add("engine", doctorStatusFail, err.Error(), nil)
 		return
 	}
+	defer closeRstreamClientLogged(client, slog.Default())
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	health, err := client.CheckHealth(runCtx)
@@ -389,6 +391,7 @@ func checkDoctorTunnelCreation(ctx context.Context, report *doctorReport, resolv
 		report.add("tunnel_creation", doctorStatusFail, "failed to configure the tunnel client", map[string]string{"error": err.Error()})
 		return
 	}
+	defer closeRstreamClientLogged(client, slog.Default())
 	runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	details, err := probeDoctorTunnelCreation(runCtx, client)

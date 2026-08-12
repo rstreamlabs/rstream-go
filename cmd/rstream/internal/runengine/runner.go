@@ -6,16 +6,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/rand/v2"
 	"net"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/netretry"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/streamrelay"
+	"github.com/rstreamlabs/rstream-go/config"
 )
 
 const acceptRetryMaxDelay = time.Second
@@ -24,6 +27,7 @@ type Runner struct {
 	logger       *slog.Logger
 	retryInitial time.Duration
 	retryMax     time.Duration
+	newTransport func(*config.TransportConfig) (rstream.Dialer, error)
 }
 
 type retryFailureLog struct {
@@ -44,11 +48,16 @@ func WithRetry(initial, max time.Duration) Option {
 	}
 }
 
+func withTransportFactory(factory func(*config.TransportConfig) (rstream.Dialer, error)) Option {
+	return func(r *Runner) { r.newTransport = factory }
+}
+
 func New(options ...Option) *Runner {
 	r := &Runner{
 		logger:       slog.Default(),
 		retryInitial: 1 * time.Second,
 		retryMax:     30 * time.Second,
+		newTransport: config.FlattenTransportWithError,
 	}
 	for _, opt := range options {
 		opt(r)
@@ -58,6 +67,7 @@ func New(options ...Option) *Runner {
 
 type handle struct {
 	cancel context.CancelFunc
+	done   <-chan struct{}
 }
 
 func (h *handle) Stop() error {
@@ -65,6 +75,9 @@ func (h *handle) Stop() error {
 		return nil
 	}
 	h.cancel()
+	if h.done != nil {
+		<-h.done
+	}
 	return nil
 }
 
@@ -85,8 +98,12 @@ func (r *Runner) Start(ctx context.Context, desired runmodel.DesiredTunnel) (run
 		return nil, fmt.Errorf("failed to generate stable domain for tunnel %q: %w", desired.Name, err)
 	}
 	workerCtx, cancel := context.WithCancel(ctx)
-	go r.run(workerCtx, desired)
-	return &handle{cancel: cancel}, nil
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.run(workerCtx, desired)
+	}()
+	return &handle{cancel: cancel, done: done}, nil
 }
 
 func (r *Runner) run(ctx context.Context, desired runmodel.DesiredTunnel) {
@@ -97,6 +114,21 @@ func (r *Runner) run(ctx context.Context, desired runmodel.DesiredTunnel) {
 	)
 	backoff := newBackoff(r.retryInitial, r.retryMax)
 	failures := &retryFailureLog{}
+	if desired.Context.Transport == nil {
+		transport, err := r.newTransport(desired.Context.TransportConfig)
+		if err != nil {
+			logger.Error("Tunnel transport configuration failed", "error", err)
+			return
+		}
+		desired.Context.Transport = transport
+		if closer, ok := transport.(io.Closer); ok {
+			defer func() {
+				if err := closer.Close(); err != nil {
+					logger.Warn("Failed to close tunnel transport", "error", err)
+				}
+			}()
+		}
+	}
 	for {
 		if ctx.Err() != nil {
 			logger.Info("Tunnel stopped")
@@ -238,6 +270,12 @@ func (r *Runner) serveWithCtx(ctx context.Context, closeFn func() error, fn func
 }
 
 func (r *Runner) serveTCP(ctx context.Context, l net.Listener, target runmodel.ForwardTarget, logger *slog.Logger) error {
+	proxyCtx, cancel := context.WithCancel(ctx)
+	var proxies sync.WaitGroup
+	defer func() {
+		cancel()
+		proxies.Wait()
+	}()
 	var acceptRetryDelay time.Duration
 	for {
 		inbound, err := l.Accept()
@@ -250,22 +288,37 @@ func (r *Runner) serveTCP(ctx context.Context, l net.Listener, target runmodel.F
 			return err
 		}
 		acceptRetryDelay = 0
-		go r.proxyTCP(inbound, target, logger)
+		proxies.Add(1)
+		go func() {
+			defer proxies.Done()
+			r.proxyTCP(proxyCtx, inbound, target, logger)
+		}()
 	}
 }
 
-func (r *Runner) proxyTCP(inbound net.Conn, target runmodel.ForwardTarget, logger *slog.Logger) {
+func (r *Runner) proxyTCP(ctx context.Context, inbound net.Conn, target runmodel.ForwardTarget, logger *slog.Logger) {
 	defer inbound.Close()
-	outbound, err := net.Dial("tcp", target.String())
+	outbound, err := (&net.Dialer{}).DialContext(ctx, "tcp", target.String())
 	if err != nil {
 		logger.Debug("Dial error", "error", err)
 		return
 	}
 	defer outbound.Close()
+	stopCancel := context.AfterFunc(ctx, func() {
+		_ = inbound.Close()
+		_ = outbound.Close()
+	})
+	defer stopCancel()
 	streamrelay.Bidirectional(inbound, outbound)
 }
 
 func (r *Runner) serveUDP(ctx context.Context, l rstream.PacketListener, target runmodel.ForwardTarget, logger *slog.Logger) error {
+	proxyCtx, cancel := context.WithCancel(ctx)
+	var proxies sync.WaitGroup
+	defer func() {
+		cancel()
+		proxies.Wait()
+	}()
 	var acceptRetryDelay time.Duration
 	for {
 		inbound, raddr, err := l.Accept()
@@ -278,23 +331,27 @@ func (r *Runner) serveUDP(ctx context.Context, l rstream.PacketListener, target 
 			return err
 		}
 		acceptRetryDelay = 0
-		go r.proxyUDP(inbound, raddr, target, logger)
+		proxies.Add(1)
+		go func() {
+			defer proxies.Done()
+			r.proxyUDP(proxyCtx, inbound, raddr, target, logger)
+		}()
 	}
 }
 
-func (r *Runner) proxyUDP(inbound net.PacketConn, remote net.Addr, target runmodel.ForwardTarget, logger *slog.Logger) {
+func (r *Runner) proxyUDP(ctx context.Context, inbound net.PacketConn, remote net.Addr, target runmodel.ForwardTarget, logger *slog.Logger) {
 	defer inbound.Close()
-	udpRaddr, err := net.ResolveUDPAddr("udp", target.String())
+	outbound, err := (&net.Dialer{}).DialContext(ctx, "udp", target.String())
 	if err != nil {
-		logger.Debug("ResolveUDPAddr error", "error", err)
-		return
-	}
-	outbound, err := net.DialUDP("udp", nil, udpRaddr)
-	if err != nil {
-		logger.Debug("DialUDP error", "error", err)
+		logger.Debug("UDP dial error", "error", err)
 		return
 	}
 	defer outbound.Close()
+	stopCancel := context.AfterFunc(ctx, func() {
+		_ = inbound.Close()
+		_ = outbound.Close()
+	})
+	defer stopCancel()
 	done := make(chan struct{}, 2)
 	go func() {
 		buf := make([]byte, 65535)
@@ -322,6 +379,9 @@ func (r *Runner) proxyUDP(inbound net.PacketConn, remote net.Addr, target runmod
 		}
 		done <- struct{}{}
 	}()
+	<-done
+	_ = inbound.Close()
+	_ = outbound.Close()
 	<-done
 }
 

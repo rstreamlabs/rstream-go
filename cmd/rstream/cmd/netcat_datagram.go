@@ -84,6 +84,7 @@ type netcatDatagramSession struct {
 	Conn          net.PacketConn
 	RemoteAddr    net.Addr
 	In            io.Reader
+	InReadContext func(context.Context, []byte) (int, error)
 	Out           io.Writer
 	IdleTimeout   time.Duration
 	EndOnInputEOF bool
@@ -91,18 +92,26 @@ type netcatDatagramSession struct {
 }
 
 func runNetcatDatagramSession(ctx context.Context, s *netcatDatagramSession) error {
-	defer s.Conn.Close()
-	doneCh := make(chan struct{})
-	defer close(doneCh)
-	go func() {
-		select {
-		case <-ctx.Done():
+	var readInput func(context.Context, []byte) (int, error)
+	var err error
+	if s.In != nil {
+		readInput, err = resolveNetcatReaderRead(s.In, s.InReadContext)
+		if err != nil {
 			_ = s.Conn.Close()
-		case <-doneCh:
+			return err
 		}
+	}
+	loopCtx, stopLoops := context.WithCancel(ctx)
+	var loopWG sync.WaitGroup
+	defer func() {
+		stopLoops()
+		_ = s.Conn.Close()
+		loopWG.Wait()
 	}()
 	outputErrCh := make(chan error, 1)
+	loopWG.Add(1)
 	go func() {
+		defer loopWG.Done()
 		err := netcatDatagramRecvLoop(s.Conn, s.Out, s.IdleTimeout, s.Logger)
 		s.Logger.Debug("netcat datagram receive completed", "error", err)
 		outputErrCh <- err
@@ -110,8 +119,10 @@ func runNetcatDatagramSession(ctx context.Context, s *netcatDatagramSession) err
 	var inputErrCh chan error
 	if s.In != nil {
 		inputErrCh = make(chan error, 1)
+		loopWG.Add(1)
 		go func() {
-			err := netcatDatagramSendLoop(s.Conn, s.RemoteAddr, s.In, s.Logger)
+			defer loopWG.Done()
+			err := netcatDatagramSendLoopContext(loopCtx, s.Conn, s.RemoteAddr, readInput, s.Logger)
 			s.Logger.Debug("netcat datagram send completed", "error", err)
 			inputErrCh <- err
 		}()
@@ -144,6 +155,15 @@ func runNetcatDatagramSession(ctx context.Context, s *netcatDatagramSession) err
 	}
 }
 
+type netcatContextReaderFunc struct {
+	ctx  context.Context
+	read func(context.Context, []byte) (int, error)
+}
+
+func (r netcatContextReaderFunc) Read(buffer []byte) (int, error) {
+	return r.read(r.ctx, buffer)
+}
+
 func netcatDatagramRecvLoop(conn net.PacketConn, out io.Writer, idleTimeout time.Duration, logger *slog.Logger) error {
 	w := bufio.NewWriter(out)
 	buf := make([]byte, maxNetcatFrameSize)
@@ -168,6 +188,14 @@ func netcatDatagramRecvLoop(conn net.PacketConn, out io.Writer, idleTimeout time
 }
 
 func netcatDatagramSendLoop(conn net.PacketConn, raddr net.Addr, in io.Reader, logger *slog.Logger) error {
+	return netcatDatagramSendReaderLoop(conn, raddr, in, logger)
+}
+
+func netcatDatagramSendLoopContext(ctx context.Context, conn net.PacketConn, raddr net.Addr, read func(context.Context, []byte) (int, error), logger *slog.Logger) error {
+	return netcatDatagramSendReaderLoop(conn, raddr, netcatContextReaderFunc{ctx: ctx, read: read}, logger)
+}
+
+func netcatDatagramSendReaderLoop(conn net.PacketConn, raddr net.Addr, in io.Reader, logger *slog.Logger) error {
 	r := bufio.NewReader(in)
 	buf := make([]byte, maxNetcatFrameSize)
 	for {
@@ -243,6 +271,14 @@ func runNetcatDatagramClient(ctx context.Context, cfg *netcatClientConfig) error
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	var readInput func(context.Context, []byte) (int, error)
+	if cfg.Interactive {
+		var err error
+		readInput, err = resolveNetcatStdinRead(cfg)
+		if err != nil {
+			return err
+		}
+	}
 	defer closeNetcatTransport(cfg.CloseTransport, cfg.Logger)
 	conn, raddr, err := cfg.PacketDial(ctx)
 	if err != nil {
@@ -257,12 +293,13 @@ func runNetcatDatagramClient(ctx context.Context, cfg *netcatClientConfig) error
 		in = cfg.Stdin
 	}
 	session := &netcatDatagramSession{
-		Conn:        conn,
-		RemoteAddr:  raddr,
-		In:          in,
-		Out:         cfg.Stdout,
-		IdleTimeout: cfg.IdleTimeout,
-		Logger:      cfg.Logger,
+		Conn:          conn,
+		RemoteAddr:    raddr,
+		In:            in,
+		InReadContext: readInput,
+		Out:           cfg.Stdout,
+		IdleTimeout:   cfg.IdleTimeout,
+		Logger:        cfg.Logger,
 	}
 	return runNetcatDatagramSession(ctx, session)
 }

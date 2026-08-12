@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"text/tabwriter"
@@ -43,6 +44,7 @@ var clientListCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer closeRstreamClientLogged(client, slog.Default())
 		params, err := buildClientListParams(clientListFilter)
 		if err != nil {
 			return fmt.Errorf("invalid --filter: %w", err)

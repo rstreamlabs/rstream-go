@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -102,6 +103,65 @@ func TestRunNetcatClientClosesTransport(t *testing.T) {
 	case <-closed:
 	default:
 		t.Fatalf("transport was not closed")
+	}
+}
+
+func TestRunNetcatClientJoinsContextStdinReader(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	started := make(chan struct{})
+	stopped := make(chan struct{})
+	var startedOnce sync.Once
+	var stoppedOnce sync.Once
+	done := make(chan error, 1)
+	go func() {
+		done <- runNetcatClient(t.Context(), &netcatClientConfig{
+			Target:      "pipe",
+			Interactive: true,
+			Stdin:       strings.NewReader(""),
+			StdinReadContext: func(ctx context.Context, _ []byte) (int, error) {
+				startedOnce.Do(func() { close(started) })
+				<-ctx.Done()
+				stoppedOnce.Do(func() { close(stopped) })
+				return 0, ctx.Err()
+			},
+			Dial:   func(context.Context) (net.Conn, error) { return clientConn, nil },
+			Logger: slog.Default(),
+		})
+	}()
+	<-started
+	if err := serverConn.Close(); err != nil {
+		t.Fatalf("server Close() error = %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("runNetcatClient() error = %v", err)
+	}
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("runNetcatClient returned before its stdin reader stopped")
+	}
+}
+
+type uncancelableNetcatReader struct{}
+
+func (uncancelableNetcatReader) Read([]byte) (int, error) { return 0, nil }
+
+func TestRunNetcatClientRejectsUncancelableStdinBeforeDial(t *testing.T) {
+	dialed := false
+	err := runNetcatClient(t.Context(), &netcatClientConfig{
+		Interactive: true,
+		Stdin:       uncancelableNetcatReader{},
+		Dial: func(context.Context) (net.Conn, error) {
+			dialed = true
+			return nil, errors.New("unexpected dial")
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "stdin reader must support cancellation") {
+		t.Fatalf("runNetcatClient() error = %v, want cancellable stdin error", err)
+	}
+	if dialed {
+		t.Fatal("runNetcatClient dialed before validating stdin cancellation")
 	}
 }
 

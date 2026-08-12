@@ -4,7 +4,9 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -12,14 +14,36 @@ import (
 )
 
 type uiRuntimeSwitchResult struct {
-	ctx        context.Context
-	cancel     context.CancelFunc
-	runtime    *resolvedRuntime
-	client     *rstream.Client
-	store      *uiStore
-	connection uiConnectionInfo
-	warning    string
-	persisted  bool
+	ctx          context.Context
+	cancel       context.CancelFunc
+	runtime      *resolvedRuntime
+	client       *rstream.Client
+	clientCloser *ownedRstreamClient
+	store        *uiStore
+	done         <-chan struct{}
+	connection   uiConnectionInfo
+	warning      string
+	persisted    bool
+}
+
+func (r *uiRuntimeSwitchResult) Close() error {
+	if r == nil {
+		return nil
+	}
+	if r.cancel != nil {
+		r.cancel()
+	}
+	err := r.clientCloser.Close()
+	if r.done != nil {
+		<-r.done
+	}
+	return err
+}
+
+func closeUIRuntimeSwitchResultLogged(result *uiRuntimeSwitchResult) {
+	if err := result.Close(); err != nil {
+		slog.Warn("failed to close prepared UI runtime", "error", err)
+	}
 }
 
 func (u *uiApp) switchTarget(target uiTarget, persist bool) {
@@ -27,8 +51,13 @@ func (u *uiApp) switchTarget(target uiTarget, persist bool) {
 		u.setMessage("Close the WebTTY session before switching context")
 		return
 	}
+	if u.ctx == nil || u.ctx.Err() != nil {
+		u.setMessage("The UI is shutting down")
+		return
+	}
 	if u.switchCancel != nil {
-		u.switchCancel()
+		u.setMessage("A context switch is already in progress")
+		return
 	}
 	u.switchGen++
 	generation := u.switchGen
@@ -38,19 +67,11 @@ func (u *uiApp) switchTarget(target uiTarget, persist bool) {
 	u.switchCancel = switchCancel
 	u.closeTargetPicker()
 	u.beginRuntimeSwitchPresentation(target.displayName())
-	go func() {
+	started := u.async.Go(func() {
 		result, err := u.prepareRuntimeSwitch(switchCtx, switchCancel, target, persist, transport, readyTimeout)
-		if u.ctx.Err() != nil {
-			if result != nil {
-				result.cancel()
-			}
-			return
-		}
-		u.app.QueueUpdateDraw(func() {
+		u.postUpdate(u.ctx, uiUpdate{apply: func() {
 			if generation != u.switchGen {
-				if result != nil {
-					result.cancel()
-				}
+				closeUIRuntimeSwitchResultLogged(result)
 				return
 			}
 			u.switchCancel = nil
@@ -63,8 +84,13 @@ func (u *uiApp) switchTarget(target uiTarget, persist bool) {
 				return
 			}
 			u.activateRuntime(result)
-		})
-	}()
+		}, discard: func() { closeUIRuntimeSwitchResultLogged(result) }})
+	})
+	if !started {
+		switchCancel()
+		u.switchCancel = nil
+		u.finishRuntimeSwitchPresentation("Could not switch context: UI is shutting down")
+	}
 }
 
 func (u *uiApp) prepareRuntimeSwitch(ctx context.Context, cancel context.CancelFunc, target uiTarget, persist bool, transport string, readyTimeout time.Duration) (*uiRuntimeSwitchResult, error) {
@@ -82,41 +108,44 @@ func (u *uiApp) prepareRuntimeSwitch(ctx context.Context, cancel context.CancelF
 	store := newUIStore(transport)
 	ready := make(chan error, 1)
 	result.client = client
+	result.clientCloser = ownRstreamClient(client)
 	result.store = store
-	go store.run(ctx, client, ready)
+	result.done = startUIStore(ctx, store, client, ready)
 	timer := time.NewTimer(readyTimeout)
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
-		cancel()
-		return result, ctx.Err()
+		return result, errors.Join(ctx.Err(), result.Close())
 	case err := <-ready:
 		if err != nil {
-			cancel()
-			return result, fmt.Errorf("connect Engine inventory: %w", err)
+			return result, errors.Join(fmt.Errorf("connect Engine inventory: %w", err), result.Close())
 		}
 		return result, nil
 	case <-timer.C:
-		cancel()
-		return result, fmt.Errorf("engine inventory did not become ready within %s", readyTimeout)
+		return result, errors.Join(fmt.Errorf("engine inventory did not become ready within %s", readyTimeout), result.Close())
 	}
 }
 
 func (u *uiApp) activateRuntime(result *uiRuntimeSwitchResult) {
 	if result == nil || result.runtime == nil || result.client == nil || result.store == nil {
-		if result != nil && result.cancel != nil {
-			result.cancel()
-		}
+		closeUIRuntimeSwitchResultLogged(result)
 		u.finishRuntimeSwitchPresentation("Could not activate context: prepared runtime is incomplete")
 		return
 	}
 	previousCancel := u.runtimeCancel
+	previousClient := u.runtimeClient
+	previousDone := u.runtimeDone
 	u.runtime = result.runtime
 	u.client = result.client
 	u.store = result.store
 	u.connection = result.connection
 	u.switchingTo = ""
 	u.runtimeCancel = result.cancel
+	u.runtimeClient = result.clientCloser
+	u.runtimeDone = result.done
+	result.cancel = nil
+	result.clientCloser = nil
+	result.done = nil
 	u.runtimeGen++
 	generation := u.runtimeGen
 	u.state.ClientID = ""
@@ -130,11 +159,19 @@ func (u *uiApp) activateRuntime(result *uiRuntimeSwitchResult) {
 	} else {
 		u.state.Message = ""
 	}
-	go u.watchStore(result.ctx, generation, result.store)
+	u.async.Go(func() { u.watchStore(result.ctx, generation, result.store) })
 	u.refreshSnapshot(u.snapshot)
 	if previousCancel != nil {
 		previousCancel()
 	}
+	u.async.Go(func() {
+		if err := previousClient.Close(); err != nil {
+			slog.Warn("failed to close replaced UI runtime client", "error", err)
+		}
+		if previousDone != nil {
+			<-previousDone
+		}
+	})
 }
 
 func (u *uiApp) beginRuntimeSwitchPresentation(target string) {

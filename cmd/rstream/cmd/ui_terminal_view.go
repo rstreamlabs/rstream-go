@@ -22,12 +22,15 @@ import (
 type uiTerminalView struct {
 	*tview.Box
 
-	app      *tview.Application
-	session  *webtty.ClientSession
-	term     *vt.SafeEmulator
-	copyText func(string) bool
+	session     *webtty.ClientSession
+	term        *vt.SafeEmulator
+	copyText    func(string) bool
+	requestDraw func(func()) bool
 
 	mu              sync.Mutex
+	closeOnce       sync.Once
+	wg              sync.WaitGroup
+	redrawTimer     *time.Timer
 	width           int
 	height          int
 	closed          bool
@@ -45,13 +48,13 @@ type uiTerminalPoint struct {
 	Column int
 }
 
-func newUITerminalView(app *tview.Application, session *webtty.ClientSession, copyText func(string) bool) *uiTerminalView {
+func newUITerminalView(session *webtty.ClientSession, copyText func(string) bool, requestDraw func(func()) bool) *uiTerminalView {
 	view := &uiTerminalView{
-		Box:      tview.NewBox(),
-		app:      app,
-		session:  session,
-		term:     vt.NewSafeEmulator(80, 24),
-		copyText: copyText,
+		Box:         tview.NewBox(),
+		session:     session,
+		term:        vt.NewSafeEmulator(80, 24),
+		copyText:    copyText,
+		requestDraw: requestDraw,
 	}
 	view.term.SetScrollbackSize(5000)
 	view.term.SetDefaultForegroundColor(color.NRGBA{R: 0xf3, G: 0xf4, B: 0xf6, A: 0xff})
@@ -67,20 +70,39 @@ func newUITerminalView(app *tview.Application, session *webtty.ClientSession, co
 }
 
 func (v *uiTerminalView) start() {
-	go v.pumpSessionOutput()
-	go v.pumpTerminalInput()
+	v.wg.Add(2)
+	go func() {
+		defer v.wg.Done()
+		v.pumpSessionOutput()
+	}()
+	go func() {
+		defer v.wg.Done()
+		v.pumpTerminalInput()
+	}()
 }
 
 func (v *uiTerminalView) Close() {
-	v.mu.Lock()
-	if v.closed {
-		v.mu.Unlock()
+	if v == nil {
 		return
 	}
-	v.closed = true
-	v.mu.Unlock()
-	_ = v.term.Close()
-	_ = v.session.Close()
+	v.closeOnce.Do(func() {
+		v.mu.Lock()
+		v.closed = true
+		timer := v.redrawTimer
+		v.redrawTimer = nil
+		v.redraw = false
+		v.mu.Unlock()
+		if timer != nil {
+			timer.Stop()
+		}
+		if v.term != nil {
+			_ = v.term.Close()
+		}
+		if v.session != nil {
+			_ = v.session.Close()
+		}
+		v.wg.Wait()
+	})
 }
 
 func (v *uiTerminalView) Draw(screen tcell.Screen) {
@@ -770,23 +792,30 @@ func (v *uiTerminalView) remoteMousePosition(event *tcell.EventMouse) (int, int,
 }
 
 func (v *uiTerminalView) scheduleDraw() {
-	if v.app == nil {
-		return
-	}
 	v.mu.Lock()
-	if v.closed || v.redraw {
+	if v.closed || v.redraw || v.requestDraw == nil {
 		v.mu.Unlock()
 		return
 	}
 	v.redraw = true
-	v.mu.Unlock()
-	time.AfterFunc(33*time.Millisecond, func() {
-		v.app.QueueUpdateDraw(func() {
+	v.redrawTimer = time.AfterFunc(33*time.Millisecond, func() {
+		v.mu.Lock()
+		if v.closed {
+			v.redraw = false
+			v.redrawTimer = nil
+			v.mu.Unlock()
+			return
+		}
+		v.redrawTimer = nil
+		requestDraw := v.requestDraw
+		v.mu.Unlock()
+		requestDraw(func() {
 			v.mu.Lock()
 			v.redraw = false
 			v.mu.Unlock()
 		})
 	})
+	v.mu.Unlock()
 }
 
 func keyFromTCell(event *tcell.EventKey) (vt.KeyPressEvent, bool) {

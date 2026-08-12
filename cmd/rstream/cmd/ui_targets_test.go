@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/rivo/tview"
-	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
 	"github.com/rstreamlabs/rstream-go/controlplane"
 	"github.com/rstreamlabs/rstream-go/webtty"
@@ -264,7 +263,9 @@ func TestUIRuntimeSwitchWaitsForInventoryAndReportsEngineErrors(t *testing.T) {
 	if result.store == nil || !result.store.snapshot().Connected {
 		t.Fatalf("prepared store = %#v, want connected snapshot", result.store)
 	}
-	result.cancel()
+	if err := result.Close(); err != nil {
+		t.Fatalf("prepared runtime Close() error = %v", err)
+	}
 	failingServer := newUIInventoryServer(t, http.StatusForbidden)
 	defer failingServer.Close()
 	path, target = writeUIRuntimeTarget(t, failingServer.URL)
@@ -302,8 +303,10 @@ func TestUIActivateRuntimeAtomicallyReplacesBundle(t *testing.T) {
 	newCtx, newCancel := context.WithCancel(t.Context())
 	oldRuntime := &resolvedRuntime{Resolved: config.Resolved{ContextName: "old"}}
 	newRuntime := &resolvedRuntime{Resolved: config.Resolved{ContextName: "new"}}
-	oldClient := &rstream.Client{}
-	newClient := &rstream.Client{}
+	oldTransport := &webTTYCloseTrackingTransport{}
+	newTransport := &webTTYCloseTrackingTransport{}
+	oldClient := newWebTTYOwnedTestClient(t, oldTransport)
+	newClient := newWebTTYOwnedTestClient(t, newTransport)
 	newStore := newUIStore("sse")
 	newStore.connected = true
 	app := &uiApp{
@@ -313,11 +316,12 @@ func TestUIActivateRuntimeAtomicallyReplacesBundle(t *testing.T) {
 		client:        oldClient,
 		store:         newUIStore("sse"),
 		runtimeCancel: oldCancel,
+		runtimeClient: ownRstreamClient(oldClient),
 		runtimeGen:    4,
 		state:         uiState{ClientID: "old-client", TunnelID: "old-tunnel"},
 	}
 	newCancel()
-	app.activateRuntime(&uiRuntimeSwitchResult{ctx: newCtx, cancel: newCancel, runtime: newRuntime, client: newClient, store: newStore, connection: uiConnectionInfo{ContextName: "new"}})
+	app.activateRuntime(&uiRuntimeSwitchResult{ctx: newCtx, cancel: newCancel, runtime: newRuntime, client: newClient, clientCloser: ownRstreamClient(newClient), store: newStore, connection: uiConnectionInfo{ContextName: "new"}})
 	if app.runtime != newRuntime || app.client != newClient || app.store != newStore || app.runtimeGen != 5 {
 		t.Fatalf("runtime bundle was not replaced atomically: %#v", app)
 	}
@@ -332,9 +336,22 @@ func TestUIActivateRuntimeAtomicallyReplacesBundle(t *testing.T) {
 	default:
 		t.Fatal("previous runtime was not canceled")
 	}
+	deadline := time.Now().Add(time.Second)
+	for oldTransport.closeCalls.Load() != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if oldTransport.closeCalls.Load() != 1 {
+		t.Fatalf("replaced runtime transport closes = %d, want 1", oldTransport.closeCalls.Load())
+	}
 	plan, selection, err := app.webTTYSessionConfig(t.Context(), webtty.ServerInfo{Target: "shell", RstreamURL: "rstrm://shell"}, slog.Default(), "", false)
 	if err != nil || selection != nil || plan == nil || plan.config == nil || plan.config.DialContext == nil {
 		t.Fatalf("WebTTY did not use activated runtime bundle: plan=%#v selection=%#v err=%v", plan, selection, err)
+	}
+	if err := app.runtimeClient.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if newTransport.closeCalls.Load() != 1 {
+		t.Fatalf("active runtime transport closes = %d, want 1", newTransport.closeCalls.Load())
 	}
 }
 

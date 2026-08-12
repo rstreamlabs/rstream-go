@@ -20,6 +20,7 @@ type forwardUITCell struct {
 	done      chan struct{}
 	status    forwardStatus
 	conns     []forwardConnInfo
+	started   bool
 }
 
 func newForwardUITCell() (forwardUI, error) {
@@ -41,17 +42,28 @@ func newForwardUITCell() (forwardUI, error) {
 }
 
 func (u *forwardUITCell) Start(ctx context.Context) <-chan struct{} {
-	u.startOnce.Do(func() { go u.run(ctx) })
+	u.startOnce.Do(func() {
+		u.mu.Lock()
+		u.started = true
+		u.mu.Unlock()
+		go u.run(ctx)
+	})
 	return u.done
 }
 
 func (u *forwardUITCell) run(ctx context.Context) {
+	events := make(chan tcell.Event, 8)
+	eventsDone := make(chan struct{})
+	go func() {
+		u.screen.ChannelEvents(events, u.stop)
+		close(eventsDone)
+	}()
 	defer func() {
+		u.stopOnce.Do(func() { close(u.stop) })
+		<-eventsDone
 		u.screen.Fini()
 		close(u.done)
 	}()
-	events := make(chan tcell.Event, 8)
-	go u.screen.ChannelEvents(events, u.stop)
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -86,7 +98,12 @@ func (u *forwardUITCell) run(ctx context.Context) {
 
 func (u *forwardUITCell) Stop() error {
 	u.stopOnce.Do(func() { close(u.stop) })
-	<-u.done
+	u.mu.Lock()
+	started := u.started
+	u.mu.Unlock()
+	if started {
+		<-u.done
+	}
 	return nil
 }
 

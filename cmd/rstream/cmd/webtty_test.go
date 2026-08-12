@@ -24,6 +24,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,6 +36,24 @@ import (
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
 	"github.com/spf13/cobra"
 )
+
+type webTTYCloseTrackingTransport struct {
+	active     *int
+	closeCalls atomic.Int64
+	closeErr   error
+}
+
+func (t *webTTYCloseTrackingTransport) Dial(context.Context, string, *tls.Config) (net.Conn, error) {
+	return nil, errors.New("unexpected dial")
+}
+
+func (t *webTTYCloseTrackingTransport) Close() error {
+	t.closeCalls.Add(1)
+	if t.active != nil {
+		*t.active--
+	}
+	return t.closeErr
+}
 
 func newTestWebTTYServerCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "server"}
@@ -610,6 +630,88 @@ func TestRunWebTTYServerRetryLoopStopsWhenContextIsCanceledDuringRetry(t *testin
 	if attempts != 1 {
 		t.Fatalf("runWebTTYServerRetryLoop() attempts = %d, want 1", attempts)
 	}
+}
+
+func TestCloseRstreamClientReleasesOwnedTransport(t *testing.T) {
+	transport := &webTTYCloseTrackingTransport{}
+	client := newWebTTYOwnedTestClient(t, transport)
+	closeRstreamClientLogged(client, slog.Default())
+	if transport.closeCalls.Load() != 1 {
+		t.Fatalf("transport close calls = %d, want 1", transport.closeCalls.Load())
+	}
+}
+
+func TestCloseRstreamClientHandlesUnsupportedAndFailedClose(t *testing.T) {
+	closeRstreamClientLogged(nil, slog.Default())
+	closeRstreamClientLogged(newWebTTYOwnedTestClient(t, &rstream.Transport{}), slog.Default())
+	transport := &webTTYCloseTrackingTransport{closeErr: errors.New("close failed")}
+	closeRstreamClientLogged(newWebTTYOwnedTestClient(t, transport), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if transport.closeCalls.Load() != 1 {
+		t.Fatalf("transport close calls = %d, want 1", transport.closeCalls.Load())
+	}
+}
+
+func TestOwnedRstreamClientCloseIsConcurrentAndRepeatSafe(t *testing.T) {
+	transport := &webTTYCloseTrackingTransport{closeErr: errors.New("close failed")}
+	owned := ownRstreamClient(newWebTTYOwnedTestClient(t, transport))
+	const workers = 64
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- owned.Close()
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err == nil || err.Error() != "close failed" {
+			t.Fatalf("Close() error = %v, want close failed", err)
+		}
+	}
+	if transport.closeCalls.Load() != 1 {
+		t.Fatalf("transport close calls = %d, want 1", transport.closeCalls.Load())
+	}
+}
+
+func TestRunWebTTYServerRetryLoopBoundsAttemptTransports(t *testing.T) {
+	active := 0
+	maxActive := 0
+	attempts := 0
+	closed := 0
+	err := runWebTTYServerRetryLoop(t.Context(), slog.Default(), true, time.Microsecond, func() error {
+		active++
+		if active > maxActive {
+			maxActive = active
+		}
+		transport := &webTTYCloseTrackingTransport{active: &active}
+		defer func() {
+			closeRstreamClientLogged(newWebTTYOwnedTestClient(t, transport), slog.Default())
+			closed += int(transport.closeCalls.Load())
+		}()
+		attempts++
+		if attempts < 100 {
+			return io.ErrUnexpectedEOF
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("runWebTTYServerRetryLoop() error = %v", err)
+	}
+	if attempts != 100 || closed != 100 || active != 0 || maxActive != 1 {
+		t.Fatalf("retry resources = attempts %d, closed %d, active %d, max %d; want 100, 100, 0, 1", attempts, closed, active, maxActive)
+	}
+}
+
+func newWebTTYOwnedTestClient(t *testing.T, transport rstream.Dialer) *rstream.Client {
+	t.Helper()
+	client, err := rstream.NewClient(rstream.ClientOptions{Engine: "engine.example.com:443", Transport: transport, OwnTransport: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return client
 }
 
 func TestApplyWebTTYServerDerivedDefaults(t *testing.T) {

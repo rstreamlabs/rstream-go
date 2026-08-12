@@ -34,10 +34,8 @@ func (u *uiApp) showTargetPicker() {
 		return
 	}
 	if u.switchCancel != nil {
-		u.switchCancel()
-		u.switchCancel = nil
-		u.switchGen++
-		u.finishRuntimeSwitchPresentation("")
+		u.setMessage("Wait for the current context switch to finish")
+		return
 	}
 	u.closeTargetPicker()
 	picker := &uiTargetPicker{mode: uiTargetContext, selectedIDs: make(map[uiTargetKind]string)}
@@ -104,12 +102,9 @@ func (u *uiApp) reloadTargetPicker() {
 	picker.projectError = nil
 	picker.workspaceWarn = nil
 	u.renderTargetPicker(picker)
-	go func() {
+	started := u.async.Go(func() {
 		discovery := u.resolver.discoverTargets(discoveryCtx, u.runtime)
-		if discoveryCtx.Err() != nil {
-			return
-		}
-		u.app.QueueUpdateDraw(func() {
+		u.postUpdate(discoveryCtx, uiUpdate{apply: func() {
 			if u.targetPicker != picker || discoveryCtx.Err() != nil {
 				return
 			}
@@ -118,8 +113,11 @@ func (u *uiApp) reloadTargetPicker() {
 			picker.projectError = discovery.ProjectError
 			picker.workspaceWarn = discovery.WorkspaceWarning
 			u.renderTargetPicker(picker)
-		})
-	}()
+		}})
+	})
+	if !started {
+		discoveryCancel()
+	}
 }
 
 func (u *uiApp) renderTargetPicker(picker *uiTargetPicker) {

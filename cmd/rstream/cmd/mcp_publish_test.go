@@ -4,11 +4,15 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/spf13/cobra"
@@ -85,6 +89,54 @@ func TestMCPHTTPHandlerRejectsInvalidJSON(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"code":-32700`) {
 		t.Fatalf("expected JSON-RPC parse error: %s", rec.Body.String())
+	}
+}
+
+func TestServeMCPHTTPCancellationJoinsShutdownWatcher(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen returned error: %v", err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+		w.WriteHeader(http.StatusNoContent)
+	})}
+	ctx, cancel := context.WithCancel(t.Context())
+	serveResult := make(chan error, 1)
+	go func() { serveResult <- serveMCPHTTP(ctx, server, listener, slog.Default()) }()
+	requestResult := make(chan error, 1)
+	go func() {
+		response, err := http.Get("http://" + listener.Addr().String())
+		if err == nil {
+			err = response.Body.Close()
+		}
+		requestResult <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("HTTP handler did not start")
+	}
+	cancel()
+	select {
+	case err := <-serveResult:
+		t.Fatalf("serveMCPHTTP returned before its shutdown watcher: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-serveResult:
+		if err != nil {
+			t.Fatalf("serveMCPHTTP returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("serveMCPHTTP did not return after handler shutdown")
+	}
+	if err := <-requestResult; err != nil {
+		t.Fatalf("HTTP request returned error: %v", err)
 	}
 }
 

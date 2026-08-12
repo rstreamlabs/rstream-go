@@ -46,6 +46,7 @@ func TestUIRuntimeOptionsFromCommandUsesExplicitSelectionAndEnvironment(t *testi
 
 func TestUITargetPickerLifecycleAndKeyboardInput(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	contextValue := config.Context{Name: "device", Engine: "device.example:443", Auth: testUIInlineAuth("token")}
 	cfg := config.Config{Contexts: []config.Context{contextValue}}
@@ -63,21 +64,9 @@ func TestUITargetPickerLifecycleAndKeyboardInput(t *testing.T) {
 		store:      newUIStore("sse"),
 		activePage: uiPageInventory,
 	}
-	pendingCtx, pendingCancel := context.WithCancel(t.Context())
-	app.switchCancel = pendingCancel
-	app.switchGen = 2
-	cancel()
 	app.showTargetPicker()
 	if app.activePage != uiPageTargetPicker || app.targetPicker == nil || len(app.targetPicker.targets) != 1 {
 		t.Fatalf("target picker was not opened: page=%q picker=%#v", app.activePage, app.targetPicker)
-	}
-	if app.switchGen != 3 {
-		t.Fatalf("opening picker switch generation = %d, want 3", app.switchGen)
-	}
-	select {
-	case <-pendingCtx.Done():
-	default:
-		t.Fatal("opening picker did not cancel pending switch")
 	}
 	if got := app.captureTargetPickerInput(tcell.NewEventKey(tcell.KeyRune, '/', tcell.ModNone)); got != nil || app.app.GetFocus() != app.targetPicker.filter {
 		t.Fatalf("filter shortcut result=%#v focus=%T", got, app.app.GetFocus())
@@ -114,6 +103,26 @@ func TestUITargetPickerLifecycleAndKeyboardInput(t *testing.T) {
 	}
 }
 
+func TestUITargetPickerDoesNotOverlapRuntimeSwitch(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	pendingCtx, pendingCancel := context.WithCancel(t.Context())
+	defer pendingCancel()
+	app := &uiApp{ctx: ctx, app: tview.NewApplication(), switchCancel: pendingCancel, switchGen: 2}
+	app.showTargetPicker()
+	if app.targetPicker != nil || app.switchGen != 2 {
+		t.Fatalf("overlapping picker state = picker %#v generation %d", app.targetPicker, app.switchGen)
+	}
+	if !strings.Contains(app.state.Message, "current context switch") {
+		t.Fatalf("overlapping picker message = %q", app.state.Message)
+	}
+	select {
+	case <-pendingCtx.Done():
+		t.Fatal("opening picker canceled the active switch")
+	default:
+	}
+}
+
 func TestUISwitchTargetRejectsActiveSessionAndCancelsWithApp(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	app := &uiApp{ctx: ctx, cancel: cancel, app: tview.NewApplication(), store: newUIStore("sse"), session: &uiSessionHandle{}, activePage: uiPageSession}
@@ -132,7 +141,7 @@ func TestUISwitchTargetRejectsActiveSessionAndCancelsWithApp(t *testing.T) {
 	app.readyTimeout = time.Second
 	cancel()
 	app.switchTarget(uiTarget{Kind: uiTargetContext, Context: contextValue}, false)
-	if app.switchGen != 1 || app.switchingTo != "target" || app.state.Message != "" {
+	if app.switchGen != 0 || app.switchingTo != "" || app.state.Message != "The UI is shutting down" {
 		t.Fatalf("canceled switch state = gen %d target %q message %q", app.switchGen, app.switchingTo, app.state.Message)
 	}
 }
@@ -168,6 +177,7 @@ func TestUISwitchTargetActivatesPreparedRuntimeInRunningApplication(t *testing.T
 	app.pages.AddPage(uiPageInventory, app.inventoryPage(), true, true)
 	app.pages.AddPage(uiPageHelp, uiCenteredPrimitive(app.help, 84, 14), true, false)
 	screen := tcell.NewSimulationScreen("UTF-8")
+	app.screen = screen
 	app.app.SetScreen(screen).SetRoot(app.pages, true).SetFocus(app.table).SetInputCapture(app.captureInput)
 	runDone := make(chan error, 1)
 	go func() {

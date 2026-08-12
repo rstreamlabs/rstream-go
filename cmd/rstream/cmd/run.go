@@ -43,7 +43,7 @@ var runCmd = &cobra.Command{
 			Engine:             res.Engine,
 			StableDomainEngine: res.StableDomainEngine,
 			Token:              res.Token,
-			Transport:          res.Transport,
+			TransportConfig:    res.TransportConfig,
 		}
 		lookup := func(name string) (runmodel.ResolvedContext, error) {
 			resolved, err := resolveNamedContext(cfg, env, cmd, name)
@@ -55,7 +55,7 @@ var runCmd = &cobra.Command{
 				Engine:             resolved.Engine,
 				StableDomainEngine: resolved.StableDomainEngine,
 				Token:              resolved.Token,
-				Transport:          resolved.Transport,
+				TransportConfig:    resolved.TransportConfig,
 			}, nil
 		}
 		starter := runengine.New(
@@ -109,10 +109,16 @@ func runLoop(ctx context.Context, source interface {
 	apply := func() error {
 		desired, err := source.List(ctx)
 		if err != nil {
+			if cause := context.Cause(ctx); cause != nil {
+				return cause
+			}
 			logger.Warn("Failed to load desired state", "error", err)
 			return err
 		}
 		if err := recon.Reconcile(desired); err != nil {
+			if cause := context.Cause(ctx); cause != nil {
+				return cause
+			}
 			logger.Warn("Failed to reconcile desired state", "error", err)
 			return err
 		}

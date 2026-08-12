@@ -4,9 +4,10 @@ package reconciler
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
-	"reflect"
-	"sync"
+	"net"
 
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
 )
@@ -16,12 +17,11 @@ type Starter interface {
 }
 
 type Reconciler struct {
-	ctx     context.Context
-	logger  *slog.Logger
-	starter Starter
-
-	mu     sync.Mutex
-	active map[string]*activeTunnel
+	ctx      context.Context
+	logger   *slog.Logger
+	starter  Starter
+	requests chan reconcileRequest
+	stopped  chan struct{}
 }
 
 type activeTunnel struct {
@@ -29,23 +29,33 @@ type activeTunnel struct {
 	handle  runmodel.Handle
 }
 
+type reconcileRequest struct {
+	desired []runmodel.DesiredTunnel
+	stop    bool
+	done    chan error
+}
+
 func New(ctx context.Context, starter Starter, logger *slog.Logger) *Reconciler {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Reconciler{
-		ctx:     ctx,
-		logger:  logger,
-		starter: starter,
-		active:  make(map[string]*activeTunnel),
+	r := &Reconciler{
+		ctx:      ctx,
+		logger:   logger,
+		starter:  starter,
+		requests: make(chan reconcileRequest),
+		stopped:  make(chan struct{}),
 	}
+	go r.run()
+	return r
 }
 
 func (r *Reconciler) Reconcile(desired []runmodel.DesiredTunnel) error {
 	if r == nil {
 		return nil
 	}
-	desiredMap := make(map[string]runmodel.DesiredTunnel, len(desired))
+	desiredCopy := make([]runmodel.DesiredTunnel, 0, len(desired))
+	desiredMap := make(map[string]struct{}, len(desired))
 	for _, d := range desired {
 		if d.Name == "" {
 			return errInvalidTunnelName
@@ -53,54 +63,126 @@ func (r *Reconciler) Reconcile(desired []runmodel.DesiredTunnel) error {
 		if _, ok := desiredMap[d.Name]; ok {
 			return errDuplicateTunnelName
 		}
+		desiredMap[d.Name] = struct{}{}
+		desiredCopy = append(desiredCopy, runmodel.CloneDesired(d))
+	}
+	done := make(chan error, 1)
+	request := reconcileRequest{desired: desiredCopy, done: done}
+	select {
+	case r.requests <- request:
+	case <-r.ctx.Done():
+		return context.Cause(r.ctx)
+	case <-r.stopped:
+		return net.ErrClosed
+	}
+	select {
+	case err := <-done:
+		return err
+	case <-r.ctx.Done():
+		return context.Cause(r.ctx)
+	case <-r.stopped:
+		return net.ErrClosed
+	}
+}
+
+func (r *Reconciler) reconcile(active map[string]*activeTunnel, desired []runmodel.DesiredTunnel) error {
+	desiredMap := make(map[string]runmodel.DesiredTunnel, len(desired))
+	for _, d := range desired {
 		desiredMap[d.Name] = d
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	removed := 0
 	updated := 0
 	created := 0
-	for name, active := range r.active {
+	failed := 0
+	var reconcileErr error
+	for name, current := range active {
 		if _, ok := desiredMap[name]; !ok {
 			r.logger.Info("Tunnel removed", "tunnel", name)
-			_ = active.handle.Stop()
-			delete(r.active, name)
+			if err := current.handle.Stop(); err != nil {
+				failed++
+				reconcileErr = errors.Join(reconcileErr, fmt.Errorf("stop removed tunnel %q: %w", name, err))
+				continue
+			}
+			delete(active, name)
 			removed++
 		}
 	}
 	for name, d := range desiredMap {
-		if active, ok := r.active[name]; ok {
-			if reflect.DeepEqual(active.desired, d) {
+		if current, ok := active[name]; ok {
+			if runmodel.EqualDesired(current.desired, d) {
 				continue
 			}
 			r.logger.Info("Tunnel updated", "tunnel", name)
-			r.logger.Debug("Tunnel spec changed", "tunnel", name, "current", runmodel.Summary(active.desired), "desired", runmodel.Summary(d))
-			_ = active.handle.Stop()
-			delete(r.active, name)
+			r.logger.Debug("Tunnel spec changed", "tunnel", name, "current", runmodel.Summary(current.desired), "desired", runmodel.Summary(d))
+			if err := current.handle.Stop(); err != nil {
+				failed++
+				reconcileErr = errors.Join(reconcileErr, fmt.Errorf("stop updated tunnel %q: %w", name, err))
+				continue
+			}
+			delete(active, name)
 			updated++
 		}
 		handle, err := r.starter.Start(r.ctx, d)
 		if err != nil {
 			r.logger.Warn("Failed to start tunnel", "tunnel", name, "error", err)
+			failed++
+			reconcileErr = errors.Join(reconcileErr, fmt.Errorf("start tunnel %q: %w", name, err))
 			continue
 		}
-		r.active[name] = &activeTunnel{desired: d, handle: handle}
+		if handle == nil {
+			failed++
+			reconcileErr = errors.Join(reconcileErr, fmt.Errorf("start tunnel %q: starter returned a nil handle", name))
+			continue
+		}
+		active[name] = &activeTunnel{desired: d, handle: handle}
 		created++
 	}
-	r.logger.Info("Reconciled desired state", "tunnels", len(desiredMap), "created", created, "updated", updated, "removed", removed)
-	return nil
+	r.logger.Info("Reconciled desired state", "tunnels", len(desiredMap), "created", created, "updated", updated, "removed", removed, "failed", failed)
+	return reconcileErr
 }
 
 func (r *Reconciler) Stop() {
 	if r == nil {
 		return
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for name, active := range r.active {
+	done := make(chan error, 1)
+	select {
+	case r.requests <- reconcileRequest{stop: true, done: done}:
+		select {
+		case <-done:
+		case <-r.stopped:
+		}
+	case <-r.stopped:
+	}
+}
+
+func (r *Reconciler) stop(active map[string]*activeTunnel) {
+	for name, current := range active {
 		r.logger.Info("Tunnel stopped", "tunnel", name)
-		_ = active.handle.Stop()
-		delete(r.active, name)
+		if err := current.handle.Stop(); err != nil {
+			r.logger.Warn("Failed to stop tunnel", "tunnel", name, "error", err)
+		}
+		delete(active, name)
+	}
+}
+
+func (r *Reconciler) run() {
+	active := make(map[string]*activeTunnel)
+	defer func() {
+		r.stop(active)
+		close(r.stopped)
+	}()
+	for {
+		select {
+		case <-r.ctx.Done():
+			return
+		case request := <-r.requests:
+			if request.stop {
+				request.done <- nil
+				return
+			}
+			request.done <- r.reconcile(active, request.desired)
+		}
 	}
 }
 

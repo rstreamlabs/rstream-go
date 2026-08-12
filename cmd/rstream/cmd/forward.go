@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
@@ -60,6 +61,70 @@ type forwardCtx struct {
 	OutputFormat     forwardOutputFormat
 	Out              io.Writer
 	UI               forwardUI
+	clientCloser     *ownedRstreamClient
+}
+
+type forwardSessionGroup struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	active map[io.Closer]struct{}
+	closed bool
+	wg     sync.WaitGroup
+}
+
+func newForwardSessionGroup(ctx context.Context) *forwardSessionGroup {
+	sessionCtx, cancel := context.WithCancel(ctx)
+	return &forwardSessionGroup{ctx: sessionCtx, cancel: cancel, active: make(map[io.Closer]struct{})}
+}
+
+func (g *forwardSessionGroup) start(closer io.Closer, run func(context.Context)) bool {
+	g.mu.Lock()
+	if g.closed {
+		g.mu.Unlock()
+		_ = closer.Close()
+		return false
+	}
+	g.active[closer] = struct{}{}
+	g.wg.Add(1)
+	g.mu.Unlock()
+	go func() {
+		defer g.wg.Done()
+		defer func() {
+			g.mu.Lock()
+			delete(g.active, closer)
+			g.mu.Unlock()
+		}()
+		run(g.ctx)
+	}()
+	return true
+}
+
+func (g *forwardSessionGroup) close() {
+	g.mu.Lock()
+	if g.closed {
+		g.mu.Unlock()
+		g.wg.Wait()
+		return
+	}
+	g.closed = true
+	g.cancel()
+	active := make([]io.Closer, 0, len(g.active))
+	for closer := range g.active {
+		active = append(active, closer)
+	}
+	g.mu.Unlock()
+	for _, closer := range active {
+		_ = closer.Close()
+	}
+	g.wg.Wait()
+}
+
+func (s *forwardCtx) Close() error {
+	if s == nil {
+		return nil
+	}
+	return s.clientCloser.Close()
 }
 
 type statusReportedError struct {
@@ -97,6 +162,11 @@ var forwardCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer func() {
+			if closeErr := s.Close(); closeErr != nil {
+				s.Logger.Warn("failed to close forward client", "error", closeErr)
+			}
+		}()
 		err = runForwardWithUI(cmd.Context(), s.UI, s.run)
 		if err != nil && errors.Is(err, context.Canceled) {
 			return nil
@@ -169,7 +239,7 @@ func init() {
 	rootCmd.AddCommand(forwardCmd)
 }
 
-func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {
+func newForwardCtx(cmd *cobra.Command, host, port string) (result *forwardCtx, err error) {
 	runtime, err := resolveRuntime(cmd, true, true)
 	if err != nil {
 		return nil, err
@@ -178,6 +248,12 @@ func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {
 	if err != nil {
 		return nil, err
 	}
+	clientCloser := ownRstreamClient(client)
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, clientCloser.Close())
+		}
+	}()
 	props, err := newTunnelPropertiesFromFlags(cmd)
 	if err != nil {
 		return nil, err
@@ -251,6 +327,7 @@ func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {
 		OutputFormat:     out,
 		Out:              os.Stdout,
 		UI:               ui,
+		clientCloser:     clientCloser,
 	}, nil
 }
 
@@ -371,10 +448,14 @@ func (s *forwardCtx) runOnce(ctx context.Context) error {
 	onlineStatus.Forwarded = &forwarded
 	s.setStatus(onlineStatus)
 	if l, ok := tunnel.(interface{ net.Listener }); ok {
-		return s.serveWithCtx(ctx, l.Close, func() error { return s.serveTCP(ctx, l) })
+		sessions := newForwardSessionGroup(ctx)
+		defer sessions.close()
+		return s.serveWithCtx(ctx, l.Close, func() error { return s.serveTCP(ctx, l, sessions) })
 	}
 	if pl, ok := tunnel.(rstream.PacketListener); ok {
-		return s.serveWithCtx(ctx, pl.Close, func() error { return s.serveUDP(ctx, pl) })
+		sessions := newForwardSessionGroup(ctx)
+		defer sessions.close()
+		return s.serveWithCtx(ctx, pl.Close, func() error { return s.serveUDP(ctx, pl, sessions) })
 	}
 	return fmt.Errorf("tunnel does not implement net.Listener or rstream.PacketListener")
 }
@@ -403,7 +484,7 @@ func (s *forwardCtx) serveWithCtx(ctx context.Context, closeFn func() error, fn 
 	}
 }
 
-func (s *forwardCtx) withTrackedConn(addr net.Addr, run func()) {
+func (s *forwardCtx) withTrackedConn(sessions *forwardSessionGroup, closer io.Closer, addr net.Addr, run func(context.Context)) {
 	var streamID *string
 	var sourceIP *net.IP
 	if ra, ok := addr.(*rstream.Addr); ok && ra != nil {
@@ -411,20 +492,21 @@ func (s *forwardCtx) withTrackedConn(addr net.Addr, run func()) {
 		sourceIP = &ra.SourceIP
 	}
 	idx := s.addConn(forwardConnInfo{Active: true, Date: time.Now(), StreamID: streamID, SourceIP: sourceIP})
-	go func() {
+	sessions.start(closer, func(ctx context.Context) {
 		defer func() {
 			if idx != nil {
 				s.closeConn(*idx)
 			}
 		}()
-		run()
-	}()
+		run(ctx)
+	})
 }
 
-func (s *forwardCtx) proxyTCP(inbound net.Conn) {
-	s.withTrackedConn(inbound.LocalAddr(), func() {
+func (s *forwardCtx) proxyTCP(sessions *forwardSessionGroup, inbound net.Conn) {
+	s.withTrackedConn(sessions, inbound, inbound.LocalAddr(), func(ctx context.Context) {
 		defer inbound.Close()
-		outbound, err := net.Dial("tcp", net.JoinHostPort(s.Host, s.Port))
+		dialer := &net.Dialer{}
+		outbound, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(s.Host, s.Port))
 		if err != nil {
 			s.Logger.Error("Dial error", slog.String("host", s.Host), slog.String("port", s.Port), slog.String("error", err.Error()))
 		} else {
@@ -434,15 +516,11 @@ func (s *forwardCtx) proxyTCP(inbound net.Conn) {
 	})
 }
 
-func (s *forwardCtx) proxyUDP(inbound net.PacketConn, remote net.Addr) {
-	s.withTrackedConn(inbound.LocalAddr(), func() {
+func (s *forwardCtx) proxyUDP(sessions *forwardSessionGroup, inbound net.PacketConn, remote net.Addr) {
+	s.withTrackedConn(sessions, inbound, inbound.LocalAddr(), func(ctx context.Context) {
 		defer inbound.Close()
-		udpRaddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(s.Host, s.Port))
-		if err != nil {
-			s.Logger.Error("ResolveUDPAddr error", slog.String("host", s.Host), slog.String("port", s.Port), slog.String("error", err.Error()))
-			return
-		}
-		outbound, err := net.DialUDP("udp", nil, udpRaddr)
+		dialer := &net.Dialer{}
+		outbound, err := dialer.DialContext(ctx, "udp", net.JoinHostPort(s.Host, s.Port))
 		if err != nil {
 			s.Logger.Error("DialUDP error", slog.String("host", s.Host), slog.String("port", s.Port), slog.String("error", err.Error()))
 			return
@@ -476,10 +554,13 @@ func (s *forwardCtx) proxyUDP(inbound net.PacketConn, remote net.Addr) {
 			done <- struct{}{}
 		}()
 		<-done
+		_ = inbound.Close()
+		_ = outbound.Close()
+		<-done
 	})
 }
 
-func (s *forwardCtx) serveTCP(ctx context.Context, l net.Listener) error {
+func (s *forwardCtx) serveTCP(ctx context.Context, l net.Listener, sessions *forwardSessionGroup) error {
 	var acceptRetryDelay time.Duration
 	for {
 		inbound, err := l.Accept()
@@ -492,11 +573,11 @@ func (s *forwardCtx) serveTCP(ctx context.Context, l net.Listener) error {
 			return err
 		}
 		acceptRetryDelay = 0
-		s.proxyTCP(inbound)
+		s.proxyTCP(sessions, inbound)
 	}
 }
 
-func (s *forwardCtx) serveUDP(ctx context.Context, l rstream.PacketListener) error {
+func (s *forwardCtx) serveUDP(ctx context.Context, l rstream.PacketListener, sessions *forwardSessionGroup) error {
 	var acceptRetryDelay time.Duration
 	for {
 		inbound, raddr, err := l.Accept()
@@ -509,7 +590,7 @@ func (s *forwardCtx) serveUDP(ctx context.Context, l rstream.PacketListener) err
 			return err
 		}
 		acceptRetryDelay = 0
-		s.proxyUDP(inbound, raddr)
+		s.proxyUDP(sessions, inbound, raddr)
 	}
 }
 

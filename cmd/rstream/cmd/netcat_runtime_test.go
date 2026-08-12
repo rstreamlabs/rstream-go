@@ -5,9 +5,9 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"io"
 	"log/slog"
 	"net"
+	"os"
 	"testing"
 	"time"
 )
@@ -16,7 +16,12 @@ func TestRunNetcatClientReturnsWhenRemoteCloses(t *testing.T) {
 	server, client := net.Pipe()
 	defer server.Close()
 	defer client.Close()
-	stdinReader, _ := io.Pipe()
+	stdinReader, stdinWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe() error = %v", err)
+	}
+	defer stdinReader.Close()
+	defer stdinWriter.Close()
 	var stdout bytes.Buffer
 	doneCh := make(chan error, 1)
 	go func() {

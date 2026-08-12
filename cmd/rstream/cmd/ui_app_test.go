@@ -967,6 +967,102 @@ func TestUIWebTTYSessionOpensWorkspaceManagedE2ERuntime(t *testing.T) {
 		t.Fatalf("expected E2E payload crypto")
 	}
 }
+
+func TestUIShutdownCancelsWatcherAndClosesRuntimeClient(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		<-ctx.Done()
+	}()
+	transport := &webTTYCloseTrackingTransport{}
+	app := &uiApp{cancel: cancel, runtimeCancel: cancel, runtimeClient: ownRstreamClient(newWebTTYOwnedTestClient(t, transport)), runtimeDone: done}
+	app.shutdown()
+	if transport.closeCalls.Load() != 1 {
+		t.Fatalf("runtime transport closes = %d, want 1", transport.closeCalls.Load())
+	}
+	select {
+	case <-done:
+	default:
+		t.Fatal("runtime watcher did not stop")
+	}
+}
+
+func TestUIShutdownDiscardsQueuedUpdateWithoutEventLoop(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("screen.Init() error = %v", err)
+	}
+	defer screen.Fini()
+	applied := make(chan struct{}, 1)
+	discarded := make(chan struct{}, 1)
+	posted := make(chan bool, 1)
+	app := &uiApp{ctx: ctx, cancel: cancel, screen: screen}
+	if !app.async.Go(func() {
+		posted <- app.postUpdate(ctx, uiUpdate{apply: func() { applied <- struct{}{} }, discard: func() { discarded <- struct{}{} }})
+	}) {
+		t.Fatal("async update was rejected before shutdown")
+	}
+	if ok := <-posted; !ok {
+		t.Fatal("postUpdate() did not enqueue the update")
+	}
+	app.shutdown()
+	select {
+	case <-applied:
+		t.Fatal("queued update ran without an event loop")
+	default:
+	}
+	select {
+	case <-discarded:
+	default:
+		t.Fatal("shutdown did not discard the queued update")
+	}
+}
+
+func TestUIAsyncGroupRejectsWorkOnceShutdownStarts(t *testing.T) {
+	var group uiAsyncGroup
+	started := make(chan struct{}, 64)
+	release := make(chan struct{})
+	for index := 0; index < 64; index++ {
+		if !group.Go(func() { started <- struct{}{}; <-release }) {
+			t.Fatalf("Go() rejected worker %d", index)
+		}
+	}
+	for index := 0; index < 64; index++ {
+		<-started
+	}
+	stopped := make(chan struct{})
+	go func() { group.StopAndWait(); close(stopped) }()
+	deadline := time.Now().Add(time.Second)
+	for {
+		group.mu.Lock()
+		stopping := group.stopped
+		group.mu.Unlock()
+		if stopping {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("StopAndWait() did not enter stopping state")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if group.Go(func() {}) {
+		t.Fatal("Go() accepted work after shutdown started")
+	}
+	select {
+	case <-stopped:
+		t.Fatal("StopAndWait() returned before active workers stopped")
+	default:
+	}
+	close(release)
+	select {
+	case <-stopped:
+	case <-time.After(time.Second):
+		t.Fatal("StopAndWait() did not wait for active workers")
+	}
+}
+
 func collectUITestSessionOutput(session *webtty.ClientSession) (string, string, int, error) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
