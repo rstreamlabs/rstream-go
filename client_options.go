@@ -11,6 +11,7 @@ type ClientOptions struct {
 	Engine          string
 	Token           string
 	Transport       Dialer
+	OwnTransport    bool
 	TLSClientConfig *tls.Config
 	NoToken         bool
 	ZeroRTT         *bool
@@ -25,12 +26,15 @@ func NewClient(options ClientOptions) (*Client, error) {
 	}
 	engine := options.Engine
 	transport := options.Transport
+	ownTransport := options.OwnTransport
 	if isNilDialer(transport) {
 		transport = &AutoTransport{}
+		ownTransport = true
 	}
 	client := &Client{
 		EngineURL:       &engine,
 		Transport:       transport,
+		ownsTransport:   ownTransport,
 		TLSClientConfig: options.TLSClientConfig,
 		ZeroRTT:         options.ZeroRTT,
 	}

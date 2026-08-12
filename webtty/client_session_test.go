@@ -132,8 +132,13 @@ func TestClientSessionConfigConversionsCopySlices(t *testing.T) {
 	if string(cfg.Attach.AttachGrant) != "Grant" || cfg.Attach.Capabilities[0] != AttachCapabilityRequestControl {
 		t.Fatalf("clientConfig should deep-copy attach slices: %#v", cfg.Attach)
 	}
-	if clientCfg.Workdir != &workdir || clientCfg.Username != &username {
-		t.Fatalf("pointer fields should be preserved")
+	if clientCfg.Workdir == nil || *clientCfg.Workdir != workdir || clientCfg.Workdir == &workdir || clientCfg.Username == nil || *clientCfg.Username != username || clientCfg.Username == &username {
+		t.Fatalf("pointer values should be copied: workdir=%p username=%p", clientCfg.Workdir, clientCfg.Username)
+	}
+	*clientCfg.Workdir = "/mutated"
+	*clientCfg.Username = "mutated"
+	if *cfg.Workdir != workdir || *cfg.Username != username {
+		t.Fatalf("clientConfig exposed mutable pointer state")
 	}
 	if (*ClientConfig)(nil).sessionConfig() != nil {
 		t.Fatalf("nil client config should convert to nil session config")
@@ -482,8 +487,7 @@ func TestOpenClientSessionSendsClientProofAfterSignedServerHello(t *testing.T) {
 }
 
 func TestClientSessionWaitClosedChannel(t *testing.T) {
-	session := &ClientSession{resultCh: make(chan clientSessionResult)}
-	close(session.resultCh)
+	session := &ClientSession{}
 	exitCode, err := session.Wait()
 	if exitCode != -1 || !errors.Is(err, io.EOF) {
 		t.Fatalf("got exit=%d err=%v", exitCode, err)
@@ -508,6 +512,62 @@ func TestClientSessionCloseStoresLocalResult(t *testing.T) {
 	exitCode, err := session.Wait()
 	if err != nil || exitCode != -1 {
 		t.Fatalf("Wait() after Close() = %d, %v", exitCode, err)
+	}
+}
+
+func TestClientSessionConcurrentCloseAndWaitJoinLifecycle(t *testing.T) {
+	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		_ = readWebTTYMessage(t, conn)
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}})
+		_, _, _ = conn.ReadMessage()
+	})
+	defer server.Close()
+	session, err := OpenClientSession(t.Context(), &SessionConfig{URL: testWebTTYURL(server.URL), SendHeartbeat: true, OpenDeadline: durationPtr(time.Second), HeartbeatInterval: durationPtr(time.Hour)})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	const callers = 64
+	start := make(chan struct{})
+	closeResults := make(chan error, callers)
+	waitResults := make(chan clientSessionResult, callers)
+	for range callers {
+		go func() {
+			<-start
+			closeResults <- session.Close()
+		}()
+		go func() {
+			<-start
+			exitCode, err := session.Wait()
+			waitResults <- clientSessionResult{exitCode: exitCode, err: err}
+		}()
+	}
+	close(start)
+	for range callers {
+		select {
+		case err := <-closeResults:
+			if err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("Close() did not join the session lifecycle")
+		}
+		select {
+		case result := <-waitResults:
+			if result.exitCode != -1 || result.err != nil {
+				t.Fatalf("Wait() = %d, %v; want -1, nil", result.exitCode, result.err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("Wait() did not observe the shared terminal result")
+		}
+	}
+	select {
+	case <-session.readDone:
+	default:
+		t.Fatal("session completed before its reader stopped")
+	}
+	if exitCode, err := session.Wait(); exitCode != -1 || err != nil {
+		t.Fatalf("repeated Wait() = %d, %v; want -1, nil", exitCode, err)
 	}
 }
 
@@ -965,6 +1025,5 @@ func newBareClientSession(t *testing.T) *ClientSession {
 		doneRead:   make(chan struct{}),
 		done:       make(chan struct{}),
 		events:     make(chan ClientSessionEvent, 1),
-		resultCh:   make(chan clientSessionResult, 1),
 	}
 }

@@ -97,6 +97,55 @@ type ListTunnelsParams struct {
 
 type ListTunnelsResponse = []TunnelInventory
 
+func clonePtr[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
+}
+
+func cloneTunnelProperties(props TunnelProperties) TunnelProperties {
+	return TunnelProperties{
+		ID:                         clonePtr(props.ID),
+		CreationDate:               clonePtr(props.CreationDate),
+		Name:                       clonePtr(props.Name),
+		Type:                       clonePtr(props.Type),
+		Publish:                    clonePtr(props.Publish),
+		Protocol:                   clonePtr(props.Protocol),
+		Labels:                     cloneStringMap(props.Labels),
+		GeoIP:                      append([]string(nil), props.GeoIP...),
+		TrustedIPs:                 append([]string(nil), props.TrustedIPs...),
+		Host:                       clonePtr(props.Host),
+		Hostname:                   clonePtr(props.Hostname),
+		Port:                       clonePtr(props.Port),
+		TLSMode:                    clonePtr(props.TLSMode),
+		TLSALPNs:                   append([]string(nil), props.TLSALPNs...),
+		TLSMinVersion:              clonePtr(props.TLSMinVersion),
+		TLSCiphers:                 append([]string(nil), props.TLSCiphers...),
+		MTLSAuth:                   clonePtr(props.MTLSAuth),
+		HTTPVersion:                clonePtr(props.HTTPVersion),
+		HTTPUseTLS:                 clonePtr(props.HTTPUseTLS),
+		UpstreamTLS:                clonePtr(props.UpstreamTLS),
+		DatagramGuaranteedDelivery: clonePtr(props.DatagramGuaranteedDelivery),
+		AllowCrossRegionRouting:    clonePtr(props.AllowCrossRegionRouting),
+		TokenAuth:                  clonePtr(props.TokenAuth),
+		RstreamAuth:                clonePtr(props.RstreamAuth),
+		ChallengeMode:              clonePtr(props.ChallengeMode),
+	}
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if values == nil {
+		return nil
+	}
+	result := make(map[string]string, len(values))
+	for key, value := range values {
+		result[key] = value
+	}
+	return result
+}
+
 func normalizeCreateTunnelProperties(props TunnelProperties) (TunnelProperties, error) {
 	if props.Port != nil && (props.Protocol == nil || *props.Protocol != ProtocolTCP) {
 		return props, errors.New("a published port requires protocol tcp")

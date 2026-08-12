@@ -75,6 +75,95 @@ func TestClientEngineAndDetailsResolution(t *testing.T) {
 	}
 }
 
+type closeTrackingDialer struct {
+	closeCalls atomic.Int32
+	closeErr   error
+}
+
+func (d *closeTrackingDialer) Dial(context.Context, string, *tls.Config) (net.Conn, error) {
+	return nil, errors.New("unexpected dial")
+}
+
+func (d *closeTrackingDialer) Close() error {
+	d.closeCalls.Add(1)
+	return d.closeErr
+}
+
+func TestClientCloseIsTerminalConcurrentAndRepeatSafe(t *testing.T) {
+	closeErr := errors.New("close failed")
+	transport := &closeTrackingDialer{closeErr: closeErr}
+	engine := "engine.example.com:443"
+	client, err := NewClient(ClientOptions{Engine: engine, Transport: transport, OwnTransport: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.apiHttpClient(); err != nil {
+		t.Fatal(err)
+	}
+	const callers = 64
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- client.Close()
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if !errors.Is(err, closeErr) {
+			t.Fatalf("Close() error = %v, want %v", err, closeErr)
+		}
+	}
+	if got := transport.closeCalls.Load(); got != 1 {
+		t.Fatalf("transport close calls = %d, want 1", got)
+	}
+	if _, err := client.apiHttpClient(); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("apiHttpClient() error = %v, want net.ErrClosed", err)
+	}
+	if _, err := client.Dial(t.Context(), Addr{IdOrName: "tunnel"}); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("Dial() error = %v, want net.ErrClosed", err)
+	}
+	var nilClient *Client
+	if err := nilClient.Close(); err != nil {
+		t.Fatalf("nil Client.Close() error = %v", err)
+	}
+}
+
+func TestClientClosePreservesCallerOwnedTransport(t *testing.T) {
+	transport := &closeTrackingDialer{}
+	client, err := NewClient(ClientOptions{Engine: "engine.example.com:443", Transport: transport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := transport.closeCalls.Load(); got != 0 {
+		t.Fatalf("caller-owned transport close calls = %d, want 0", got)
+	}
+}
+
+func TestClientLazyDefaultTransportIsOwnedAndNotCreatedAfterClose(t *testing.T) {
+	engine := "engine.example.com:443"
+	client := &Client{EngineURL: &engine}
+	if _, ok := client.defaultTunnelTransport().(*AutoTransport); !ok || !client.ownsTransport {
+		t.Fatalf("default transport = %T owned=%v", client.Transport, client.ownsTransport)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	closed := &Client{EngineURL: &engine}
+	if err := closed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := closed.defaultTunnelTransport().(closedClientDialer); !ok || closed.Transport != nil {
+		t.Fatalf("closed client created transport %T", closed.Transport)
+	}
+}
+
 func TestToServerDetails(t *testing.T) {
 	if toServerDetails(nil) != nil {
 		t.Fatalf("nil server details should stay nil")
@@ -161,6 +250,10 @@ func TestControlChannelConnectCreateTunnelAndClose(t *testing.T) {
 	if details == nil || details.Agent == nil || *details.Agent != "engine" {
 		t.Fatalf("unexpected server details: %#v", details)
 	}
+	*details.Agent = "mutated"
+	if current := channel.ServerDetails(); current == nil || current.Agent == nil || *current.Agent != "engine" {
+		t.Fatalf("ServerDetails() exposed mutable state: %#v", current)
+	}
 	tunnel, err := channel.CreateTunnel(t.Context(), TunnelProperties{Name: StringPtr("web"), Type: TunnelTypePtr(TunnelTypeBytestream)})
 	if err != nil {
 		t.Fatalf("CreateTunnel() error = %v", err)
@@ -171,6 +264,17 @@ func TestControlChannelConnectCreateTunnelAndClose(t *testing.T) {
 	}
 	if props.ID == nil || *props.ID != "tun-1" || props.Name == nil || *props.Name != "web" {
 		t.Fatalf("unexpected tunnel properties: %#v", props)
+	}
+	*props.Name = "mutated"
+	props.Labels["tier"] = "mutated"
+	props.GeoIP[0] = "US"
+	props.TLSALPNs[0] = "mutated"
+	currentProps, err := tunnel.Properties()
+	if err != nil {
+		t.Fatalf("second Properties() error = %v", err)
+	}
+	if currentProps.Name == nil || *currentProps.Name != "web" || currentProps.Labels["tier"] != "edge" || currentProps.GeoIP[0] != "FR" || currentProps.TLSALPNs[0] != "h2" {
+		t.Fatalf("Properties() exposed mutable state: %#v", currentProps)
 	}
 	bytestream, ok := tunnel.(BytestreamTunnel)
 	if !ok {
@@ -691,6 +795,60 @@ func TestClientPacketDialUsesQUICDatagramChannel(t *testing.T) {
 	close(done)
 	if err := packetConn.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
+	}
+	dialer.wait(t, 1)
+}
+
+func TestClientPacketDialCloseJoinsDatagramWatcher(t *testing.T) {
+	dialer := newQueuedDatagramDialer(1)
+	dialer.enqueue(func(conn net.Conn) error {
+		reader := bufio.NewReader(conn)
+		writer := bufio.NewWriter(conn)
+		if _, err := expectStreamReq(reader, "datagrams", "token"); err != nil {
+			return err
+		}
+		if err := writeStreamRsp(writer, "01020304-0000-0000-0000-000000000000"); err != nil {
+			return err
+		}
+		_, err := reader.ReadByte()
+		if !errors.Is(err, io.EOF) {
+			return fmt.Errorf("control stream read error = %v, want EOF", err)
+		}
+		return nil
+	})
+	client := newTestClientWithDatagramDialer(dialer)
+	packetConn, err := client.PacketDial(t.Context(), Addr{IdOrName: "datagrams"})
+	if err != nil {
+		t.Fatalf("PacketDial() error = %v", err)
+	}
+	channel, ok := packetConn.(*quicDatagramChannel)
+	if !ok {
+		t.Fatalf("PacketDial() = %T, want *quicDatagramChannel", packetConn)
+	}
+	const callers = 64
+	start := make(chan struct{})
+	results := make(chan error, callers)
+	for range callers {
+		go func() {
+			<-start
+			results <- channel.Close()
+		}()
+	}
+	close(start)
+	for range callers {
+		select {
+		case err := <-results:
+			if err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("Close() did not join the datagram watcher")
+		}
+	}
+	select {
+	case <-channel.watchDone:
+	default:
+		t.Fatal("Close() returned before the datagram watcher stopped")
 	}
 	dialer.wait(t, 1)
 }
@@ -1292,6 +1450,77 @@ func TestControlChannelRejectsProxyRequestWithoutTunnelLifecycle(t *testing.T) {
 	}
 }
 
+func TestControlChannelBoundsProxyWorkAndJoinsWorkersOnClose(t *testing.T) {
+	lifecycleCtx, lifecycleCancel := context.WithCancel(t.Context())
+	dialer := &blockingProxyDialer{started: make(chan struct{}, 2)}
+	engine := "engine.example.com:443"
+	channel := &controlChannelImpl{
+		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
+		client:             &Client{EngineURL: &engine, Transport: dialer, TLSClientConfig: &tls.Config{MaxVersion: tls.VersionTLS12}},
+		w:                  bufio.NewWriter(io.Discard),
+		doneCh:             make(chan error, 1),
+		closedCh:           make(chan struct{}),
+		tunnels:            make(map[string]*bytestreamTunnelImpl),
+		proxyTransports:    make(map[string]Dialer),
+		lifecycleCtx:       lifecycleCtx,
+		lifecycleCancel:    lifecycleCancel,
+		datagramTunnels:    make(map[string]*quicDatagramListener),
+		datagramChannels:   make(map[datagramChannelID]*quicDatagramChannel),
+		proxyWorkerLimit:   2,
+		proxyQueueLimit:    3,
+		proxyResponseLimit: 4,
+	}
+	tunnelCtx, tunnelCancel := context.WithCancel(lifecycleCtx)
+	tunnel := &bytestreamTunnelImpl{ctrl: channel, tunnelID: "tun-1", closedCh: make(chan struct{}), conns: make(chan net.Conn, 1), ctx: tunnelCtx, cancel: tunnelCancel}
+	channel.tunnels[tunnel.tunnelID] = tunnel
+	enqueue := func(streamID string) error {
+		channel.mu.Lock()
+		defer channel.mu.Unlock()
+		return channel.handleProxyConnReq(&pb.ProxyConnReq{TunnelId: tunnel.tunnelID, StreamId: streamID, Secret: wrapperspb.String("proxy-secret"), ProxyEndpoint: wrapperspb.String("ingress.example.com:443")})
+	}
+	if err := enqueue("active-1"); err != nil {
+		t.Fatalf("enqueue active-1: %v", err)
+	}
+	if err := enqueue("active-2"); err != nil {
+		t.Fatalf("enqueue active-2: %v", err)
+	}
+	for range 2 {
+		select {
+		case <-dialer.started:
+		case <-time.After(time.Second):
+			t.Fatal("proxy worker did not start")
+		}
+	}
+	for i := range 3 {
+		if err := enqueue(fmt.Sprintf("queued-%d", i)); err != nil {
+			t.Fatalf("enqueue queued request %d: %v", i, err)
+		}
+	}
+	if err := enqueue("overflow"); err != nil {
+		t.Fatalf("overflow request was not rejected cleanly: %v", err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if calls := dialer.calls.Load(); calls != 2 {
+		t.Fatalf("concurrent proxy dials = %d, want 2", calls)
+	}
+	if maximum := dialer.maximum.Load(); maximum != 2 {
+		t.Fatalf("maximum concurrent proxy dials = %d, want 2", maximum)
+	}
+	want := errors.New("test shutdown")
+	channel.onError(want)
+	select {
+	case <-channel.closedCh:
+	case <-time.After(time.Second):
+		t.Fatal("control channel did not join proxy workers")
+	}
+	if active := dialer.active.Load(); active != 0 {
+		t.Fatalf("active proxy dials after close = %d, want 0", active)
+	}
+	if !errors.Is(channel.Err(), want) {
+		t.Fatalf("control channel error = %v, want %v", channel.Err(), want)
+	}
+}
+
 func testControlChannelAcceptsProxyConnection(t *testing.T, proxyEndpoint string) {
 	t.Helper()
 	dialer := newQueuedDialer(2)
@@ -1416,7 +1645,12 @@ func TestControlChannelDatagramProxyRoutesPacketsAndClosesChannels(t *testing.T)
 	}
 	assertDatagramChannelPresent(t, ctrl, channelID, true)
 	if err := tunnel.Close(); err != nil {
-		t.Fatalf("tunnel Close() error = %v", err)
+		select {
+		case serverErr := <-dialer.errs:
+			t.Fatalf("tunnel Close() error = %v; server error = %v", err, serverErr)
+		default:
+			t.Fatalf("tunnel Close() error = %v; server still running", err)
+		}
 	}
 	assertDatagramChannelPresent(t, ctrl, channelID, false)
 	if _, _, err := packetConn.ReadFrom(buf); !errors.Is(err, net.ErrClosed) {
@@ -1503,7 +1737,7 @@ func TestControlChannelProxyTransportUsesOneQUICTransportPerEndpoint(t *testing.
 		t.Fatalf("redirected proxy reused the control-channel QUIC transport")
 	}
 	firstQUIC, ok := first.(*QUICTransport)
-	if !ok || firstQUIC.ForceIPv4 != selected.ForceIPv4 || firstQUIC.ProxyHTTPHeaders["X-Test"] != "value" || firstQUIC.TLSProxyConfig == tlsProxyConfig || firstQUIC.TLSProxyConfig.ServerName != tlsProxyConfig.ServerName {
+	if !ok || firstQUIC.ForceIPv4 == selected.ForceIPv4 || firstQUIC.ForceIPv4 == nil || !*firstQUIC.ForceIPv4 || firstQUIC.ProxyHTTPHeaders["X-Test"] != "value" || firstQUIC.TLSProxyConfig == tlsProxyConfig || firstQUIC.TLSProxyConfig.ServerName != tlsProxyConfig.ServerName {
 		t.Fatalf("redirected proxy transport = %#v, want cloned QUIC configuration", first)
 	}
 	if again := channel.proxyTransportLocked(&firstEndpoint); again != first {
@@ -1513,8 +1747,12 @@ func TestControlChannelProxyTransportUsesOneQUICTransportPerEndpoint(t *testing.
 		t.Fatalf("second endpoint reused another endpoint transport")
 	}
 	selected.ProxyHTTPHeaders["X-Test"] = "changed"
+	*selected.ForceIPv4 = false
 	if firstQUIC.ProxyHTTPHeaders["X-Test"] != "value" {
 		t.Fatalf("proxy headers were not cloned")
+	}
+	if !*firstQUIC.ForceIPv4 {
+		t.Fatal("proxy scalar pointer was not cloned")
 	}
 	channel.conn = stubConn{}
 	channel.doneCh = make(chan error, 1)
@@ -1660,6 +1898,28 @@ func (d *countingFailDialer) Dial(context.Context, string, *tls.Config) (net.Con
 type timeoutOnceDialer struct {
 	calls atomic.Int64
 	next  Dialer
+}
+
+type blockingProxyDialer struct {
+	active  atomic.Int64
+	maximum atomic.Int64
+	calls   atomic.Int64
+	started chan struct{}
+}
+
+func (d *blockingProxyDialer) Dial(ctx context.Context, _ string, _ *tls.Config) (net.Conn, error) {
+	d.calls.Add(1)
+	active := d.active.Add(1)
+	defer d.active.Add(-1)
+	for {
+		maximum := d.maximum.Load()
+		if active <= maximum || d.maximum.CompareAndSwap(maximum, active) {
+			break
+		}
+	}
+	d.started <- struct{}{}
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 func (d *timeoutOnceDialer) Dial(ctx context.Context, address string, config *tls.Config) (net.Conn, error) {
@@ -1946,9 +2206,12 @@ func serveControlChannelLifecycle(conn net.Conn) error {
 	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenTunnelRsp{OpenTunnelRsp: &pb.OpenTunnelRsp{
 		RequestId: openTunnelReq.RequestId,
 		Payload: &pb.OpenTunnelRsp_TunnelProperties{TunnelProperties: toTunnelPropertiesPb(TunnelProperties{
-			ID:   StringPtr("tun-1"),
-			Name: props.Name,
-			Type: TunnelTypePtr(TunnelTypeBytestream),
+			ID:       StringPtr("tun-1"),
+			Name:     props.Name,
+			Type:     TunnelTypePtr(TunnelTypeBytestream),
+			Labels:   map[string]string{"tier": "edge"},
+			GeoIP:    []string{"FR"},
+			TLSALPNs: []string{"h2"},
 		})},
 	}}}); err != nil {
 		return err

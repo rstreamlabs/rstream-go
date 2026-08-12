@@ -79,13 +79,16 @@ type ClientSession struct {
 	runtime            *clientRuntime
 	loopCancel         context.CancelFunc
 	doneRead           chan struct{}
+	readDone           chan struct{}
 	done               chan struct{}
 	events             chan ClientSessionEvent
-	resultCh           chan clientSessionResult
 	closeTransportOnce sync.Once
 	finalizeOnce       sync.Once
+	loopWG             sync.WaitGroup
 	resultMu           sync.Mutex
 	closeResult        *clientSessionResult
+	result             clientSessionResult
+	resultReady        bool
 }
 
 func (cfg *ClientConfig) sessionConfig() *SessionConfig {
@@ -102,25 +105,25 @@ func (cfg *ClientConfig) sessionConfig() *SessionConfig {
 		AllocateTTY:            cfg.AllocateTTY,
 		SendHeartbeat:          cfg.SendHeartbeat,
 		Attach:                 cloneAttachConfig(cfg.Attach),
-		PayloadCrypto:          cfg.PayloadCrypto,
-		EndpointIdentity:       cfg.EndpointIdentity,
-		ExpectedServerIdentity: cfg.ExpectedServerIdentity,
+		PayloadCrypto:          clonePayloadCrypto(cfg.PayloadCrypto),
+		EndpointIdentity:       cloneWebTTYEndpointIdentity(cfg.EndpointIdentity),
+		ExpectedServerIdentity: cloneWebTTYEndpointIdentityPublic(cfg.ExpectedServerIdentity),
 		ClientCredential:       append([]byte(nil), cfg.ClientCredential...),
 		ClientPrincipalID:      cfg.ClientPrincipalID,
 		ClientDeviceID:         cfg.ClientDeviceID,
 		ClientBrowserID:        cfg.ClientBrowserID,
 		EnvVars:                append([]string(nil), cfg.EnvVars...),
-		Workdir:                cfg.Workdir,
-		Username:               cfg.Username,
+		Workdir:                cloneValuePtr(cfg.Workdir),
+		Username:               cloneValuePtr(cfg.Username),
 		CmdArgs:                append([]string(nil), cfg.CmdArgs...),
-		AuthToken:              cfg.AuthToken,
+		AuthToken:              cloneValuePtr(cfg.AuthToken),
 		TLSConfig:              cloneTLSConfig(cfg.TLSConfig),
-		MaxMessageSize:         cfg.MaxMessageSize,
-		ReadBufferSize:         cfg.ReadBufferSize,
-		WriteBufferSize:        cfg.WriteBufferSize,
-		OpenDeadline:           cfg.OpenDeadline,
-		CloseDeadline:          cfg.CloseDeadline,
-		HeartbeatInterval:      cfg.HeartbeatInterval,
+		MaxMessageSize:         cloneValuePtr(cfg.MaxMessageSize),
+		ReadBufferSize:         cloneValuePtr(cfg.ReadBufferSize),
+		WriteBufferSize:        cloneValuePtr(cfg.WriteBufferSize),
+		OpenDeadline:           cloneValuePtr(cfg.OpenDeadline),
+		CloseDeadline:          cloneValuePtr(cfg.CloseDeadline),
+		HeartbeatInterval:      cloneValuePtr(cfg.HeartbeatInterval),
 		Logger:                 cfg.Logger,
 	}
 }
@@ -139,33 +142,31 @@ func (cfg *SessionConfig) clientConfig() *ClientConfig {
 		AllocateTTY:            cfg.AllocateTTY,
 		SendHeartbeat:          cfg.SendHeartbeat,
 		Attach:                 cloneAttachConfig(cfg.Attach),
-		PayloadCrypto:          cfg.PayloadCrypto,
-		EndpointIdentity:       cfg.EndpointIdentity,
-		ExpectedServerIdentity: cfg.ExpectedServerIdentity,
+		PayloadCrypto:          clonePayloadCrypto(cfg.PayloadCrypto),
+		EndpointIdentity:       cloneWebTTYEndpointIdentity(cfg.EndpointIdentity),
+		ExpectedServerIdentity: cloneWebTTYEndpointIdentityPublic(cfg.ExpectedServerIdentity),
 		ClientCredential:       append([]byte(nil), cfg.ClientCredential...),
 		ClientPrincipalID:      cfg.ClientPrincipalID,
 		ClientDeviceID:         cfg.ClientDeviceID,
 		ClientBrowserID:        cfg.ClientBrowserID,
 		EnvVars:                append([]string(nil), cfg.EnvVars...),
-		Workdir:                cfg.Workdir,
-		Username:               cfg.Username,
+		Workdir:                cloneValuePtr(cfg.Workdir),
+		Username:               cloneValuePtr(cfg.Username),
 		CmdArgs:                append([]string(nil), cfg.CmdArgs...),
-		AuthToken:              cfg.AuthToken,
+		AuthToken:              cloneValuePtr(cfg.AuthToken),
 		TLSConfig:              cloneTLSConfig(cfg.TLSConfig),
-		MaxMessageSize:         cfg.MaxMessageSize,
-		ReadBufferSize:         cfg.ReadBufferSize,
-		WriteBufferSize:        cfg.WriteBufferSize,
-		OpenDeadline:           cfg.OpenDeadline,
-		CloseDeadline:          cfg.CloseDeadline,
-		HeartbeatInterval:      cfg.HeartbeatInterval,
+		MaxMessageSize:         cloneValuePtr(cfg.MaxMessageSize),
+		ReadBufferSize:         cloneValuePtr(cfg.ReadBufferSize),
+		WriteBufferSize:        cloneValuePtr(cfg.WriteBufferSize),
+		OpenDeadline:           cloneValuePtr(cfg.OpenDeadline),
+		CloseDeadline:          cloneValuePtr(cfg.CloseDeadline),
+		HeartbeatInterval:      cloneValuePtr(cfg.HeartbeatInterval),
 		Logger:                 cfg.Logger,
 	}
 }
 
 func resolveSessionConfig(cfg *SessionConfig) (*SessionConfig, error) {
-	if cfg == nil {
-		cfg = &SessionConfig{}
-	}
+	cfg = cloneSessionConfig(cfg)
 	if cfg.PayloadCrypto != nil && cfg.PayloadCrypto.SessionKeyGrant != nil && cfg.Attach == nil {
 		if cfg.ExpectedServerIdentity == nil {
 			return nil, fmt.Errorf("WebTTY E2E requires a known server endpoint identity")
@@ -237,48 +238,47 @@ func OpenClientSession(ctx context.Context, cfg *SessionConfig) (*ClientSession,
 		}
 	}
 	doneRead := make(chan struct{})
+	readDone := make(chan struct{})
 	readEvents := make(chan clientEvent, 1)
-	go runtime.readLoop(doneRead, readEvents)
+	go func() {
+		defer close(readDone)
+		runtime.readLoop(doneRead, readEvents)
+	}()
+	opened := false
+	defer func() {
+		if opened {
+			return
+		}
+		close(doneRead)
+		runtime.closeConn()
+		<-readDone
+	}()
 	var serverHello *pb.ServerHello
 	if runtime.cfg.ExpectedServerIdentity != nil {
 		event, err := waitForClientEvent(ctx, runtime.cfg.OpenDeadline, readEvents)
 		if err != nil {
-			close(doneRead)
-			runtime.closeConn()
 			return nil, err
 		}
 		msg := event.msg
 		if protocolError := msg.GetProtocolError(); protocolError != nil {
-			close(doneRead)
-			runtime.closeConn()
 			return nil, webTTYProtocolError(protocolError)
 		}
 		if msg == nil || msg.GetServerHello() == nil {
-			close(doneRead)
-			runtime.closeConn()
 			return nil, fmt.Errorf("%w: expected WebTTY server hello", errClientUnexpected)
 		}
 		serverHello = msg.GetServerHello()
 		if err := runtime.verifyServerHello(serverHello, endpoint.Transport); err != nil {
-			close(doneRead)
-			runtime.closeConn()
 			return nil, err
 		}
 	}
 	handshakeMessage, err := runtime.buildHandshakeMessage(endpoint.Transport, serverHello)
 	if err != nil {
-		close(doneRead)
-		runtime.closeConn()
 		return nil, err
 	}
 	if err := runtime.writeMessage(handshakeMessage); err != nil {
-		close(doneRead)
-		runtime.closeConn()
 		return nil, fmt.Errorf("failed to send WebTTY handshake message: %w", err)
 	}
 	if err := runtime.waitForOpen(ctx, readEvents); err != nil {
-		close(doneRead)
-		runtime.closeConn()
 		return nil, err
 	}
 	loopCtx, loopCancel := context.WithCancel(ctx)
@@ -286,22 +286,28 @@ func OpenClientSession(ctx context.Context, cfg *SessionConfig) (*ClientSession,
 		runtime:    runtime,
 		loopCancel: loopCancel,
 		doneRead:   doneRead,
+		readDone:   readDone,
 		done:       make(chan struct{}),
 		events:     make(chan ClientSessionEvent, 128),
-		resultCh:   make(chan clientSessionResult, 1),
 	}
 	loopErrCh := make(chan error, 1)
+	loopCount := 2
 	if resolved.SendHeartbeat {
-		go runtime.heartbeatLoop(loopCtx, loopErrCh)
+		loopCount++
 	}
-	go session.run(loopCtx, readEvents, loopErrCh)
-	go func() {
+	session.loopWG.Add(loopCount)
+	go session.runOwnedLoop(func() { session.run(loopCtx, readEvents, loopErrCh) })
+	if resolved.SendHeartbeat {
+		go session.runOwnedLoop(func() { runtime.heartbeatLoop(loopCtx, loopErrCh) })
+	}
+	go session.runOwnedLoop(func() {
 		select {
 		case <-ctx.Done():
-			_ = session.CloseWithError(ctx.Err())
+			session.requestClose(-1, ctx.Err(), true)
 		case <-session.done:
 		}
-	}()
+	})
+	opened = true
 	return session, nil
 }
 
@@ -474,6 +480,96 @@ func cloneAttachConfig(cfg *AttachConfig) *AttachConfig {
 	return &cloned
 }
 
+func cloneValuePtr[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func clonePayloadCrypto(value *PayloadCrypto) *PayloadCrypto {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	cloned.Capabilities = append([]OpenCapability(nil), value.Capabilities...)
+	cloned.SessionKeyGrant = sessionKeyGrantFromProto(sessionKeyGrantToProto(value.SessionKeyGrant))
+	return &cloned
+}
+
+func cloneWebTTYEndpointIdentity(value *WebTTYEndpointIdentity) *WebTTYEndpointIdentity {
+	if value == nil {
+		return nil
+	}
+	return &WebTTYEndpointIdentity{
+		Encryption: E2EIdentity{KeyID: cloneBytes(value.Encryption.KeyID), PublicKey: cloneBytes(value.Encryption.PublicKey), PrivateKey: cloneBytes(value.Encryption.PrivateKey)},
+		Signing:    WebTTYSigningIdentity{KeyID: cloneBytes(value.Signing.KeyID), PublicKey: cloneBytes(value.Signing.PublicKey), PrivateKey: cloneBytes(value.Signing.PrivateKey)},
+	}
+}
+
+func cloneWebTTYEndpointIdentityPublic(value *WebTTYEndpointIdentityPublic) *WebTTYEndpointIdentityPublic {
+	if value == nil {
+		return nil
+	}
+	return &WebTTYEndpointIdentityPublic{
+		EncryptionKeyID:     cloneBytes(value.EncryptionKeyID),
+		EncryptionPublicKey: cloneBytes(value.EncryptionPublicKey),
+		SigningKeyID:        cloneBytes(value.SigningKeyID),
+		SigningPublicKey:    cloneBytes(value.SigningPublicKey),
+	}
+}
+
+func cloneSessionConfig(value *SessionConfig) *SessionConfig {
+	if value == nil {
+		return &SessionConfig{}
+	}
+	cloned := *value
+	cloned.Attach = cloneAttachConfig(value.Attach)
+	cloned.PayloadCrypto = clonePayloadCrypto(value.PayloadCrypto)
+	cloned.EndpointIdentity = cloneWebTTYEndpointIdentity(value.EndpointIdentity)
+	cloned.ExpectedServerIdentity = cloneWebTTYEndpointIdentityPublic(value.ExpectedServerIdentity)
+	cloned.ClientCredential = cloneBytes(value.ClientCredential)
+	cloned.EnvVars = append([]string(nil), value.EnvVars...)
+	cloned.Workdir = cloneValuePtr(value.Workdir)
+	cloned.Username = cloneValuePtr(value.Username)
+	cloned.CmdArgs = append([]string(nil), value.CmdArgs...)
+	cloned.AuthToken = cloneValuePtr(value.AuthToken)
+	cloned.TLSConfig = cloneTLSConfig(value.TLSConfig)
+	cloned.MaxMessageSize = cloneValuePtr(value.MaxMessageSize)
+	cloned.ReadBufferSize = cloneValuePtr(value.ReadBufferSize)
+	cloned.WriteBufferSize = cloneValuePtr(value.WriteBufferSize)
+	cloned.OpenDeadline = cloneValuePtr(value.OpenDeadline)
+	cloned.CloseDeadline = cloneValuePtr(value.CloseDeadline)
+	cloned.HeartbeatInterval = cloneValuePtr(value.HeartbeatInterval)
+	return &cloned
+}
+
+func cloneClientConfig(value *ClientConfig) *ClientConfig {
+	if value == nil {
+		return &ClientConfig{}
+	}
+	cloned := *value
+	cloned.Attach = cloneAttachConfig(value.Attach)
+	cloned.PayloadCrypto = clonePayloadCrypto(value.PayloadCrypto)
+	cloned.EndpointIdentity = cloneWebTTYEndpointIdentity(value.EndpointIdentity)
+	cloned.ExpectedServerIdentity = cloneWebTTYEndpointIdentityPublic(value.ExpectedServerIdentity)
+	cloned.ClientCredential = cloneBytes(value.ClientCredential)
+	cloned.EnvVars = append([]string(nil), value.EnvVars...)
+	cloned.Workdir = cloneValuePtr(value.Workdir)
+	cloned.Username = cloneValuePtr(value.Username)
+	cloned.CmdArgs = append([]string(nil), value.CmdArgs...)
+	cloned.AuthToken = cloneValuePtr(value.AuthToken)
+	cloned.TLSConfig = cloneTLSConfig(value.TLSConfig)
+	cloned.MaxMessageSize = cloneValuePtr(value.MaxMessageSize)
+	cloned.ReadBufferSize = cloneValuePtr(value.ReadBufferSize)
+	cloned.WriteBufferSize = cloneValuePtr(value.WriteBufferSize)
+	cloned.OpenDeadline = cloneValuePtr(value.OpenDeadline)
+	cloned.CloseDeadline = cloneValuePtr(value.CloseDeadline)
+	cloned.HeartbeatInterval = cloneValuePtr(value.HeartbeatInterval)
+	return &cloned
+}
+
 func cloneTLSConfigWithWebTTYDefaults(cfg *tls.Config) *tls.Config {
 	tlsConfig := cloneTLSConfig(cfg)
 	if tlsConfig == nil {
@@ -497,11 +593,20 @@ func ensureTLSNextProto(values []string, proto string) []string {
 func (s *ClientSession) Events() <-chan ClientSessionEvent { return s.events }
 
 func (s *ClientSession) Wait() (int, error) {
-	result, ok := <-s.resultCh
-	if !ok {
+	if s == nil || s.done == nil {
 		return -1, io.EOF
 	}
-	return result.exitCode, result.err
+	<-s.done
+	s.loopWG.Wait()
+	if s.readDone != nil {
+		<-s.readDone
+	}
+	s.resultMu.Lock()
+	defer s.resultMu.Unlock()
+	if !s.resultReady {
+		return -1, io.EOF
+	}
+	return s.result.exitCode, s.result.err
 }
 
 func (s *ClientSession) SendInput(data []byte) error {
@@ -551,12 +656,19 @@ func (s *ClientSession) Resize(rows, cols int) error {
 
 func (s *ClientSession) Close() error {
 	s.requestClose(-1, nil, false)
+	_, _ = s.Wait()
 	return nil
 }
 
 func (s *ClientSession) CloseWithError(err error) error {
 	s.requestClose(-1, err, true)
+	_, _ = s.Wait()
 	return nil
+}
+
+func (s *ClientSession) runOwnedLoop(loop func()) {
+	defer s.loopWG.Done()
+	loop()
 }
 
 func (s *ClientSession) run(ctx context.Context, readEvents <-chan clientEvent, loopErrCh <-chan error) {
@@ -643,14 +755,17 @@ func (s *ClientSession) finalize(exitCode int, err error) {
 	s.finalizeOnce.Do(func() {
 		s.loopCancel()
 		close(s.doneRead)
+		if s.runtime != nil {
+			s.runtime.closeConn()
+		}
 		result := clientSessionResult{exitCode: exitCode, err: err}
 		s.resultMu.Lock()
 		if s.closeResult != nil {
 			result = *s.closeResult
 		}
+		s.result = result
+		s.resultReady = true
 		s.resultMu.Unlock()
-		s.resultCh <- result
-		close(s.resultCh)
 		close(s.events)
 		close(s.done)
 	})

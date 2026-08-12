@@ -74,6 +74,7 @@ type Handler struct {
 	logger     *slog.Logger
 	sessionsMu sync.Mutex
 	sessions   map[*session]struct{}
+	sessionWG  sync.WaitGroup
 	sessionIDs *sessionIDGenerator
 	draining   atomic.Bool
 }
@@ -98,9 +99,7 @@ func NewWebTTYHandler(cfg *ServerConfig) *Handler {
 }
 
 func resolveServerConfig(cfg *ServerConfig) *ServerConfig {
-	if cfg == nil {
-		cfg = &ServerConfig{}
-	}
+	cfg = cloneServerConfig(cfg)
 	if cfg.MaxMessageSize == nil {
 		value := defaultMaxMessageSize
 		cfg.MaxMessageSize = &value
@@ -146,7 +145,42 @@ func (h *Handler) Config() *ServerConfig {
 	if h == nil {
 		return nil
 	}
-	return h.cfg
+	return cloneServerConfig(h.cfg)
+}
+
+func cloneServerConfig(value *ServerConfig) *ServerConfig {
+	if value == nil {
+		return &ServerConfig{}
+	}
+	cloned := *value
+	cloned.MaxMessageSize = cloneValuePtr(value.MaxMessageSize)
+	cloned.ReadBufferSize = cloneValuePtr(value.ReadBufferSize)
+	cloned.WriteBufferSize = cloneValuePtr(value.WriteBufferSize)
+	if value.EnvVars != nil {
+		env := make(map[string]string, len(*value.EnvVars))
+		for key, entry := range *value.EnvVars {
+			env[key] = entry
+		}
+		cloned.EnvVars = &env
+	}
+	cloned.SessionOpenDeadline = cloneValuePtr(value.SessionOpenDeadline)
+	cloned.SessionCloseDeadline = cloneValuePtr(value.SessionCloseDeadline)
+	cloned.HeartbeatInterval = cloneValuePtr(value.HeartbeatInterval)
+	cloned.AuthToken = cloneValuePtr(value.AuthToken)
+	cloned.AllowUnauthenticated = cloneValuePtr(value.AllowUnauthenticated)
+	cloned.AllowedOrigins = append([]string(nil), value.AllowedOrigins...)
+	cloned.PayloadCrypto = clonePayloadCrypto(value.PayloadCrypto)
+	cloned.RequireSessionKeyGrant = cloneValuePtr(value.RequireSessionKeyGrant)
+	cloned.EndpointIdentity = cloneWebTTYEndpointIdentity(value.EndpointIdentity)
+	cloned.RequireClientProof = cloneValuePtr(value.RequireClientProof)
+	cloned.AuthorizedClientSigningKeys = make(map[string][]byte, len(value.AuthorizedClientSigningKeys))
+	for key, entry := range value.AuthorizedClientSigningKeys {
+		cloned.AuthorizedClientSigningKeys[key] = cloneBytes(entry)
+	}
+	cloned.ExecutionMode = cloneValuePtr(value.ExecutionMode)
+	cloned.DefaultUsername = cloneValuePtr(value.DefaultUsername)
+	cloned.AllowClientUser = cloneValuePtr(value.AllowClientUser)
+	return &cloned
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -227,13 +261,18 @@ func (h *Handler) registerSession(s *session) bool {
 		return false
 	}
 	h.sessions[s] = struct{}{}
+	h.sessionWG.Add(1)
 	return true
 }
 
 func (h *Handler) unregisterSession(s *session) {
 	h.sessionsMu.Lock()
 	defer h.sessionsMu.Unlock()
+	if _, ok := h.sessions[s]; !ok {
+		return
+	}
 	delete(h.sessions, s)
+	h.sessionWG.Done()
 }
 
 func (h *Handler) snapshotSessions() []*session {
@@ -247,6 +286,8 @@ func (h *Handler) snapshotSessions() []*session {
 }
 
 func (h *Handler) BeginDrain() {
+	h.sessionsMu.Lock()
+	defer h.sessionsMu.Unlock()
 	h.draining.Store(true)
 }
 
@@ -274,6 +315,7 @@ func (h *Handler) Shutdown(ctx context.Context) error {
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
+		h.sessionWG.Wait()
 		close(done)
 	}()
 	select {

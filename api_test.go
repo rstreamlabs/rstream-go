@@ -43,21 +43,23 @@ func TestCloneProxyHTTPHeadersCopiesMap(t *testing.T) {
 func TestAPIDialerClonesTransportState(t *testing.T) {
 	tlsCfg := &tls.Config{ServerName: "proxy.example.com", NextProtos: []string{"h2"}}
 	headers := map[string]string{"X-Trace": "source"}
-	client := &Client{Transport: &Transport{ProxyHTTPHeaders: headers, TLSProxyConfig: tlsCfg, ForceIPv4: BoolPtr(true)}}
+	forceIPv4 := true
+	client := &Client{Transport: &Transport{ProxyHTTPHeaders: headers, TLSProxyConfig: tlsCfg, ForceIPv4: &forceIPv4}}
 	dialer, ok := client.apiDialer().(*Transport)
 	if !ok {
 		t.Fatalf("apiDialer() returned %T, want *Transport", client.apiDialer())
 	}
 	headers["X-Trace"] = "mutated"
 	tlsCfg.ServerName = "mutated.example.com"
+	forceIPv4 = false
 	if dialer.ProxyHTTPHeaders["X-Trace"] != "source" {
 		t.Fatalf("proxy headers should be cloned, got %#v", dialer.ProxyHTTPHeaders)
 	}
 	if dialer.TLSProxyConfig == tlsCfg || dialer.TLSProxyConfig.ServerName != "proxy.example.com" {
 		t.Fatalf("TLS proxy config should be cloned, got %#v", dialer.TLSProxyConfig)
 	}
-	if dialer.ForceIPv4 == nil || !*dialer.ForceIPv4 {
-		t.Fatalf("ForceIPv4 not preserved")
+	if dialer.ForceIPv4 == nil || !*dialer.ForceIPv4 || dialer.ForceIPv4 == client.Transport.(*Transport).ForceIPv4 {
+		t.Fatalf("ForceIPv4 was not cloned")
 	}
 }
 
@@ -93,11 +95,16 @@ func TestAPIDialerMapsQUICTransportToTCPTransport(t *testing.T) {
 	}
 	headers["X-Trace"] = "mutated"
 	tlsCfg.ServerName = "mutated.example.com"
+	*client.Transport.(*QUICTransport).LocalAddr = "mutated"
+	*client.Transport.(*QUICTransport).ForceIPv6 = false
 	if dialer.ProxyHTTP == nil || *dialer.ProxyHTTP != "https://masque.example.com:443" || dialer.ProxySOCKS5 == nil || *dialer.ProxySOCKS5 != "socks5://socks.example.com:1080" {
 		t.Fatalf("proxy settings not preserved: %#v", dialer)
 	}
 	if dialer.ProxyHTTPHeaders["X-Trace"] != "source" {
 		t.Fatalf("proxy headers should be cloned, got %#v", dialer.ProxyHTTPHeaders)
+	}
+	if *dialer.LocalAddr != "127.0.0.1" || !*dialer.ForceIPv6 || dialer.LocalAddr == client.Transport.(*QUICTransport).LocalAddr || dialer.ForceIPv6 == client.Transport.(*QUICTransport).ForceIPv6 {
+		t.Fatalf("QUIC scalar pointers should be cloned: %#v", dialer)
 	}
 	if dialer.TLSProxyConfig == tlsCfg || dialer.TLSProxyConfig.ServerName != "proxy.example.com" {
 		t.Fatalf("TLS proxy config should be cloned, got %#v", dialer.TLSProxyConfig)
@@ -497,6 +504,48 @@ func TestAPIHTTPClientConcurrentInitialization(t *testing.T) {
 	}
 }
 
+func TestClientCloseIdleConnectionsRotatesOwnedAPITransport(t *testing.T) {
+	client := &Client{}
+	first, err := client.apiHttpClient()
+	if err != nil {
+		t.Fatalf("apiHttpClient() error = %v", err)
+	}
+	client.CloseIdleConnections()
+	second, err := client.apiHttpClient()
+	if err != nil {
+		t.Fatalf("apiHttpClient() error = %v", err)
+	}
+	if first.Transport == second.Transport {
+		t.Fatalf("API transport was retained after CloseIdleConnections()")
+	}
+}
+
+func TestClientCloseIdleConnectionsIsConcurrentAndRepeatSafe(t *testing.T) {
+	client := &Client{}
+	const workers = 32
+	var wg sync.WaitGroup
+	for range workers {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				if _, err := client.apiHttpClient(); err != nil {
+					t.Errorf("apiHttpClient() error = %v", err)
+					return
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				client.CloseIdleConnections()
+			}
+		}()
+	}
+	wg.Wait()
+	client.CloseIdleConnections()
+}
+
 func TestAPIClientErrors(t *testing.T) {
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -599,6 +648,55 @@ func TestWatchWSAgainstLocalTLSServer(t *testing.T) {
 	}
 	if got.Type != "client" || string(got.Object) != `{"id":"client-1"}` {
 		t.Fatalf("websocket event = %#v", got)
+	}
+}
+
+func TestWSConnConcurrentCloseJoinsPingLoop(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	serverDone := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer close(serverDone)
+		defer conn.Close()
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+	url := "ws" + strings.TrimPrefix(server.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	watch := newWSConn(conn, time.Millisecond, time.Second)
+	const callers = 64
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for range callers {
+		wg.Add(1)
+		go func() { defer wg.Done(); errs <- watch.Close() }()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	}
+	select {
+	case <-watch.pingDone:
+	default:
+		t.Fatal("Close() returned before ping loop stopped")
+	}
+	select {
+	case <-serverDone:
+	case <-time.After(time.Second):
+		t.Fatal("server did not observe websocket closure")
 	}
 }
 

@@ -49,7 +49,11 @@ type QUICTransport struct {
 	TLSProxyConfig       *tls.Config
 	ProxyFromEnvironment *bool
 	mu                   sync.Mutex
-	connectMu            sync.Mutex
+	connecting           bool
+	connectDone          chan struct{}
+	connectCancel        context.CancelFunc
+	connectWaiters       int
+	connectFn            func(context.Context, string, *tls.Config) (*quic.Conn, *quic.Transport, net.PacketConn, io.Closer, error)
 	quicConn             *quic.Conn
 	qtransport           *quic.Transport
 	pconn                net.PacketConn
@@ -58,6 +62,7 @@ type QUICTransport struct {
 	closeGeneration      uint64
 	datagramChannels     map[datagramChannelID]*quicDatagramChannel
 	datagramReadRunning  bool
+	datagramReadDone     chan struct{}
 }
 
 func cloneQUICTransport(transport *QUICTransport) *QUICTransport {
@@ -65,21 +70,21 @@ func cloneQUICTransport(transport *QUICTransport) *QUICTransport {
 		return &QUICTransport{}
 	}
 	return &QUICTransport{
-		LocalAddr:            transport.LocalAddr,
-		NetworkInterface:     transport.NetworkInterface,
-		ForceIPv4:            transport.ForceIPv4,
-		ForceIPv6:            transport.ForceIPv6,
-		DNSOverride:          transport.DNSOverride,
-		DNSOverTLS:           transport.DNSOverTLS,
-		DNSServerName:        transport.DNSServerName,
-		DNSSECEnabled:        transport.DNSSECEnabled,
-		ProxyHTTP:            transport.ProxyHTTP,
-		ProxySOCKS5:          transport.ProxySOCKS5,
-		ProxyUsername:        transport.ProxyUsername,
-		ProxyPassword:        transport.ProxyPassword,
+		LocalAddr:            clonePtr(transport.LocalAddr),
+		NetworkInterface:     clonePtr(transport.NetworkInterface),
+		ForceIPv4:            clonePtr(transport.ForceIPv4),
+		ForceIPv6:            clonePtr(transport.ForceIPv6),
+		DNSOverride:          clonePtr(transport.DNSOverride),
+		DNSOverTLS:           clonePtr(transport.DNSOverTLS),
+		DNSServerName:        clonePtr(transport.DNSServerName),
+		DNSSECEnabled:        clonePtr(transport.DNSSECEnabled),
+		ProxyHTTP:            clonePtr(transport.ProxyHTTP),
+		ProxySOCKS5:          clonePtr(transport.ProxySOCKS5),
+		ProxyUsername:        clonePtr(transport.ProxyUsername),
+		ProxyPassword:        clonePtr(transport.ProxyPassword),
 		ProxyHTTPHeaders:     cloneProxyHTTPHeaders(transport.ProxyHTTPHeaders),
 		TLSProxyConfig:       cloneTLSConfig(transport.TLSProxyConfig),
-		ProxyFromEnvironment: transport.ProxyFromEnvironment,
+		ProxyFromEnvironment: clonePtr(transport.ProxyFromEnvironment),
 	}
 }
 
@@ -110,49 +115,85 @@ func (t *QUICTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Confi
 }
 
 func (t *QUICTransport) connection(ctx context.Context, addr string, tlsCfg *tls.Config, origin string) (*quic.Conn, error) {
-	t.mu.Lock()
-	if t.quicConn != nil {
-		if t.origin != origin {
+	var generation uint64
+	initialized := false
+	for {
+		t.mu.Lock()
+		if !initialized {
+			generation = t.closeGeneration
+			initialized = true
+		} else if t.closeGeneration != generation {
 			t.mu.Unlock()
-			return nil, fmt.Errorf("QUIC transport already connected to %s", t.origin)
+			return nil, net.ErrClosed
 		}
-		conn := t.quicConn
+		if t.quicConn != nil {
+			if t.origin != origin {
+				connectedOrigin := t.origin
+				t.mu.Unlock()
+				return nil, fmt.Errorf("QUIC transport already connected to %s", connectedOrigin)
+			}
+			conn := t.quicConn
+			t.mu.Unlock()
+			return conn, nil
+		}
+		if t.connecting {
+			done := t.connectDone
+			t.connectWaiters++
+			t.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				t.mu.Lock()
+				t.connectWaiters--
+				t.mu.Unlock()
+				return nil, ctx.Err()
+			case <-done:
+				t.mu.Lock()
+				t.connectWaiters--
+				t.mu.Unlock()
+				continue
+			}
+		}
+		connectCtx, cancel := context.WithCancel(ctx)
+		t.connecting = true
+		t.connectDone = make(chan struct{})
+		t.connectCancel = cancel
+		done := t.connectDone
+		connectGeneration := t.closeGeneration
+		connectFn := t.connectFn
 		t.mu.Unlock()
+		if connectFn == nil {
+			connectFn = t.connect
+		}
+		conn, qtransport, pconn, proxyCloser, err := connectFn(connectCtx, addr, tlsCfg)
+		cancel()
+		if err == nil && conn == nil {
+			err = errors.New("QUIC connect returned a nil connection")
+		}
+		t.mu.Lock()
+		stale := t.closeGeneration != connectGeneration
+		t.connecting = false
+		t.connectCancel = nil
+		close(done)
+		if err == nil && !stale {
+			t.quicConn = conn
+			t.qtransport = qtransport
+			t.pconn = pconn
+			t.proxyCloser = proxyCloser
+			t.origin = origin
+		}
+		t.mu.Unlock()
+		if stale {
+			if conn != nil {
+				_ = conn.CloseWithError(0, "transport closed")
+			}
+			_ = closeQUICTransportResources(qtransport, pconn, proxyCloser)
+			return nil, net.ErrClosed
+		}
+		if err != nil {
+			return nil, err
+		}
 		return conn, nil
 	}
-	t.mu.Unlock()
-	t.connectMu.Lock()
-	defer t.connectMu.Unlock()
-	t.mu.Lock()
-	if t.quicConn != nil {
-		if t.origin != origin {
-			t.mu.Unlock()
-			return nil, fmt.Errorf("QUIC transport already connected to %s", t.origin)
-		}
-		conn := t.quicConn
-		t.mu.Unlock()
-		return conn, nil
-	}
-	generation := t.closeGeneration
-	t.mu.Unlock()
-	conn, qtransport, pconn, proxyCloser, err := t.connect(ctx, addr, tlsCfg)
-	if err != nil {
-		return nil, err
-	}
-	t.mu.Lock()
-	if t.closeGeneration != generation {
-		t.mu.Unlock()
-		_ = conn.CloseWithError(0, "transport closed")
-		_ = closeQUICTransportResources(qtransport, pconn, proxyCloser)
-		return nil, net.ErrClosed
-	}
-	t.quicConn = conn
-	t.qtransport = qtransport
-	t.pconn = pconn
-	t.proxyCloser = proxyCloser
-	t.origin = origin
-	t.mu.Unlock()
-	return conn, nil
 }
 
 // SendDatagram sends a datagram over the underlying QUIC connection.
@@ -187,7 +228,9 @@ func (t *QUICTransport) ReceiveDatagram(ctx context.Context) ([]byte, error) {
 func (t *QUICTransport) Close() error {
 	t.mu.Lock()
 	t.closeGeneration++
+	connectCancel := t.connectCancel
 	channels := t.detachDatagramChannelsLocked()
+	datagramReadDone := t.datagramReadDone
 	conn := t.quicConn
 	qtransport := t.qtransport
 	pconn := t.pconn
@@ -198,6 +241,9 @@ func (t *QUICTransport) Close() error {
 	t.pconn = nil
 	t.proxyCloser = nil
 	t.mu.Unlock()
+	if connectCancel != nil {
+		connectCancel()
+	}
 	var err error
 	if conn != nil {
 		err = conn.CloseWithError(0, "transport closed")
@@ -207,6 +253,9 @@ func (t *QUICTransport) Close() error {
 	}
 	for _, ch := range channels {
 		_ = ch.Close()
+	}
+	if datagramReadDone != nil {
+		<-datagramReadDone
 	}
 	return err
 }
@@ -258,12 +307,15 @@ func (t *QUICTransport) registerDatagramChannel(id datagramChannelID, ch *quicDa
 	t.datagramChannels[id] = ch
 	conn := t.quicConn
 	start := !t.datagramReadRunning
+	var done chan struct{}
 	if start {
 		t.datagramReadRunning = true
+		done = make(chan struct{})
+		t.datagramReadDone = done
 	}
 	t.mu.Unlock()
 	if start {
-		go t.datagramReadLoop(conn)
+		go t.datagramReadLoop(conn, done)
 	}
 	return true
 }
@@ -276,7 +328,8 @@ func (t *QUICTransport) unregisterDatagramChannel(id datagramChannelID, ch *quic
 	}
 }
 
-func (t *QUICTransport) datagramReadLoop(conn *quic.Conn) {
+func (t *QUICTransport) datagramReadLoop(conn *quic.Conn, done chan struct{}) {
+	defer close(done)
 	for {
 		data, err := conn.ReceiveDatagram(conn.Context())
 		if err != nil {
@@ -311,6 +364,7 @@ func (t *QUICTransport) closeDatagramChannelsForConn(conn *quic.Conn) {
 	}
 	if t.quicConn == conn {
 		t.datagramReadRunning = false
+		t.datagramReadDone = nil
 	}
 	channels := t.detachDatagramChannelsLocked()
 	t.mu.Unlock()
@@ -559,6 +613,7 @@ type quicDatagramChannel struct {
 	deadlineMu    sync.Mutex
 	closed        bool
 	onClose       func(*quicDatagramChannel)
+	watchDone     chan struct{}
 	readDeadline  *packetDeadline
 	writeDeadline *packetDeadline
 }
@@ -619,6 +674,14 @@ func (c *quicDatagramChannel) WriteTo(p []byte, addr net.Addr) (int, error) {
 }
 
 func (c *quicDatagramChannel) Close() error {
+	c.initiateClose()
+	if c.watchDone != nil {
+		<-c.watchDone
+	}
+	return nil
+}
+
+func (c *quicDatagramChannel) initiateClose() {
 	c.once.Do(func() {
 		c.deadlineMu.Lock()
 		c.closed = true
@@ -636,7 +699,6 @@ func (c *quicDatagramChannel) Close() error {
 			c.onClose(c)
 		}
 	})
-	return nil
 }
 
 func (c *quicDatagramChannel) LocalAddr() net.Addr {

@@ -63,6 +63,10 @@ type packetListenerWrapper struct {
 	mu            sync.Mutex
 	closed        bool
 	closeErr      error
+	shutdownErr   error
+	shutdownOnce  sync.Once
+	shutdownDone  chan struct{}
+	readers       sync.WaitGroup
 	inner         PacketListener
 	conns         map[string]*packetListenerConn
 	pkts          chan packet
@@ -236,6 +240,7 @@ func PacketConnFromPacketListener(l PacketListener) net.PacketConn {
 		conns:         make(map[string]*packetListenerConn),
 		pkts:          make(chan packet, 100),
 		done:          make(chan struct{}),
+		shutdownDone:  make(chan struct{}),
 		readDeadline:  newPacketDeadline(),
 		writeDeadline: newPacketDeadline(),
 	}
@@ -244,10 +249,14 @@ func PacketConnFromPacketListener(l PacketListener) net.PacketConn {
 }
 
 func (pl *packetListenerWrapper) accept() {
+	defer func() {
+		pl.readers.Wait()
+		close(pl.shutdownDone)
+	}()
 	for {
 		conn, raddr, err := pl.inner.Accept()
 		if err != nil {
-			_ = pl.shutdown(err)
+			pl.initiateShutdown(err)
 			return
 		}
 		pl.mu.Lock()
@@ -264,6 +273,7 @@ func (pl *packetListenerWrapper) accept() {
 			previous.active.Store(false)
 		}
 		pl.conns[key] = entry
+		pl.readers.Add(1)
 		pl.mu.Unlock()
 		if previous != nil {
 			_ = previous.conn.Close()
@@ -278,6 +288,7 @@ func (pl *packetListenerWrapper) accept() {
 
 func (pl *packetListenerWrapper) read(entry *packetListenerConn, key string) {
 	defer func() {
+		pl.readers.Done()
 		entry.active.Store(false)
 		_ = entry.conn.Close()
 		pl.mu.Lock()
@@ -361,31 +372,36 @@ func (pl *packetListenerWrapper) WriteTo(p []byte, addr net.Addr) (n int, err er
 }
 
 func (pl *packetListenerWrapper) Close() error {
-	return pl.shutdown(net.ErrClosed)
+	pl.initiateShutdown(net.ErrClosed)
+	<-pl.shutdownDone
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
+	return pl.shutdownErr
 }
 
-func (pl *packetListenerWrapper) shutdown(err error) error {
-	pl.mu.Lock()
-	if pl.closed {
+func (pl *packetListenerWrapper) initiateShutdown(err error) {
+	pl.shutdownOnce.Do(func() {
+		pl.mu.Lock()
+		pl.closed = true
+		if err == nil {
+			err = net.ErrClosed
+		}
+		pl.closeErr = err
+		conns := pl.conns
+		pl.conns = nil
+		for _, entry := range conns {
+			entry.active.Store(false)
+		}
+		close(pl.done)
 		pl.mu.Unlock()
-		return nil
-	}
-	pl.closed = true
-	if err == nil {
-		err = net.ErrClosed
-	}
-	pl.closeErr = err
-	conns := pl.conns
-	pl.conns = nil
-	for _, entry := range conns {
-		entry.active.Store(false)
-	}
-	close(pl.done)
-	pl.mu.Unlock()
-	for _, entry := range conns {
-		_ = entry.conn.Close()
-	}
-	return pl.inner.Close()
+		shutdownErr := pl.inner.Close()
+		for _, entry := range conns {
+			_ = entry.conn.Close()
+		}
+		pl.mu.Lock()
+		pl.shutdownErr = shutdownErr
+		pl.mu.Unlock()
+	})
 }
 
 func packetAddrKey(addr net.Addr) string {

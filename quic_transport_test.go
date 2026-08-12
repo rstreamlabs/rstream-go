@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -276,6 +277,141 @@ func TestQUICTransportCloseInvalidatesInFlightConnectGeneration(t *testing.T) {
 	transport.LocalAddr = &localAddr
 	if _, err := transport.Dial(t.Context(), "127.0.0.1:443", &tls.Config{}); err == nil || !strings.Contains(err.Error(), "failed to parse local address") {
 		t.Fatalf("Dial() after idle Close() error = %v, want local address validation", err)
+	}
+}
+
+func TestQUICTransportCloseJoinsDatagramReader(t *testing.T) {
+	server := newTestQUICEchoServer(t)
+	defer server.close()
+	transport := &QUICTransport{}
+	conn, err := transport.Dial(t.Context(), server.addr, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{testQUICALPN}})
+	if err != nil {
+		t.Fatalf("Dial() error = %v", err)
+	}
+	defer conn.Close()
+	channel := newTestQUICDatagramChannel(t)
+	var channelID datagramChannelID
+	channelID[0] = 1
+	if !transport.registerDatagramChannel(channelID, channel) {
+		t.Fatal("registerDatagramChannel() rejected a fresh channel")
+	}
+	transport.mu.Lock()
+	readDone := transport.datagramReadDone
+	transport.mu.Unlock()
+	if readDone == nil {
+		t.Fatal("datagram reader completion signal was not initialized")
+	}
+	if err := transport.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	select {
+	case <-readDone:
+	default:
+		t.Fatal("Close() returned before the datagram reader stopped")
+	}
+}
+
+func TestQUICTransportConcurrentConnectWaitIsCancelableAndCloseCancelsOwner(t *testing.T) {
+	started := make(chan struct{})
+	var startOnce sync.Once
+	var calls atomic.Int32
+	transport := &QUICTransport{connectFn: func(ctx context.Context, _ string, _ *tls.Config) (*quic.Conn, *quic.Transport, net.PacketConn, io.Closer, error) {
+		calls.Add(1)
+		startOnce.Do(func() { close(started) })
+		<-ctx.Done()
+		return nil, nil, nil, nil, ctx.Err()
+	}}
+	first := make(chan error, 1)
+	go func() {
+		_, err := transport.Dial(t.Context(), "127.0.0.1:443", &tls.Config{NextProtos: []string{"test"}})
+		first <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first connect did not start")
+	}
+	waitCtx, cancelWait := context.WithCancel(t.Context())
+	cancelWait()
+	if _, err := transport.Dial(waitCtx, "127.0.0.1:443", &tls.Config{NextProtos: []string{"test"}}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("waiting Dial() error = %v, want context.Canceled", err)
+	}
+	if err := transport.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-first:
+		if !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("owner Dial() error = %v, want net.ErrClosed", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close() did not cancel in-flight connect")
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("connect calls = %d, want 1", got)
+	}
+}
+
+func TestQUICTransportCloseRejectsAllInFlightConnectWaiters(t *testing.T) {
+	started := make(chan struct{})
+	var startOnce sync.Once
+	var calls atomic.Int32
+	transport := &QUICTransport{connectFn: func(ctx context.Context, _ string, _ *tls.Config) (*quic.Conn, *quic.Transport, net.PacketConn, io.Closer, error) {
+		calls.Add(1)
+		startOnce.Do(func() { close(started) })
+		<-ctx.Done()
+		return nil, nil, nil, nil, ctx.Err()
+	}}
+	const dials = 64
+	errs := make(chan error, dials)
+	for range dials {
+		go func() {
+			_, err := transport.Dial(t.Context(), "127.0.0.1:443", &tls.Config{NextProtos: []string{"test"}})
+			errs <- err
+		}()
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("connect did not start")
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		transport.mu.Lock()
+		waiters := transport.connectWaiters
+		transport.mu.Unlock()
+		if waiters == dials-1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("connect waiters = %d, want %d", waiters, dials-1)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := transport.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for range dials {
+		select {
+		case err := <-errs:
+			if !errors.Is(err, net.ErrClosed) {
+				t.Fatalf("in-flight Dial() error = %v, want net.ErrClosed", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("in-flight Dial() did not stop")
+		}
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("connect calls = %d, want 1", got)
+	}
+}
+
+func TestQUICTransportRejectsNilSuccessfulConnection(t *testing.T) {
+	transport := &QUICTransport{connectFn: func(context.Context, string, *tls.Config) (*quic.Conn, *quic.Transport, net.PacketConn, io.Closer, error) {
+		return nil, nil, nil, nil, nil
+	}}
+	if _, err := transport.Dial(t.Context(), "127.0.0.1:443", &tls.Config{NextProtos: []string{"test"}}); err == nil || !strings.Contains(err.Error(), "nil connection") {
+		t.Fatalf("Dial() error = %v", err)
 	}
 }
 
@@ -582,6 +718,33 @@ func TestMASQUEUDPPacketConnWriteLifecycle(t *testing.T) {
 	}
 }
 
+func TestMASQUEUDPPacketConnCloseIsConcurrentAndRepeatSafe(t *testing.T) {
+	closeErr := errors.New("stream close failed")
+	stream := newBlockingMASQUEUDPStream()
+	stream.closeErr = closeErr
+	conn := newMASQUEUDPPacketConn(stream, stubNetAddr("local"), stubNetAddr("remote"))
+	const callers = 64
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for range callers {
+		wg.Add(1)
+		go func() { defer wg.Done(); errs <- conn.Close() }()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if !errors.Is(err, closeErr) {
+			t.Fatalf("Close() error = %v, want %v", err, closeErr)
+		}
+	}
+	if got := stream.closeCalls.Load(); got != 3 {
+		t.Fatalf("underlying close calls = %d, want lifecycle-constant 3", got)
+	}
+	if err := conn.SetReadDeadline(time.Now()); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("SetReadDeadline() after Close error = %v, want net.ErrClosed", err)
+	}
+}
+
 func TestQUICTransportMASQUEProxyHonorsCustomDNSAndLocalAddress(t *testing.T) {
 	resolverAddr := startDNSResolutionTestServer(t, dnsAnswerAllA("127.0.0.1"))
 	server := newTestQUICEchoServer(t)
@@ -735,11 +898,13 @@ func (p *recordingDatagramProvider) ReceiveDatagram(context.Context) ([]byte, er
 }
 
 type blockingMASQUEUDPStream struct {
-	datagrams chan []byte
-	closed    chan struct{}
-	once      sync.Once
-	sent      [][]byte
-	sendErr   error
+	datagrams  chan []byte
+	closed     chan struct{}
+	once       sync.Once
+	closeCalls atomic.Int32
+	closeErr   error
+	sent       [][]byte
+	sendErr    error
 }
 
 func newBlockingMASQUEUDPStream() *blockingMASQUEUDPStream {
@@ -759,10 +924,11 @@ func (s *blockingMASQUEUDPStream) Write(p []byte) (int, error) {
 }
 
 func (s *blockingMASQUEUDPStream) Close() error {
+	s.closeCalls.Add(1)
 	s.once.Do(func() {
 		close(s.closed)
 	})
-	return nil
+	return s.closeErr
 }
 
 func (s *blockingMASQUEUDPStream) ReceiveDatagram(ctx context.Context) ([]byte, error) {

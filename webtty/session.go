@@ -33,6 +33,7 @@ type session struct {
 	logProto        bool
 	mu              sync.Mutex
 	writeMu         sync.Mutex
+	lifecycleWG     sync.WaitGroup
 	closed          bool
 	opening         bool
 	shutdownReq     bool
@@ -63,15 +64,16 @@ type session struct {
 }
 
 type sessionCleanup struct {
-	logger     *slog.Logger
-	conn       messageConn
-	cmd        *exec.Cmd
-	ptyFile    *os.File
-	stdinPipe  io.WriteCloser
-	doneCh     chan struct{}
-	attrs      []any
-	childDone  bool
-	closeFrame []byte
+	logger      *slog.Logger
+	conn        messageConn
+	cmd         *exec.Cmd
+	ptyFile     *os.File
+	stdinPipe   io.WriteCloser
+	doneCh      chan struct{}
+	attrs       []any
+	childDone   bool
+	closeFrame  []byte
+	lifecycleWG *sync.WaitGroup
 }
 
 type sessionOpenResources struct {
@@ -164,8 +166,20 @@ func (s *session) run() {
 		s.error(err)
 		return
 	}
-	go s.readLoop(initial)
+	s.mu.Lock()
+	if !s.closed {
+		s.startLoopLocked(func() { s.readLoop(initial) })
+	}
+	s.mu.Unlock()
 	<-s.doneCh
+}
+
+func (s *session) startLoopLocked(loop func()) {
+	s.lifecycleWG.Add(1)
+	go func() {
+		defer s.lifecycleWG.Done()
+		loop()
+	}()
 }
 
 func (s *session) validateE2EConfig() error {
@@ -304,7 +318,7 @@ func (s *session) heartbeatLoop() {
 	defer s.heartbeatTicker.Stop()
 	for {
 		select {
-		case <-s.doneCh:
+		case <-s.ctx.Done():
 			return
 		case <-s.heartbeatTicker.C:
 			if !s.doSendHeartbeat() {
@@ -585,6 +599,15 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 	}
 	shutdownReq := s.shutdownReq
 	startHeartbeat := s.heartbeatTicker != nil
+	if resources.allocateTTY {
+		s.startLoopLocked(func() { s.waitProcessLoop(resources.cmd) })
+		s.startLoopLocked(func() { s.copyStdoutLoop(resources.ptyFile) })
+	} else {
+		s.startLoopLocked(func() { s.waitPipedProcessLoop(resources.cmd, resources.stdout, resources.stderr) })
+	}
+	if startHeartbeat {
+		s.startLoopLocked(s.heartbeatLoop)
+	}
 	s.mu.Unlock()
 	if shutdownReq {
 		if err := signalChildInterrupt(resources.cmd); err != nil {
@@ -592,15 +615,6 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 		} else {
 			s.logger.Debug("requested child process shutdown")
 		}
-	}
-	if resources.allocateTTY {
-		go s.waitProcessLoop(resources.cmd)
-		go s.copyStdoutLoop(resources.ptyFile)
-	} else {
-		go s.waitPipedProcessLoop(resources.cmd, resources.stdout, resources.stderr)
-	}
-	if startHeartbeat {
-		go s.heartbeatLoop()
 	}
 	return s.sendAck()
 }
@@ -863,15 +877,16 @@ func (s *session) detachCleanupLocked() *sessionCleanup {
 		attrs = append(attrs, "reason_code", webTTYSessionErrorReasonCode(s.closeErr), "error", s.closeErr)
 	}
 	return &sessionCleanup{
-		logger:     s.logger,
-		conn:       s.conn,
-		cmd:        s.cmd,
-		ptyFile:    s.ptyFile,
-		stdinPipe:  s.stdinPipe,
-		doneCh:     s.doneCh,
-		attrs:      attrs,
-		childDone:  s.childDone,
-		closeFrame: websocket.FormatCloseMessage(websocket.CloseNormalClosure, "finished"),
+		logger:      s.logger,
+		conn:        s.conn,
+		cmd:         s.cmd,
+		ptyFile:     s.ptyFile,
+		stdinPipe:   s.stdinPipe,
+		doneCh:      s.doneCh,
+		attrs:       attrs,
+		childDone:   s.childDone,
+		closeFrame:  websocket.FormatCloseMessage(websocket.CloseNormalClosure, "finished"),
+		lifecycleWG: &s.lifecycleWG,
 	}
 }
 
@@ -889,8 +904,15 @@ func (c *sessionCleanup) run() {
 	}
 	_ = c.conn.WriteControl(websocket.CloseMessage, c.closeFrame, time.Now().Add(time.Second))
 	_ = c.conn.Close()
-	close(c.doneCh)
+	go c.finish()
+}
+
+func (c *sessionCleanup) finish() {
+	if c.lifecycleWG != nil {
+		c.lifecycleWG.Wait()
+	}
 	c.logger.Info("session closed", c.attrs...)
+	close(c.doneCh)
 }
 
 func (s *session) onOpenTimeout() {

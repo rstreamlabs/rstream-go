@@ -185,6 +185,8 @@ type masqueUDPPacketConn struct {
 	localAddr  net.Addr
 	remoteAddr net.Addr
 	closed     atomic.Bool
+	closeOnce  sync.Once
+	closeErr   error
 	readDone   chan struct{}
 
 	deadlineMu        sync.Mutex
@@ -265,19 +267,19 @@ func (c *masqueUDPPacketConn) WriteTo(p []byte, addr net.Addr) (int, error) {
 }
 
 func (c *masqueUDPPacketConn) Close() error {
-	if !c.closed.CompareAndSwap(false, true) {
-		return nil
-	}
-	c.stream.CancelRead(quic.StreamErrorCode(http3.ErrCodeNoError))
-	err := c.stream.Close()
-	<-c.readDone
-	c.readCancel()
-	c.deadlineMu.Lock()
-	if c.readDeadlineTimer != nil {
-		c.readDeadlineTimer.Stop()
-	}
-	c.deadlineMu.Unlock()
-	return err
+	c.closeOnce.Do(func() {
+		c.closed.Store(true)
+		c.stream.CancelRead(quic.StreamErrorCode(http3.ErrCodeNoError))
+		c.closeErr = c.stream.Close()
+		<-c.readDone
+		c.readCancel()
+		c.deadlineMu.Lock()
+		if c.readDeadlineTimer != nil {
+			c.readDeadlineTimer.Stop()
+		}
+		c.deadlineMu.Unlock()
+	})
+	return c.closeErr
 }
 
 func (c *masqueUDPPacketConn) LocalAddr() net.Addr {
@@ -293,11 +295,11 @@ func (c *masqueUDPPacketConn) SetDeadline(t time.Time) error {
 }
 
 func (c *masqueUDPPacketConn) SetReadDeadline(t time.Time) error {
+	c.deadlineMu.Lock()
+	defer c.deadlineMu.Unlock()
 	if c.closed.Load() {
 		return net.ErrClosed
 	}
-	c.deadlineMu.Lock()
-	defer c.deadlineMu.Unlock()
 	c.readDeadline = t
 	now := time.Now()
 	if t.IsZero() {

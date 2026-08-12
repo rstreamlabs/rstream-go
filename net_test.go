@@ -468,6 +468,7 @@ type fakePacketListener struct {
 	accepted chan acceptedPacketConn
 	closed   chan struct{}
 	once     sync.Once
+	closeErr error
 }
 
 func newFakePacketListener(addr net.Addr) *fakePacketListener {
@@ -489,7 +490,7 @@ func (l *fakePacketListener) Accept() (net.PacketConn, net.Addr, error) {
 
 func (l *fakePacketListener) Close() error {
 	l.once.Do(func() { close(l.closed) })
-	return nil
+	return l.closeErr
 }
 
 func (l *fakePacketListener) Addr() net.Addr { return l.addr }
@@ -632,6 +633,49 @@ func TestPacketConnFromPacketListenerCloseUnblocksRead(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatalf("ReadFrom() remained blocked after close")
+	}
+}
+
+func TestPacketConnFromPacketListenerConcurrentCloseJoinsReaders(t *testing.T) {
+	remote := stubNetAddr("remote")
+	inner := newFakePacketConn(stubNetAddr("inner"))
+	closeErr := errors.New("listener close failed")
+	listener := newFakePacketListener(stubNetAddr("listener"))
+	listener.closeErr = closeErr
+	packetConn := PacketConnFromPacketListener(listener)
+	listener.accepted <- acceptedPacketConn{conn: inner, addr: remote}
+	inner.reads <- []byte("ready")
+	if _, _, err := packetConn.ReadFrom(make([]byte, 16)); err != nil {
+		t.Fatal(err)
+	}
+	wrapper := packetConn.(*packetListenerWrapper)
+	wrapper.mu.Lock()
+	entry := wrapper.conns[packetAddrKey(remote)]
+	wrapper.mu.Unlock()
+	if entry == nil || !entry.active.Load() {
+		t.Fatal("accepted packet reader did not become active")
+	}
+	const callers = 64
+	var wg sync.WaitGroup
+	errs := make(chan error, callers)
+	for range callers {
+		wg.Add(1)
+		go func() { defer wg.Done(); errs <- packetConn.Close() }()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if !errors.Is(err, closeErr) {
+			t.Fatalf("Close() error = %v, want %v", err, closeErr)
+		}
+	}
+	select {
+	case <-wrapper.shutdownDone:
+	default:
+		t.Fatal("Close() returned before listener workers stopped")
+	}
+	if entry.active.Load() {
+		t.Fatal("accepted packet reader remained active after Close()")
 	}
 }
 

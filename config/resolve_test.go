@@ -240,6 +240,13 @@ func TestResolveContextEngineTLSConfig(t *testing.T) {
 	if resolved.TLSClientConfig.ServerName != "engine.local" {
 		t.Fatalf("engine TLS server name = %q", resolved.TLSClientConfig.ServerName)
 	}
+	if resolved.TransportConfig == nil || resolved.TransportConfig.TLS == nil || resolved.TransportConfig.TLS.ServerName != "engine.local" {
+		t.Fatalf("resolved transport config = %#v", resolved.TransportConfig)
+	}
+	resolved.TransportConfig.TLS.ServerName = "mutated.example"
+	if cfg.Contexts[0].Transport.TLS.ServerName != "engine.local" {
+		t.Fatalf("resolved transport config aliases source config: %#v", cfg.Contexts[0].Transport)
+	}
 }
 
 func TestResolveRejectsStoredTokenWithEngineOverride(t *testing.T) {

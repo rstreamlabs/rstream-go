@@ -65,6 +65,7 @@ type Resolved struct {
 	Region              string
 	Token               string
 	Transport           rstream.Dialer
+	TransportConfig     *TransportConfig
 	TLSClientConfig     *tls.Config
 	ControlPlaneHeaders map[string]string
 }
@@ -219,6 +220,10 @@ func Resolve(input ResolveInput) (Resolved, error) {
 	if err != nil {
 		return Resolved{}, err
 	}
+	resolvedTransportConfig := MergeTransport(nil, transportConfig)
+	if resolvedTransportConfig == nil {
+		resolvedTransportConfig = &TransportConfig{Mode: string(rstream.TunnelTransportModeAuto)}
+	}
 	return Resolved{
 		APIURL:              apiURL,
 		ContextName:         contextName,
@@ -229,6 +234,7 @@ func Resolve(input ResolveInput) (Resolved, error) {
 		Region:              region,
 		Token:               token,
 		Transport:           transport,
+		TransportConfig:     resolvedTransportConfig,
 		TLSClientConfig:     tlsClientConfig,
 		ControlPlaneHeaders: controlPlaneHeaders,
 	}, nil

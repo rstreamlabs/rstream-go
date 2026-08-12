@@ -15,6 +15,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,6 +33,10 @@ type Client struct {
 	transportMu     sync.Mutex
 	apiMu           sync.Mutex
 	apiTransport    *http.Transport
+	closeOnce       sync.Once
+	closeErr        error
+	closed          atomic.Bool
+	ownsTransport   bool
 }
 
 type Config struct {
@@ -69,6 +74,9 @@ type ServerDetails struct {
 }
 
 func (c *Client) getEngine() (*string, error) {
+	if c == nil || c.closed.Load() {
+		return nil, net.ErrClosed
+	}
 	engine := c.EngineURL
 	if engine == nil {
 		return nil, errors.New("engine URL is required")
@@ -163,6 +171,9 @@ func (c *Client) dialEngineWithTransport(ctx context.Context, engine *string, ne
 }
 
 func (c *Client) dialEngineWithTransportConfig(ctx context.Context, engine *string, nextProtos *[]string, override Dialer, clientTLSConfig *tls.Config) (net.Conn, error) {
+	if c == nil || c.closed.Load() {
+		return nil, net.ErrClosed
+	}
 	var err error
 	if engine == nil {
 		engine, err = c.getEngine()
@@ -197,13 +208,44 @@ func (c *Client) dialEngineWithTransportConfig(ctx context.Context, engine *stri
 	return dialWithECH(ctx, transport, *engine, tlsCfg)
 }
 
+// Close releases API pools and transports owned by the client. Transports supplied
+// through ClientOptions remain caller-owned unless OwnTransport is true. It is safe
+// to call concurrently and repeatedly. A closed client cannot be reused.
+func (c *Client) Close() error {
+	if c == nil {
+		return nil
+	}
+	c.closeOnce.Do(func() {
+		c.closed.Store(true)
+		c.CloseIdleConnections()
+		c.transportMu.Lock()
+		transport := c.Transport
+		owned := c.ownsTransport
+		c.transportMu.Unlock()
+		if closer, ok := transport.(io.Closer); owned && ok {
+			c.closeErr = closer.Close()
+		}
+	})
+	return c.closeErr
+}
+
 func (c *Client) defaultTunnelTransport() Dialer {
 	c.transportMu.Lock()
 	defer c.transportMu.Unlock()
+	if c.closed.Load() {
+		return closedClientDialer{}
+	}
 	if isNilDialer(c.Transport) {
 		c.Transport = &AutoTransport{}
+		c.ownsTransport = true
 	}
 	return c.Transport
+}
+
+type closedClientDialer struct{}
+
+func (closedClientDialer) Dial(context.Context, string, *tls.Config) (net.Conn, error) {
+	return nil, net.ErrClosed
 }
 
 func selectedTunnelTransport(transport Dialer) Dialer {
@@ -228,6 +270,9 @@ const (
 	proxyConnectionDeliveryTimeout             = 5 * time.Second
 	proxyConnectionDialAttemptTimeout          = 10 * time.Second
 	proxyConnectionDialAttempts                = 2
+	proxyConnectionWorkerLimit                 = 64
+	proxyConnectionQueueLimit                  = 256
+	proxyConnectionResponseQueueLimit          = 256
 	defaultCloseTimeout                        = 5 * time.Second
 )
 
@@ -412,7 +457,7 @@ func (c *Client) packetDialDatagramChannel(ctx context.Context, raddr Addr) (net
 		_ = conn.Close()
 		return nil, true, err
 	}
-	chCtx, chCancel := context.WithCancel(context.Background())
+	chCtx, chCancel := context.WithCancel(context.WithoutCancel(ctx))
 	laddr := &Addr{IdOrName: streamID}
 	ch := &quicDatagramChannel{channelID: channelID, provider: provider, laddr: laddr, raddr: &raddr, recvCh: make(chan []byte, 64), ctx: chCtx, cancel: chCancel, readDeadline: newPacketDeadline(), writeDeadline: newPacketDeadline()}
 	ch.onClose = func(ch *quicDatagramChannel) {
@@ -424,15 +469,17 @@ func (c *Client) packetDialDatagramChannel(ctx context.Context, raddr Addr) (net
 		ch.Close()
 		return nil, true, fmt.Errorf("datagram channel ID collision")
 	}
+	ch.watchDone = make(chan struct{})
 	go watchDatagramChannelMessages(r, streamID, ch)
 	return ch, true, nil
 }
 
 func watchDatagramChannelMessages(r *bufio.Reader, streamID string, ch *quicDatagramChannel) {
+	defer close(ch.watchDone)
 	for {
 		msg, err := readPbMessage(r)
 		if err != nil {
-			ch.Close()
+			ch.initiateClose()
 			return
 		}
 		closeMsg := msg.GetDatagramChannelClose()
@@ -442,7 +489,7 @@ func watchDatagramChannelMessages(r *bufio.Reader, streamID string, ch *quicData
 		if closeMsg.StreamId != streamID {
 			continue
 		}
-		ch.Close()
+		ch.initiateClose()
 		return
 	}
 }
@@ -492,25 +539,30 @@ func (p *pendingOpenTunnelReq) closeReady() {
 }
 
 type controlChannelImpl struct {
-	logger            *slog.Logger
-	client            *Client
-	clientID          string
-	enableHeartbeat   bool
-	heartbeatInterval time.Duration
-	conn              net.Conn
-	w                 *bufio.Writer
-	r                 *bufio.Reader
-	serverDetails     *ServerDetails
-	doneCh            chan error
-	closedCh          chan struct{}
-	pendingTunnels    map[string]*pendingOpenTunnelReq
-	tunnels           map[string]*bytestreamTunnelImpl
-	proxyTransports   map[string]Dialer
-	closing           bool
-	closed            bool
-	mu                sync.Mutex
-	writeLock         contextMutex
-	err               error
+	logger             *slog.Logger
+	client             *Client
+	clientID           string
+	enableHeartbeat    bool
+	heartbeatInterval  time.Duration
+	conn               net.Conn
+	w                  *bufio.Writer
+	r                  *bufio.Reader
+	serverDetails      *ServerDetails
+	doneCh             chan error
+	closedCh           chan struct{}
+	pendingTunnels     map[string]*pendingOpenTunnelReq
+	tunnels            map[string]*bytestreamTunnelImpl
+	proxyTransports    map[string]Dialer
+	proxyRequests      chan proxyConnectionRequest
+	proxyResponses     chan proxyConnectionResponse
+	proxyWorkerLimit   int
+	proxyQueueLimit    int
+	proxyResponseLimit int
+	closing            bool
+	closed             bool
+	mu                 sync.Mutex
+	writeLock          contextMutex
+	err                error
 	// QUIC datagram support — non-nil when the transport implements DatagramProvider.
 	datagramProvider DatagramProvider
 	datagramTunnels  map[string]*quicDatagramListener           // tunnelID -> listener
@@ -518,6 +570,24 @@ type controlChannelImpl struct {
 	lifecycleCtx     context.Context
 	lifecycleCancel  context.CancelFunc
 	closeTimeout     time.Duration
+	lifecycleWG      sync.WaitGroup
+}
+
+type proxyConnectionRequest struct {
+	req              *pb.ProxyConnReq
+	tunnel           *bytestreamTunnelImpl
+	ctx              context.Context
+	endpoint         *string
+	secret           *string
+	transport        Dialer
+	datagramListener *quicDatagramListener
+	datagramDirect   bool
+}
+
+type proxyConnectionResponse struct {
+	streamID string
+	err      error
+	tunnel   *bytestreamTunnelImpl
 }
 
 type controlChannelCleanup struct {
@@ -531,6 +601,7 @@ type controlChannelCleanup struct {
 	conn             net.Conn
 	doneCh           chan error
 	closedCh         chan struct{}
+	lifecycleWG      *sync.WaitGroup
 }
 
 func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, error) {
@@ -622,13 +693,25 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 			ch.datagramProvider = dp
 			ch.datagramTunnels = make(map[string]*quicDatagramListener)
 			ch.datagramChannels = make(map[datagramChannelID]*quicDatagramChannel)
-			if _, ok := dp.(datagramChannelRegistry); !ok {
-				go ch.datagramReadLoop()
-			}
 		}
-		go ch.readLoop()
+		loopCount := 1
+		startDatagramLoop := ch.datagramProvider != nil
+		if _, ok := ch.datagramProvider.(datagramChannelRegistry); ok {
+			startDatagramLoop = false
+		}
+		if startDatagramLoop {
+			loopCount++
+		}
 		if ch.enableHeartbeat && ch.heartbeatInterval > 0 {
-			go ch.heartbeatLoop()
+			loopCount++
+		}
+		ch.lifecycleWG.Add(loopCount)
+		go ch.runLifecycleLoop(ch.readLoop)
+		if startDatagramLoop {
+			go ch.runLifecycleLoop(ch.datagramReadLoop)
+		}
+		if ch.enableHeartbeat && ch.heartbeatInterval > 0 {
+			go ch.runLifecycleLoop(ch.heartbeatLoop)
 		}
 	}
 	if err != nil {
@@ -636,6 +719,11 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 		return nil, err
 	}
 	return ch, nil
+}
+
+func (c *controlChannelImpl) runLifecycleLoop(loop func()) {
+	defer c.lifecycleWG.Done()
+	loop()
 }
 
 func (c *controlChannelImpl) CreateTunnel(ctx context.Context, props TunnelProperties) (Tunnel, error) {
@@ -776,7 +864,8 @@ func (c *controlChannelImpl) Close() error {
 		if err := c.writePbMessageContext(ctx, msg); err != nil {
 			closeErr := fmt.Errorf("failed to send CloseControlChannelReq: %w", err)
 			c.onError(closeErr)
-			return closeErr
+			<-closedCh
+			return c.Err()
 		}
 	}
 	select {
@@ -790,7 +879,8 @@ func (c *controlChannelImpl) Close() error {
 		}
 		closeErr := fmt.Errorf("timed out waiting for control channel to close: %w", context.Cause(ctx))
 		c.onError(closeErr)
-		return closeErr
+		<-closedCh
+		return c.Err()
 	}
 }
 
@@ -810,8 +900,15 @@ func (c *controlChannelImpl) ServerDetails() *ServerDetails {
 	if c.serverDetails == nil {
 		return nil
 	}
-	tmp := *c.serverDetails
-	return &tmp
+	return &ServerDetails{
+		Agent:    clonePtr(c.serverDetails.Agent),
+		Channel:  clonePtr(c.serverDetails.Channel),
+		Version:  clonePtr(c.serverDetails.Version),
+		Plan:     clonePtr(c.serverDetails.Plan),
+		Provider: clonePtr(c.serverDetails.Provider),
+		Region:   clonePtr(c.serverDetails.Region),
+		Update:   clonePtr(c.serverDetails.Update),
+	}
 }
 
 func (c *controlChannelImpl) readLoop() {
@@ -883,8 +980,7 @@ func (c *controlChannelImpl) handleMessage(msg *pb.Message) (bool, <-chan struct
 	case *pb.Message_CloseTunnelRsp:
 		return false, nil, c.handleCloseTunnelRsp(payload.CloseTunnelRsp), nil
 	case *pb.Message_ProxyConnReq:
-		c.handleProxyConnReq(payload.ProxyConnReq)
-		return false, nil, nil, nil
+		return false, nil, nil, c.handleProxyConnReq(payload.ProxyConnReq)
 	case *pb.Message_DatagramChannelClose:
 		return false, nil, c.handleDatagramChannelClose(payload.DatagramChannelClose), nil
 	case *pb.Message_CloseControlChannelRsp:
@@ -950,60 +1046,172 @@ func (c *controlChannelImpl) handleCloseTunnelRsp(rsp *pb.CloseTunnelRsp) func()
 	return nil
 }
 
-func (c *controlChannelImpl) handleProxyConnReq(req *pb.ProxyConnReq) {
+func (c *controlChannelImpl) handleProxyConnReq(req *pb.ProxyConnReq) error {
+	if req == nil {
+		return errors.New("received empty ProxyConnReq")
+	}
+	if strings.TrimSpace(req.StreamId) == "" {
+		return errors.New("received ProxyConnReq without a stream ID")
+	}
+	if err := c.startProxyRuntimeLocked(); err != nil {
+		return err
+	}
 	tunnelId := req.TunnelId
 	tunnel, found := c.tunnels[tunnelId]
 	if !found {
 		c.logger.Warn("unexpected ProxyConnReq", "tunnel_id", tunnelId, "stream_id", req.StreamId)
-		return
+		return c.rejectProxyConnReqLocked(req.StreamId, nil, errors.New("proxy connection references an unknown tunnel"))
 	}
 	proxyCtx := tunnel.ctx
 	if proxyCtx == nil {
 		err := errors.New("tunnel lifecycle context is not initialized")
 		c.logger.Error("rejected proxy connection request", "tunnel_id", tunnelId, "stream_id", req.StreamId, "error", err)
-		go c.sendProxyConnRsp(req.StreamId, err)
-		return
+		return c.rejectProxyConnReqLocked(req.StreamId, tunnel, err)
 	}
 	proxyEndpoint := stringPtrFromPbValue(req.ProxyEndpoint)
 	proxySecret := stringPtrFromPbValue(req.Secret)
 	if proxyEndpoint != nil && (strings.TrimSpace(*proxyEndpoint) == "" || proxySecret == nil || strings.TrimSpace(*proxySecret) == "") {
-		go c.sendProxyConnRsp(req.StreamId, errors.New("redirected proxy connection requires a non-empty endpoint and stream credential"))
-		return
+		return c.rejectProxyConnReqLocked(req.StreamId, tunnel, errors.New("redirected proxy connection requires a non-empty endpoint and stream credential"))
 	}
-	if proxyEndpoint == nil && c.datagramProvider != nil && tunnel.props.Type != nil && *tunnel.props.Type == TunnelTypeDatagram && tunnelAllowsQUICDatagrams(tunnel.props) {
-		go func() {
-			if !c.handleDatagramProxyConnReq(req, tunnel) {
+	task := proxyConnectionRequest{
+		req:              req,
+		tunnel:           tunnel,
+		ctx:              proxyCtx,
+		endpoint:         proxyEndpoint,
+		secret:           proxySecret,
+		transport:        c.proxyTransportLocked(proxyEndpoint),
+		datagramListener: c.datagramTunnels[tunnelId],
+		datagramDirect:   proxyEndpoint == nil && c.datagramProvider != nil && tunnel.props.Type != nil && *tunnel.props.Type == TunnelTypeDatagram && tunnelAllowsQUICDatagrams(tunnel.props),
+	}
+	select {
+	case c.proxyRequests <- task:
+		tunnel.addProxyResponseLocked()
+		return nil
+	default:
+		return c.rejectProxyConnReqLocked(req.StreamId, tunnel, errors.New("proxy connection request queue is full"))
+	}
+}
+
+func (c *controlChannelImpl) startProxyRuntimeLocked() error {
+	if c.proxyRequests != nil {
+		return nil
+	}
+	if c.lifecycleCtx == nil {
+		return errors.New("control channel lifecycle context is not initialized")
+	}
+	workerLimit := c.proxyWorkerLimit
+	if workerLimit <= 0 {
+		workerLimit = proxyConnectionWorkerLimit
+	}
+	queueLimit := c.proxyQueueLimit
+	if queueLimit <= 0 {
+		queueLimit = proxyConnectionQueueLimit
+	}
+	c.proxyRequests = make(chan proxyConnectionRequest, queueLimit)
+	responseLimit := c.proxyResponseLimit
+	if responseLimit <= 0 {
+		responseLimit = proxyConnectionResponseQueueLimit
+	}
+	c.proxyResponses = make(chan proxyConnectionResponse, responseLimit)
+	c.lifecycleWG.Add(workerLimit + 1)
+	for range workerLimit {
+		go c.runLifecycleLoop(c.proxyConnectionWorkerLoop)
+	}
+	go c.runLifecycleLoop(c.proxyConnectionResponseLoop)
+	return nil
+}
+
+func (c *controlChannelImpl) rejectProxyConnReqLocked(streamID string, tunnel *bytestreamTunnelImpl, responseErr error) error {
+	select {
+	case c.proxyResponses <- proxyConnectionResponse{streamID: streamID, err: responseErr, tunnel: tunnel}:
+		if tunnel != nil {
+			tunnel.addProxyResponseLocked()
+		}
+		return nil
+	default:
+		return errors.New("proxy connection response queue is full")
+	}
+}
+
+func (c *controlChannelImpl) proxyConnectionWorkerLoop() {
+	for {
+		if c.lifecycleCtx.Err() != nil {
+			return
+		}
+		select {
+		case <-c.lifecycleCtx.Done():
+			return
+		case task := <-c.proxyRequests:
+			if c.lifecycleCtx.Err() != nil {
 				return
 			}
-			c.sendProxyConnRsp(req.StreamId, nil)
-		}()
-		return
+			responseErr := c.processProxyConnectionRequest(task)
+			if !c.queueProxyConnRsp(task.req.StreamId, task.tunnel, responseErr) {
+				return
+			}
+		}
 	}
-	proxyTransport := c.proxyTransportLocked(proxyEndpoint)
-	datagramListener := c.datagramTunnels[tunnelId]
-	go func() {
-		laddr := Addr{IdOrName: req.StreamId, SourceIP: NetIPFromPbValue(req.SourceIp)}
-		raddr := Addr{IdOrName: tunnelId}
-		conn, err := c.dialProxyConnection(proxyCtx, proxyEndpoint, laddr, proxySecret, proxyTransport)
-		if err != nil {
-			c.logger.Error("failed to dial proxy connection", "error", err)
-			c.sendProxyConnRsp(req.StreamId, err)
+}
+
+func (c *controlChannelImpl) processProxyConnectionRequest(task proxyConnectionRequest) error {
+	if task.datagramDirect {
+		if !c.handleDatagramProxyConnReq(task.req, task.tunnel) {
+			return errors.New("failed to establish datagram proxy connection")
+		}
+		return nil
+	}
+	laddr := Addr{IdOrName: task.req.StreamId, SourceIP: NetIPFromPbValue(task.req.SourceIp)}
+	raddr := Addr{IdOrName: task.req.TunnelId}
+	conn, err := c.dialProxyConnection(task.ctx, task.endpoint, laddr, task.secret, task.transport)
+	if err != nil {
+		c.logger.Error("failed to dial proxy connection", "error", err)
+		return err
+	}
+	proxyConn := &bytestreamConn{conn: conn, laddr: laddr, raddr: raddr}
+	if task.datagramListener != nil {
+		packetConn := PacketConnFromConn(proxyConn, &laddr, PacketModeFramed)
+		err = c.deliverDatagramProxyConnection(task.ctx, task.tunnel, task.datagramListener, packetConn)
+	} else {
+		err = c.deliverProxyConnection(task.ctx, task.tunnel, proxyConn)
+	}
+	if err != nil {
+		_ = conn.Close()
+	}
+	return err
+}
+
+func (c *controlChannelImpl) queueProxyConnRsp(streamID string, tunnel *bytestreamTunnelImpl, responseErr error) bool {
+	select {
+	case c.proxyResponses <- proxyConnectionResponse{streamID: streamID, err: responseErr, tunnel: tunnel}:
+		return true
+	case <-c.lifecycleCtx.Done():
+		return false
+	}
+}
+
+func (c *controlChannelImpl) proxyConnectionResponseLoop() {
+	for {
+		if c.lifecycleCtx.Err() != nil {
 			return
 		}
-		proxyConn := &bytestreamConn{conn: conn, laddr: laddr, raddr: raddr}
-		if datagramListener != nil {
-			packetConn := PacketConnFromConn(proxyConn, &laddr, PacketModeFramed)
-			err = c.deliverDatagramProxyConnection(proxyCtx, tunnel, datagramListener, packetConn)
-		} else {
-			err = c.deliverProxyConnection(proxyCtx, tunnel, proxyConn)
-		}
-		if err != nil {
-			_ = conn.Close()
-			c.sendProxyConnRsp(req.StreamId, err)
+		select {
+		case <-c.lifecycleCtx.Done():
 			return
+		case response := <-c.proxyResponses:
+			if c.lifecycleCtx.Err() != nil {
+				return
+			}
+			if err := c.writeProxyConnRsp(response.streamID, response.err); err != nil {
+				c.onError(fmt.Errorf("failed to send ProxyConnRsp: %w", err))
+				return
+			}
+			c.mu.Lock()
+			if response.tunnel != nil {
+				response.tunnel.completeProxyResponseLocked()
+			}
+			c.mu.Unlock()
 		}
-		c.sendProxyConnRsp(req.StreamId, nil)
-	}()
+	}
 }
 
 func (c *controlChannelImpl) dialProxyConnection(ctx context.Context, endpoint *string, laddr Addr, secret *string, transport Dialer) (net.Conn, error) {
@@ -1123,6 +1331,12 @@ func (c *controlChannelImpl) proxyTransportLocked(endpoint *string) Dialer {
 }
 
 func (c *controlChannelImpl) sendProxyConnRsp(streamID string, responseErr error) {
+	if err := c.writeProxyConnRsp(streamID, responseErr); err != nil {
+		c.onError(fmt.Errorf("failed to send ProxyConnRsp: %w", err))
+	}
+}
+
+func (c *controlChannelImpl) writeProxyConnRsp(streamID string, responseErr error) error {
 	var response *pb.Error
 	if responseErr != nil {
 		response = &pb.Error{Code: pb.ErrorCode_ERROR_CODE_SERVICE_UNAVAILABLE, Message: wrapperspb.String(responseErr.Error())}
@@ -1135,9 +1349,7 @@ func (c *controlChannelImpl) sendProxyConnRsp(streamID string, responseErr error
 			},
 		},
 	}
-	if err := c.writePbMessage(msg); err != nil {
-		c.onError(fmt.Errorf("failed to send ProxyConnRsp: %w", err))
-	}
+	return c.writePbMessage(msg)
 }
 
 // handleDatagramProxyConnReq creates a quicDatagramChannel for a datagram
@@ -1353,6 +1565,7 @@ func (c *controlChannelImpl) detachCleanupLocked(err error) *controlChannelClean
 		conn:            c.conn,
 		doneCh:          c.doneCh,
 		closedCh:        c.ensureClosedSignalLocked(),
+		lifecycleWG:     &c.lifecycleWG,
 	}
 	for _, p := range c.pendingTunnels {
 		cleanup.pendingTunnels = append(cleanup.pendingTunnels, p)
@@ -1404,6 +1617,13 @@ func (c *controlChannelCleanup) run() {
 	}
 	if c.conn != nil {
 		_ = c.conn.Close()
+	}
+	go c.finish()
+}
+
+func (c *controlChannelCleanup) finish() {
+	if c.lifecycleWG != nil {
+		c.lifecycleWG.Wait()
 	}
 	c.doneCh <- c.err
 	close(c.doneCh)

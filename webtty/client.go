@@ -3,6 +3,7 @@
 package webtty
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -54,6 +55,7 @@ type ClientConfig struct {
 	CloseDeadline          *time.Duration
 	HeartbeatInterval      *time.Duration
 	Stdin                  io.Reader
+	StdinReadContext       func(context.Context, []byte) (int, error)
 	Stdout                 io.Writer
 	Stderr                 io.Writer
 	Logger                 *slog.Logger
@@ -116,6 +118,7 @@ type clientEvent struct {
 const (
 	defaultClientCloseDeadline      time.Duration = 5 * time.Second
 	defaultClientOpenDeadline       time.Duration = 5 * time.Second
+	defaultStdinReadPollPeriod      time.Duration = 100 * time.Millisecond
 	defaultTerminalResizePollPeriod time.Duration = 300 * time.Millisecond
 )
 
@@ -150,25 +153,46 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 			defer term.Restore(runtime.stdinFD, state)
 		}
 	}
+	forwardStdin := resolved.Interactive || !runtime.hasStdinFD || !term.IsTerminal(runtime.stdinFD)
+	var readStdin func(context.Context, []byte) (int, error)
+	if forwardStdin {
+		readStdin, err = resolveClientStdinRead(resolved)
+		if err != nil {
+			return -1, err
+		}
+	}
 	session, err := OpenClientSession(ctx, resolved.sessionConfig())
 	if err != nil {
 		return -1, err
 	}
-	defer session.Close()
 	runtime.logger = resolved.Logger.With("component", "webtty.client")
 	runtime.logger.Debug("webtty session acknowledged")
 	loopCtx, stopLoops := context.WithCancel(ctx)
-	defer stopLoops()
+	var loopWG sync.WaitGroup
+	defer func() {
+		stopLoops()
+		_ = session.Close()
+		loopWG.Wait()
+	}()
 	loopErrCh := make(chan error, 1)
-	forwardStdin := resolved.Interactive || !runtime.hasStdinFD || !term.IsTerminal(runtime.stdinFD)
 	if forwardStdin {
-		go runtime.stdinSessionLoop(loopCtx, session, loopErrCh)
+		loopWG.Add(1)
+		go func() {
+			defer loopWG.Done()
+			runtime.stdinSessionLoop(loopCtx, session, loopErrCh, readStdin)
+		}()
 	}
 	if resolved.AllocateTTY {
-		go runtime.resizeSessionLoop(loopCtx, session, loopErrCh)
+		loopWG.Add(1)
+		go func() {
+			defer loopWG.Done()
+			runtime.resizeSessionLoop(loopCtx, session, loopErrCh)
+		}()
 	}
 	waitCh := make(chan clientSessionResult, 1)
+	loopWG.Add(1)
 	go func() {
+		defer loopWG.Done()
 		exitCode, err := session.Wait()
 		waitCh <- clientSessionResult{exitCode: exitCode, err: err}
 	}()
@@ -187,10 +211,12 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 		}
 	}()
 	ctxDone := ctx.Done()
+	events := session.Events()
 	for {
 		select {
-		case event, ok := <-session.Events():
+		case event, ok := <-events:
 			if !ok {
+				events = nil
 				continue
 			}
 			if err := runtime.writeSessionEvent(event); err != nil {
@@ -213,9 +239,7 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 			}
 			pendingErr = err
 			stopLoops()
-			if err := session.CloseWithError(err); err != nil {
-				return -1, pendingErr
-			}
+			session.requestClose(-1, err, true)
 			if resolved.CloseDeadline != nil && *resolved.CloseDeadline > 0 {
 				closeTimer = time.NewTimer(*resolved.CloseDeadline)
 				closeTimeout = closeTimer.C
@@ -227,9 +251,7 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 			}
 			pendingErr = ctx.Err()
 			stopLoops()
-			if err := session.CloseWithError(pendingErr); err != nil {
-				return -1, pendingErr
-			}
+			session.requestClose(-1, pendingErr, true)
 			if resolved.CloseDeadline != nil && *resolved.CloseDeadline > 0 {
 				closeTimer = time.NewTimer(*resolved.CloseDeadline)
 				closeTimeout = closeTimer.C
@@ -254,7 +276,7 @@ func (c *clientRuntime) writeSessionEvent(event ClientSessionEvent) error {
 	return writeAll(writer, event.Data)
 }
 
-func (c *clientRuntime) stdinSessionLoop(ctx context.Context, session *ClientSession, errCh chan<- error) {
+func (c *clientRuntime) stdinSessionLoop(ctx context.Context, session *ClientSession, errCh chan<- error, readStdin func(context.Context, []byte) (int, error)) {
 	buffer := make([]byte, 32*1024)
 	for {
 		select {
@@ -262,7 +284,7 @@ func (c *clientRuntime) stdinSessionLoop(ctx context.Context, session *ClientSes
 			return
 		default:
 		}
-		n, err := c.cfg.Stdin.Read(buffer)
+		n, err := readStdin(ctx, buffer)
 		if n > 0 {
 			if werr := session.SendInputContext(ctx, buffer[:n]); werr != nil {
 				select {
@@ -273,6 +295,9 @@ func (c *clientRuntime) stdinSessionLoop(ctx context.Context, session *ClientSes
 			}
 		}
 		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
 			if errors.Is(err, io.EOF) {
 				if werr := session.SendEOF(); werr != nil {
 					select {
@@ -289,6 +314,77 @@ func (c *clientRuntime) stdinSessionLoop(ctx context.Context, session *ClientSes
 			return
 		}
 	}
+}
+
+type clientStdinContextReader interface {
+	ReadContext(context.Context, []byte) (int, error)
+}
+
+type clientStdinDeadlineReader interface {
+	Read([]byte) (int, error)
+	SetReadDeadline(time.Time) error
+}
+
+func resolveClientStdinRead(cfg *ClientConfig) (func(context.Context, []byte) (int, error), error) {
+	if cfg.StdinReadContext != nil {
+		return cfg.StdinReadContext, nil
+	}
+	if reader, ok := cfg.Stdin.(clientStdinContextReader); ok {
+		return reader.ReadContext, nil
+	}
+	if file, ok := cfg.Stdin.(*os.File); ok {
+		if readStdin := clientFileStdinRead(file); readStdin != nil {
+			return readStdin, nil
+		}
+	}
+	if reader, ok := cfg.Stdin.(clientStdinDeadlineReader); ok {
+		if err := reader.SetReadDeadline(time.Time{}); err == nil {
+			return func(ctx context.Context, buffer []byte) (int, error) {
+				return readClientStdinWithDeadline(ctx, reader, buffer)
+			}, nil
+		}
+	}
+	switch cfg.Stdin.(type) {
+	case *bytes.Buffer, *bytes.Reader, *strings.Reader:
+		return func(ctx context.Context, buffer []byte) (int, error) {
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+			return cfg.Stdin.Read(buffer)
+		}, nil
+	}
+	return nil, fmt.Errorf("stdin reader must support cancellation through StdinReadContext, ReadContext, or SetReadDeadline")
+}
+
+func readClientStdinWithDeadline(ctx context.Context, reader clientStdinDeadlineReader, buffer []byte) (int, error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
+		if err := reader.SetReadDeadline(time.Now().Add(defaultStdinReadPollPeriod)); err != nil {
+			return 0, fmt.Errorf("failed to set stdin read deadline: %w", err)
+		}
+		n, err := reader.Read(buffer)
+		if n > 0 {
+			_ = reader.SetReadDeadline(time.Time{})
+			return n, nil
+		}
+		if err == nil {
+			continue
+		}
+		if !isClientStdinReadTimeout(err) {
+			_ = reader.SetReadDeadline(time.Time{})
+			return 0, err
+		}
+	}
+}
+
+func isClientStdinReadTimeout(err error) bool {
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	netErr, ok := err.(net.Error)
+	return ok && netErr.Timeout()
 }
 
 type fileDescriptorReader interface {
@@ -350,9 +446,7 @@ func (c *clientRuntime) resizeSessionLoop(ctx context.Context, session *ClientSe
 }
 
 func resolveClientConfig(cfg *ClientConfig) (*ClientConfig, error) {
-	if cfg == nil {
-		cfg = &ClientConfig{}
-	}
+	cfg = cloneClientConfig(cfg)
 	if cfg.URL == "" {
 		cfg.URL = "ws://127.0.0.1:8080"
 	}

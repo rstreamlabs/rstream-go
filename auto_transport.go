@@ -42,18 +42,29 @@ type AutoTransport struct {
 	tlsDialer     Dialer
 	quicDialer    Dialer
 
-	mu              sync.Mutex
-	selected        Dialer
-	selectedMode    TunnelTransportMode
-	selecting       bool
-	selectionDone   chan struct{}
-	selectionCancel context.CancelFunc
-	generation      uint64
+	mu               sync.Mutex
+	selected         Dialer
+	selectedMode     TunnelTransportMode
+	selecting        bool
+	selectionDone    chan struct{}
+	selectionCancel  context.CancelFunc
+	selectionWaiters int
+	cleanupDone      <-chan struct{}
+	generation       uint64
 }
 
 func (t *AutoTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (net.Conn, error) {
+	var generation uint64
+	initialized := false
 	for {
 		t.mu.Lock()
+		if !initialized {
+			generation = t.generation
+			initialized = true
+		} else if t.generation != generation {
+			t.mu.Unlock()
+			return nil, net.ErrClosed
+		}
 		if t.selected != nil {
 			selected := t.selected
 			t.mu.Unlock()
@@ -61,11 +72,33 @@ func (t *AutoTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Confi
 		}
 		if t.selecting {
 			done := t.selectionDone
+			t.selectionWaiters++
+			t.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				t.mu.Lock()
+				t.selectionWaiters--
+				t.mu.Unlock()
+				return nil, ctx.Err()
+			case <-done:
+				t.mu.Lock()
+				t.selectionWaiters--
+				t.mu.Unlock()
+				continue
+			}
+		}
+		if t.cleanupDone != nil {
+			done := t.cleanupDone
 			t.mu.Unlock()
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			case <-done:
+				t.mu.Lock()
+				if t.cleanupDone == done {
+					t.cleanupDone = nil
+				}
+				t.mu.Unlock()
 				continue
 			}
 		}
@@ -75,29 +108,41 @@ func (t *AutoTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Confi
 		t.selectionDone = make(chan struct{})
 		t.selectionCancel = cancel
 		done := t.selectionDone
-		generation := t.generation
+		selectionGeneration := t.generation
 		t.mu.Unlock()
 
-		conn, selected, mode, err := t.selectTransport(selectionCtx, addr, tlsCfg)
+		conn, selected, mode, cleanupDone, err := t.selectTransport(selectionCtx, addr, tlsCfg)
 		cancel()
 
 		t.mu.Lock()
-		stale := generation != t.generation
-		if !stale && err == nil {
+		stale := selectionGeneration != t.generation
+		if stale {
+			t.mu.Unlock()
+			if conn != nil {
+				_ = conn.Close()
+			}
+			_ = closeAutoTransport(selected)
+			if cleanupDone != nil {
+				<-cleanupDone
+			}
+			t.mu.Lock()
+			t.selecting = false
+			t.selectionCancel = nil
+			close(done)
+			t.mu.Unlock()
+			return nil, net.ErrClosed
+		}
+		if err == nil {
 			t.selected = selected
 			t.selectedMode = mode
+		}
+		if cleanupDone != nil {
+			t.cleanupDone = cleanupDone
 		}
 		t.selecting = false
 		t.selectionCancel = nil
 		close(done)
 		t.mu.Unlock()
-		if stale {
-			if conn != nil {
-				_ = conn.Close()
-			}
-			_ = closeAutoTransport(selected)
-			return nil, net.ErrClosed
-		}
 		return conn, err
 	}
 }
@@ -120,14 +165,33 @@ func (t *AutoTransport) SelectedMode() TunnelTransportMode {
 func (t *AutoTransport) Close() error {
 	t.mu.Lock()
 	t.generation++
-	if t.selectionCancel != nil {
-		t.selectionCancel()
-	}
+	cancel := t.selectionCancel
+	selectionDone := t.selectionDone
+	selecting := t.selecting
+	cleanupDone := t.cleanupDone
 	selected := t.selected
 	t.selected = nil
 	t.selectedMode = ""
 	t.mu.Unlock()
-	return closeAutoTransport(selected)
+	if cancel != nil {
+		cancel()
+	}
+	closeErr := closeAutoTransport(selected)
+	if selecting {
+		<-selectionDone
+		t.mu.Lock()
+		cleanupDone = t.cleanupDone
+		t.mu.Unlock()
+	}
+	if cleanupDone != nil {
+		<-cleanupDone
+		t.mu.Lock()
+		if t.cleanupDone == cleanupDone {
+			t.cleanupDone = nil
+		}
+		t.mu.Unlock()
+	}
+	return closeErr
 }
 
 type autoTransportResult struct {
@@ -137,7 +201,7 @@ type autoTransportResult struct {
 	err       error
 }
 
-func (t *AutoTransport) selectTransport(ctx context.Context, addr string, tlsCfg *tls.Config) (net.Conn, Dialer, TunnelTransportMode, error) {
+func (t *AutoTransport) selectTransport(ctx context.Context, addr string, tlsCfg *tls.Config) (net.Conn, Dialer, TunnelTransportMode, <-chan struct{}, error) {
 	tlsTransport := t.tlsTransportOrDefault()
 	quicTransport := t.quicTransportOrDefault()
 	delay := defaultAutoTransportFallbackDelay
@@ -179,16 +243,16 @@ func (t *AutoTransport) selectTransport(ctx context.Context, addr string, tlsCfg
 		select {
 		case <-ctx.Done():
 			cancel()
-			go cleanupAutoTransportResults(results, started-completed, "")
-			return nil, nil, "", ctx.Err()
+			cleanupDone := cleanupAutoTransportResultsAsync(results, started-completed, "")
+			return nil, nil, "", cleanupDone, ctx.Err()
 		case <-timer.C:
 			startTLS()
 		case result := <-results:
 			completed++
 			if result.err == nil {
 				cancel()
-				go cleanupAutoTransportResults(results, started-completed, result.mode)
-				return result.conn, result.transport, result.mode, nil
+				cleanupDone := cleanupAutoTransportResultsAsync(results, started-completed, result.mode)
+				return result.conn, result.transport, result.mode, cleanupDone, nil
 			}
 			switch result.mode {
 			case TunnelTransportModeQUIC:
@@ -199,10 +263,22 @@ func (t *AutoTransport) selectTransport(ctx context.Context, addr string, tlsCfg
 			}
 		}
 	}
-	return nil, nil, "", errors.Join(
+	return nil, nil, "", nil, errors.Join(
 		fmt.Errorf("QUIC tunnel transport failed: %w", quicErr),
 		fmt.Errorf("TLS tunnel transport failed: %w", tlsErr),
 	)
+}
+
+func cleanupAutoTransportResultsAsync(results <-chan autoTransportResult, count int, winner TunnelTransportMode) <-chan struct{} {
+	if count == 0 {
+		return nil
+	}
+	done := make(chan struct{})
+	go func() {
+		cleanupAutoTransportResults(results, count, winner)
+		close(done)
+	}()
+	return done
 }
 
 func (t *AutoTransport) tlsTransportOrDefault() Dialer {

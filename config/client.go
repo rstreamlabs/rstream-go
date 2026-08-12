@@ -138,7 +138,16 @@ func NewClientFromResolved(resolved Resolved) (*rstream.Client, error) {
 		Engine: resolved.Engine,
 		Token:  resolved.Token,
 	}
-	if resolved.Transport != nil {
+	var ownedTransport interface{ Close() error }
+	if resolved.TransportConfig != nil {
+		transport, err := FlattenTransportWithError(resolved.TransportConfig)
+		if err != nil {
+			return nil, err
+		}
+		options.Transport = transport
+		options.OwnTransport = true
+		ownedTransport, _ = transport.(interface{ Close() error })
+	} else if resolved.Transport != nil {
 		options.Transport = resolved.Transport
 	}
 	if resolved.TLSClientConfig != nil {
@@ -147,5 +156,9 @@ func NewClientFromResolved(resolved Resolved) (*rstream.Client, error) {
 	if resolved.Token == "" {
 		options.NoToken = true
 	}
-	return rstream.NewClient(options)
+	client, err := rstream.NewClient(options)
+	if err != nil && ownedTransport != nil {
+		err = errors.Join(err, ownedTransport.Close())
+	}
+	return client, err
 }

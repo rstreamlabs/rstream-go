@@ -70,6 +70,33 @@ func TestNewClientFromResolvedPropagatesTransportAndNoToken(t *testing.T) {
 	}
 }
 
+func TestNewClientFromResolvedCreatesIndependentOwnedTransports(t *testing.T) {
+	resolved := Resolved{Engine: "engine.example.com:443", TransportConfig: &TransportConfig{Mode: "quic"}}
+	first, err := NewClientFromResolved(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewClientFromResolved(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Transport == second.Transport {
+		t.Fatal("clients share a stateful transport")
+	}
+	if _, ok := first.Transport.(*rstream.QUICTransport); !ok {
+		t.Fatalf("first transport = %T, want QUIC", first.Transport)
+	}
+	if _, ok := second.Transport.(*rstream.QUICTransport); !ok {
+		t.Fatalf("second transport = %T, want QUIC", second.Transport)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestResolveProjectRegionKeepsGlobalStableDomainEndpoint(t *testing.T) {
 	resolved := Resolved{Region: "eu-west-3"}
 	project := controlplane.Project{

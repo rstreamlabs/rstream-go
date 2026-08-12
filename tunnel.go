@@ -24,16 +24,18 @@ type BytestreamTunnel interface {
 }
 
 type bytestreamTunnelImpl struct {
-	props    TunnelProperties
-	ctrl     *controlChannelImpl
-	tunnelID string
-	closedCh chan struct{}
-	closing  bool
-	closed   bool
-	err      error
-	conns    chan net.Conn
-	ctx      context.Context
-	cancel   context.CancelFunc
+	props        TunnelProperties
+	ctrl         *controlChannelImpl
+	tunnelID     string
+	closedCh     chan struct{}
+	proxyDrained chan struct{}
+	proxyPending int
+	closing      bool
+	closed       bool
+	err          error
+	conns        chan net.Conn
+	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
 type tunnelCleanup struct {
@@ -55,7 +57,7 @@ func (t *bytestreamTunnelImpl) ForwardingAddress() (string, error) {
 }
 
 func (t *bytestreamTunnelImpl) Properties() (TunnelProperties, error) {
-	return t.props, nil
+	return cloneTunnelProperties(t.props), nil
 }
 
 func (t *bytestreamTunnelImpl) Accept() (net.Conn, error) {
@@ -100,6 +102,7 @@ func (t *bytestreamTunnelImpl) Close() error {
 		return err
 	}
 	closedCh := t.ensureClosedSignalLocked()
+	proxyDrained := t.proxyDrained
 	sendClose := !t.closing
 	if sendClose {
 		t.closing = true
@@ -107,6 +110,17 @@ func (t *bytestreamTunnelImpl) Close() error {
 	t.ctrl.mu.Unlock()
 	ctx, cancel := t.ctrl.newCloseContext()
 	defer cancel()
+	if proxyDrained != nil {
+		select {
+		case <-proxyDrained:
+		case <-t.ctrl.closedCh:
+			return t.closeResultAfterControlClosed(closedCh)
+		case <-ctx.Done():
+			closeErr := fmt.Errorf("timed out waiting for tunnel %q proxy responses before close: %w", t.tunnelID, context.Cause(ctx))
+			t.ctrl.onError(closeErr)
+			return closeErr
+		}
+	}
 	if sendClose {
 		msg := &pb.Message{
 			Payload: &pb.Message_CloseTunnelReq{
@@ -137,6 +151,24 @@ func (t *bytestreamTunnelImpl) Close() error {
 		closeErr := fmt.Errorf("timed out waiting for tunnel %q to close: %w", t.tunnelID, context.Cause(ctx))
 		t.ctrl.onError(closeErr)
 		return closeErr
+	}
+}
+
+func (t *bytestreamTunnelImpl) addProxyResponseLocked() {
+	if t.proxyPending == 0 {
+		t.proxyDrained = make(chan struct{})
+	}
+	t.proxyPending++
+}
+
+func (t *bytestreamTunnelImpl) completeProxyResponseLocked() {
+	if t.proxyPending == 0 {
+		return
+	}
+	t.proxyPending--
+	if t.proxyPending == 0 {
+		close(t.proxyDrained)
+		t.proxyDrained = nil
 	}
 }
 

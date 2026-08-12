@@ -99,6 +99,62 @@ func TestResolveServerConfigDefaultsAndHandlerDrain(t *testing.T) {
 	}
 }
 
+func TestWebTTYHandlerConfigUsesImmutableSnapshots(t *testing.T) {
+	maxMessageSize := int64(4096)
+	username := "alice"
+	env := map[string]string{"MODE": "test"}
+	source := &ServerConfig{
+		MaxMessageSize: &maxMessageSize,
+		EnvVars:        &env,
+		AllowedOrigins: []string{"https://terminal.example"},
+		PayloadCrypto: &PayloadCrypto{
+			Capabilities: []OpenCapability{OpenCapabilityEncryptedPayload},
+			SessionKeyGrant: &SessionKeyGrant{
+				PayloadKeyID: []byte("payload-key"),
+				KeyEnvelopes: []KeyEnvelope{{RecipientKeyID: []byte("recipient")}},
+			},
+		},
+		EndpointIdentity: &WebTTYEndpointIdentity{
+			Encryption: E2EIdentity{KeyID: []byte("encryption-key")},
+			Signing:    WebTTYSigningIdentity{KeyID: []byte("signing-key")},
+		},
+		AuthorizedClientSigningKeys: map[string][]byte{"client": []byte("credential")},
+		DefaultUsername:             &username,
+	}
+	handler := NewWebTTYHandler(source)
+	maxMessageSize = 1
+	env["MODE"] = "mutated"
+	source.AllowedOrigins[0] = "https://mutated.example"
+	source.PayloadCrypto.Capabilities[0] = OpenCapabilitySessionKeyGrant
+	source.PayloadCrypto.SessionKeyGrant.PayloadKeyID[0] = 'X'
+	source.PayloadCrypto.SessionKeyGrant.KeyEnvelopes[0].RecipientKeyID[0] = 'X'
+	source.EndpointIdentity.Encryption.KeyID[0] = 'X'
+	source.EndpointIdentity.Signing.KeyID[0] = 'X'
+	source.AuthorizedClientSigningKeys["client"][0] = 'X'
+	username = "mallory"
+	first := handler.Config()
+	if *first.MaxMessageSize != 4096 || (*first.EnvVars)["MODE"] != "test" || first.AllowedOrigins[0] != "https://terminal.example" {
+		t.Fatalf("handler config changed through source mutation: %#v", first)
+	}
+	if first.PayloadCrypto.Capabilities[0] != OpenCapabilityEncryptedPayload || string(first.PayloadCrypto.SessionKeyGrant.PayloadKeyID) != "payload-key" || string(first.PayloadCrypto.SessionKeyGrant.KeyEnvelopes[0].RecipientKeyID) != "recipient" {
+		t.Fatalf("handler payload crypto changed through source mutation: %#v", first.PayloadCrypto)
+	}
+	if string(first.EndpointIdentity.Encryption.KeyID) != "encryption-key" || string(first.EndpointIdentity.Signing.KeyID) != "signing-key" || string(first.AuthorizedClientSigningKeys["client"]) != "credential" || *first.DefaultUsername != "alice" {
+		t.Fatalf("handler identity or policy changed through source mutation: %#v", first)
+	}
+	*first.MaxMessageSize = 2
+	(*first.EnvVars)["MODE"] = "returned"
+	first.AllowedOrigins[0] = "https://returned.example"
+	first.PayloadCrypto.SessionKeyGrant.PayloadKeyID[0] = 'Y'
+	first.EndpointIdentity.Encryption.KeyID[0] = 'Y'
+	first.AuthorizedClientSigningKeys["client"][0] = 'Y'
+	*first.DefaultUsername = "eve"
+	second := handler.Config()
+	if *second.MaxMessageSize != 4096 || (*second.EnvVars)["MODE"] != "test" || second.AllowedOrigins[0] != "https://terminal.example" || string(second.PayloadCrypto.SessionKeyGrant.PayloadKeyID) != "payload-key" || string(second.EndpointIdentity.Encryption.KeyID) != "encryption-key" || string(second.AuthorizedClientSigningKeys["client"]) != "credential" || *second.DefaultUsername != "alice" {
+		t.Fatalf("handler config changed through returned snapshot mutation: %#v", second)
+	}
+}
+
 func TestHandlerServeHTTPRejectsWhileDraining(t *testing.T) {
 	handler := NewWebTTYHandler(testServerConfig(ServerConfig{}))
 	handler.BeginDrain()
@@ -1488,6 +1544,55 @@ func TestRunClientRemoteExitDoesNotWaitForOpenStdin(t *testing.T) {
 	})
 	if err != nil || exitCode != 0 {
 		t.Fatalf("RunClient() = %d, %v", exitCode, err)
+	}
+}
+
+func TestRunClientJoinsContextStdinReader(t *testing.T) {
+	zero := time.Duration(0)
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	started := make(chan struct{})
+	stopped := make(chan struct{})
+	var startedOnce sync.Once
+	var stoppedOnce sync.Once
+	exitCode, err := RunClient(t.Context(), &ClientConfig{
+		URL:   testWebTTYURL(server.URL),
+		Stdin: strings.NewReader(""),
+		StdinReadContext: func(ctx context.Context, _ []byte) (int, error) {
+			startedOnce.Do(func() { close(started) })
+			<-ctx.Done()
+			stoppedOnce.Do(func() { close(stopped) })
+			return 0, ctx.Err()
+		},
+		CmdArgs:       testShellCommand("exit 0", "exit 0"),
+		OpenDeadline:  durationPtr(time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
+	if err != nil || exitCode != 0 {
+		t.Fatalf("RunClient() = %d, %v", exitCode, err)
+	}
+	select {
+	case <-started:
+	default:
+		t.Fatal("stdin reader did not start")
+	}
+	select {
+	case <-stopped:
+	default:
+		t.Fatal("RunClient returned before its stdin reader stopped")
+	}
+}
+
+type uncancelableStdinReader struct{}
+
+func (uncancelableStdinReader) Read([]byte) (int, error) { return 0, nil }
+
+func TestRunClientRejectsUncancelableStdinReader(t *testing.T) {
+	_, err := RunClient(t.Context(), &ClientConfig{Stdin: uncancelableStdinReader{}})
+	if err == nil || !strings.Contains(err.Error(), "stdin reader must support cancellation") {
+		t.Fatalf("RunClient() error = %v, want cancellable stdin error", err)
 	}
 }
 

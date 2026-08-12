@@ -64,52 +64,85 @@ func cloneTLSConfig(cfg *tls.Config) *tls.Config {
 	return cfg.Clone()
 }
 
+func cloneTransport(transport *Transport) *Transport {
+	if transport == nil {
+		return &Transport{}
+	}
+	out := *transport
+	out.LocalAddr = clonePtr(transport.LocalAddr)
+	out.NetworkInterface = clonePtr(transport.NetworkInterface)
+	out.ForceIPv4 = clonePtr(transport.ForceIPv4)
+	out.ForceIPv6 = clonePtr(transport.ForceIPv6)
+	out.DNSOverride = clonePtr(transport.DNSOverride)
+	out.DNSOverTLS = clonePtr(transport.DNSOverTLS)
+	out.DNSServerName = clonePtr(transport.DNSServerName)
+	out.DNSSECEnabled = clonePtr(transport.DNSSECEnabled)
+	out.ProxyHTTP = clonePtr(transport.ProxyHTTP)
+	out.ProxySOCKS5 = clonePtr(transport.ProxySOCKS5)
+	out.ProxyUsername = clonePtr(transport.ProxyUsername)
+	out.ProxyPassword = clonePtr(transport.ProxyPassword)
+	out.ProxyHTTPHeaders = cloneProxyHTTPHeaders(transport.ProxyHTTPHeaders)
+	out.TLSProxyConfig = cloneTLSConfig(transport.TLSProxyConfig)
+	out.ProxyFromEnvironment = clonePtr(transport.ProxyFromEnvironment)
+	return &out
+}
+
 func (c *Client) apiDialer() Dialer {
-	switch transport := c.Transport.(type) {
+	c.transportMu.Lock()
+	transport := c.Transport
+	c.transportMu.Unlock()
+	switch transport := transport.(type) {
 	case *Transport:
-		if transport == nil {
-			return &Transport{}
-		}
-		out := *transport
-		out.TLSProxyConfig = cloneTLSConfig(transport.TLSProxyConfig)
-		out.ProxyHTTPHeaders = cloneProxyHTTPHeaders(transport.ProxyHTTPHeaders)
-		return &out
+		return cloneTransport(transport)
 	case *QUICTransport:
 		if transport == nil {
 			return &Transport{}
 		}
 		return &Transport{
-			LocalAddr:            transport.LocalAddr,
-			NetworkInterface:     transport.NetworkInterface,
-			ForceIPv4:            transport.ForceIPv4,
-			ForceIPv6:            transport.ForceIPv6,
-			DNSOverride:          transport.DNSOverride,
-			DNSOverTLS:           transport.DNSOverTLS,
-			DNSServerName:        transport.DNSServerName,
-			DNSSECEnabled:        transport.DNSSECEnabled,
-			ProxyHTTP:            transport.ProxyHTTP,
-			ProxySOCKS5:          transport.ProxySOCKS5,
-			ProxyUsername:        transport.ProxyUsername,
-			ProxyPassword:        transport.ProxyPassword,
+			LocalAddr:            clonePtr(transport.LocalAddr),
+			NetworkInterface:     clonePtr(transport.NetworkInterface),
+			ForceIPv4:            clonePtr(transport.ForceIPv4),
+			ForceIPv6:            clonePtr(transport.ForceIPv6),
+			DNSOverride:          clonePtr(transport.DNSOverride),
+			DNSOverTLS:           clonePtr(transport.DNSOverTLS),
+			DNSServerName:        clonePtr(transport.DNSServerName),
+			DNSSECEnabled:        clonePtr(transport.DNSSECEnabled),
+			ProxyHTTP:            clonePtr(transport.ProxyHTTP),
+			ProxySOCKS5:          clonePtr(transport.ProxySOCKS5),
+			ProxyUsername:        clonePtr(transport.ProxyUsername),
+			ProxyPassword:        clonePtr(transport.ProxyPassword),
 			ProxyHTTPHeaders:     cloneProxyHTTPHeaders(transport.ProxyHTTPHeaders),
 			TLSProxyConfig:       cloneTLSConfig(transport.TLSProxyConfig),
-			ProxyFromEnvironment: transport.ProxyFromEnvironment,
+			ProxyFromEnvironment: clonePtr(transport.ProxyFromEnvironment),
 		}
 	case *AutoTransport:
 		if transport == nil || transport.TLS == nil {
 			return &Transport{}
 		}
-		out := *transport.TLS
-		out.TLSProxyConfig = cloneTLSConfig(transport.TLS.TLSProxyConfig)
-		out.ProxyHTTPHeaders = cloneProxyHTTPHeaders(transport.TLS.ProxyHTTPHeaders)
-		return &out
+		return cloneTransport(transport.TLS)
 	default:
 		return &Transport{}
 	}
 }
 
+// CloseIdleConnections closes pooled API connections owned by the client.
+// It does not close active requests or the tunnel transport.
+func (c *Client) CloseIdleConnections() {
+	c.apiMu.Lock()
+	transport := c.apiTransport
+	c.apiTransport = nil
+	c.apiMu.Unlock()
+	if transport != nil {
+		transport.CloseIdleConnections()
+	}
+}
+
 func (c *Client) apiHttpClient() (*http.Client, error) {
 	c.apiMu.Lock()
+	if c.closed.Load() {
+		c.apiMu.Unlock()
+		return nil, net.ErrClosed
+	}
 	if c.apiTransport == nil {
 		dialer := c.apiDialer()
 		c.apiTransport = &http.Transport{
@@ -528,6 +561,7 @@ func (c *Client) openSSE(ctx context.Context, engine, token string, params *Watc
 type wsConn struct {
 	c            *websocket.Conn
 	done         chan struct{}
+	pingDone     chan struct{}
 	closeOnce    sync.Once
 	closeErr     error
 	pingInterval time.Duration
@@ -544,6 +578,7 @@ func newWSConn(conn *websocket.Conn, pingInterval, readTimeout time.Duration) *w
 	w := &wsConn{
 		c:            conn,
 		done:         make(chan struct{}),
+		pingDone:     make(chan struct{}),
 		pingInterval: pingInterval,
 		readTimeout:  readTimeout,
 	}
@@ -554,16 +589,23 @@ func newWSConn(conn *websocket.Conn, pingInterval, readTimeout time.Duration) *w
 	})
 	if pingInterval > 0 {
 		go w.pingLoop()
+	} else {
+		close(w.pingDone)
 	}
 	return w
 }
 
 func (w *wsConn) Close() error {
+	w.initiateClose()
+	<-w.pingDone
+	return w.closeErr
+}
+
+func (w *wsConn) initiateClose() {
 	w.closeOnce.Do(func() {
 		close(w.done)
 		w.closeErr = w.c.Close()
 	})
-	return w.closeErr
 }
 
 func (w *wsConn) Read(ctx context.Context) ([]byte, error) {
@@ -589,6 +631,7 @@ func (w *wsConn) resetReadDeadline() {
 func (w *wsConn) pingLoop() {
 	ticker := time.NewTicker(w.pingInterval)
 	defer ticker.Stop()
+	defer close(w.pingDone)
 	for {
 		select {
 		case <-w.done:
@@ -596,7 +639,7 @@ func (w *wsConn) pingLoop() {
 		case <-ticker.C:
 			deadline := time.Now().Add(watchWSWriteTimeout)
 			if err := w.c.WriteControl(websocket.PingMessage, nil, deadline); err != nil {
-				_ = w.Close()
+				w.initiateClose()
 				return
 			}
 		}

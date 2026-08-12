@@ -9,6 +9,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -138,6 +139,121 @@ func TestAutoTransportConcurrentDialsUseOneMode(t *testing.T) {
 	if transport.SelectedMode() != TunnelTransportModeQUIC || quic.callCount() != count || tlsDialer.callCount() != 0 {
 		t.Fatalf("selection=%q dial counts quic=%d tls=%d", transport.SelectedMode(), quic.callCount(), tlsDialer.callCount())
 	}
+}
+
+func TestAutoTransportCloseRejectsAllInFlightSelectionWaiters(t *testing.T) {
+	quic := &autoTestDialer{waitForCancellation: true}
+	delay := time.Hour
+	transport := &AutoTransport{quicDialer: quic, tlsDialer: &autoTestDialer{waitForCancellation: true}, FallbackDelay: &delay}
+	const dials = 64
+	errs := make(chan error, dials)
+	for range dials {
+		go func() {
+			_, err := transport.Dial(t.Context(), "engine.example:443", &tls.Config{})
+			errs <- err
+		}()
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		transport.mu.Lock()
+		waiters := transport.selectionWaiters
+		transport.mu.Unlock()
+		if waiters == dials-1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("selection waiters = %d, want %d", waiters, dials-1)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := transport.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for range dials {
+		select {
+		case err := <-errs:
+			if !errors.Is(err, net.ErrClosed) {
+				t.Fatalf("in-flight Dial() error = %v, want net.ErrClosed", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("in-flight Dial() did not stop")
+		}
+	}
+	if got := quic.callCount(); got != 1 {
+		t.Fatalf("QUIC selection calls = %d, want 1", got)
+	}
+}
+
+func TestAutoTransportCloseWaitsForLosingDialCleanup(t *testing.T) {
+	tlsStarted := make(chan struct{})
+	tlsCanceled := make(chan struct{})
+	releaseTLS := make(chan struct{})
+	quic := &autoCoordinatedDialer{wait: tlsStarted}
+	tlsDialer := &autoCoordinatedDialer{started: tlsStarted, canceled: tlsCanceled, release: releaseTLS}
+	delay := time.Duration(0)
+	transport := &AutoTransport{quicDialer: quic, tlsDialer: tlsDialer, FallbackDelay: &delay}
+	conn, err := transport.Dial(t.Context(), "engine.example:443", &tls.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	select {
+	case <-tlsCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("losing TLS dial was not canceled")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- transport.Close() }()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close() returned before loser cleanup: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(releaseTLS)
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close() did not finish after loser cleanup")
+	}
+	if quic.calls.Load() != 1 || tlsDialer.calls.Load() != 1 {
+		t.Fatalf("selection calls = QUIC %d TLS %d, want 1/1", quic.calls.Load(), tlsDialer.calls.Load())
+	}
+}
+
+type autoCoordinatedDialer struct {
+	wait     <-chan struct{}
+	started  chan<- struct{}
+	canceled chan<- struct{}
+	release  <-chan struct{}
+	calls    atomic.Int32
+}
+
+func (d *autoCoordinatedDialer) Dial(ctx context.Context, _ string, _ *tls.Config) (net.Conn, error) {
+	d.calls.Add(1)
+	if d.started != nil {
+		close(d.started)
+	}
+	if d.wait != nil {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-d.wait:
+		}
+	}
+	if d.canceled != nil {
+		<-ctx.Done()
+		close(d.canceled)
+		if d.release != nil {
+			<-d.release
+		}
+		return nil, ctx.Err()
+	}
+	client, server := net.Pipe()
+	go func() { <-ctx.Done(); _ = server.Close() }()
+	return client, nil
 }
 
 type autoTestDialer struct {

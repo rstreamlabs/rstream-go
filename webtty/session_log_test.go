@@ -140,6 +140,11 @@ func TestSessionClosedLogIncludesAuditAndPolicyFields(t *testing.T) {
 		doneCh:          make(chan struct{}),
 	}
 	s.close()
+	select {
+	case <-s.doneCh:
+	case <-time.After(time.Second):
+		t.Fatal("session cleanup did not finish")
+	}
 	out := buf.String()
 	for _, want := range []string{
 		`msg="session closed"`,
