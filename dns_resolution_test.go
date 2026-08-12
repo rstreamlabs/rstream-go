@@ -4,8 +4,10 @@ package rstream
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/miekg/dns"
@@ -109,14 +111,25 @@ func TestResolveDialAddressRejectsInvalidAndEmptyLookups(t *testing.T) {
 
 func startDNSResolutionTestServer(t *testing.T, handler dns.Handler) string {
 	t.Helper()
-	tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("Listen(tcp) error = %v", err)
-	}
-	udpConn, err := net.ListenPacket("udp", tcpListener.Addr().String())
-	if err != nil {
+	var tcpListener net.Listener
+	var udpConn net.PacketConn
+	var err error
+	for range 16 {
+		tcpListener, err = net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("Listen(tcp) error = %v", err)
+		}
+		udpConn, err = net.ListenPacket("udp", tcpListener.Addr().String())
+		if err == nil {
+			break
+		}
 		_ = tcpListener.Close()
-		t.Fatalf("ListenPacket(udp) error = %v", err)
+		if !errors.Is(err, syscall.EADDRINUSE) {
+			t.Fatalf("ListenPacket(udp) error = %v", err)
+		}
+	}
+	if udpConn == nil {
+		t.Fatalf("ListenPacket(udp) exhausted retries: %v", err)
 	}
 	tcpServer := &dns.Server{Listener: tcpListener, Handler: handler}
 	udpServer := &dns.Server{PacketConn: udpConn, Handler: handler}
