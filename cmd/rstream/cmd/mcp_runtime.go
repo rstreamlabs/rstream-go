@@ -222,6 +222,28 @@ func mcpUpsertRuntimeContext(path string, cfg config.Config, apiURL string, proj
 	if envToken == "" {
 		return config.Context{}, false, errors.New("authentication is required but not configured (run rstream login, set RSTREAM_AUTHENTICATION_TOKEN, or set RSTREAM_MTLS_CERT_FILE and RSTREAM_MTLS_KEY_FILE)")
 	}
+	var updated config.Context
+	var changed bool
+	unchanged := errors.New("runtime context is unchanged")
+	err = config.UpdateAtomic(path, func(latest *config.Config) error {
+		var updateErr error
+		updated, changed, updateErr = mcpApplyRuntimeContext(latest, apiURL, project, contextName, setDefault)
+		if updateErr == nil && !changed {
+			return unchanged
+		}
+		return updateErr
+	})
+	if errors.Is(err, unchanged) {
+		return updated, false, nil
+	}
+	if err != nil {
+		return config.Context{}, false, err
+	}
+	return updated, true, nil
+}
+
+func mcpApplyRuntimeContext(cfg *config.Config, apiURL string, project controlplane.Project, contextName string, setDefault bool) (config.Context, bool, error) {
+	engine := project.EngineAddress()
 	contextValue, _, err := cfg.FindContextForAPIURL(contextName, apiURL)
 	if err != nil {
 		return config.Context{}, false, err
@@ -263,11 +285,6 @@ func mcpUpsertRuntimeContext(path string, cfg config.Config, apiURL string, proj
 	if setDefault && (cfg.Defaults.Context == nil || cfg.Defaults.Context.Name != contextName) {
 		cfg.Defaults.Context = &config.DefaultContext{Name: contextName}
 		changed = true
-	}
-	if changed {
-		if err := config.WriteAtomic(path, cfg); err != nil {
-			return config.Context{}, false, err
-		}
 	}
 	return *contextValue, changed, nil
 }

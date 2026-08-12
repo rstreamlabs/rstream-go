@@ -65,24 +65,23 @@ func storeTokenWithStorage(ctx context.Context, path string, cfg config.Config, 
 	if err := validateToken(ctx, apiURL, token, headers); err != nil {
 		return err
 	}
-	environment := cfg.EnsureEnvironment(apiURL)
 	switch storage.Kind {
 	case config.TokenStorageInline:
-		if err := setEnvironmentToken(environment, token); err != nil {
-			return err
-		}
 	case config.TokenStorageKeychain:
 		if err := config.StoreToken(storage, token); err != nil {
 			return err
 		}
-		setEnvironmentTokenStorage(environment, storage)
 	default:
 		return fmt.Errorf("token storage kind %q is not supported", storage.Kind)
 	}
-	if err := config.WriteAtomic(path, cfg); err != nil {
-		return err
-	}
-	return nil
+	return config.UpdateAtomic(path, func(latest *config.Config) error {
+		environment := latest.EnsureEnvironment(apiURL)
+		if storage.Kind == config.TokenStorageInline {
+			return setEnvironmentToken(environment, token)
+		}
+		setEnvironmentTokenStorage(environment, storage)
+		return nil
+	})
 }
 
 func tokenStorageFromFlags(cmd *cobra.Command, apiURL string) (config.TokenStorage, error) {

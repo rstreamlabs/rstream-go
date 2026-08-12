@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
@@ -68,12 +70,50 @@ type mcpReadResult struct {
 	Err      error
 }
 
+type mcpMessageHandler func(context.Context, mcpMessage) mcpResponse
+
+type mcpRequestJob struct {
+	Context context.Context
+	Cancel  context.CancelFunc
+	Key     string
+	Message mcpMessage
+	Framing mcpFraming
+}
+
+type mcpRequestState struct {
+	Cancel    context.CancelFunc
+	Method    string
+	Cancelled bool
+}
+
+type mcpRequestRegistry struct {
+	mu       sync.Mutex
+	requests map[string]*mcpRequestState
+}
+
+type mcpResponseWriter struct {
+	ctx       context.Context
+	output    io.Writer
+	jobs      chan mcpWriteJob
+	done      chan struct{}
+	errors    chan<- error
+	cancelMCP context.CancelFunc
+}
+
+type mcpWriteJob struct {
+	Response mcpResponse
+	Framing  mcpFraming
+	Result   chan error
+}
+
 type mcpFraming string
 
 const mcpProtocolVersion = "2025-11-25"
 const mcpFramingContentLength mcpFraming = "content-length"
 const mcpFramingLineDelimited mcpFraming = "line-delimited"
 const mcpMaxMessageBytes = 8 * 1024 * 1024
+const mcpMaxConcurrentRequests = 8
+const mcpMaxQueuedRequests = 16
 const mcpInstructions = "Write the product name as rstream. When local runtime state is unknown, call rstream_runtime_status first. Treat the returned agent_guidance as authoritative for application SDK selection and self-hosted CE boundaries. If login is missing during a setup or prepare flow, call rstream_auth_start, show the login_url without restating a user code unless the tool returned a separate user_code field, then call rstream_auth_poll with wait=true and a bounded timeout; only ask the user to report approval after the wait times out. If the user only asks to start login and return an approval URL, stop after rstream_auth_start. If a login token exists but no usable hosted project context exists, or the requested hosted project differs from the selected context, call rstream_runtime_prepare with the project name, endpoint, or ID. If the user is using a self-hosted rstream Engine Community Edition deployment, do not use hosted project, workspace, billing, plan, rstream Auth, managed credential, managed policy, hosted logs, managed TURN, or Control plane tools as if they existed; CE agents use a direct engine host, a locally signed JWT, static TLS certificates, and an engine-only context or RSTREAM_ENGINE/RSTREAM_AUTHENTICATION_TOKEN. The public CE runtime scope is the TCP/TLS engine listener, optional HTTP redirect listener, static TLS certificate provider, JWT agent authentication, Prometheus metrics, bytestream tunnels, published HTTP/TLS tunnels over the TCP/TLS listener, and private bytestream tunnels. Do not describe QUIC, DTLS, datagram tunnels, WebTTY, browser rstream Auth, HTTP tunnel token auth, challenge mode, zero-trust hosted edge policy, managed resource policies, hosted project settings, hosted credential records, automatic certificates, Geo/IP policies, trusted IP policies, or managed logs as CE features. Tunnel cleanup must follow the resource owner: unmanaged rstream forward processes are cleaned up by stopping the owning process, while MCP-created resources use their returned cleanup fields and matching MCP stop tools. If no tunnel project is available during a hosted setup or prepare flow, report that a project is needed; do not create a project unless the user explicitly asks to create one. If a tool reports missing authorization for a user-approved MCP action, start a new rstream login with the additional required permission; explicit permissions are added to the MCP workstation bundle instead of replacing it. If several projects are available and the user did not explicitly name one, do not infer or recommend a project from naming conventions alone; list the choices and ask the user to choose by name, endpoint, or ID without adding a preferred example. For Codex workstation local tunnels, WebTTY, remote exposure, and remote MCP on hosted projects, do not call rstream_token_create; it is only for immediate browser, URL, query-token, published MCP, or runtime handoff flows. Enabling token_auth on a tunnel only configures edge access control; do not mint a token unless the user asks to hand one to a client or to verify authenticated access. For remote MCP surfaces that Codex calls itself, keep the remote exposure private unless the user asks for a public URL or browser access. Scoped credentials for remote devices are not the same thing as short-lived delegated handoff tokens. For application-owned tunnel lifecycle, prefer SDKs over MCP or shell workflows and name the concrete SDK in the answer: Node.js tunnel runtimes use @rstreamlabs/runtime with Client, createTunnel, serve, dial/private dialing, AbortSignal-based cancellation, and tunnel close/cleanup; Node.js hosted/Engine API clients use @rstreamlabs/tunnels for inventory, watch, token, and TURN workflows; Go services use github.com/rstreamlabs/rstream-go with Connect, CreateTunnel, Dial, context cancellation, and Close; native C++ services use the rstream C++ SDK from github.com/rstreamlabs/rstream-cpp with io_rstrm::client, async_create_tunnel, async_accept, io_rstrm::socket, and io_rstrm::endpoint. The rstream CLI is an operator and sidecar surface, not the preferred primary API inside application code when an SDK covers the runtime. In SDK answers, describe MCP as setup, diagnostics, managed local tunnels, and remote operations. Do not shell out to package registries to discover these SDK names during normal MCP workflows. For Engine inventory endpoints /api/clients and /api/tunnels, use Authorization: Bearer tokens. For Engine watch endpoints /api/sse and /api/websocket, Authorization: Bearer is accepted and the rstream.token query parameter is also accepted for browser transports that cannot attach headers; that query-token form is only for those watch endpoints and must use a short-lived auth or app token with explicit read-only watch permissions and list-only tunnel resources, not personal, create, connect, WebTTY session, or WebTTY log permissions. CE Engine HTTP APIs use the CE JWT authentication backend and do not enforce hosted resources.tunnels boundaries. Use rstream_local_tunnel_expose, rstream_local_tunnel_list, and rstream_local_tunnel_stop for MCP-managed local tunnel workflows. When a local tunnel or remote exposure is created by MCP, use the returned structured cleanup fields and the matching MCP stop tool for cleanup; do not invent shell commands for MCP-managed resources. Do not shell out to the rstream CLI for information already exposed by this MCP server, and do not use a local shell for presentation-only transformations of MCP results; use the MCP context, runtime, project, local tunnel, WebTTY, and remote tools instead."
 
 var mcpCmd = &cobra.Command{
@@ -142,32 +182,125 @@ func mcpStringFlag(cmd *cobra.Command, name string) string {
 }
 
 func serveMCP(ctx context.Context, input io.Reader, output io.Writer) error {
+	return serveMCPWithHandler(ctx, input, output, handleMCPMessage)
+}
+
+func serveMCPWithHandler(ctx context.Context, input io.Reader, output io.Writer, handler mcpMessageHandler) error {
+	serverCtx, cancelServer := context.WithCancel(ctx)
+	defer cancelServer()
 	reader := bufio.NewReader(input)
 	results := make(chan mcpReadResult, 1)
+	readerDone := make(chan struct{})
 	go func() {
+		defer close(readerDone)
+		defer close(results)
 		for {
 			envelope, err := readMCPEnvelope(reader)
-			results <- mcpReadResult{Envelope: envelope, Err: err}
+			select {
+			case results <- mcpReadResult{Envelope: envelope, Err: err}:
+			case <-serverCtx.Done():
+				return
+			}
 			if err != nil {
 				var decodeErr *mcpDecodeError
 				if errors.As(err, &decodeErr) {
 					continue
 				}
-				close(results)
 				return
 			}
 		}
 	}()
+	writeErrors := make(chan error, 1)
+	writer := newMCPResponseWriter(serverCtx, output, writeErrors, cancelServer)
+	registry := &mcpRequestRegistry{requests: map[string]*mcpRequestState{}}
+	jobs := make(chan mcpRequestJob, mcpMaxQueuedRequests)
+	var workers sync.WaitGroup
+	for range mcpMaxConcurrentRequests {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for job := range jobs {
+				if !runMCPRequestJob(job, handler, writer, registry, writeErrors, cancelServer) {
+					return
+				}
+			}
+		}()
+	}
+	finish := func(err error, abort bool) error {
+		var inputCloser io.Closer
+		var outputCloser io.Closer
+		abortServer := func() {
+			cancelServer()
+			registry.cancelAll()
+			inputCloser, _ = input.(io.Closer)
+			outputCloser, _ = output.(io.Closer)
+			if inputCloser != nil {
+				_ = inputCloser.Close()
+			}
+			if outputCloser != nil {
+				_ = outputCloser.Close()
+			}
+		}
+		if abort {
+			abortServer()
+		}
+		close(jobs)
+		workersDone := make(chan struct{})
+		go func() {
+			workers.Wait()
+			close(workersDone)
+		}()
+		if abort {
+			<-workersDone
+		} else {
+			select {
+			case <-workersDone:
+			case <-ctx.Done():
+				abort = true
+				abortServer()
+				<-workersDone
+			case writeErr := <-writeErrors:
+				abort = true
+				err = writeErr
+				abortServer()
+				<-workersDone
+			}
+		}
+		writer.close()
+		if inputCloser != nil {
+			select {
+			case <-readerDone:
+			case <-time.After(time.Second):
+				if err == nil {
+					err = errors.New("MCP input did not close after cancellation")
+				}
+			}
+		}
+		if err != nil {
+			return err
+		}
+		if abort && ctx.Err() != nil {
+			return nil
+		}
+		select {
+		case err := <-writeErrors:
+			return err
+		default:
+			return nil
+		}
+	}
 	for {
 		select {
 		case <-ctx.Done():
-			return nil
+			return finish(nil, true)
+		case err := <-writeErrors:
+			return finish(err, true)
 		case result, ok := <-results:
 			if !ok {
-				return nil
+				return finish(nil, false)
 			}
 			if errors.Is(result.Err, io.EOF) {
-				return nil
+				return finish(nil, false)
 			}
 			if result.Err != nil {
 				var decodeErr *mcpDecodeError
@@ -177,28 +310,217 @@ func serveMCP(ctx context.Context, input io.Reader, output io.Writer) error {
 						ID:      json.RawMessage("null"),
 						Error:   &mcpError{Code: decodeErr.Code, Message: mcpErrorMessage(decodeErr.Code)},
 					}
-					if err := writeMCPResponseWithFraming(output, response, result.Envelope.Framing); err != nil {
-						return err
+					if err := writer.write(serverCtx, response, result.Envelope.Framing); err != nil {
+						return finish(err, true)
 					}
 					continue
 				}
-				return result.Err
+				return finish(result.Err, true)
 			}
 			if result.Envelope.Message.ID == nil {
 				if protocolErr := validateMCPMessage(result.Envelope.Message); protocolErr != nil {
 					response := mcpResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: protocolErr}
-					if err := writeMCPResponseWithFraming(output, response, result.Envelope.Framing); err != nil {
-						return err
+					if err := writer.write(serverCtx, response, result.Envelope.Framing); err != nil {
+						return finish(err, true)
 					}
+					continue
+				}
+				if result.Envelope.Message.Method == "notifications/cancelled" {
+					registry.cancel(result.Envelope.Message.Params)
 				}
 				continue
 			}
-			response := handleMCPMessage(ctx, result.Envelope.Message)
-			if err := writeMCPResponseWithFraming(output, response, result.Envelope.Framing); err != nil {
-				return err
+			if protocolErr := validateMCPMessage(result.Envelope.Message); protocolErr != nil {
+				response := mcpResponse{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: protocolErr}
+				if err := writer.write(serverCtx, response, result.Envelope.Framing); err != nil {
+					return finish(err, true)
+				}
+				continue
+			}
+			key := mcpRequestKey(result.Envelope.Message.ID)
+			requestCtx, requestCancel := context.WithCancel(serverCtx)
+			if !registry.register(key, result.Envelope.Message.Method, requestCancel) {
+				requestCancel()
+				response := mcpResponse{JSONRPC: "2.0", ID: result.Envelope.Message.ID, Error: &mcpError{Code: -32600, Message: "request id is already in progress"}}
+				if err := writer.write(serverCtx, response, result.Envelope.Framing); err != nil {
+					return finish(err, true)
+				}
+				continue
+			}
+			job := mcpRequestJob{Context: requestCtx, Cancel: requestCancel, Key: key, Message: result.Envelope.Message, Framing: result.Envelope.Framing}
+			select {
+			case jobs <- job:
+			default:
+				registry.complete(key)
+				requestCancel()
+				response := mcpResponse{JSONRPC: "2.0", ID: result.Envelope.Message.ID, Error: &mcpError{Code: -32000, Message: "server is busy"}}
+				if err := writer.write(serverCtx, response, result.Envelope.Framing); err != nil {
+					return finish(err, true)
+				}
 			}
 		}
 	}
+}
+
+func runMCPRequestJob(job mcpRequestJob, handler mcpMessageHandler, writer *mcpResponseWriter, registry *mcpRequestRegistry, writeErrors chan<- error, cancelServer context.CancelFunc) bool {
+	defer job.Cancel()
+	if job.Context.Err() != nil {
+		registry.complete(job.Key)
+		return true
+	}
+	response := handler(job.Context, job.Message)
+	if registry.complete(job.Key) || job.Context.Err() != nil {
+		return true
+	}
+	if err := writer.write(job.Context, response, job.Framing); err != nil {
+		select {
+		case writeErrors <- err:
+		default:
+		}
+		cancelServer()
+		return false
+	}
+	return true
+}
+
+func newMCPResponseWriter(ctx context.Context, output io.Writer, errors chan<- error, cancel context.CancelFunc) *mcpResponseWriter {
+	writer := &mcpResponseWriter{ctx: ctx, output: output, jobs: make(chan mcpWriteJob, mcpMaxConcurrentRequests+mcpMaxQueuedRequests), done: make(chan struct{}), errors: errors, cancelMCP: cancel}
+	go writer.run()
+	return writer
+}
+
+func (w *mcpResponseWriter) run() {
+	defer close(w.done)
+	for {
+		select {
+		case <-w.ctx.Done():
+			return
+		case job, ok := <-w.jobs:
+			if !ok {
+				return
+			}
+			err := writeMCPResponseWithFraming(w.output, job.Response, job.Framing)
+			job.Result <- err
+			if err != nil {
+				select {
+				case w.errors <- err:
+				default:
+				}
+				w.cancelMCP()
+				return
+			}
+		}
+	}
+}
+
+func (w *mcpResponseWriter) write(ctx context.Context, response mcpResponse, framing mcpFraming) error {
+	result := make(chan error, 1)
+	job := mcpWriteJob{Response: response, Framing: framing, Result: result}
+	select {
+	case w.jobs <- job:
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-w.done:
+		return io.ErrClosedPipe
+	}
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		select {
+		case err := <-result:
+			return err
+		default:
+			return ctx.Err()
+		}
+	case <-w.done:
+		select {
+		case err := <-result:
+			return err
+		default:
+			return io.ErrClosedPipe
+		}
+	}
+}
+
+func (w *mcpResponseWriter) close() {
+	close(w.jobs)
+	<-w.done
+}
+
+func (r *mcpRequestRegistry) register(key string, method string, cancel context.CancelFunc) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.requests[key]; ok {
+		return false
+	}
+	r.requests[key] = &mcpRequestState{Cancel: cancel, Method: method}
+	return true
+}
+
+func (r *mcpRequestRegistry) complete(key string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	request, ok := r.requests[key]
+	if !ok {
+		return false
+	}
+	delete(r.requests, key)
+	return request.Cancelled
+}
+
+func (r *mcpRequestRegistry) cancel(params json.RawMessage) {
+	key, ok := mcpCancellationRequestKey(params)
+	if !ok {
+		return
+	}
+	r.mu.Lock()
+	request, ok := r.requests[key]
+	if !ok || request.Method == "initialize" {
+		r.mu.Unlock()
+		return
+	}
+	request.Cancelled = true
+	cancel := request.Cancel
+	r.mu.Unlock()
+	cancel()
+}
+
+func (r *mcpRequestRegistry) cancelAll() {
+	r.mu.Lock()
+	requests := r.requests
+	r.requests = map[string]*mcpRequestState{}
+	r.mu.Unlock()
+	for _, request := range requests {
+		request.Cancel()
+	}
+}
+
+func mcpCancellationRequestKey(params json.RawMessage) (string, bool) {
+	var value struct {
+		RequestID json.RawMessage `json:"requestId"`
+	}
+	if err := json.Unmarshal(params, &value); err != nil || value.RequestID == nil {
+		return "", false
+	}
+	var id any
+	if err := json.Unmarshal(value.RequestID, &id); err != nil {
+		return "", false
+	}
+	switch id.(type) {
+	case string, float64:
+		return mcpRequestKey(value.RequestID), true
+	default:
+		return "", false
+	}
+}
+
+func mcpRequestKey(id json.RawMessage) string {
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, id); err != nil {
+		return string(id)
+	}
+	return compact.String()
 }
 
 func readMCPMessage(reader *bufio.Reader) (mcpMessage, error) {

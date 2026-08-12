@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,6 +50,62 @@ func TestStoreTokenValidatesAndPersistsEnvironmentToken(t *testing.T) {
 	token, ok, err := config.TokenFromAuth(env.Auth)
 	if err != nil || !ok || token != apiToken {
 		t.Fatalf("stored token = %q ok=%v err=%v", token, ok, err)
+	}
+}
+
+func TestStoreTokenConcurrentUpdatesPreserveBothEnvironments(t *testing.T) {
+	requests := make(chan struct{}, 2)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/whoami" {
+			http.NotFound(w, r)
+			return
+		}
+		requests <- struct{}{}
+		<-release
+		_ = json.NewEncoder(w).Encode(controlplane.Whoami{ID: "user", Role: "admin"})
+	}))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	apiURLs := []string{server.URL, strings.Replace(server.URL, "127.0.0.1", "localhost", 1)}
+	errors := make(chan error, len(apiURLs))
+	var workers sync.WaitGroup
+	for index, apiURL := range apiURLs {
+		index, apiURL := index, apiURL
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			errors <- storeToken(t.Context(), path, config.Config{}, apiURL, fmt.Sprintf("token-%d", index))
+		}()
+	}
+	for range apiURLs {
+		select {
+		case <-requests:
+		case <-time.After(time.Second):
+			t.Fatal("concurrent token validation did not reach the server")
+		}
+	}
+	close(release)
+	workers.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatalf("storeToken returned error: %v", err)
+		}
+	}
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	for index, apiURL := range apiURLs {
+		environment, _ := loaded.FindEnvironment(apiURL)
+		if environment == nil {
+			t.Fatalf("environment %s was lost", apiURL)
+		}
+		token, ok, tokenErr := config.TokenFromAuth(environment.Auth)
+		if tokenErr != nil || !ok || token != fmt.Sprintf("token-%d", index) {
+			t.Fatalf("environment %s token=%q ok=%v error=%v", apiURL, token, ok, tokenErr)
+		}
 	}
 }
 

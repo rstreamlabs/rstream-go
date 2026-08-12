@@ -16,6 +16,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +26,75 @@ import (
 	"github.com/rstreamlabs/rstream-go/webtty"
 	"github.com/spf13/cobra"
 )
+
+type failingMCPWriter struct {
+	err error
+}
+
+func (w failingMCPWriter) Write(_ []byte) (int, error) {
+	return 0, w.err
+}
+
+type blockingMCPReader struct {
+	closed    chan struct{}
+	started   chan struct{}
+	closeOnce sync.Once
+	startOnce sync.Once
+}
+
+type blockingMCPWriter struct {
+	closed    chan struct{}
+	started   chan struct{}
+	closeOnce sync.Once
+	startOnce sync.Once
+}
+
+type lockedMCPBuffer struct {
+	buffer bytes.Buffer
+	mu     sync.Mutex
+}
+
+func newBlockingMCPReader() *blockingMCPReader {
+	return &blockingMCPReader{closed: make(chan struct{}), started: make(chan struct{})}
+}
+
+func (r *blockingMCPReader) Read(_ []byte) (int, error) {
+	r.startOnce.Do(func() { close(r.started) })
+	<-r.closed
+	return 0, io.ErrClosedPipe
+}
+
+func (r *blockingMCPReader) Close() error {
+	r.closeOnce.Do(func() { close(r.closed) })
+	return nil
+}
+
+func newBlockingMCPWriter() *blockingMCPWriter {
+	return &blockingMCPWriter{closed: make(chan struct{}), started: make(chan struct{})}
+}
+
+func (w *blockingMCPWriter) Write(_ []byte) (int, error) {
+	w.startOnce.Do(func() { close(w.started) })
+	<-w.closed
+	return 0, io.ErrClosedPipe
+}
+
+func (w *blockingMCPWriter) Close() error {
+	w.closeOnce.Do(func() { close(w.closed) })
+	return nil
+}
+
+func (b *lockedMCPBuffer) Write(value []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.Write(value)
+}
+
+func (b *lockedMCPBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buffer.String()
+}
 
 func TestMCPReadWriteFraming(t *testing.T) {
 	input := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
@@ -125,6 +196,554 @@ func TestServeMCPReturnsWhenContextCancelled(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("serveMCP did not return after context cancellation")
+	}
+}
+
+func TestServeMCPCancellationClosesBlockingInput(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	input := newBlockingMCPReader()
+	done := make(chan error, 1)
+	go func() { done <- serveMCP(ctx, input, &bytes.Buffer{}) }()
+	select {
+	case <-input.started:
+	case <-time.After(time.Second):
+		t.Fatal("MCP input read did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serveMCP returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("serveMCP did not return after closing blocking input")
+	}
+	select {
+	case <-input.closed:
+	default:
+		t.Fatal("MCP input was not closed")
+	}
+}
+
+func TestServeMCPCancellationClosesBlockingOutput(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	output := newBlockingMCPWriter()
+	done := make(chan error, 1)
+	go func() {
+		done <- serveMCP(ctx, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`+"\n"), output)
+	}()
+	select {
+	case <-output.started:
+	case <-time.After(time.Second):
+		t.Fatal("MCP output write did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serveMCP returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("serveMCP did not return after closing blocking output")
+	}
+	select {
+	case <-output.closed:
+	default:
+		t.Fatal("MCP output was not closed")
+	}
+}
+
+func TestServeMCPRunsRequestsConcurrentlyWithinBounds(t *testing.T) {
+	inputReader, inputWriter := io.Pipe()
+	defer inputReader.Close()
+	release := make(chan struct{})
+	started := make(chan struct{}, mcpMaxConcurrentRequests+mcpMaxQueuedRequests)
+	var active atomic.Int32
+	var maximum atomic.Int32
+	var handled atomic.Int32
+	handler := func(_ context.Context, message mcpMessage) mcpResponse {
+		current := active.Add(1)
+		for previous := maximum.Load(); current > previous && !maximum.CompareAndSwap(previous, current); previous = maximum.Load() {
+		}
+		handled.Add(1)
+		started <- struct{}{}
+		<-release
+		active.Add(-1)
+		return mcpResponse{JSONRPC: "2.0", ID: message.ID, Result: map[string]bool{"ok": true}}
+	}
+	var output lockedMCPBuffer
+	done := make(chan error, 1)
+	go func() { done <- serveMCPWithHandler(t.Context(), inputReader, &output, handler) }()
+	writeDone := make(chan error, 1)
+	go func() {
+		for id := 1; id <= mcpMaxConcurrentRequests; id++ {
+			if _, err := fmt.Fprintf(inputWriter, `{"jsonrpc":"2.0","id":%d,"method":"tools/list"}`+"\n", id); err != nil {
+				writeDone <- err
+				return
+			}
+		}
+		for queued := range mcpMaxQueuedRequests + 1 {
+			id := mcpMaxConcurrentRequests + queued + 1
+			if _, err := fmt.Fprintf(inputWriter, `{"jsonrpc":"2.0","id":%d,"method":"tools/list"}`+"\n", id); err != nil {
+				writeDone <- err
+				return
+			}
+		}
+		writeDone <- inputWriter.Close()
+	}()
+	for range mcpMaxConcurrentRequests {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("concurrent MCP request did not start")
+		}
+	}
+	if err := <-writeDone; err != nil {
+		t.Fatalf("write MCP requests: %v", err)
+	}
+	select {
+	case <-started:
+		t.Fatal("MCP server exceeded the concurrent request bound")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serveMCPWithHandler returned error: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("MCP server did not drain bounded requests")
+	}
+	if got := maximum.Load(); got != mcpMaxConcurrentRequests {
+		t.Fatalf("maximum concurrent requests = %d, want %d", got, mcpMaxConcurrentRequests)
+	}
+	if got := handled.Load(); got > mcpMaxConcurrentRequests+mcpMaxQueuedRequests {
+		t.Fatalf("handled requests = %d, exceeds worker plus queue bound", got)
+	}
+	if !strings.Contains(output.String(), `"code":-32000`) {
+		t.Fatalf("overload response is missing: %q", output.String())
+	}
+}
+
+func TestServeMCPCancellationStopsRequestWithoutResponse(t *testing.T) {
+	inputReader, inputWriter := io.Pipe()
+	defer inputReader.Close()
+	started := make(chan struct{})
+	cancelled := make(chan struct{})
+	handler := func(ctx context.Context, message mcpMessage) mcpResponse {
+		close(started)
+		<-ctx.Done()
+		close(cancelled)
+		return mcpResponse{JSONRPC: "2.0", ID: message.ID, Result: map[string]bool{"late": true}}
+	}
+	var output bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- serveMCPWithHandler(t.Context(), inputReader, &output, handler) }()
+	if _, err := io.WriteString(inputWriter, `{"jsonrpc":"2.0","id":"slow","method":"tools/list"}`+"\n"); err != nil {
+		t.Fatalf("write MCP request: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("MCP request did not start")
+	}
+	if _, err := io.WriteString(inputWriter, `{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"slow","reason":"test"}}`+"\n"); err != nil {
+		t.Fatalf("write MCP cancellation: %v", err)
+	}
+	if err := inputWriter.Close(); err != nil {
+		t.Fatalf("close MCP input: %v", err)
+	}
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("MCP cancellation did not reach the request context")
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("serveMCPWithHandler returned error: %v", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("cancelled MCP request wrote a response: %q", output.String())
+	}
+}
+
+func TestServeMCPCancellationRemovesQueuedRequest(t *testing.T) {
+	inputReader, inputWriter := io.Pipe()
+	defer inputReader.Close()
+	release := make(chan struct{})
+	started := make(chan string, mcpMaxConcurrentRequests+1)
+	handler := func(ctx context.Context, message mcpMessage) mcpResponse {
+		started <- string(message.ID)
+		if string(message.ID) == `"queued"` {
+			return mcpResponse{JSONRPC: "2.0", ID: message.ID, Result: map[string]bool{"late": true}}
+		}
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return mcpResponse{JSONRPC: "2.0", ID: message.ID, Result: map[string]bool{"ok": true}}
+	}
+	var output lockedMCPBuffer
+	done := make(chan error, 1)
+	go func() { done <- serveMCPWithHandler(t.Context(), inputReader, &output, handler) }()
+	for id := 1; id <= mcpMaxConcurrentRequests; id++ {
+		if _, err := fmt.Fprintf(inputWriter, `{"jsonrpc":"2.0","id":%d,"method":"tools/list"}`+"\n", id); err != nil {
+			t.Fatalf("write MCP request: %v", err)
+		}
+	}
+	for range mcpMaxConcurrentRequests {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("MCP worker did not start")
+		}
+	}
+	if _, err := io.WriteString(inputWriter, `{"jsonrpc":"2.0","id":"queued","method":"tools/list"}`+"\n"); err != nil {
+		t.Fatalf("write queued MCP request: %v", err)
+	}
+	if _, err := io.WriteString(inputWriter, `{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"queued"}}`+"\n"); err != nil {
+		t.Fatalf("write queued MCP cancellation: %v", err)
+	}
+	if _, err := io.WriteString(inputWriter, `{"jsonrpc":"2.0","id":"queued","method":"tools/list"}`+"\n"); err != nil {
+		t.Fatalf("write queued MCP duplicate: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for !strings.Contains(output.String(), "request id is already in progress") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !strings.Contains(output.String(), "request id is already in progress") {
+		t.Fatalf("queued cancellation barrier response is missing: %q", output.String())
+	}
+	close(release)
+	if err := inputWriter.Close(); err != nil {
+		t.Fatalf("close MCP input: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("serveMCPWithHandler returned error: %v", err)
+	}
+	select {
+	case id := <-started:
+		if id == `"queued"` {
+			t.Fatal("cancelled queued request reached the handler")
+		}
+	default:
+	}
+	if strings.Contains(output.String(), `"late":true`) {
+		t.Fatalf("cancelled queued request reached the response path: %q", output.String())
+	}
+}
+
+func TestServeMCPRejectsDuplicateInFlightIDAndAllowsReuse(t *testing.T) {
+	inputReader, inputWriter := io.Pipe()
+	defer inputReader.Close()
+	started := make(chan struct{}, 2)
+	release := make(chan struct{}, 2)
+	handler := func(_ context.Context, message mcpMessage) mcpResponse {
+		started <- struct{}{}
+		<-release
+		return mcpResponse{JSONRPC: "2.0", ID: message.ID, Result: map[string]bool{"ok": true}}
+	}
+	var output lockedMCPBuffer
+	done := make(chan error, 1)
+	go func() { done <- serveMCPWithHandler(t.Context(), inputReader, &output, handler) }()
+	request := `{"jsonrpc":"2.0","id":"same","method":"tools/list"}` + "\n"
+	if _, err := io.WriteString(inputWriter, request); err != nil {
+		t.Fatalf("write first MCP request: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first MCP request did not start")
+	}
+	if _, err := io.WriteString(inputWriter, request); err != nil {
+		t.Fatalf("write duplicate MCP request: %v", err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for !strings.Contains(output.String(), "request id is already in progress") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !strings.Contains(output.String(), "request id is already in progress") {
+		t.Fatalf("duplicate MCP response is missing: %q", output.String())
+	}
+	release <- struct{}{}
+	deadline = time.Now().Add(time.Second)
+	for strings.Count(output.String(), `"id":"same"`) < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := io.WriteString(inputWriter, request); err != nil {
+		t.Fatalf("reuse MCP request id: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("completed MCP request id was not reusable")
+	}
+	release <- struct{}{}
+	if err := inputWriter.Close(); err != nil {
+		t.Fatalf("close MCP input: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("serveMCPWithHandler returned error: %v", err)
+	}
+	if got := strings.Count(output.String(), `"id":"same"`); got != 3 {
+		t.Fatalf("responses for reused ID = %d, want duplicate rejection plus two successes: %q", got, output.String())
+	}
+}
+
+func TestServeMCPRunsIndependentMutatingToolsConcurrently(t *testing.T) {
+	release := make(chan struct{}, 2)
+	started := make(chan struct{}, 2)
+	var active atomic.Int32
+	var maximum atomic.Int32
+	handler := func(_ context.Context, message mcpMessage) mcpResponse {
+		current := active.Add(1)
+		for previous := maximum.Load(); current > previous && !maximum.CompareAndSwap(previous, current); previous = maximum.Load() {
+		}
+		started <- struct{}{}
+		<-release
+		active.Add(-1)
+		return mcpResponse{JSONRPC: "2.0", ID: message.ID, Result: map[string]bool{"ok": true}}
+	}
+	input := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"rstream_auth_poll","arguments":{"id":"a"}}}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"rstream_runtime_prepare","arguments":{}}}`,
+		"",
+	}, "\n")
+	var output bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- serveMCPWithHandler(t.Context(), strings.NewReader(input), &output, handler) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first mutating MCP request did not start")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("second mutating MCP request did not run concurrently")
+	}
+	release <- struct{}{}
+	release <- struct{}{}
+	if err := <-done; err != nil {
+		t.Fatalf("serveMCPWithHandler returned error: %v", err)
+	}
+	if got := maximum.Load(); got != 2 {
+		t.Fatalf("maximum concurrent mutating requests = %d, want 2", got)
+	}
+}
+
+func TestServeMCPIgnoresInitializeCancellation(t *testing.T) {
+	inputReader, inputWriter := io.Pipe()
+	defer inputReader.Close()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	cancelled := make(chan struct{}, 1)
+	handler := func(ctx context.Context, message mcpMessage) mcpResponse {
+		close(started)
+		select {
+		case <-ctx.Done():
+			cancelled <- struct{}{}
+		case <-release:
+		}
+		return mcpResponse{JSONRPC: "2.0", ID: message.ID, Result: map[string]bool{"ok": true}}
+	}
+	var output bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- serveMCPWithHandler(t.Context(), inputReader, &output, handler) }()
+	if _, err := io.WriteString(inputWriter, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`+"\n"); err != nil {
+		t.Fatalf("write initialize request: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("initialize request did not start")
+	}
+	if _, err := io.WriteString(inputWriter, `{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1,"reason":"test"}}`+"\n"); err != nil {
+		t.Fatalf("write initialize cancellation: %v", err)
+	}
+	select {
+	case <-cancelled:
+		t.Fatal("initialize request was cancelled")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := inputWriter.Close(); err != nil {
+		t.Fatalf("close MCP input: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("serveMCPWithHandler returned error: %v", err)
+	}
+	if !strings.Contains(output.String(), `"id":1`) {
+		t.Fatalf("initialize response is missing: %q", output.String())
+	}
+}
+
+func TestServeMCPIgnoresMalformedCancellationID(t *testing.T) {
+	inputReader, inputWriter := io.Pipe()
+	defer inputReader.Close()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	cancelled := make(chan struct{}, 1)
+	handler := func(ctx context.Context, message mcpMessage) mcpResponse {
+		close(started)
+		select {
+		case <-ctx.Done():
+			cancelled <- struct{}{}
+		case <-release:
+		}
+		return mcpResponse{JSONRPC: "2.0", ID: message.ID, Result: map[string]bool{"ok": true}}
+	}
+	var output bytes.Buffer
+	done := make(chan error, 1)
+	go func() { done <- serveMCPWithHandler(t.Context(), inputReader, &output, handler) }()
+	if _, err := io.WriteString(inputWriter, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`+"\n"); err != nil {
+		t.Fatalf("write MCP request: %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("MCP request did not start")
+	}
+	if _, err := io.WriteString(inputWriter, `{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":true}}`+"\n"); err != nil {
+		t.Fatalf("write malformed MCP cancellation: %v", err)
+	}
+	select {
+	case <-cancelled:
+		t.Fatal("malformed cancellation ID cancelled the request")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := inputWriter.Close(); err != nil {
+		t.Fatalf("close MCP input: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("serveMCPWithHandler returned error: %v", err)
+	}
+	if !strings.Contains(output.String(), `"id":1`) || !strings.Contains(output.String(), `"ok":true`) {
+		t.Fatalf("request response is missing after malformed cancellation: %q", output.String())
+	}
+}
+
+func TestMCPRuntimeContextUpdatesAreAtomic(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	initial := config.Config{Environments: []config.Environment{{
+		APIURL: "https://api.example.com",
+		Auth: &config.Auth{Token: &config.Token{Storage: &config.TokenStorage{
+			Kind:  config.TokenStorageInline,
+			Value: "login-token",
+		}}},
+	}}}
+	if err := config.WriteAtomic(path, initial); err != nil {
+		t.Fatalf("WriteAtomic returned error: %v", err)
+	}
+	projects := []controlplane.Project{
+		{ID: "one", Name: "One", Endpoint: "one00001", Domain: "one.example.com", EnginePort: 443},
+		{ID: "two", Name: "Two", Endpoint: "two00002", Domain: "two.example.com", EnginePort: 443},
+	}
+	errors := make(chan error, len(projects))
+	var start sync.WaitGroup
+	start.Add(1)
+	var workers sync.WaitGroup
+	for _, project := range projects {
+		project := project
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			start.Wait()
+			_, _, err := mcpUpsertRuntimeContext(path, initial, "https://api.example.com", project, project.Name, false)
+			errors <- err
+		}()
+	}
+	start.Done()
+	workers.Wait()
+	close(errors)
+	for err := range errors {
+		if err != nil {
+			t.Fatalf("mcpUpsertRuntimeContext returned error: %v", err)
+		}
+	}
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	for _, project := range projects {
+		contextValue, _, findErr := loaded.FindContextByName(project.Name)
+		if findErr != nil || contextValue == nil || contextValue.ProjectEndpoint != project.Endpoint {
+			t.Fatalf("context %s was lost: value=%#v error=%v", project.Name, contextValue, findErr)
+		}
+	}
+}
+
+func TestMCPRuntimeContextRepairsStaleNoChangeSnapshot(t *testing.T) {
+	apiURL := "https://api.example.com"
+	project := controlplane.Project{ID: "one", Name: "One", Endpoint: "one00001", Domain: "one.example.com", EnginePort: 443}
+	stale := config.Config{
+		Environments: []config.Environment{{
+			APIURL: apiURL,
+			Auth: &config.Auth{Token: &config.Token{Storage: &config.TokenStorage{
+				Kind:  config.TokenStorageInline,
+				Value: "login-token",
+			}}},
+		}},
+		Contexts: []config.Context{{Name: project.Name, APIURL: apiURL, Engine: project.EngineAddress(), ProjectEndpoint: project.Endpoint, TURNDomain: project.Domain}},
+	}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	latest := config.Config{Environments: stale.Environments}
+	if err := config.WriteAtomic(path, latest); err != nil {
+		t.Fatalf("WriteAtomic returned error: %v", err)
+	}
+	contextValue, changed, err := mcpUpsertRuntimeContext(path, stale, apiURL, project, project.Name, false)
+	if err != nil {
+		t.Fatalf("mcpUpsertRuntimeContext returned error: %v", err)
+	}
+	if !changed || contextValue.ProjectEndpoint != project.Endpoint {
+		t.Fatalf("stale snapshot repair changed=%v context=%#v", changed, contextValue)
+	}
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	stored, _, err := loaded.FindContextByName(project.Name)
+	if err != nil || stored == nil || stored.ProjectEndpoint != project.Endpoint {
+		t.Fatalf("repaired context value=%#v error=%v", stored, err)
+	}
+}
+
+func TestServeMCPOutputFailureCancelsInFlightRequests(t *testing.T) {
+	writeErr := errors.New("output closed")
+	started := make(chan json.RawMessage, 2)
+	releaseFirst := make(chan struct{})
+	cancelledSecond := make(chan struct{})
+	handler := func(ctx context.Context, message mcpMessage) mcpResponse {
+		started <- message.ID
+		if string(message.ID) == "1" {
+			<-releaseFirst
+		} else {
+			<-ctx.Done()
+			close(cancelledSecond)
+		}
+		return mcpResponse{JSONRPC: "2.0", ID: message.ID, Result: map[string]bool{"ok": true}}
+	}
+	input := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}` + "\n" + `{"jsonrpc":"2.0","id":2,"method":"tools/list"}` + "\n"
+	done := make(chan error, 1)
+	go func() {
+		done <- serveMCPWithHandler(t.Context(), strings.NewReader(input), failingMCPWriter{err: writeErr}, handler)
+	}()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("MCP request did not start")
+		}
+	}
+	close(releaseFirst)
+	select {
+	case <-cancelledSecond:
+	case <-time.After(time.Second):
+		t.Fatal("output failure did not cancel the in-flight request")
+	}
+	if err := <-done; !errors.Is(err, writeErr) {
+		t.Fatalf("serveMCPWithHandler error = %v, want %v", err, writeErr)
 	}
 }
 
