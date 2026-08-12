@@ -6,10 +6,12 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -35,6 +37,14 @@ type EngineHealth struct {
 	Live  bool `json:"live"`
 	Ready bool `json:"ready"`
 }
+
+const (
+	apiRequestTimeout  = 5 * time.Second
+	apiAttemptTimeout  = 2450 * time.Millisecond
+	apiRequestAttempts = 2
+	apiRetryDelayMin   = 20 * time.Millisecond
+	apiRetryDelayRange = 30 * time.Millisecond
+)
 
 func cloneProxyHTTPHeaders(headers map[string]string) map[string]string {
 	if len(headers) == 0 {
@@ -118,11 +128,14 @@ func (c *Client) apiHttpClient() (*http.Client, error) {
 	c.apiMu.Unlock()
 	return &http.Client{
 		Transport: transport,
-		Timeout:   5 * time.Second,
+		Timeout:   apiRequestTimeout,
 	}, nil
 }
 
 func (c *Client) apiDo(ctx context.Context, method, path string, query url.Values, body io.Reader, engine, token *string) ([]byte, int, error) {
+	if ctx == nil {
+		return nil, 0, errors.New("API request context is required")
+	}
 	if engine == nil {
 		var err error
 		engine, err = c.getEngine()
@@ -146,7 +159,31 @@ func (c *Client) apiDo(ctx context.Context, method, path string, query url.Value
 	if len(query) > 0 {
 		url += "?" + query.Encode()
 	}
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	requestCtx, cancel := context.WithTimeout(ctx, apiRequestTimeout)
+	defer cancel()
+	retryable := body == nil && (method == http.MethodGet || method == http.MethodHead)
+	for attempt := 1; attempt <= apiRequestAttempts; attempt++ {
+		attemptCtx := requestCtx
+		var attemptCancel context.CancelFunc
+		if retryable && attempt < apiRequestAttempts {
+			attemptCtx, attemptCancel = context.WithTimeout(requestCtx, apiAttemptTimeout)
+		}
+		responseBody, status, err := apiRequest(attemptCtx, httpc, method, url, path, body, token)
+		if attemptCancel != nil {
+			attemptCancel()
+		}
+		if err == nil || !retryable || attempt == apiRequestAttempts || !retryableAPITransportError(requestCtx, status, err) {
+			return responseBody, status, err
+		}
+		if err := waitAPIRetry(requestCtx); err != nil {
+			return nil, status, err
+		}
+	}
+	return nil, 0, errors.New("API request retry invariant failed")
+}
+
+func apiRequest(ctx context.Context, client *http.Client, method, requestURL, path string, body io.Reader, token *string) ([]byte, int, error) {
+	req, err := http.NewRequestWithContext(ctx, method, requestURL, body)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -156,7 +193,7 @@ func (c *Client) apiDo(ctx context.Context, method, path string, query url.Value
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := httpc.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -173,6 +210,41 @@ func (c *Client) apiDo(ctx context.Context, method, path string, query url.Value
 		return nil, resp.StatusCode, fmt.Errorf("api %s %s: %s (%d)", method, path, msg, resp.StatusCode)
 	}
 	return b, resp.StatusCode, nil
+}
+
+func retryableAPITransportError(ctx context.Context, status int, err error) bool {
+	if err == nil || context.Cause(ctx) != nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	if status != 0 && (status < http.StatusOK || status >= http.StatusMultipleChoices) {
+		return false
+	}
+	var certificateError *tls.CertificateVerificationError
+	if errors.As(err, &certificateError) {
+		return false
+	}
+	var unknownAuthority x509.UnknownAuthorityError
+	if errors.As(err, &unknownAuthority) {
+		return false
+	}
+	var hostnameError x509.HostnameError
+	if errors.As(err, &hostnameError) {
+		return false
+	}
+	var dnsError *net.DNSError
+	return !errors.As(err, &dnsError) || !dnsError.IsNotFound
+}
+
+func waitAPIRetry(ctx context.Context) error {
+	delay := apiRetryDelayMin + time.Duration(rand.Int64N(int64(apiRetryDelayRange)+1))
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return context.Cause(ctx)
+	}
 }
 
 func setQueryJSON(q url.Values, key string, value any) error {

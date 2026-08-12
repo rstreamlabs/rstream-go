@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -261,6 +262,165 @@ func TestAPIClientReusesConnections(t *testing.T) {
 	}
 }
 
+func TestAPIClientRetriesOneTransientReadOnlyFailure(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if attempts.Add(1) == 1 {
+			w.Header().Set("Content-Length", "8")
+			_, _ = w.Write([]byte(`[]`))
+			return
+		}
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+	client := testAPIClient(server, "token")
+	if _, err := client.ListTunnels(t.Context(), nil); err != nil {
+		t.Fatalf("ListTunnels() error = %v", err)
+	}
+	if got := attempts.Load(); got != apiRequestAttempts {
+		t.Fatalf("API attempts = %d, want %d", got, apiRequestAttempts)
+	}
+}
+
+func TestAPIClientRetryRetainsBudgetAfterStalledAttempt(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) == 1 {
+			<-r.Context().Done()
+			return
+		}
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+	client := testAPIClient(server, "token")
+	started := time.Now()
+	if _, err := client.ListTunnels(t.Context(), nil); err != nil {
+		t.Fatalf("ListTunnels() error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= apiRequestTimeout {
+		t.Fatalf("ListTunnels() took %s, want less than total timeout %s", elapsed, apiRequestTimeout)
+	}
+	if got := attempts.Load(); got != apiRequestAttempts {
+		t.Fatalf("API attempts = %d, want %d", got, apiRequestAttempts)
+	}
+}
+
+func TestAPIClientBoundsTransientReadOnlyRetries(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		w.Header().Set("Content-Length", "8")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+	client := testAPIClient(server, "token")
+	if _, err := client.ListTunnels(t.Context(), nil); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("ListTunnels() error = %v, want unexpected EOF", err)
+	}
+	if got := attempts.Load(); got != apiRequestAttempts {
+		t.Fatalf("API attempts = %d, want %d", got, apiRequestAttempts)
+	}
+}
+
+func TestAPIClientDoesNotRetryMutationsOrHTTPFailures(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		if r.Method == http.MethodPost {
+			w.Header().Set("Content-Length", "8")
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	client := testAPIClient(server, "token")
+	if _, _, err := client.apiDo(t.Context(), http.MethodPost, "/raw", nil, strings.NewReader(`{}`), nil, nil); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("apiDo(POST) error = %v, want unexpected EOF", err)
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("POST attempts = %d, want 1", got)
+	}
+	if _, err := client.ListTunnels(t.Context(), nil); err == nil || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("ListTunnels(503) error = %v", err)
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("attempts after 503 = %d, want 2", got)
+	}
+}
+
+func TestAPIClientMutationRetainsTotalTimeout(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		time.Sleep(apiAttemptTimeout + 50*time.Millisecond)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	client := testAPIClient(server, "token")
+	if _, _, err := client.apiDo(t.Context(), http.MethodPost, "/raw", nil, strings.NewReader(`{}`), nil, nil); err != nil {
+		t.Fatalf("apiDo(POST) error = %v", err)
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("POST attempts = %d, want 1", got)
+	}
+}
+
+func TestAPIClientCancellationPreventsTransientRetry(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	var attempts atomic.Int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		attempts.Add(1)
+		cancel()
+		w.Header().Set("Content-Length", "8")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+	client := testAPIClient(server, "token")
+	if _, err := client.ListTunnels(ctx, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("ListTunnels() error = %v, want context canceled", err)
+	}
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("API attempts = %d, want 1", got)
+	}
+}
+
+func TestRetryableAPITransportErrorRejectsPermanentFailures(t *testing.T) {
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if retryableAPITransportError(canceled, 0, io.ErrUnexpectedEOF) {
+		t.Fatal("canceled request must not retry")
+	}
+	if retryableAPITransportError(context.Background(), 0, &net.DNSError{Err: "not found", Name: "missing.example", IsNotFound: true}) {
+		t.Fatal("permanent DNS failure must not retry")
+	}
+	expired, expire := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer expire()
+	if retryableAPITransportError(expired, 0, context.DeadlineExceeded) {
+		t.Fatal("expired total request context must not retry")
+	}
+	certificate := &x509.Certificate{}
+	if retryableAPITransportError(context.Background(), 0, x509.HostnameError{Certificate: certificate, Host: "wrong.example"}) {
+		t.Fatal("certificate hostname failure must not retry")
+	}
+	unknownAuthority := x509.UnknownAuthorityError{Cert: certificate}
+	if retryableAPITransportError(context.Background(), 0, unknownAuthority) {
+		t.Fatal("unknown certificate authority must not retry")
+	}
+	if retryableAPITransportError(context.Background(), 0, &tls.CertificateVerificationError{UnverifiedCertificates: []*x509.Certificate{certificate}, Err: unknownAuthority}) {
+		t.Fatal("TLS certificate verification failure must not retry")
+	}
+	if retryableAPITransportError(context.Background(), http.StatusServiceUnavailable, io.ErrUnexpectedEOF) {
+		t.Fatal("HTTP failures must not retry")
+	}
+	if !retryableAPITransportError(context.Background(), 0, context.DeadlineExceeded) {
+		t.Fatal("bounded attempt timeout should retry while the total request context remains active")
+	}
+	if !retryableAPITransportError(context.Background(), http.StatusOK, io.ErrUnexpectedEOF) {
+		t.Fatal("unexpected EOF should retry")
+	}
+}
+
 func TestAPIClientReusesConnectionUnderParallelLoad(t *testing.T) {
 	var connections atomic.Int32
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -361,6 +521,9 @@ func TestAPIClientErrors(t *testing.T) {
 	}
 	if _, _, err := (&Client{}).apiDo(t.Context(), http.MethodGet, "/auth", nil, nil, nil, nil); err == nil || !strings.Contains(err.Error(), "engine URL is required") {
 		t.Fatalf("expected missing engine error, got %v", err)
+	}
+	if _, _, err := (&Client{}).apiDo(nil, http.MethodGet, "/auth", nil, nil, nil, nil); err == nil || !strings.Contains(err.Error(), "context is required") {
+		t.Fatalf("expected missing context error, got %v", err)
 	}
 }
 
