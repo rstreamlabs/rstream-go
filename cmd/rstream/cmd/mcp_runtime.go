@@ -31,7 +31,7 @@ func resolveMCPControlPlaneRuntime(ctx context.Context, requireToken bool) (*res
 	if envAPIURL == "" && len(cfg.Environments) == 1 {
 		envAPIURL = cfg.Environments[0].APIURL
 	}
-	input := config.ResolveInput{Config: cfg, EnvAPIURL: envAPIURL, EnvToken: env.Token, IgnoreDefaultContext: true, RequireToken: requireToken, ResolveToken: true}
+	input := config.ResolveInput{Config: cfg, EnvAPIURL: envAPIURL, EnvContext: env.Context, EnvToken: env.Token, IgnoreDefaultContext: true, RequireToken: requireToken, ResolveToken: true}
 	resolved, err := config.Resolve(input)
 	if err == nil {
 		return &resolvedRuntime{ConfigPath: path, Config: cfg, Resolved: resolved}, nil

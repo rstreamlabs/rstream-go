@@ -406,6 +406,46 @@ contexts:
 	}
 }
 
+func TestMCPControlPlaneRuntimeUsesExplicitContextAPIURL(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte(`version: 1
+defaults:
+  context:
+    name: prod
+environments:
+  - apiUrl: https://rstream.io
+    auth:
+      token:
+        storage:
+          kind: inline
+          value: prod-token
+  - apiUrl: https://dev.rstream.io
+    auth:
+      token:
+        storage:
+          kind: inline
+          value: staging-token
+contexts:
+  - name: prod
+    apiUrl: https://rstream.io
+    projectEndpoint: prod0001
+  - name: staging
+    apiUrl: https://dev.rstream.io
+    projectEndpoint: dev00001
+`), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	t.Setenv("RSTREAM_CONFIG", configPath)
+	t.Setenv("RSTREAM_CONTEXT", "staging")
+	runtime, err := resolveMCPControlPlaneRuntime(t.Context(), true)
+	if err != nil {
+		t.Fatalf("resolveMCPControlPlaneRuntime returned error: %v", err)
+	}
+	if runtime.Resolved.APIURL != "https://dev.rstream.io" || runtime.Resolved.Token != "staging-token" {
+		t.Fatalf("explicit staging context resolved the wrong Control plane: %#v", runtime.Resolved)
+	}
+}
+
 func TestMCPRuntimePrepareUsesLoginTokenInsteadOfShortContextToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/projects/tunnels" {
