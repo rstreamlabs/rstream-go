@@ -522,7 +522,8 @@ func TestAPIClientErrors(t *testing.T) {
 	if _, _, err := (&Client{}).apiDo(t.Context(), http.MethodGet, "/auth", nil, nil, nil, nil); err == nil || !strings.Contains(err.Error(), "engine URL is required") {
 		t.Fatalf("expected missing engine error, got %v", err)
 	}
-	if _, _, err := (&Client{}).apiDo(nil, http.MethodGet, "/auth", nil, nil, nil, nil); err == nil || !strings.Contains(err.Error(), "context is required") {
+	var missingContext context.Context
+	if _, _, err := (&Client{}).apiDo(missingContext, http.MethodGet, "/auth", nil, nil, nil, nil); err == nil || !strings.Contains(err.Error(), "context is required") {
 		t.Fatalf("expected missing context error, got %v", err)
 	}
 }
