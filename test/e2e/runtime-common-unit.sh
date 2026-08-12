@@ -50,4 +50,11 @@ RSTREAM_E2E_DOWNSTREAM_PORT_MAP=443:8443 expect_equal \
   "downstream port rewrite" \
   "$(RSTREAM_E2E_DOWNSTREAM_PORT_MAP=443:8443 rewrite_downstream_address 'edge.example.test:443')" \
   "edge.example.test:8443"
+printf 'READY ' >"$TMP_DIR/partial-ready.log"
+expect_equal "partial readiness is ignored" "$(ready_value_from_log "$TMP_DIR/partial-ready.log")" ""
+printf 'https://edge.example.test:443\n' >>"$TMP_DIR/partial-ready.log"
+expect_equal \
+  "complete readiness is returned" \
+  "$(ready_value_from_log "$TMP_DIR/partial-ready.log")" \
+  "https://edge.example.test:443"
 printf 'Runtime common unit tests: %d passed\n' "$PASS"

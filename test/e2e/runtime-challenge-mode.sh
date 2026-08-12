@@ -36,9 +36,10 @@ require_executable "$BIN/http/client"
 wait_ready() {
   local pid=$1 log=$2 label=$3
   local deadline=$((SECONDS + TIMEOUT_SECONDS))
+  local ready
   while [ "$SECONDS" -lt "$deadline" ]; do
-    if grep -q "^READY " "$log" 2>/dev/null; then
-      awk '/^READY / {print $2; exit}' "$log"
+    if ready=$(ready_value_from_log "$log") && [ -n "$ready" ]; then
+      printf '%s\n' "$ready"
       return 0
     fi
     if ! kill -0 "$pid" 2>/dev/null; then
@@ -77,7 +78,11 @@ start_upstream() {
   "$PYTHON" "$ROOT/test/e2e/runtime_harness.py" serve http >"$log" 2>&1 &
   local pid=$!
   PIDS+=("$pid")
-  UPSTREAM_ADDR=$(wait_ready "$pid" "$log" "$label")
+  if ! UPSTREAM_ADDR=$(wait_ready "$pid" "$log" "$label"); then
+    stop_pid "$pid"
+    UPSTREAM_ADDR=
+    return 1
+  fi
 }
 
 start_challenge_forward() {
@@ -157,8 +162,8 @@ case_http_challenge_h2_redirects() {
   local headers status expected
   headers="$TMP_DIR/challenge-h2-headers.txt"
   expected="${API_URL%/}/rstream/challenge?request="
-  start_upstream "challenge-h2"
-  start_challenge_forward "challenge-h2"
+  start_upstream "challenge-h2" || return 1
+  start_challenge_forward "challenge-h2" || return 1
   status=$(curl -sk --http2 -D "$headers" -o /dev/null -w "%{http_code}" "$FORWARDING/ping" || true)
   stop_pid "$FORWARD_PID"
   if [ "$status" != "302" ]; then
@@ -176,8 +181,8 @@ case_http_challenge_h2_redirects() {
 case_http_challenge_h3_redirects() {
   local expected status=0
   expected="${API_URL%/}/rstream/challenge?request="
-  start_upstream "challenge-h3"
-  start_challenge_forward "challenge-h3"
+  start_upstream "challenge-h3" || return 1
+  start_challenge_forward "challenge-h3" || return 1
   "$BIN/http/client" \
     --h3-redirect-url "$FORWARDING/ping" \
     --location-contains "$expected" || status=$?

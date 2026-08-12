@@ -42,6 +42,11 @@ require_executable() {
   fi
 }
 
+ready_value_from_log() {
+  local log=$1
+  awk '$1 == "READY" && length($2) > 0 { print $2; exit }' "$log" 2>/dev/null
+}
+
 rewrite_downstream_address() {
   local address=$1
   local host=${RSTREAM_E2E_DOWNSTREAM_HOST:-}

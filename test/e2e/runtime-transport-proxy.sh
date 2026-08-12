@@ -47,9 +47,10 @@ fi
 wait_ready() {
   local pid=$1 log=$2 label=$3
   local deadline=$((SECONDS + TIMEOUT_SECONDS))
+  local ready
   while [ "$SECONDS" -lt "$deadline" ]; do
-    if grep -q "^READY " "$log" 2>/dev/null; then
-      awk '/^READY / {print $2; exit}' "$log"
+    if ready=$(ready_value_from_log "$log") && [ -n "$ready" ]; then
+      printf '%s\n' "$ready"
       return 0
     fi
     if ! kill -0 "$pid" 2>/dev/null; then
@@ -86,7 +87,12 @@ start_proxy() {
   local pid=$!
   PIDS+=("$pid")
   STARTED_PID=$pid
-  STARTED_VALUE=$(wait_ready "$pid" "$log" "$label")
+  if ! STARTED_VALUE=$(wait_ready "$pid" "$log" "$label"); then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    STARTED_VALUE=
+    return 1
+  fi
 }
 
 start_upstream() {
@@ -96,7 +102,12 @@ start_upstream() {
   local pid=$!
   PIDS+=("$pid")
   STARTED_PID=$pid
-  STARTED_VALUE=$(wait_ready "$pid" "$log" "$label")
+  if ! STARTED_VALUE=$(wait_ready "$pid" "$log" "$label"); then
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    STARTED_VALUE=
+    return 1
+  fi
 }
 
 write_config() {
@@ -182,10 +193,10 @@ start_forward() {
 run_case() {
   local label=$1 proxy_mode=$2 use_quic=$3 proxy_key=$4
   local proxy_url proxy_pid upstream upstream_pid config_path tunnel_prefix forward_pid
-  start_proxy "$label" "$proxy_mode"
+  start_proxy "$label" "$proxy_mode" || return 1
   proxy_url=$STARTED_VALUE
   proxy_pid=$STARTED_PID
-  start_upstream "$label"
+  start_upstream "$label" || return 1
   upstream=$STARTED_VALUE
   upstream_pid=$STARTED_PID
   config_path="$TMP_DIR/config-$label.yaml"

@@ -105,9 +105,10 @@ make_cert() {
 wait_ready() {
   local pid=$1 log=$2 label=$3
   local deadline=$((SECONDS + TIMEOUT_SECONDS))
+  local ready
   while [ "$SECONDS" -lt "$deadline" ]; do
-    if grep -q "^READY " "$log" 2>/dev/null; then
-      awk '/^READY / {print $2; exit}' "$log"
+    if ready=$(ready_value_from_log "$log") && [ -n "$ready" ]; then
+      printf '%s\n' "$ready"
       return 0
     fi
     if ! kill -0 "$pid" 2>/dev/null; then
@@ -160,7 +161,11 @@ start_upstream() {
   esac
   local pid=$!
   PIDS+=("$pid")
-  UPSTREAM_ADDR=$(wait_ready "$pid" "$log" "$label")
+  if ! UPSTREAM_ADDR=$(wait_ready "$pid" "$log" "$label"); then
+    stop_pid "$pid"
+    UPSTREAM_ADDR=
+    return 1
+  fi
 }
 
 extract_forwarding() {
@@ -269,11 +274,11 @@ run_case() {
 case_private_plain() {
   local upstream
   local rc=0
-  start_upstream "private-plain" tcp
+  start_upstream "private-plain" tcp || return 1
   upstream=$UPSTREAM_ADDR
   local tunnel_prefix="$NAME_PREFIX-private"
   start_forward "private-plain" "$upstream" 0 \
-    --bytestream --no-publish --name "$tunnel_prefix-plain"
+    --bytestream --no-publish --name "$tunnel_prefix-plain" || return 1
   "$BIN/stream/client" --variant plain --tunnel "$tunnel_prefix" || rc=$?
   stop_pid "$FORWARD_PID"
   return "$rc"
@@ -282,11 +287,11 @@ case_private_plain() {
 case_tls_terminated() {
   local upstream
   local rc=0
-  start_upstream "tls-terminated" tcp
+  start_upstream "tls-terminated" tcp || return 1
   upstream=$UPSTREAM_ADDR
   start_forward "tls-terminated" "$upstream" 1 \
     --bytestream --publish --tls --tls-mode terminated \
-    --tls-alpn rstream-runtime-stream --name "$NAME_PREFIX-tls-terminated"
+    --tls-alpn rstream-runtime-stream --name "$NAME_PREFIX-tls-terminated" || return 1
   "$BIN/stream/client" --variant tls --addr "$FORWARDING" --tls-alpn rstream-runtime-stream || rc=$?
   stop_pid "$FORWARD_PID"
   return "$rc"
@@ -295,11 +300,11 @@ case_tls_terminated() {
 case_tls_upstream_tls() {
   local upstream
   local rc=0
-  start_upstream "tls-upstream-tls" tls
+  start_upstream "tls-upstream-tls" tls || return 1
   upstream=$UPSTREAM_ADDR
   start_forward "tls-upstream-tls" "$upstream" 1 \
     --bytestream --publish --tls --tls-mode terminated --upstream-tls \
-    --tls-alpn rstream-runtime-stream --name "$NAME_PREFIX-tls-upstream"
+    --tls-alpn rstream-runtime-stream --name "$NAME_PREFIX-tls-upstream" || return 1
   "$BIN/stream/client" --variant tls --addr "$FORWARDING" --tls-alpn rstream-runtime-stream || rc=$?
   stop_pid "$FORWARD_PID"
   return "$rc"
@@ -308,11 +313,11 @@ case_tls_upstream_tls() {
 case_tls_passthrough() {
   local upstream
   local rc=0
-  start_upstream "tls-passthrough" tls
+  start_upstream "tls-passthrough" tls || return 1
   upstream=$UPSTREAM_ADDR
   start_forward "tls-passthrough" "$upstream" 1 \
     --bytestream --publish --tls --tls-mode passthrough \
-    --name "$NAME_PREFIX-tls-passthrough"
+    --name "$NAME_PREFIX-tls-passthrough" || return 1
   "$BIN/stream/client" --variant tls --addr "$FORWARDING" || rc=$?
   stop_pid "$FORWARD_PID"
   return "$rc"
@@ -320,9 +325,9 @@ case_tls_passthrough() {
 
 case_published_tcp() {
   local rc=0
-  start_upstream "published-tcp" tcp
+  start_upstream "published-tcp" tcp || return 1
   start_forward "published-tcp" "$UPSTREAM_ADDR" 1 \
-    --tcp --name "$NAME_PREFIX-published-tcp"
+    --tcp --name "$NAME_PREFIX-published-tcp" || return 1
   "$BIN/stream/client" --variant plain --addr "$FORWARDING" || rc=$?
   stop_pid "$FORWARD_PID"
   return "$rc"
@@ -330,9 +335,9 @@ case_published_tcp() {
 
 case_published_tcp_half_close() {
   local rc=0
-  start_upstream "published-tcp-half-close" tcp-eof-reply
+  start_upstream "published-tcp-half-close" tcp-eof-reply || return 1
   start_forward "published-tcp-half-close" "$UPSTREAM_ADDR" 1 \
-    --tcp --name "$NAME_PREFIX-published-tcp-half-close"
+    --tcp --name "$NAME_PREFIX-published-tcp-half-close" || return 1
   "$PYTHON" "$ROOT/test/e2e/runtime_harness.py" check tcp-half-close \
     --addr "$FORWARDING" || rc=$?
   stop_pid "$FORWARD_PID"
@@ -378,10 +383,10 @@ case_published_tcp_ssh() {
 case_http_h1() {
   local upstream forwarding_hostport
   local rc=0
-  start_upstream "http-h1" http
+  start_upstream "http-h1" http || return 1
   upstream=$UPSTREAM_ADDR
   start_forward "http-h1" "$upstream" 1 \
-    --bytestream --publish --http --name "$NAME_PREFIX-http-h1"
+    --bytestream --publish --http --name "$NAME_PREFIX-http-h1" || return 1
   forwarding_hostport=$("$PYTHON" "$ROOT/test/e2e/runtime_harness.py" hostport --addr "$FORWARDING")
   "$BIN/http/client" --upstream h1 --addr "$forwarding_hostport" || rc=$?
   stop_pid "$FORWARD_PID"
@@ -393,14 +398,20 @@ case_http_h2_reused_connection_routes() {
   local rc=0
   trigger="$TMP_DIR/h2-reuse-trigger"
   checker_log="$TMP_DIR/h2-reuse-checker.log"
-  start_upstream "http-h2-reuse-first" http
+  start_upstream "http-h2-reuse-first" http || return 1
   start_forward "http-h2-reuse-first" "$UPSTREAM_ADDR" 1 \
-    --bytestream --publish --http --name "$NAME_PREFIX-http-h2-reuse-first"
+    --bytestream --publish --http --name "$NAME_PREFIX-http-h2-reuse-first" || return 1
   first_forward_pid=$FORWARD_PID
   first_forwarding=$FORWARDING
-  start_upstream "http-h2-reuse-second" http
-  start_forward "http-h2-reuse-second" "$UPSTREAM_ADDR" 1 \
-    --bytestream --publish --http --name "$NAME_PREFIX-http-h2-reuse-second"
+  if ! start_upstream "http-h2-reuse-second" http; then
+    stop_pid "$first_forward_pid"
+    return 1
+  fi
+  if ! start_forward "http-h2-reuse-second" "$UPSTREAM_ADDR" 1 \
+    --bytestream --publish --http --name "$NAME_PREFIX-http-h2-reuse-second"; then
+    stop_pid "$first_forward_pid"
+    return 1
+  fi
   second_forward_pid=$FORWARD_PID
   second_forwarding=$FORWARDING
   "$PYTHON" "$ROOT/test/e2e/runtime_harness.py" check h2-reuse-routes \
@@ -427,9 +438,9 @@ case_http_h2_reused_connection_routes() {
 
 case_http_h2_subpath_preserves_request_path() {
   local rc=0
-  start_upstream "http-h2-subpath" http
+  start_upstream "http-h2-subpath" http || return 1
   start_forward "http-h2-subpath" "$UPSTREAM_ADDR" 1 \
-    --bytestream --publish --http --name "$NAME_PREFIX-http-h2-subpath"
+    --bytestream --publish --http --name "$NAME_PREFIX-http-h2-subpath" || return 1
   "$PYTHON" "$ROOT/test/e2e/runtime_harness.py" check h2-subpath-response \
     --url "$FORWARDING/directory/" || rc=$?
   stop_pid "$FORWARD_PID"
@@ -438,9 +449,9 @@ case_http_h2_subpath_preserves_request_path() {
 
 case_http_h3_subpath_preserves_request_path() {
   local rc=0
-  start_upstream "http-h3-subpath" http
+  start_upstream "http-h3-subpath" http || return 1
   start_forward "http-h3-subpath" "$UPSTREAM_ADDR" 1 \
-    --bytestream --publish --http --name "$NAME_PREFIX-http-h3-subpath"
+    --bytestream --publish --http --name "$NAME_PREFIX-http-h3-subpath" || return 1
   "$BIN/http/client" --h3-url "$FORWARDING/directory/" || rc=$?
   stop_pid "$FORWARD_PID"
   return "$rc"
@@ -449,14 +460,20 @@ case_http_h3_subpath_preserves_request_path() {
 case_http_h3_reused_connection_routes() {
   local first_forward_pid first_forwarding second_forward_pid second_forwarding
   local rc=0
-  start_upstream "http-h3-reuse-first" http
+  start_upstream "http-h3-reuse-first" http || return 1
   start_forward "http-h3-reuse-first" "$UPSTREAM_ADDR" 1 \
-    --bytestream --publish --http --name "$NAME_PREFIX-http-h3-reuse-first"
+    --bytestream --publish --http --name "$NAME_PREFIX-http-h3-reuse-first" || return 1
   first_forward_pid=$FORWARD_PID
   first_forwarding=$FORWARDING
-  start_upstream "http-h3-reuse-second" http
-  start_forward "http-h3-reuse-second" "$UPSTREAM_ADDR" 1 \
-    --bytestream --publish --http --name "$NAME_PREFIX-http-h3-reuse-second"
+  if ! start_upstream "http-h3-reuse-second" http; then
+    stop_pid "$first_forward_pid"
+    return 1
+  fi
+  if ! start_forward "http-h3-reuse-second" "$UPSTREAM_ADDR" 1 \
+    --bytestream --publish --http --name "$NAME_PREFIX-http-h3-reuse-second"; then
+    stop_pid "$first_forward_pid"
+    return 1
+  fi
   second_forward_pid=$FORWARD_PID
   second_forwarding=$FORWARDING
   "$BIN/http/client" \
@@ -470,11 +487,11 @@ case_http_h3_reused_connection_routes() {
 case_dtls() {
   local upstream
   local rc=0
-  start_upstream "dtls" udp
+  start_upstream "dtls" udp || return 1
   upstream=$UPSTREAM_ADDR
   start_forward "dtls" "$upstream" 1 \
     --datagram --publish --dtls --tls-alpn rstream-runtime-dtls \
-    --name "$NAME_PREFIX-dtls"
+    --name "$NAME_PREFIX-dtls" || return 1
   "$BIN/datagram/client" --variant dtls --addr "$FORWARDING" --tls-alpn rstream-runtime-dtls || rc=$?
   stop_pid "$FORWARD_PID"
   return "$rc"
@@ -489,7 +506,10 @@ case_quic() {
     --name "$NAME_PREFIX-quic" >"$server_log" 2>&1 &
   server_pid=$!
   PIDS+=("$server_pid")
-  forwarding=$(wait_ready "$server_pid" "$server_log" "quic")
+  if ! forwarding=$(wait_ready "$server_pid" "$server_log" "quic"); then
+    stop_pid "$server_pid"
+    return 1
+  fi
   forwarding=$(rewrite_downstream_address "$forwarding")
   "$BIN/datagram/client" --variant quic \
     --addr "$forwarding" \
@@ -501,7 +521,7 @@ case_quic() {
 case_connect_udp() {
   local server_pid server_log forwarding upstream
   local rc=0
-  start_upstream "connect-udp-target" udp
+  start_upstream "connect-udp-target" udp || return 1
   upstream=$UPSTREAM_ADDR
   server_log="$TMP_DIR/connect-udp-server.log"
   owner_exec "$BIN/masque/server" --variant connect-udp \
@@ -509,7 +529,10 @@ case_connect_udp() {
     --public-port "${RSTREAM_E2E_DOWNSTREAM_PORT:-}" >"$server_log" 2>&1 &
   server_pid=$!
   PIDS+=("$server_pid")
-  forwarding=$(wait_ready "$server_pid" "$server_log" "connect-udp")
+  if ! forwarding=$(wait_ready "$server_pid" "$server_log" "connect-udp"); then
+    stop_pid "$server_pid"
+    return 1
+  fi
   forwarding=$(rewrite_downstream_address "$forwarding")
   "$BIN/masque/client" --variant connect-udp \
     --addr "$forwarding" \
@@ -527,7 +550,10 @@ case_connect_ip() {
     --public-port "${RSTREAM_E2E_DOWNSTREAM_PORT:-}" >"$server_log" 2>&1 &
   server_pid=$!
   PIDS+=("$server_pid")
-  forwarding=$(wait_ready "$server_pid" "$server_log" "connect-ip")
+  if ! forwarding=$(wait_ready "$server_pid" "$server_log" "connect-ip"); then
+    stop_pid "$server_pid"
+    return 1
+  fi
   forwarding=$(rewrite_downstream_address "$forwarding")
   "$BIN/masque/client" --variant connect-ip \
     --addr "$forwarding" || rc=$?
@@ -540,14 +566,17 @@ case_plain_connect() {
   local downstream=$2
   local target server_pid server_log forwarding
   local rc=0
-  start_upstream "connect-$upstream-$downstream-target" tcp
+  start_upstream "connect-$upstream-$downstream-target" tcp || return 1
   target=$UPSTREAM_ADDR
   server_log="$TMP_DIR/connect-$upstream-$downstream-server.log"
   owner_exec "$BIN/connect/server" --upstream "$upstream" \
     --name "$NAME_PREFIX-connect-$upstream-$downstream" >"$server_log" 2>&1 &
   server_pid=$!
   PIDS+=("$server_pid")
-  forwarding=$(wait_ready "$server_pid" "$server_log" "connect-$upstream-$downstream")
+  if ! forwarding=$(wait_ready "$server_pid" "$server_log" "connect-$upstream-$downstream"); then
+    stop_pid "$server_pid"
+    return 1
+  fi
   forwarding=$(rewrite_downstream_address "$forwarding")
   "$BIN/connect/client" --downstream "$downstream" \
     --addr "$forwarding" \

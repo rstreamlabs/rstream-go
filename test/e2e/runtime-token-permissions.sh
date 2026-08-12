@@ -407,9 +407,10 @@ PY
 wait_ready() {
     local pid=$1 log=$2 label=$3
     local deadline=$((SECONDS + TIMEOUT_SECONDS))
+    local ready
     while [ "$SECONDS" -lt "$deadline" ]; do
-        if grep -q "^READY " "$log" 2>/dev/null; then
-            awk '/^READY / {print $2; exit}' "$log"
+        if ready=$(ready_value_from_log "$log") && [ -n "$ready" ]; then
+            printf '%s\n' "$ready"
             return 0
         fi
         if ! kill -0 "$pid" 2>/dev/null; then
@@ -430,7 +431,12 @@ start_upstream() {
     "$PYTHON" "$ROOT/test/e2e/runtime_harness.py" serve http >"$log" 2>&1 &
     local pid=$!
     PIDS+=("$pid")
-    UPSTREAM_ADDR=$(wait_ready "$pid" "$log" "$label")
+    if ! UPSTREAM_ADDR=$(wait_ready "$pid" "$log" "$label"); then
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+        UPSTREAM_ADDR=
+        return 1
+    fi
 }
 
 extract_forwarding() {
