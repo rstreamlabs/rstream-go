@@ -124,7 +124,7 @@ fi
 start_server() {
   local label="$1" suite="$2"
   shift 2
-  local tmpout
+  local tmpout ready
   local exe="$BIN/$suite"
   [ -d "$exe" ] && exe="$exe/server"
   tmpout=$(mktemp)
@@ -132,13 +132,15 @@ start_server() {
   SERVER_PID=$!
   local i=0
   while [ $i -lt 20 ]; do
-    if grep -q "^READY" "$tmpout" 2>/dev/null; then
-      SERVER_ADDR=$(rewrite_downstream_address "$(grep "^READY" "$tmpout" | head -1 | awk '{print $2}')")
+    ready=$(ready_value_from_log "$tmpout")
+    if [ -n "$ready" ]; then
+      SERVER_ADDR=$(rewrite_downstream_address "$ready")
       rm -f "$tmpout"
       return 0
     fi
     if ! kill -0 "$SERVER_PID" 2>/dev/null; then
       log_fail "$label" "server exited early: $(tail -1 "$tmpout" 2>/dev/null)"
+      print_server_log_tail "$tmpout"
       rm -f "$tmpout"
       SERVER_PID=
       return 1
@@ -147,6 +149,7 @@ start_server() {
     i=$((i + 1))
   done
   log_fail "$label" "server did not become ready (timeout)"
+  print_server_log_tail "$tmpout"
   rm -f "$tmpout"
   stop_server
   return 1

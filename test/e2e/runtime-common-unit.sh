@@ -57,4 +57,10 @@ expect_equal \
   "complete readiness is returned" \
   "$(ready_value_from_log "$TMP_DIR/partial-ready.log")" \
   "https://edge.example.test:443"
+seq 1 105 >"$TMP_DIR/server.log"
+SERVER_LOG_TAIL=$(print_server_log_tail "$TMP_DIR/server.log")
+expect_equal "server log tail heading" "$(printf '%s\n' "$SERVER_LOG_TAIL" | head -1)" "  ---- server log (last 100 lines) ----"
+expect_equal "server log tail first line" "$(printf '%s\n' "$SERVER_LOG_TAIL" | sed -n '2p')" "  6"
+expect_equal "server log tail last line" "$(printf '%s\n' "$SERVER_LOG_TAIL" | tail -1)" "  105"
+expect_equal "empty server log has no output" "$(print_server_log_tail "$TMP_DIR/missing.log")" ""
 printf 'Runtime common unit tests: %d passed\n' "$PASS"

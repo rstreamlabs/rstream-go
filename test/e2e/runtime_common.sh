@@ -47,6 +47,13 @@ ready_value_from_log() {
   awk '$1 == "READY" && length($2) > 0 { print $2; exit }' "$log" 2>/dev/null
 }
 
+print_server_log_tail() {
+  local log=$1
+  [ -s "$log" ] || return 0
+  printf '%s\n' '  ---- server log (last 100 lines) ----'
+  tail -n 100 "$log" | sed 's/^/  /'
+}
+
 rewrite_downstream_address() {
   local address=$1
   local host=${RSTREAM_E2E_DOWNSTREAM_HOST:-}
