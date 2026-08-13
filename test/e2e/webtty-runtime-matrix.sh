@@ -222,6 +222,68 @@ cpp_client_text_with_home() {
   printf "%s" "$out" | grep -q "$expected"
 }
 
+go_client_remote_exit_before_eof() {
+  local label=$1
+  local expected_size=$2
+  shift 2
+  local fifo="$TMP_DIR/${label//[^A-Za-z0-9_.-]/_}.fifo"
+  local output="$TMP_DIR/${label//[^A-Za-z0-9_.-]/_}.out"
+  mkfifo "$fifo"
+  { dd if="$EARLY_EXIT_PAYLOAD" bs="$expected_size" count=1 status=none; sleep 5; } >"$fifo" &
+  local producer=$!
+  PIDS+=("$producer")
+  local started
+  started=$(python3 -c 'import time; print(time.monotonic())')
+  local rc=0
+  "$RSTREAM" webtty exec "$@" -- /usr/bin/env python3 -c "import sys; print(len(sys.stdin.buffer.read($expected_size)))" <"$fifo" >"$output" 2>&1 || rc=$?
+  local finished
+  finished=$(python3 -c 'import time; print(time.monotonic())')
+  kill "$producer" 2>/dev/null || true
+  wait "$producer" 2>/dev/null || true
+  if [ "$rc" -ne 0 ]; then
+    cat "$output"
+    return "$rc"
+  fi
+  python3 - "$started" "$finished" <<'PY'
+import sys
+elapsed = float(sys.argv[2]) - float(sys.argv[1])
+if elapsed >= 4:
+    raise SystemExit(f"client waited {elapsed:.3f}s for local stdin EOF after remote exit")
+PY
+  grep -q "$expected_size" "$output"
+}
+
+cpp_client_remote_exit_before_eof() {
+  local label=$1
+  local expected_size=$2
+  shift 2
+  local fifo="$TMP_DIR/${label//[^A-Za-z0-9_.-]/_}.fifo"
+  local output="$TMP_DIR/${label//[^A-Za-z0-9_.-]/_}.out"
+  mkfifo "$fifo"
+  { dd if="$EARLY_EXIT_PAYLOAD" bs="$expected_size" count=1 status=none; sleep 5; } >"$fifo" &
+  local producer=$!
+  PIDS+=("$producer")
+  local started
+  started=$(python3 -c 'import time; print(time.monotonic())')
+  local rc=0
+  "$CPP_CLIENT" "$@" -i -T -- /usr/bin/env python3 -c "import sys; print(len(sys.stdin.buffer.read($expected_size)))" <"$fifo" >"$output" 2>&1 || rc=$?
+  local finished
+  finished=$(python3 -c 'import time; print(time.monotonic())')
+  kill "$producer" 2>/dev/null || true
+  wait "$producer" 2>/dev/null || true
+  if [ "$rc" -ne 0 ]; then
+    cat "$output"
+    return "$rc"
+  fi
+  python3 - "$started" "$finished" <<'PY'
+import sys
+elapsed = float(sys.argv[2]) - float(sys.argv[1])
+if elapsed >= 4:
+    raise SystemExit(f"client waited {elapsed:.3f}s for local stdin EOF after remote exit")
+PY
+  grep -q "$expected_size" "$output"
+}
+
 find_cpp_binary() {
   local name=$1
   local root
@@ -420,12 +482,16 @@ echo "=== c++ cli interop ==="
 CPP_SERVER="${RSTREAM_CPP_WEBTTY_SERVER_BIN:-$(find_cpp_binary rstream-webtty-server || true)}"
 CPP_CLIENT="${RSTREAM_CPP_WEBTTY_CLIENT_BIN:-$(find_cpp_binary rstream-webtty-client || true)}"
 if [ -x "${CPP_SERVER:-}" ] && [ -x "${CPP_CLIENT:-}" ]; then
+  EARLY_EXIT_SIZE=1048576
+  EARLY_EXIT_PAYLOAD="$TMP_DIR/early-exit-payload"
+  dd if=/dev/urandom of="$EARLY_EXIT_PAYLOAD" bs="$EARLY_EXIT_SIZE" count=1 status=none
   cpp_ws_port=$(reserve_port)
   cpp_ws_addr="127.0.0.1:$cpp_ws_port"
   start_cpp_server "cpp-ws" --uri="$cpp_ws_addr" --transport=websocket --allow-unauthenticated
   wait_tcp "$cpp_ws_addr"
   run_case "go-client/cpp-server/ws" go_exec_text "cpp-server-ws" --url "ws://$cpp_ws_addr" -- /bin/sh -c "printf cpp-server-ws"
   run_case "cpp-client/cpp-server/ws" cpp_client_text "cpp-client-ws" --uri="$cpp_ws_addr" --transport=websocket -I -T -- /bin/sh -c "printf cpp-client-ws"
+  run_case "go-client/cpp-server/ws/remote-exit-before-eof" go_client_remote_exit_before_eof "go-cpp-ws-early-exit" "$EARLY_EXIT_SIZE" --url "ws://$cpp_ws_addr"
 
   cpp_login_port=$(reserve_port)
   cpp_login_addr="127.0.0.1:$cpp_login_port"
@@ -440,6 +506,7 @@ if [ -x "${CPP_SERVER:-}" ] && [ -x "${CPP_CLIENT:-}" ]; then
   start_go_server "go-for-cpp-ws" --listen "$go_cpp_ws_addr" --allow-unauthenticated
   wait_tcp "$go_cpp_ws_addr"
   run_case "cpp-client/go-server/ws" cpp_client_text "go-server-ws" --uri="$go_cpp_ws_addr" --transport=websocket -I -T -- /bin/sh -c "printf go-server-ws"
+  run_case "cpp-client/go-server/ws/remote-exit-before-eof" cpp_client_remote_exit_before_eof "cpp-go-ws-early-exit" "$EARLY_EXIT_SIZE" --uri="$go_cpp_ws_addr" --transport=websocket
 
   cpp_plain_port=$(reserve_port)
   cpp_plain_addr="127.0.0.1:$cpp_plain_port"
@@ -447,12 +514,14 @@ if [ -x "${CPP_SERVER:-}" ] && [ -x "${CPP_CLIENT:-}" ]; then
   wait_tcp "$cpp_plain_addr"
   run_case "go-client/cpp-server/plain" go_exec_text "cpp-server-plain" --transport plain --url "$cpp_plain_addr" -- /bin/sh -c "printf cpp-server-plain"
   run_case "cpp-client/cpp-server/plain" cpp_client_text "cpp-client-plain" --uri="$cpp_plain_addr" --transport=plain -I -T -- /bin/sh -c "printf cpp-client-plain"
+  run_case "go-client/cpp-server/plain/remote-exit-before-eof" go_client_remote_exit_before_eof "go-cpp-plain-early-exit" "$EARLY_EXIT_SIZE" --transport plain --url "$cpp_plain_addr"
 
   go_cpp_plain_port=$(reserve_port)
   go_cpp_plain_addr="127.0.0.1:$go_cpp_plain_port"
   start_go_server "go-for-cpp-plain" --listen "$go_cpp_plain_addr" --transport plain --allow-unauthenticated
   wait_tcp "$go_cpp_plain_addr"
   run_case "cpp-client/go-server/plain" cpp_client_text "go-server-plain" --uri="$go_cpp_plain_addr" --transport=plain -I -T -- /bin/sh -c "printf go-server-plain"
+  run_case "cpp-client/go-server/plain/remote-exit-before-eof" cpp_client_remote_exit_before_eof "cpp-go-plain-early-exit" "$EARLY_EXIT_SIZE" --uri="$go_cpp_plain_addr" --transport=plain
 
   cpp_e2e_port=$(reserve_port)
   cpp_e2e_addr="127.0.0.1:$cpp_e2e_port"
@@ -461,6 +530,7 @@ if [ -x "${CPP_SERVER:-}" ] && [ -x "${CPP_CLIENT:-}" ]; then
   wait_tcp "$cpp_e2e_addr"
   cpp_known_server=$(known_server_from_identity "$cpp_e2e_identity")
   run_case "go-client/cpp-server/ws/e2e-authenticated" go_exec_text "cpp-server-e2e" --url "ws://$cpp_e2e_addr" --known-server-key "$cpp_known_server" --identity-file "$runtime_client_identity" -- /bin/sh -c "printf cpp-server-e2e"
+  run_case "go-client/cpp-server/ws/e2e/remote-exit-before-eof" go_client_remote_exit_before_eof "go-cpp-e2e-early-exit" "$EARLY_EXIT_SIZE" --url "ws://$cpp_e2e_addr" --known-server-key "$cpp_known_server" --identity-file "$runtime_client_identity"
   run_case "cpp-client/cpp-server/ws/e2e-authenticated" cpp_client_text "cpp-client-e2e" --uri="$cpp_e2e_addr" --transport=websocket --known-server-key="$cpp_known_server" --identity-file="$runtime_client_identity" -I -T -- /bin/sh -c "printf cpp-client-e2e"
   run_case_expect_fail "cpp-server/e2e-rejects-unauthorized-client" "WebTTY client signing key is not authorized" "$RSTREAM" webtty exec --url "ws://$cpp_e2e_addr" --known-server-key "$cpp_known_server" --identity-file "$runtime_denied_client_identity" -- /bin/sh -c "printf no"
 
@@ -499,6 +569,7 @@ if [ -x "${CPP_SERVER:-}" ] && [ -x "${CPP_CLIENT:-}" ]; then
   run_case_expect_fail "cpp-client/go-server/ws/e2e-rejects-wrong-server-key" "WebTTY server endpoint identity does not match" "$CPP_CLIENT" --uri="$go_cpp_e2e_addr" --transport=websocket --known-server-key="$go_cpp_wrong_known_server" --identity-file="$runtime_client_identity" -I -T -- /bin/sh -c "printf no"
   run_case_expect_fail "cpp-client/go-server/ws/e2e-rejects-unauthorized-client" "WebTTY client signing key is not authorized" "$CPP_CLIENT" --uri="$go_cpp_e2e_addr" --transport=websocket --known-server-key="$go_cpp_known_server" --identity-file="$runtime_denied_client_identity" -I -T -- /bin/sh -c "printf no"
   run_case "cpp-client/go-server/ws/e2e-authenticated" cpp_client_text "go-server-e2e" --uri="$go_cpp_e2e_addr" --transport=websocket --known-server-key="$go_cpp_known_server" --identity-file="$runtime_client_identity" -I -T -- /bin/sh -c "printf go-server-e2e"
+  run_case "cpp-client/go-server/ws/e2e/remote-exit-before-eof" cpp_client_remote_exit_before_eof "cpp-go-e2e-early-exit" "$EARLY_EXIT_SIZE" --uri="$go_cpp_e2e_addr" --transport=websocket --known-server-key="$go_cpp_known_server" --identity-file="$runtime_client_identity"
   cpp_client_credential="$TMP_DIR/cpp-client-credential.json"
   printf '{"type":"test.workspace.credential","v":1}\n' >"$cpp_client_credential"
   run_case "cpp-client/go-server/ws/e2e-client-credential" cpp_client_text "go-server-e2e-credential" --uri="$go_cpp_e2e_addr" --transport=websocket --known-server-key="$go_cpp_known_server" --identity-file="$runtime_client_identity" --client-credential-file="$cpp_client_credential" -I -T -- /bin/sh -c "printf go-server-e2e-credential"
