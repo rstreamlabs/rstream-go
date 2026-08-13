@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.27.1](https://github.com/rstreamlabs/rstream-go/compare/v1.27.0...v1.27.1) (2026-08-13)
+
+
+### Bug Fixes
+
+* preserve API cancellation semantics ([f4cc743](https://github.com/rstreamlabs/rstream-go/commit/f4cc743d59b45358a78d2a4bbd9d018c7943ce01))
+
 ## [1.27.0](https://github.com/rstreamlabs/rstream-go/compare/v1.26.6...v1.27.0) (2026-08-12)
 
 
