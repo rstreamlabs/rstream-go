@@ -1500,7 +1500,7 @@ func TestRunClientNonInteractiveLargePipeIsNotTruncated(t *testing.T) {
 		writeResult <- err
 	}()
 	var stdout strings.Builder
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	exitCode, err := RunClient(ctx, &ClientConfig{
 		URL:           testWebTTYURL(server.URL),

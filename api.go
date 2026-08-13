@@ -205,6 +205,11 @@ func (c *Client) apiDo(ctx context.Context, method, path string, query url.Value
 		if attemptCancel != nil {
 			attemptCancel()
 		}
+		if err != nil {
+			if cause := context.Cause(requestCtx); cause != nil {
+				return nil, status, cause
+			}
+		}
 		if err == nil || !retryable || attempt == apiRequestAttempts || !retryableAPITransportError(requestCtx, status, err) {
 			return responseBody, status, err
 		}
