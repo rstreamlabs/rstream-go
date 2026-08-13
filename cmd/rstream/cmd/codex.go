@@ -130,7 +130,6 @@ func runCodexSetup(cmd *cobra.Command, args []string) error {
 	if printOnly && verify {
 		return errors.New("--print and --verify cannot be used together")
 	}
-
 	configPath, _ := cmd.Flags().GetString("config")
 	if strings.TrimSpace(configPath) == "" {
 		path, err := defaultCodexConfigPath()
@@ -144,7 +143,6 @@ func runCodexSetup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to resolve Codex config path: %w", err)
 	}
 	configPath = absConfigPath
-
 	commandPath, _ := cmd.Flags().GetString("command")
 	if strings.TrimSpace(commandPath) == "" {
 		path, err := os.Executable()
@@ -166,7 +164,6 @@ func runCodexSetup(cmd *cobra.Command, args []string) error {
 		_, err := fmt.Fprint(cmd.OutOrStdout(), block)
 		return err
 	}
-
 	force, _ := cmd.Flags().GetBool("force")
 	result, setupErr := configureCodexRstreamMCP(configPath, resolvedCommand, env, block, force)
 	if setupErr == nil && verify {
@@ -270,7 +267,6 @@ func configureCodexRstreamMCP(configPath string, commandPath string, desiredEnv 
 		result.Diagnostics = append(result.Diagnostics, codexDiagnostic{Code: "configuration_installed", Level: "info", Message: "The rstream MCP server entry was added to Codex."})
 		return result, nil
 	}
-
 	analysis := analyzeCodexRstreamConfig(existing, commandPath, desiredEnv)
 	result.Diagnostics = append(result.Diagnostics, analysis.diagnostics...)
 	if analysis.equivalent && analysis.usable && !force {
@@ -283,7 +279,6 @@ func configureCodexRstreamMCP(configPath string, commandPath string, desiredEnv 
 		result.Diagnostics = append(result.Diagnostics, codexDiagnostic{Code: "force_required", Level: "error", Message: "The existing configuration looks customized; use --force to replace its complete rstream subtree."})
 		return result, &codexSetupConflictError{reason: analysis.customReason}
 	}
-
 	next, replaced, err := replaceTomlTree(content, []string{"mcp_servers", "rstream"}, block)
 	if err != nil {
 		return result, err
@@ -323,14 +318,12 @@ func analyzeCodexRstreamConfig(existing codexRstreamConfig, desiredCommand strin
 		configuredCommand = resolved
 		commandUsable = true
 	}
-
 	argsExpected := existing.ArgsSet && existing.ArgsValid && stringSlicesEqual(existing.Args, []string{"mcp", "serve"})
 	startupExpected := existing.StartupTimeoutSet && existing.StartupValid && existing.StartupTimeout == 30
 	toolExpected := existing.ToolTimeoutSet && existing.ToolTimeoutValid && existing.ToolTimeout == 300
 	if !argsExpected || !startupExpected || !toolExpected || !existing.EnvValid {
 		analysis.usable = false
 	}
-
 	for key, value := range existing.Env {
 		if key != "RSTREAM_CONFIG" {
 			continue
@@ -340,14 +333,12 @@ func analyzeCodexRstreamConfig(existing codexRstreamConfig, desiredCommand strin
 			analysis.diagnostics = append(analysis.diagnostics, codexDiagnostic{Code: "rstream_config_unreadable", Level: "warning", Message: "The configured RSTREAM_CONFIG file does not exist or is not readable."})
 		}
 	}
-
 	commandEquivalent := commandUsable && sameResolvedExecutable(configuredCommand, desiredCommand)
 	envEquivalent := stringMapsEqual(existing.Env, desiredEnv)
 	analysis.equivalent = commandEquivalent && argsExpected && startupExpected && toolExpected && existing.EnvValid && envEquivalent && !existing.UnknownMainKeys && !existing.UnknownEnvKeys
 	if analysis.equivalent && analysis.usable {
 		return analysis
 	}
-
 	customReasons := []string{}
 	if existing.UnknownMainKeys {
 		customReasons = append(customReasons, "it contains additional rstream server settings")
@@ -518,7 +509,6 @@ func replaceTomlTree(content string, prefix []string, block string) (string, boo
 		}
 		return content + separator + block, false, nil
 	}
-
 	var result strings.Builder
 	inserted := false
 	for i := 0; i < len(lines); {
@@ -889,7 +879,6 @@ func verifyCodexMCP(ctx context.Context, command string, args []string, env map[
 		}
 	}()
 	reader := bufio.NewReader(stdout)
-
 	initialize := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
@@ -926,7 +915,6 @@ func verifyCodexMCP(ctx context.Context, command string, args []string, env map[
 	if initialized.ServerInfo.Name != "rstream" {
 		return verification, errors.New("configured MCP server did not identify itself as rstream")
 	}
-
 	if err := writeCodexMCPJSON(stdin, map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"}); err != nil {
 		return verification, errors.New("failed to send MCP initialized notification")
 	}

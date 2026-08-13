@@ -322,7 +322,6 @@ func TestRunCodexSetupStructuredOutputAndHumanReloadHint(t *testing.T) {
 	if !result.Changed || result.Status != "installed" || result.Config != configPath || result.Command == "" || !result.ReloadRequired || len(result.Diagnostics) == 0 {
 		t.Fatalf("JSON output lacks required fields: %#v", result)
 	}
-
 	yamlConfig := filepath.Join(t.TempDir(), "config.toml")
 	yamlCommand := newCodexSetupCommand()
 	output.Reset()
@@ -338,7 +337,6 @@ func TestRunCodexSetupStructuredOutputAndHumanReloadHint(t *testing.T) {
 	if !yamlResult.Changed || yamlResult.Status != "installed" || yamlResult.Config != yamlConfig || yamlResult.Command == "" || !yamlResult.ReloadRequired || len(yamlResult.Diagnostics) == 0 {
 		t.Fatalf("YAML output lacks required fields: %#v", yamlResult)
 	}
-
 	humanConfig := filepath.Join(t.TempDir(), "config.toml")
 	human := newCodexSetupCommand()
 	output.Reset()
@@ -364,7 +362,6 @@ func TestRunCodexSetupRejectsMissingCommandAndExplicitConfigOverride(t *testing.
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
 		t.Fatalf("invalid command should not create config: %v", err)
 	}
-
 	t.Setenv("RSTREAM_CONFIG", filepath.Join(t.TempDir(), "missing.yaml"))
 	command = newCodexSetupCommand()
 	command.SetOut(&bytes.Buffer{})
@@ -395,7 +392,6 @@ func TestCodexSetupDoesNotExposeSecrets(t *testing.T) {
 	if strings.Contains(combined, secret) {
 		t.Fatalf("secret leaked in result or error: %s", combined)
 	}
-
 	invalidPath := filepath.Join(t.TempDir(), "invalid.toml")
 	mustWriteFile(t, invalidPath, "[mcp_servers.rstream]\ncommand = \""+secret+"\n", 0o600)
 	_, parseErr := configureCodexRstreamMCP(invalidPath, command, nil, codexRstreamMCPBlockWithEnv(command, nil), false)
