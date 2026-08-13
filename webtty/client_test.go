@@ -7,14 +7,86 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
+
+type stdinEOFWriteFailureConn struct{}
+
+func (stdinEOFWriteFailureConn) Close() error { return nil }
+
+func (stdinEOFWriteFailureConn) ReadMessage() (int, []byte, error) { return 0, nil, io.EOF }
+
+func (stdinEOFWriteFailureConn) SetReadLimit(int64) {}
+
+func (stdinEOFWriteFailureConn) SetWriteDeadline(time.Time) error { return nil }
+
+func (stdinEOFWriteFailureConn) WriteControl(int, []byte, time.Time) error { return nil }
+
+func (stdinEOFWriteFailureConn) WriteMessage(int, []byte) error { return websocket.ErrCloseSent }
+
+func TestStdinSessionLoopSuppressesOnlyEOFFailureDuringTransportClose(t *testing.T) {
+	tests := []struct {
+		name      string
+		closing   bool
+		wantError bool
+	}{
+		{name: "active transport", wantError: true},
+		{name: "closing transport", closing: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runtime := &clientRuntime{conn: stdinEOFWriteFailureConn{}}
+			runtime.closing.Store(tt.closing)
+			session := &ClientSession{runtime: runtime}
+			errors := make(chan error, 1)
+			(&clientRuntime{}).stdinSessionLoop(t.Context(), session, errors, func(context.Context, []byte) (int, error) { return 0, io.EOF })
+			select {
+			case err := <-errors:
+				if !tt.wantError || !strings.Contains(err.Error(), "failed to send stdin eos") {
+					t.Fatalf("stdin error = %v, wantError = %v", err, tt.wantError)
+				}
+			default:
+				if tt.wantError {
+					t.Fatal("stdin EOF failure was not reported for an active transport")
+				}
+			}
+		})
+	}
+}
+
+func TestClientRuntimeMarksClosingBeforeCloseHandshake(t *testing.T) {
+	conn := newBlockingSessionCloseConn()
+	runtime := &clientRuntime{conn: conn, cfg: &ClientConfig{}}
+	closed := make(chan struct{})
+	go func() {
+		runtime.closeConn()
+		close(closed)
+	}()
+	select {
+	case <-conn.closeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("close handshake did not start")
+	}
+	if !runtime.closing.Load() {
+		t.Fatal("transport was not marked closing before the close handshake")
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("close handshake did not finish")
+	}
+}
 
 func TestNormalizeWebTTYURL(t *testing.T) {
 	tests := []struct {

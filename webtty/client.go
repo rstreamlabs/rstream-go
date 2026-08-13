@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -97,6 +98,7 @@ type clientRuntime struct {
 	logProto    bool
 	writeMu     sync.Mutex
 	closeOnce   sync.Once
+	closing     atomic.Bool
 	stdinFD     int
 	hasStdinFD  bool
 	hasTerminal bool
@@ -300,6 +302,9 @@ func (c *clientRuntime) stdinSessionLoop(ctx context.Context, session *ClientSes
 			}
 			if errors.Is(err, io.EOF) {
 				if werr := session.SendEOF(); werr != nil {
+					if session.runtime.closing.Load() {
+						return
+					}
 					select {
 					case errCh <- fmt.Errorf("failed to send stdin eos: %w", werr):
 					default:
@@ -1146,6 +1151,7 @@ func (c *clientRuntime) writeMessage(msg *pb.Message) error {
 }
 
 func (c *clientRuntime) closeConn() {
+	c.closing.Store(true)
 	c.closeOnce.Do(func() {
 		deadline := c.closeWriteDeadline()
 		_ = c.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done"), deadline)
