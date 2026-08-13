@@ -384,7 +384,7 @@ exec_tar_pipe_json() {
   local out
   mkdir -p "$source_directory"
   python3 -c 'import pathlib, sys; pathlib.Path(sys.argv[1]).write_bytes(b"x" * int(sys.argv[2]))' "$source_directory/payload" "$expected_size"
-  if ! out=$(tar -czf - -C "$source_directory" payload | "$RSTREAM" webtty exec --output json "$@" 2>&1); then
+  if ! out=$(tar -cf - -C "$source_directory" payload | "$RSTREAM" webtty exec --output json "$@" 2>&1); then
     printf "%s" "$out"
     return 1
   fi
@@ -556,7 +556,7 @@ run_case "non-interactive JSON exec forwards piped stdin and EOF" exec_pipe_json
 run_case "empty pipe sends EOF without waiting" exec_empty_pipe_json --url "ws://$addr" --identity operator --e2e -- cat
 run_case "large pipe is not truncated" exec_large_pipe_json 2097152 --url "ws://$addr" --identity operator --e2e -- wc -c
 run_case "binary pipe preserves every byte" exec_binary_pipe_json 1048576 --url "ws://$addr" --identity operator --e2e -- python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
-run_case "archive consumer may exit before client sends EOF" exec_tar_pipe_json 1048576 --url "ws://$addr" --identity operator --e2e -- /bin/sh -c "target=\$(mktemp -d); trap 'find \"\$target\" -depth -delete' EXIT; tar -xzf - -C \"\$target\"; wc -c <\"\$target/payload\""
+run_case "archive consumer may exit before client sends EOF" exec_tar_pipe_json 1048576 --url "ws://$addr" --identity operator --e2e -- /bin/sh -c "target=\$(mktemp -d); trap 'find \"\$target\" -depth -delete' EXIT; tar -xf - -C \"\$target\"; wc -c <\"\$target/payload\""
 run_case "remote exit does not wait for open stdin" exec_remote_exit_with_open_stdin --url "ws://$addr" --identity operator --e2e -- /bin/sh -c 'printf remote-exit'
 runtime_workdir="$TMP_DIR/runtime-workdir"
 mkdir -p "$runtime_workdir"

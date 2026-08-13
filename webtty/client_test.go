@@ -15,6 +15,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -31,6 +32,26 @@ func (stdinEOFWriteFailureConn) SetWriteDeadline(time.Time) error { return nil }
 func (stdinEOFWriteFailureConn) WriteControl(int, []byte, time.Time) error { return nil }
 
 func (stdinEOFWriteFailureConn) WriteMessage(int, []byte) error { return websocket.ErrCloseSent }
+
+type remoteTerminalReadConn struct {
+	payload []byte
+	read    chan struct{}
+}
+
+func (c *remoteTerminalReadConn) Close() error { return nil }
+
+func (c *remoteTerminalReadConn) ReadMessage() (int, []byte, error) {
+	close(c.read)
+	return websocket.BinaryMessage, c.payload, nil
+}
+
+func (c *remoteTerminalReadConn) SetReadLimit(int64) {}
+
+func (c *remoteTerminalReadConn) SetWriteDeadline(time.Time) error { return nil }
+
+func (c *remoteTerminalReadConn) WriteControl(int, []byte, time.Time) error { return nil }
+
+func (c *remoteTerminalReadConn) WriteMessage(int, []byte) error { return nil }
 
 func TestStdinSessionLoopSuppressesOnlyEOFFailureDuringTransportClose(t *testing.T) {
 	tests := []struct {
@@ -85,6 +106,48 @@ func TestClientRuntimeMarksClosingBeforeCloseHandshake(t *testing.T) {
 	case <-closed:
 	case <-time.After(time.Second):
 		t.Fatal("close handshake did not finish")
+	}
+}
+
+func TestClientReadLoopMarksClosingBeforeDispatchingRemoteTerminalMessage(t *testing.T) {
+	messages := map[string]*pb.Message{
+		"close":          {Payload: &pb.Message_Close{Close: &pb.Close{}}},
+		"error":          {Payload: &pb.Message_Error{Error: &pb.Error{Msg: "remote error"}}},
+		"protocol error": {Payload: &pb.Message_ProtocolError{ProtocolError: &pb.ProtocolError{Msg: "protocol error"}}},
+	}
+	for name, message := range messages {
+		t.Run(name, func(t *testing.T) {
+			payload, err := proto.Marshal(message)
+			if err != nil {
+				t.Fatalf("failed to marshal message: %v", err)
+			}
+			conn := &remoteTerminalReadConn{payload: payload, read: make(chan struct{})}
+			runtime := &clientRuntime{conn: conn}
+			done := make(chan struct{})
+			exited := make(chan struct{})
+			go func() {
+				runtime.readLoop(done, make(chan clientEvent))
+				close(exited)
+			}()
+			select {
+			case <-conn.read:
+			case <-time.After(time.Second):
+				t.Fatal("read loop did not receive the terminal message")
+			}
+			deadline := time.Now().Add(time.Second)
+			for !runtime.closing.Load() && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			if !runtime.closing.Load() {
+				t.Fatal("transport was not marked closing before terminal message dispatch")
+			}
+			close(done)
+			select {
+			case <-exited:
+			case <-time.After(time.Second):
+				t.Fatal("read loop did not stop")
+			}
+		})
 	}
 }
 

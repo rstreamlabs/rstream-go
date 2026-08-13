@@ -990,6 +990,10 @@ func (c *clientRuntime) readLoop(done <-chan struct{}, eventCh chan<- clientEven
 			}
 			return
 		}
+		switch msg.Payload.(type) {
+		case *pb.Message_Close, *pb.Message_Error, *pb.Message_ProtocolError:
+			c.closing.Store(true)
+		}
 		c.logProtoMessage("received", msg)
 		select {
 		case eventCh <- clientEvent{msg: msg}:
