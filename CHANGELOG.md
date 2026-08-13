@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.27.3](https://github.com/rstreamlabs/rstream-go/compare/v1.27.2...v1.27.3) (2026-08-13)
+
+
+### Bug Fixes
+
+* **webtty:** publish remote close before stdin shutdown ([2d8df24](https://github.com/rstreamlabs/rstream-go/commit/2d8df24650e9c14a28957cecb6e7181926619645))
+* **webtty:** tolerate remote close after stdin payload ([92e3e1b](https://github.com/rstreamlabs/rstream-go/commit/92e3e1b79f4654f0eca44e09013df0d1ac35b0d1))
+
 ## [1.27.2](https://github.com/rstreamlabs/rstream-go/compare/v1.27.1...v1.27.2) (2026-08-13)
 
 
