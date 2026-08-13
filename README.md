@@ -312,6 +312,14 @@ rstream mcp publish --name codex-rstream-mcp --label role=codex
 rstream ui
 ```
 
+`rstream codex setup --verify` always validates a newly started MCP process.
+An MCP process already attached to an open Codex task keeps running the CLI
+version with which it was started; replacing the signed Homebrew binary cannot
+replace code inside that process. After every rstream CLI upgrade, open a new
+Codex task or reload Codex before relying on MCP, then run an actual tool call.
+Code signing preserves binary identity and integrity, but does not restart
+long-lived processes.
+
 Inside `rstream ui`, press `c` to open the context and project picker. Configured
 local contexts are available immediately, including unlinked contexts that have
 no Control plane API. Projects for the active Control plane API are loaded in
