@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.27.2](https://github.com/rstreamlabs/rstream-go/compare/v1.27.1...v1.27.2) (2026-08-13)
+
+
+### Bug Fixes
+
+* require Codex reload after MCP verification ([9c93c1f](https://github.com/rstreamlabs/rstream-go/commit/9c93c1f1b6ac1f8e6619f958d36ef6b65b0cb942))
+
 ## [1.27.1](https://github.com/rstreamlabs/rstream-go/compare/v1.27.0...v1.27.1) (2026-08-13)
 
 
