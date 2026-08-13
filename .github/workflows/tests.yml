@@ -62,8 +62,18 @@ jobs:
         run: make test-bins
       - name: Test runtime harness helpers
         run: ./test/e2e/runtime-common-unit.sh
-      - name: Test
-        run: go test -shuffle=on -count=1 ./...
+      - name: Test with coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          coverage="${RUNNER_TEMP}/coverage.out"
+          go test -shuffle=on -count=1 -coverprofile="${coverage}" ./...
+          total="$(go tool cover -func="${coverage}" | awk '/^total:/ {gsub(/%/, "", $3); print $3}')"
+          printf 'Total coverage: %s%%\n' "${total}"
+          if ! awk -v total="${total}" 'BEGIN {exit total < 54.0}'; then
+            printf 'Coverage %s%% is below the 54.0%% floor.\n' "${total}" >&2
+            exit 1
+          fi
   race:
     name: race and lifecycle tests
     runs-on: ubuntu-latest

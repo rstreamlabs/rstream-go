@@ -261,7 +261,7 @@ func TestRunWebTTYClientCaptureForwardsPipedStdin(t *testing.T) {
 		Interactive:   false,
 		Stdin:         stdin,
 		CmdArgs:       []string{os.Args[0], "-test.run=^TestCmdWebTTYEchoStdinHelperProcess$"},
-		EnvVars:       []string{"RSTREAM_CMD_WEBTTY_TEST_STDIN_HELPER=1"},
+		EnvVars:       []string{"RSTREAM_CMD_WEBTTY_TEST_STDIN_HELPER=1", "GOCOVERDIR=" + t.TempDir()},
 		OpenDeadline:  &deadline,
 		CloseDeadline: &deadline,
 	})
@@ -298,7 +298,7 @@ func TestServePlainWebTTYGracefulShutdownDeliversProtocolClose(t *testing.T) {
 	session, err := webtty.OpenClientSession(t.Context(), &webtty.SessionConfig{
 		URL:           "tcp://" + listener.Addr().String(),
 		CmdArgs:       []string{os.Args[0], "-test.run=^TestCmdWebTTYInterruptHelperProcess$"},
-		EnvVars:       []string{"RSTREAM_CMD_WEBTTY_TEST_INTERRUPT_HELPER=1"},
+		EnvVars:       []string{"RSTREAM_CMD_WEBTTY_TEST_INTERRUPT_HELPER=1", "GOCOVERDIR=" + t.TempDir()},
 		OpenDeadline:  &clientOpenDeadline,
 		CloseDeadline: &clientCloseDeadline,
 	})
