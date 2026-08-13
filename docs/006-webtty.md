@@ -304,6 +304,24 @@ CLI flags override YAML values. `server.serverId` loads the matching enrollment
 from `~/.rstream/webtty/enrollments/<server-id>.yaml`. `server.serverEnrollment`
 can point to a non-default enrollment path.
 
+The service manager owns the daemon lifecycle. Installing a new CLI binary does
+not replace an already-running WebTTY process. After every package upgrade,
+restart the service and validate an actual terminal command. For the macOS
+LaunchAgent documented by rstream:
+
+```bash
+rstream --version
+launchctl kickstart -k "gui/$(id -u)/io.rstream.webtty"
+rstream webtty exec --url rstrm://<server-name> -- printf 'webtty-upgrade-ok\n'
+```
+
+Keep the stable package-manager path in the service definition rather than a
+versioned Homebrew Cellar path. Code signing establishes binary identity and
+integrity; it does not restart a process that was loaded before the upgrade.
+Do not reset macOS privacy permissions as a routine upgrade step. Restart and
+test first, then investigate TCC only when the protected resource returns an
+actual privacy denial.
+
 ## Local Files
 
 WebTTY files live under the WebTTY subtree, separate from workspace-managed
