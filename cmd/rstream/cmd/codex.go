@@ -177,7 +177,9 @@ func runCodexSetup(cmd *cobra.Command, args []string) error {
 			result.Diagnostics = append(result.Diagnostics, codexDiagnostic{Code: "verification_failed", Level: "error", Message: verifyErr.Error()})
 			setupErr = verifyErr
 		} else {
+			result.ReloadRequired = true
 			result.Diagnostics = append(result.Diagnostics, codexDiagnostic{Code: "verification_succeeded", Level: "info", Message: "MCP initialize and tools/list completed successfully."})
+			result.Diagnostics = append(result.Diagnostics, codexDiagnostic{Code: "open_tasks_unchanged", Level: "info", Message: "Verification used a fresh process; reload open Codex tasks to use the verified rstream binary."})
 		}
 	}
 	if err := writeCodexSetupResult(cmd.OutOrStdout(), output, result); err != nil {

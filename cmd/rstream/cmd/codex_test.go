@@ -426,6 +426,38 @@ func TestVerifyCodexMCPHandshake(t *testing.T) {
 	}
 }
 
+func TestRunCodexSetupVerifyRequiresReloadForExistingTasks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("helper script uses a POSIX shell")
+	}
+	clearCodexRuntimeOverrides(t)
+	t.Setenv("GO_WANT_CODEX_MCP_HELPER", "1")
+	testBinary, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable returned error: %v", err)
+	}
+	script := makeCodexExecutable(t, fmt.Sprintf("exec %s -test.run='^TestCodexMCPVerificationHelper$'", codexTestShellQuote(testBinary)))
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	mustWriteFile(t, configPath, codexRstreamMCPBlockWithEnv(script, nil), 0o600)
+	command := newCodexSetupCommand()
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetArgs([]string{"--config", configPath, "--command", script, "--verify", "--output", "json"})
+	if err := command.ExecuteContext(t.Context()); err != nil {
+		t.Fatalf("verified setup returned error: %v", err)
+	}
+	var result codexSetupResult
+	if err := json.Unmarshal(output.Bytes(), &result); err != nil {
+		t.Fatalf("invalid JSON output: %v\n%s", err, output.String())
+	}
+	if result.Status != "already_configured" || result.Changed || !result.ReloadRequired {
+		t.Fatalf("verification should require open tasks to reload: %#v", result)
+	}
+	if !hasDiagnostic(result.Diagnostics, "open_tasks_unchanged") {
+		t.Fatalf("verification lacks process lifecycle diagnostic: %#v", result.Diagnostics)
+	}
+}
+
 func TestVerifyCodexMCPDoesNotExposeServerStderr(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("helper script uses a POSIX shell")
