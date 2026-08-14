@@ -245,10 +245,20 @@ func TestUISwitchTargetActivatesPreparedRuntimeInRunningApplication(t *testing.T
 		app.app.Stop()
 		t.Fatal("UI event loop stopped responding after switch and resize")
 	}
-	cells, width, height := screen.GetContents()
-	if width != 172 || height != 56 || !simulationScreenContains(cells, "rstream ui") {
+	type screenState struct {
+		width    int
+		height   int
+		hasTitle bool
+	}
+	screenStateCh := make(chan screenState, 1)
+	app.app.QueueUpdateDraw(func() {
+		cells, width, height := screen.GetContents()
+		screenStateCh <- screenState{width: width, height: height, hasTitle: simulationScreenContains(cells, "rstream ui")}
+	})
+	snapshot := <-screenStateCh
+	if snapshot.width != 172 || snapshot.height != 56 || !snapshot.hasTitle {
 		app.app.Stop()
-		t.Fatalf("resized screen = %dx%d, complete header=%v", width, height, simulationScreenContains(cells, "rstream ui"))
+		t.Fatalf("resized screen = %dx%d, complete header=%v", snapshot.width, snapshot.height, snapshot.hasTitle)
 	}
 	persisted, err := config.Load(path)
 	if err != nil {
