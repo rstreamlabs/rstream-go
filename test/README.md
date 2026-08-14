@@ -275,6 +275,19 @@ Run the WebTTY runtime matrix:
 bash test/e2e/webtty-runtime-matrix.sh
 ```
 
+Exercise the real MCP stdio process with eight simultaneous WebTTY inventory calls per round, using both line-delimited and Content-Length framing:
+
+```bash
+python3 test/e2e/mcp-stdio-concurrency.py \
+  --binary ./out/cmd/rstream/dev/main/macos/arm64/release/bin/rstream \
+  --context <non-production-context> \
+  --url rstrm://<test-webtty-server>
+```
+
+Omit `--url` to exercise only the MCP dispatcher and inventory API. Supplying a
+dedicated test server also runs eight simultaneous, output-verified shell
+commands per round; do not target a production shell for this stress test.
+
 The matrix starts live WebTTY servers and clients and covers direct Go
 transports, JavaScript browser WebTransport, C++ client/server interop when the
 C++ binaries are available, explicit-key E2E, connection setup, command

@@ -284,6 +284,24 @@ PY
   grep -q "$expected_size" "$output"
 }
 
+go_client_archive() {
+  local out
+  if ! out=$(tar -cf - -C "$TMP_DIR" archive-payload | "$RSTREAM" webtty exec "$@" -- /usr/bin/env python3 -c "$ARCHIVE_READER" 2>&1); then
+    printf "%s\n" "$out"
+    return 1
+  fi
+  printf "%s" "$out" | grep -q "$ARCHIVE_DIGEST"
+}
+
+cpp_client_archive() {
+  local out
+  if ! out=$(tar -cf - -C "$TMP_DIR" archive-payload | "$CPP_CLIENT" "$@" -i -T -- /usr/bin/env python3 -c "$ARCHIVE_READER" 2>&1); then
+    printf "%s\n" "$out"
+    return 1
+  fi
+  printf "%s" "$out" | grep -q "$ARCHIVE_DIGEST"
+}
+
 find_cpp_binary() {
   local name=$1
   local root
@@ -485,6 +503,10 @@ if [ -x "${CPP_SERVER:-}" ] && [ -x "${CPP_CLIENT:-}" ]; then
   EARLY_EXIT_SIZE=1048576
   EARLY_EXIT_PAYLOAD="$TMP_DIR/early-exit-payload"
   dd if=/dev/urandom of="$EARLY_EXIT_PAYLOAD" bs="$EARLY_EXIT_SIZE" count=1 status=none
+  ARCHIVE_PAYLOAD="$TMP_DIR/archive-payload"
+  dd if=/dev/urandom of="$ARCHIVE_PAYLOAD" bs=1048576 count=16 status=none
+  ARCHIVE_DIGEST=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$ARCHIVE_PAYLOAD")
+  ARCHIVE_READER="import hashlib,sys,tarfile; archive=tarfile.open(fileobj=sys.stdin.buffer,mode='r|'); member=next(item for item in archive if item.name=='archive-payload'); stream=archive.extractfile(member); print(hashlib.sha256(stream.read()).hexdigest())"
   cpp_ws_port=$(reserve_port)
   cpp_ws_addr="127.0.0.1:$cpp_ws_port"
   start_cpp_server "cpp-ws" --uri="$cpp_ws_addr" --transport=websocket --allow-unauthenticated
@@ -492,6 +514,8 @@ if [ -x "${CPP_SERVER:-}" ] && [ -x "${CPP_CLIENT:-}" ]; then
   run_case "go-client/cpp-server/ws" go_exec_text "cpp-server-ws" --url "ws://$cpp_ws_addr" -- /bin/sh -c "printf cpp-server-ws"
   run_case "cpp-client/cpp-server/ws" cpp_client_text "cpp-client-ws" --uri="$cpp_ws_addr" --transport=websocket -I -T -- /bin/sh -c "printf cpp-client-ws"
   run_case "go-client/cpp-server/ws/remote-exit-before-eof" go_client_remote_exit_before_eof "go-cpp-ws-early-exit" "$EARLY_EXIT_SIZE" --url "ws://$cpp_ws_addr"
+  run_case "go-client/cpp-server/ws/binary-archive" go_client_archive --url "ws://$cpp_ws_addr"
+  run_case "cpp-client/cpp-server/ws/binary-archive" cpp_client_archive --uri="$cpp_ws_addr" --transport=websocket
 
   cpp_login_port=$(reserve_port)
   cpp_login_addr="127.0.0.1:$cpp_login_port"
@@ -507,6 +531,8 @@ if [ -x "${CPP_SERVER:-}" ] && [ -x "${CPP_CLIENT:-}" ]; then
   wait_tcp "$go_cpp_ws_addr"
   run_case "cpp-client/go-server/ws" cpp_client_text "go-server-ws" --uri="$go_cpp_ws_addr" --transport=websocket -I -T -- /bin/sh -c "printf go-server-ws"
   run_case "cpp-client/go-server/ws/remote-exit-before-eof" cpp_client_remote_exit_before_eof "cpp-go-ws-early-exit" "$EARLY_EXIT_SIZE" --uri="$go_cpp_ws_addr" --transport=websocket
+  run_case "go-client/go-server/ws/binary-archive" go_client_archive --url "ws://$go_cpp_ws_addr"
+  run_case "cpp-client/go-server/ws/binary-archive" cpp_client_archive --uri="$go_cpp_ws_addr" --transport=websocket
 
   cpp_plain_port=$(reserve_port)
   cpp_plain_addr="127.0.0.1:$cpp_plain_port"
