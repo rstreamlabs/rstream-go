@@ -287,14 +287,29 @@ func caseCloseCode(ctx context.Context, sess *webtransport.Session, q url.Values
 }
 
 // caseCombo multiplexes bidi echo, uni drain and datagram echo on a single
-// session to exercise the six relay goroutines under concurrent load.
+// session to exercise the six relay goroutines under concurrent load. A
+// control-stream barrier proves every receiver is running before the client
+// starts the best-effort datagram burst; otherwise WAN latency can turn a
+// server-startup race into an apparent relay loss.
 func caseCombo(ctx context.Context, sess *webtransport.Session, n int) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	ctrl, err := sess.AcceptStream(ctx)
+	if err != nil {
+		return
+	}
+	defer ctrl.Close()
+	request := make([]byte, len("go"))
+	if _, err := io.ReadFull(ctrl, request); err != nil || string(request) != "go" {
+		return
+	}
 	var wg sync.WaitGroup
+	var ready sync.WaitGroup
 	wg.Add(3)
+	ready.Add(3)
 	go func() {
 		defer wg.Done()
+		ready.Done()
 		for {
 			s, err := sess.AcceptStream(ctx)
 			if err != nil {
@@ -308,6 +323,7 @@ func caseCombo(ctx context.Context, sess *webtransport.Session, n int) {
 	}()
 	go func() {
 		defer wg.Done()
+		ready.Done()
 		for {
 			rs, err := sess.AcceptUniStream(ctx)
 			if err != nil {
@@ -318,6 +334,7 @@ func caseCombo(ctx context.Context, sess *webtransport.Session, n int) {
 	}()
 	go func() {
 		defer wg.Done()
+		ready.Done()
 		for i := 0; i < n*8; i++ {
 			payload, err := sess.ReceiveDatagram(ctx)
 			if err != nil {
@@ -328,8 +345,18 @@ func caseCombo(ctx context.Context, sess *webtransport.Session, n int) {
 			}
 		}
 	}()
+	defer func() {
+		cancel()
+		wg.Wait()
+	}()
+	ready.Wait()
+	if _, err := ctrl.Write([]byte("ready")); err != nil {
+		return
+	}
+	if err := ctrl.Close(); err != nil {
+		return
+	}
 	<-sess.Context().Done()
-	wg.Wait()
 }
 
 func dispatch(ctx context.Context, sess *webtransport.Session, q url.Values) {

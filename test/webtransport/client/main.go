@@ -461,7 +461,17 @@ func caseCloseCode(code uint32, reason string) func(context.Context, sessionDial
 	}
 }
 
-// caseCombo runs bidi + uni + datagrams concurrently on a single session.
+const (
+	comboDatagramCount       = 32
+	comboDatagramPayloadSize = 128
+	comboDatagramMinEchoes   = comboDatagramCount / 4
+	comboDatagramSpacing     = 10 * time.Millisecond
+)
+
+// caseCombo runs bidi + uni + datagrams concurrently on a single session. Its
+// datagrams form a short, paced train instead of one microburst: one lost UDP
+// burst must not make a healthy relay test flaky, while a path that starves
+// datagrams still fails because at least a quarter of unique probes must echo.
 func caseCombo() func(context.Context, sessionDialer) error {
 	return func(ctx context.Context, dial sessionDialer) error {
 		sess, err := dial(ctx, "/webtransport?case=combo&n=4")
@@ -469,6 +479,23 @@ func caseCombo() func(context.Context, sessionDialer) error {
 			return err
 		}
 		defer sess.CloseWithError(0, "")
+		ctrl, err := sess.OpenStreamSync(ctx)
+		if err != nil {
+			return fmt.Errorf("combo control stream: %w", err)
+		}
+		if _, err := ctrl.Write([]byte("go")); err != nil {
+			return fmt.Errorf("combo control write: %w", err)
+		}
+		if err := ctrl.Close(); err != nil {
+			return fmt.Errorf("combo control close: %w", err)
+		}
+		ready := make([]byte, len("ready"))
+		if _, err := io.ReadFull(ctrl, ready); err != nil {
+			return fmt.Errorf("combo readiness read: %w", err)
+		}
+		if string(ready) != "ready" {
+			return fmt.Errorf("combo readiness mismatch: got %q", string(ready))
+		}
 		var wg sync.WaitGroup
 		errCh := make(chan error, 3)
 		// Bidi echo
@@ -480,7 +507,7 @@ func caseCombo() func(context.Context, sessionDialer) error {
 				errCh <- err
 				return
 			}
-			payload := []byte(strings.Repeat("abc", 300))
+			payload := []byte(strings.Repeat("abc", 64*1024))
 			if _, err := s.Write(payload); err != nil {
 				errCh <- err
 				return
@@ -507,7 +534,7 @@ func caseCombo() func(context.Context, sessionDialer) error {
 				errCh <- err
 				return
 			}
-			if _, err := us.Write([]byte("uni-combo")); err != nil {
+			if _, err := us.Write(bytes.Repeat([]byte("u"), 64*1024)); err != nil {
 				errCh <- err
 				return
 			}
@@ -517,23 +544,43 @@ func caseCombo() func(context.Context, sessionDialer) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < 16; i++ {
-				if err := sess.SendDatagram([]byte{byte(i)}); err != nil {
+			for i := 0; i < comboDatagramCount; i++ {
+				payload := make([]byte, comboDatagramPayloadSize)
+				payload[0] = byte(i)
+				if err := sess.SendDatagram(payload); err != nil {
 					errCh <- err
 					return
 				}
+				if i+1 < comboDatagramCount {
+					timer := time.NewTimer(comboDatagramSpacing)
+					select {
+					case <-ctx.Done():
+						if !timer.Stop() {
+							select {
+							case <-timer.C:
+							default:
+							}
+						}
+						errCh <- ctx.Err()
+						return
+					case <-timer.C:
+					}
+				}
 			}
-			deadline, cancel := context.WithTimeout(ctx, time.Second)
+			deadline, cancel := context.WithTimeout(ctx, 2*time.Second)
 			defer cancel()
-			seen := 0
-			for seen < 4 { // tolerate high loss; just ensure >0
-				if _, err := sess.ReceiveDatagram(deadline); err != nil {
+			seen := make(map[byte]struct{}, comboDatagramCount)
+			for len(seen) < comboDatagramCount {
+				payload, err := sess.ReceiveDatagram(deadline)
+				if err != nil {
 					break
 				}
-				seen++
+				if len(payload) == comboDatagramPayloadSize && int(payload[0]) < comboDatagramCount {
+					seen[payload[0]] = struct{}{}
+				}
 			}
-			if seen == 0 {
-				errCh <- fmt.Errorf("no datagrams echoed")
+			if len(seen) < comboDatagramMinEchoes {
+				errCh <- fmt.Errorf("combo datagram loss too high: %d/%d unique probes echoed, need at least %d", len(seen), comboDatagramCount, comboDatagramMinEchoes)
 			}
 		}()
 		wg.Wait()
