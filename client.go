@@ -279,7 +279,6 @@ const (
 	maxHeartbeatInterval                       = 5 * time.Minute
 	maxHeartbeatTimeout                        = 15 * time.Minute
 	minLegacyHeartbeatWriteTimeout             = time.Minute
-	maxDeferredControlChannelMessages          = 64
 )
 
 func (c *Client) dial(ctx context.Context, dialType dialType, raddr Addr, token *string) (net.Conn, error) {
@@ -501,9 +500,12 @@ func watchDatagramChannelMessages(r *bufio.Reader, streamID string, ch *quicData
 }
 
 type pendingOpenTunnelReq struct {
-	respCh    chan *pb.OpenTunnelRsp
-	readyCh   chan struct{}
-	readyOnce sync.Once
+	respCh chan openTunnelResult
+}
+
+type openTunnelResult struct {
+	tunnel Tunnel
+	err    error
 }
 
 type contextMutex struct {
@@ -538,10 +540,6 @@ func (m *contextMutex) Lock(ctx context.Context) error {
 
 func (m *contextMutex) Unlock() {
 	m.ch <- struct{}{}
-}
-
-func (p *pendingOpenTunnelReq) closeReady() {
-	p.readyOnce.Do(func() { close(p.readyCh) })
 }
 
 type controlChannelImpl struct {
@@ -798,10 +796,7 @@ func (c *controlChannelImpl) CreateTunnel(ctx context.Context, props TunnelPrope
 		return nil, err
 	}
 	requestID := uuid.New().String()
-	pending := &pendingOpenTunnelReq{
-		respCh:  make(chan *pb.OpenTunnelRsp, 1),
-		readyCh: make(chan struct{}),
-	}
+	pending := &pendingOpenTunnelReq{respCh: make(chan openTunnelResult, 1)}
 	c.pendingTunnels[requestID] = pending
 	c.mu.Unlock()
 	msg := &pb.Message{
@@ -817,7 +812,6 @@ func (c *controlChannelImpl) CreateTunnel(ctx context.Context, props TunnelPrope
 		if c.pendingTunnels[requestID] == pending {
 			delete(c.pendingTunnels, requestID)
 		}
-		pending.closeReady()
 		c.mu.Unlock()
 		failedErr := fmt.Errorf("failed to send OpenTunnelReq: %w", err)
 		var writeErr *controlChannelWriteError
@@ -829,73 +823,31 @@ func (c *controlChannelImpl) CreateTunnel(ctx context.Context, props TunnelPrope
 		}
 		return nil, failedErr
 	}
+	return c.awaitOpenTunnelResult(ctx, requestID, pending)
+}
+
+func (c *controlChannelImpl) awaitOpenTunnelResult(ctx context.Context, requestID string, pending *pendingOpenTunnelReq) (Tunnel, error) {
 	select {
+	case result, ok := <-pending.respCh:
+		return tunnelFromOpenResult(result, ok)
 	case <-ctx.Done():
 		c.mu.Lock()
-		delete(c.pendingTunnels, requestID)
-		pending.closeReady()
-		c.mu.Unlock()
-		return nil, ctx.Err()
-	case openTunnelRsp, ok := <-pending.respCh:
-		defer pending.closeReady()
-		if !ok {
-			return nil, errors.New("control channel closed unexpectedly")
-		}
-		switch payload := openTunnelRsp.Payload.(type) {
-		case *pb.OpenTunnelRsp_Error:
-			return nil, newEngineError(payload.Error)
-		case *pb.OpenTunnelRsp_TunnelProperties:
-			rProps := toTunnelProperties(payload.TunnelProperties)
-			if rProps.ID == nil {
-				return nil, errors.New("engine did not return a tunnel ID")
-			}
-			tunnelID := *rProps.ID
-			tunnelCtx, tunnelCancel := context.WithCancel(c.lifecycleCtx)
-			tunnel := &bytestreamTunnelImpl{
-				props:    rProps,
-				ctrl:     c,
-				tunnelID: tunnelID,
-				closedCh: make(chan struct{}),
-				conns:    make(chan net.Conn, 10),
-				ctx:      tunnelCtx,
-				cancel:   tunnelCancel,
-			}
-			var listener *quicDatagramListener
-			isDatagram := rProps.Type != nil && *rProps.Type == TunnelTypeDatagram
-			if isDatagram && c.datagramProvider != nil && tunnelAllowsQUICDatagrams(rProps) {
-				dlCtx, dlCancel := context.WithCancel(tunnelCtx)
-				listener = &quicDatagramListener{
-					conns:  make(chan net.PacketConn, 10),
-					ctx:    dlCtx,
-					cancel: dlCancel,
-					laddr:  &Addr{IdOrName: tunnelID},
-				}
-			}
-			c.mu.Lock()
-			if c.closed || c.closing {
-				c.mu.Unlock()
-				tunnelCancel()
-				if listener != nil {
-					_ = listener.Close()
-				}
-				return nil, errors.New("control channel closed while opening tunnel")
-			}
-			c.tunnels[tunnelID] = tunnel
-			if listener != nil {
-				c.datagramTunnels[tunnelID] = listener
-			}
+		if c.pendingTunnels[requestID] == pending {
+			delete(c.pendingTunnels, requestID)
 			c.mu.Unlock()
-			if listener != nil {
-				return &datagramTunnelImpl{inner: tunnel, pl: listener}, nil
-			}
-			if isDatagram {
-				return &datagramTunnelImpl{inner: tunnel, pl: PacketListenerFromListener(tunnel)}, nil
-			}
-			return tunnel, nil
-		default:
-			return nil, errors.New("unexpected OpenTunnelRsp payload")
+			return nil, context.Cause(ctx)
 		}
+		c.mu.Unlock()
+		result, ok := <-pending.respCh
+		return tunnelFromOpenResult(result, ok)
 	}
+}
+
+func tunnelFromOpenResult(result openTunnelResult, ok bool) (Tunnel, error) {
+	if !ok {
+		return nil, errors.New("control channel closed unexpectedly")
+	}
+	return result.tunnel, result.err
 }
 
 func (c *controlChannelImpl) Close() error {
@@ -968,55 +920,28 @@ func (c *controlChannelImpl) ServerDetails() *ServerDetails {
 
 func (c *controlChannelImpl) readLoop() {
 	var err error = nil
-	var waitCh <-chan struct{}
-	var deferred []*pb.Message
 	c.mu.Lock()
 	for {
-		var msg *pb.Message
-		if waitCh == nil && len(deferred) > 0 {
-			msg = deferred[0]
-			deferred[0] = nil
-			deferred = deferred[1:]
-			if len(deferred) == 0 {
-				deferred = nil
-			}
-		} else {
-			c.mu.Unlock()
-			var cause error
-			var deadlineErr error
-			msg, cause = readPbMessage(c.r)
-			if cause == nil && c.heartbeatTimeout > 0 {
-				deadlineErr = c.conn.SetReadDeadline(time.Now().Add(c.heartbeatTimeout))
-			}
-			c.mu.Lock()
-			if cause != nil {
-				err = fmt.Errorf("failed to read message: %w", cause)
-			}
-			if c.closed || err != nil {
+		c.mu.Unlock()
+		msg, cause := readPbMessage(c.r)
+		var deadlineErr error
+		if cause == nil && c.heartbeatTimeout > 0 {
+			deadlineErr = c.conn.SetReadDeadline(time.Now().Add(c.heartbeatTimeout))
+		}
+		c.mu.Lock()
+		if cause != nil {
+			err = fmt.Errorf("failed to read message: %w", cause)
+		}
+		if c.closed || err != nil {
+			break
+		}
+		if deadlineErr != nil {
+			if _, closing := msg.Payload.(*pb.Message_CloseControlChannelRsp); !closing {
+				err = fmt.Errorf("failed to refresh control channel liveness deadline: %w", deadlineErr)
 				break
 			}
-			if deadlineErr != nil {
-				err = fmt.Errorf("failed to refresh control channel liveness deadline: %w", deadlineErr)
-			}
 		}
-		if waitCh != nil {
-			select {
-			case <-waitCh:
-				waitCh = nil
-			default:
-			}
-		}
-		if waitCh != nil {
-			if _, heartbeat := msg.Payload.(*pb.Message_Heartbeat); !heartbeat {
-				if len(deferred) >= maxDeferredControlChannelMessages {
-					err = errors.New("control channel message queue remained blocked")
-					break
-				}
-				deferred = append(deferred, msg)
-				continue
-			}
-		}
-		closeChannel, nextWaitCh, cleanup, cause := c.handleMessage(msg)
+		closeChannel, cleanup, cause := c.handleMessage(msg)
 		if cause != nil {
 			err = fmt.Errorf("failed to handle message: %w", cause)
 		}
@@ -1031,9 +956,6 @@ func (c *controlChannelImpl) readLoop() {
 		}
 		if err != nil {
 			break
-		}
-		if nextWaitCh != nil {
-			waitCh = nextWaitCh
 		}
 	}
 	c.mu.Unlock()
@@ -1090,25 +1012,25 @@ func (c *controlChannelImpl) sendHeartbeat() error {
 	return c.writePbMessageContext(writeCtx, &pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: heartbeat}})
 }
 
-func (c *controlChannelImpl) handleMessage(msg *pb.Message) (bool, <-chan struct{}, func(), error) {
+func (c *controlChannelImpl) handleMessage(msg *pb.Message) (bool, func(), error) {
 	if c.closed {
-		return true, nil, nil, nil
+		return true, nil, nil
 	}
 	switch payload := msg.Payload.(type) {
 	case *pb.Message_OpenTunnelRsp:
-		return false, c.handleOpenTunnelRsp(payload.OpenTunnelRsp), nil, nil
+		return false, nil, c.handleOpenTunnelRsp(payload.OpenTunnelRsp)
 	case *pb.Message_CloseTunnelRsp:
-		return false, nil, c.handleCloseTunnelRsp(payload.CloseTunnelRsp), nil
+		return false, c.handleCloseTunnelRsp(payload.CloseTunnelRsp), nil
 	case *pb.Message_ProxyConnReq:
-		return false, nil, nil, c.handleProxyConnReq(payload.ProxyConnReq)
+		return false, nil, c.handleProxyConnReq(payload.ProxyConnReq)
 	case *pb.Message_DatagramChannelClose:
-		return false, nil, c.handleDatagramChannelClose(payload.DatagramChannelClose), nil
+		return false, c.handleDatagramChannelClose(payload.DatagramChannelClose), nil
 	case *pb.Message_CloseControlChannelRsp:
-		return true, nil, nil, nil
+		return true, nil, nil
 	case *pb.Message_Heartbeat:
-		return false, nil, nil, c.handleHeartbeat(payload.Heartbeat)
+		return false, nil, c.handleHeartbeat(payload.Heartbeat)
 	default:
-		return false, nil, nil, nil
+		return false, nil, nil
 	}
 }
 
@@ -1140,17 +1062,61 @@ func (c *controlChannelImpl) handleDatagramChannelClose(msg *pb.DatagramChannelC
 	return func() { ch.initiateClose() }
 }
 
-func (c *controlChannelImpl) handleOpenTunnelRsp(rsp *pb.OpenTunnelRsp) <-chan struct{} {
-	requestId := rsp.RequestId
-	pending, found := c.pendingTunnels[requestId]
-	if found {
-		delete(c.pendingTunnels, requestId)
-		pending.respCh <- rsp
-		return pending.readyCh
-	} else {
-		c.logger.Warn("unexpected OpenTunnelRsp", "request_id", requestId)
+func (c *controlChannelImpl) handleOpenTunnelRsp(rsp *pb.OpenTunnelRsp) error {
+	if rsp == nil {
+		return errors.New("received empty OpenTunnelRsp")
+	}
+	requestID := rsp.RequestId
+	pending, found := c.pendingTunnels[requestID]
+	if !found {
+		c.logger.Warn("unexpected OpenTunnelRsp", "request_id", requestID)
 		return nil
 	}
+	delete(c.pendingTunnels, requestID)
+	pending.respCh <- c.openTunnelResultLocked(rsp)
+	return nil
+}
+
+func (c *controlChannelImpl) openTunnelResultLocked(rsp *pb.OpenTunnelRsp) openTunnelResult {
+	switch payload := rsp.Payload.(type) {
+	case *pb.OpenTunnelRsp_Error:
+		return openTunnelResult{err: newEngineError(payload.Error)}
+	case *pb.OpenTunnelRsp_TunnelProperties:
+		return c.openTunnelFromPropertiesLocked(toTunnelProperties(payload.TunnelProperties))
+	default:
+		return openTunnelResult{err: errors.New("unexpected OpenTunnelRsp payload")}
+	}
+}
+
+func (c *controlChannelImpl) openTunnelFromPropertiesLocked(props TunnelProperties) openTunnelResult {
+	if props.ID == nil || strings.TrimSpace(*props.ID) == "" {
+		return openTunnelResult{err: errors.New("engine did not return a tunnel ID")}
+	}
+	if c.closed || c.closing {
+		return openTunnelResult{err: errors.New("control channel closed while opening tunnel")}
+	}
+	if c.lifecycleCtx == nil {
+		return openTunnelResult{err: errors.New("control channel lifecycle context is not initialized")}
+	}
+	tunnelID := *props.ID
+	if c.tunnels[tunnelID] != nil {
+		return openTunnelResult{err: fmt.Errorf("engine returned duplicate tunnel ID %q", tunnelID)}
+	}
+	tunnelCtx, tunnelCancel := context.WithCancel(c.lifecycleCtx)
+	tunnel := &bytestreamTunnelImpl{props: props, ctrl: c, tunnelID: tunnelID, closedCh: make(chan struct{}), conns: make(chan net.Conn, 10), ctx: tunnelCtx, cancel: tunnelCancel}
+	isDatagram := props.Type != nil && *props.Type == TunnelTypeDatagram
+	if isDatagram && c.datagramProvider != nil && tunnelAllowsQUICDatagrams(props) {
+		dlCtx, dlCancel := context.WithCancel(tunnelCtx)
+		listener := &quicDatagramListener{conns: make(chan net.PacketConn, 10), ctx: dlCtx, cancel: dlCancel, laddr: &Addr{IdOrName: tunnelID}}
+		c.tunnels[tunnelID] = tunnel
+		c.datagramTunnels[tunnelID] = listener
+		return openTunnelResult{tunnel: &datagramTunnelImpl{inner: tunnel, pl: listener}}
+	}
+	c.tunnels[tunnelID] = tunnel
+	if isDatagram {
+		return openTunnelResult{tunnel: &datagramTunnelImpl{inner: tunnel, pl: PacketListenerFromListener(tunnel)}}
+	}
+	return openTunnelResult{tunnel: tunnel}
 }
 
 func (c *controlChannelImpl) handleCloseTunnelRsp(rsp *pb.CloseTunnelRsp) func() {
@@ -1772,7 +1738,6 @@ func (c *controlChannelImpl) detachCleanupLocked(err error) *controlChannelClean
 func (c *controlChannelCleanup) run() {
 	for _, p := range c.pendingTunnels {
 		close(p.respCh)
-		p.closeReady()
 	}
 	for _, t := range c.tunnels {
 		tunnelErr := c.err
