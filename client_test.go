@@ -495,7 +495,7 @@ func TestControlChannelHeartbeatSendsPeriodicMessage(t *testing.T) {
 	}}
 	engine := "engine.example.com:443"
 	token := "token"
-	interval := 10 * time.Millisecond
+	interval := time.Second
 	client := &Client{EngineURL: &engine, Token: &token, Transport: dialer}
 	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(true), HeartbeatInterval: &interval})
 	if err != nil {
@@ -511,6 +511,318 @@ func TestControlChannelHeartbeatSendsPeriodicMessage(t *testing.T) {
 	}
 	if err := <-serverErr; err != nil {
 		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestControlChannelNegotiatesHeartbeatLiveness(t *testing.T) {
+	heartbeatSeen := make(chan struct{}, 1)
+	serverErr := make(chan error, 1)
+	dialer := pipeDialer{serve: func(conn net.Conn) {
+		serverErr <- serveNegotiatedControlChannelHeartbeat(conn, heartbeatSeen, true)
+	}}
+	engine := "engine.example.com:443"
+	token := "token"
+	interval := time.Second
+	client := &Client{EngineURL: &engine, Token: &token, Transport: dialer}
+	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(true), HeartbeatInterval: &interval})
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	select {
+	case <-heartbeatSeen:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for negotiated heartbeat acknowledgement")
+	}
+	if err := channel.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestControlChannelDelayedHeartbeatAcknowledgementPreservesConnection(t *testing.T) {
+	serverErr := make(chan error, 1)
+	dialer := acceleratedReadDeadlinePipeDialer{maximum: 100 * time.Millisecond, serve: func(conn net.Conn) {
+		serverErr <- serveDelayedNegotiatedControlChannelHeartbeat(conn, 80*time.Millisecond)
+	}}
+	engine := "engine.example.com:443"
+	token := "token"
+	interval := time.Second
+	client := &Client{EngineURL: &engine, Token: &token, Transport: dialer}
+	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(true), HeartbeatInterval: &interval})
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	select {
+	case channelErr := <-channel.Done():
+		t.Fatalf("control channel closed after a delayed acknowledgement: %v", channelErr)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if err := channel.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestControlChannelIntermittentHeartbeatLossPreservesConnection(t *testing.T) {
+	serverErr := make(chan error, 1)
+	dialer := pipeDialer{serve: func(conn net.Conn) {
+		serverErr <- serveIntermittentNegotiatedControlChannelHeartbeat(conn)
+	}}
+	engine := "engine.example.com:443"
+	token := "token"
+	interval := time.Second
+	client := &Client{EngineURL: &engine, Token: &token, Transport: dialer}
+	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(true), HeartbeatInterval: &interval})
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	time.Sleep(3200 * time.Millisecond)
+	select {
+	case channelErr := <-channel.Done():
+		t.Fatalf("control channel closed during intermittent heartbeat loss: %v", channelErr)
+	default:
+	}
+	if err := channel.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestControlChannelMissingNegotiatedHeartbeatAcknowledgementExpires(t *testing.T) {
+	serverErr := make(chan error, 1)
+	armed := make(chan time.Duration, 1)
+	dialer := acceleratedReadDeadlinePipeDialer{maximum: 100 * time.Millisecond, armed: armed, serve: func(conn net.Conn) {
+		serverErr <- serveNegotiatedControlChannelHeartbeat(conn, nil, false)
+	}}
+	engine := "engine.example.com:443"
+	token := "token"
+	interval := time.Second
+	client := &Client{EngineURL: &engine, Token: &token, Transport: dialer}
+	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(true), HeartbeatInterval: &interval})
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	implementation, ok := channel.(*controlChannelImpl)
+	if !ok || implementation.heartbeatTimeout != time.Second {
+		t.Fatalf("control channel liveness = type %T timeout %v", channel, implementation.heartbeatTimeout)
+	}
+	if _, ok := implementation.conn.(*acceleratedReadDeadlineConn); !ok {
+		t.Fatalf("control channel connection = %T, want accelerated deadline connection", implementation.conn)
+	}
+	select {
+	case deadline := <-armed:
+		if deadline <= 0 || deadline > 150*time.Millisecond {
+			t.Fatalf("accelerated read deadline = %v", deadline)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("control channel read deadline was not armed")
+	}
+	select {
+	case channelErr := <-channel.Done():
+		if channelErr == nil {
+			t.Fatal("control channel expired without an error")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("control channel remained open after the negotiated acknowledgement deadline")
+	}
+	if err := <-serverErr; err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestResolveControlChannelConfigValidatesHeartbeatInterval(t *testing.T) {
+	minimum := time.Second
+	maximum := 5 * time.Minute
+	subMillisecond := time.Second + time.Microsecond
+	tooShort := time.Second - time.Millisecond
+	tooLong := 5*time.Minute + time.Millisecond
+	disabled := false
+	tests := []struct {
+		name     string
+		config   *Config
+		enabled  bool
+		interval time.Duration
+		wantErr  bool
+	}{
+		{name: "defaults", enabled: true, interval: 5 * time.Second},
+		{name: "minimum", config: &Config{HeartbeatInterval: &minimum}, enabled: true, interval: time.Second},
+		{name: "maximum", config: &Config{HeartbeatInterval: &maximum}, enabled: true, interval: 5 * time.Minute},
+		{name: "disabled_ignores_interval", config: &Config{EnableHeartbeat: &disabled, HeartbeatInterval: &tooShort}, interval: tooShort},
+		{name: "too_short", config: &Config{HeartbeatInterval: &tooShort}, wantErr: true},
+		{name: "too_long", config: &Config{HeartbeatInterval: &tooLong}, wantErr: true},
+		{name: "fractional_millisecond", config: &Config{HeartbeatInterval: &subMillisecond}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			enabled, interval, _, err := resolveControlChannelConfig(test.config)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("resolveControlChannelConfig() succeeded, want error")
+				}
+				return
+			}
+			if err != nil || enabled != test.enabled || interval != test.interval {
+				t.Fatalf("resolveControlChannelConfig() = enabled=%v interval=%v error=%v", enabled, interval, err)
+			}
+		})
+	}
+}
+
+func TestValidateNegotiatedControlLivenessRejectsInvalidServerPolicy(t *testing.T) {
+	valid := &pb.ControlChannelLiveness{HeartbeatIntervalMs: 5000, HeartbeatTimeoutMs: 15000}
+	if timeout, err := validateNegotiatedControlLiveness(true, 5*time.Second, valid); err != nil || timeout != 15*time.Second {
+		t.Fatalf("valid policy = timeout=%v error=%v", timeout, err)
+	}
+	invalid := []*pb.ControlChannelLiveness{
+		{HeartbeatIntervalMs: 4000, HeartbeatTimeoutMs: 15000},
+		{HeartbeatIntervalMs: 5000, HeartbeatTimeoutMs: 4999},
+		{HeartbeatIntervalMs: 5000, HeartbeatTimeoutMs: uint32((15*time.Minute + time.Millisecond) / time.Millisecond)},
+	}
+	for _, policy := range invalid {
+		if _, err := validateNegotiatedControlLiveness(true, 5*time.Second, policy); err == nil {
+			t.Fatalf("invalid policy accepted: %#v", policy)
+		}
+	}
+	if _, err := validateNegotiatedControlLiveness(false, 5*time.Second, valid); err == nil {
+		t.Fatal("unsolicited liveness policy was accepted")
+	}
+	if timeout, err := validateNegotiatedControlLiveness(true, 5*time.Second, nil); err != nil || timeout != 0 {
+		t.Fatalf("legacy policy = timeout=%v error=%v", timeout, err)
+	}
+}
+
+func TestControlChannelRejectsInvalidHeartbeatAcknowledgements(t *testing.T) {
+	channel := &controlChannelImpl{heartbeatTimeout: 15 * time.Second, heartbeatSequence: 2}
+	invalid := []*pb.Heartbeat{nil, {}, {Sequence: 1, Acknowledgement: 1}, {Acknowledgement: 3}}
+	for _, heartbeat := range invalid {
+		if err := channel.handleHeartbeat(heartbeat); err == nil {
+			t.Fatalf("invalid heartbeat acknowledgement accepted: %#v", heartbeat)
+		}
+	}
+	for _, acknowledgement := range []uint64{1, 2} {
+		if err := channel.handleHeartbeat(&pb.Heartbeat{Acknowledgement: acknowledgement}); err != nil {
+			t.Fatalf("valid acknowledgement %d rejected: %v", acknowledgement, err)
+		}
+	}
+	for _, acknowledgement := range []uint64{2, 1} {
+		if err := channel.handleHeartbeat(&pb.Heartbeat{Acknowledgement: acknowledgement}); err == nil {
+			t.Fatalf("replayed acknowledgement %d was accepted", acknowledgement)
+		}
+	}
+}
+
+func TestControlChannelHeartbeatValidationIsNotStarvedByTunnelPublication(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	lifecycleCtx, lifecycleCancel := context.WithCancel(t.Context())
+	pending := &pendingOpenTunnelReq{respCh: make(chan *pb.OpenTunnelRsp, 1), readyCh: make(chan struct{})}
+	channel := &controlChannelImpl{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), heartbeatTimeout: time.Minute, heartbeatSequence: 1, conn: clientConn, w: bufio.NewWriter(clientConn), r: bufio.NewReader(clientConn), doneCh: make(chan error, 1), closedCh: make(chan struct{}), pendingTunnels: map[string]*pendingOpenTunnelReq{"request-1": pending}, tunnels: make(map[string]*bytestreamTunnelImpl), proxyTransports: make(map[string]Dialer), datagramTunnels: make(map[string]*quicDatagramListener), datagramChannels: make(map[datagramChannelID]*quicDatagramChannel), lifecycleCtx: lifecycleCtx, lifecycleCancel: lifecycleCancel}
+	channel.lifecycleWG.Add(1)
+	go channel.runLifecycleLoop(channel.readLoop)
+	serverErr := make(chan error, 1)
+	go func() {
+		writer := bufio.NewWriter(serverConn)
+		response := &pb.OpenTunnelRsp{RequestId: "request-1", Payload: &pb.OpenTunnelRsp_Error{Error: &pb.Error{Code: pb.ErrorCode_ERROR_CODE_SERVICE_UNAVAILABLE}}}
+		if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenTunnelRsp{OpenTunnelRsp: response}}); err != nil {
+			serverErr <- err
+			return
+		}
+		serverErr <- writePbMessage(writer, &pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: &pb.Heartbeat{Acknowledgement: 2}}})
+	}()
+	select {
+	case err := <-channel.Done():
+		if err == nil || !strings.Contains(err.Error(), "invalid heartbeat acknowledgement") {
+			t.Fatalf("Done() error = %v, want invalid heartbeat acknowledgement", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		pending.closeReady()
+		<-channel.Done()
+		t.Fatal("heartbeat acknowledgement was starved behind tunnel publication")
+	}
+	if err := <-serverErr; err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestControlChannelDefersBoundedMessagesDuringTunnelPublication(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	lifecycleCtx, lifecycleCancel := context.WithCancel(t.Context())
+	pending := &pendingOpenTunnelReq{respCh: make(chan *pb.OpenTunnelRsp, 1), readyCh: make(chan struct{})}
+	channel := &controlChannelImpl{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), conn: clientConn, w: bufio.NewWriter(clientConn), r: bufio.NewReader(clientConn), doneCh: make(chan error, 1), closedCh: make(chan struct{}), pendingTunnels: map[string]*pendingOpenTunnelReq{"request-1": pending}, tunnels: make(map[string]*bytestreamTunnelImpl), proxyTransports: make(map[string]Dialer), datagramTunnels: make(map[string]*quicDatagramListener), datagramChannels: make(map[datagramChannelID]*quicDatagramChannel), lifecycleCtx: lifecycleCtx, lifecycleCancel: lifecycleCancel}
+	channel.lifecycleWG.Add(1)
+	go channel.runLifecycleLoop(channel.readLoop)
+	serverErr := make(chan error, 1)
+	go func() {
+		writer := bufio.NewWriter(serverConn)
+		response := &pb.OpenTunnelRsp{RequestId: "request-1", Payload: &pb.OpenTunnelRsp_Error{Error: &pb.Error{Code: pb.ErrorCode_ERROR_CODE_SERVICE_UNAVAILABLE}}}
+		if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenTunnelRsp{OpenTunnelRsp: response}}); err != nil {
+			serverErr <- err
+			return
+		}
+		for i := 0; i <= maxDeferredControlChannelMessages; i++ {
+			message := &pb.Message{Payload: &pb.Message_CloseTunnelRsp{CloseTunnelRsp: &pb.CloseTunnelRsp{TunnelId: fmt.Sprintf("tunnel-%d", i)}}}
+			if err := writePbMessage(writer, message); err != nil {
+				serverErr <- err
+				return
+			}
+		}
+		serverErr <- nil
+	}()
+	select {
+	case err := <-channel.Done():
+		if err == nil || !strings.Contains(err.Error(), "message queue remained blocked") {
+			t.Fatalf("Done() error = %v, want bounded queue failure", err)
+		}
+	case <-time.After(time.Second):
+		pending.closeReady()
+		<-channel.Done()
+		t.Fatal("blocked control message queue exceeded its bound without closing")
+	}
+	if err := <-serverErr; err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestControlChannelHeartbeatSocketWriteIsBounded(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	lifecycleCtx, lifecycleCancel := context.WithCancel(t.Context())
+	interval := 20 * time.Millisecond
+	heartbeatTimeout := 200 * time.Millisecond
+	channel := &controlChannelImpl{
+		conn:              clientConn,
+		w:                 bufio.NewWriter(clientConn),
+		heartbeatInterval: interval,
+		heartbeatTimeout:  heartbeatTimeout,
+		doneCh:            make(chan error, 1),
+		closedCh:          make(chan struct{}),
+		pendingTunnels:    make(map[string]*pendingOpenTunnelReq),
+		tunnels:           make(map[string]*bytestreamTunnelImpl),
+		proxyTransports:   make(map[string]Dialer),
+		datagramTunnels:   make(map[string]*quicDatagramListener),
+		datagramChannels:  make(map[datagramChannelID]*quicDatagramChannel),
+		lifecycleCtx:      lifecycleCtx,
+		lifecycleCancel:   lifecycleCancel,
+	}
+	startedAt := time.Now()
+	channel.heartbeatLoop()
+	if elapsed := time.Since(startedAt); elapsed < heartbeatTimeout-50*time.Millisecond || elapsed > 500*time.Millisecond {
+		t.Fatalf("blocked heartbeat write returned after %v", elapsed)
+	}
+	select {
+	case err := <-channel.Done():
+		if err == nil || !strings.Contains(err.Error(), "failed to send heartbeat") {
+			t.Fatalf("Done() error = %v, want heartbeat write failure", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("blocked heartbeat cleanup did not complete")
 	}
 }
 
@@ -1983,6 +2295,18 @@ type pipeDialer struct {
 	serve func(net.Conn)
 }
 
+type acceleratedReadDeadlinePipeDialer struct {
+	maximum time.Duration
+	serve   func(net.Conn)
+	armed   chan<- time.Duration
+}
+
+type acceleratedReadDeadlineConn struct {
+	net.Conn
+	maximum time.Duration
+	armed   chan<- time.Duration
+}
+
 type countingFailDialer struct {
 	calls atomic.Int64
 }
@@ -2031,6 +2355,25 @@ func (d pipeDialer) Dial(_ context.Context, _ string, _ *tls.Config) (net.Conn, 
 	client, server := net.Pipe()
 	go d.serve(server)
 	return client, nil
+}
+
+func (d acceleratedReadDeadlinePipeDialer) Dial(_ context.Context, _ string, _ *tls.Config) (net.Conn, error) {
+	client, server := net.Pipe()
+	go d.serve(server)
+	return &acceleratedReadDeadlineConn{Conn: client, maximum: d.maximum, armed: d.armed}, nil
+}
+
+func (c *acceleratedReadDeadlineConn) SetReadDeadline(deadline time.Time) error {
+	if !deadline.IsZero() && c.maximum > 0 && time.Until(deadline) > c.maximum {
+		deadline = time.Now().Add(c.maximum)
+	}
+	if c.armed != nil {
+		select {
+		case c.armed <- time.Until(deadline):
+		default:
+		}
+	}
+	return c.Conn.SetReadDeadline(deadline)
 }
 
 type queuedDialer struct {
@@ -2347,6 +2690,127 @@ func serveControlChannelHeartbeat(conn net.Conn, heartbeatSeen chan<- struct{}) 
 		return errUnexpectedTestMessage("Heartbeat")
 	}
 	heartbeatSeen <- struct{}{}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetCloseControlChannelReq() == nil {
+		return errUnexpectedTestMessage("CloseControlChannelReq")
+	}
+	return writePbMessage(writer, &pb.Message{Payload: &pb.Message_CloseControlChannelRsp{CloseControlChannelRsp: &pb.CloseControlChannelRsp{}}})
+}
+
+func serveNegotiatedControlChannelHeartbeat(conn net.Conn, heartbeatSeen chan<- struct{}, acknowledge bool) error {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	msg, err := readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	req := msg.GetOpenControlChannelReq()
+	if req == nil || req.Liveness == nil || req.Liveness.HeartbeatIntervalMs != 1000 || req.Liveness.HeartbeatTimeoutMs != 0 {
+		return fmt.Errorf("unexpected OpenControlChannelReq liveness: %#v", req)
+	}
+	liveness := &pb.ControlChannelLiveness{HeartbeatIntervalMs: 1000, HeartbeatTimeoutMs: 1000}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenControlChannelRsp{OpenControlChannelRsp: &pb.OpenControlChannelRsp{Payload: &pb.OpenControlChannelRsp_Ok_{Ok: &pb.OpenControlChannelRsp_Ok{ClientId: "client-1", Liveness: liveness}}}}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	heartbeat := msg.GetHeartbeat()
+	if heartbeat == nil || heartbeat.Sequence != 1 || heartbeat.Acknowledgement != 0 {
+		return fmt.Errorf("unexpected negotiated heartbeat: %#v", heartbeat)
+	}
+	if !acknowledge {
+		_, err = readPbMessage(reader)
+		return err
+	}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: &pb.Heartbeat{Acknowledgement: heartbeat.Sequence}}}); err != nil {
+		return err
+	}
+	heartbeatSeen <- struct{}{}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetCloseControlChannelReq() == nil {
+		return errUnexpectedTestMessage("CloseControlChannelReq")
+	}
+	return writePbMessage(writer, &pb.Message{Payload: &pb.Message_CloseControlChannelRsp{CloseControlChannelRsp: &pb.CloseControlChannelRsp{}}})
+}
+
+func serveDelayedNegotiatedControlChannelHeartbeat(conn net.Conn, acknowledgementDelay time.Duration) error {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	msg, err := readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	req := msg.GetOpenControlChannelReq()
+	if req == nil || req.Liveness == nil || req.Liveness.HeartbeatIntervalMs != 1000 {
+		return fmt.Errorf("unexpected OpenControlChannelReq liveness: %#v", req)
+	}
+	liveness := &pb.ControlChannelLiveness{HeartbeatIntervalMs: 1000, HeartbeatTimeoutMs: 60000}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenControlChannelRsp{OpenControlChannelRsp: &pb.OpenControlChannelRsp{Payload: &pb.OpenControlChannelRsp_Ok_{Ok: &pb.OpenControlChannelRsp_Ok{ClientId: "client-1", Liveness: liveness}}}}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	heartbeat := msg.GetHeartbeat()
+	if heartbeat == nil || heartbeat.Sequence != 1 || heartbeat.Acknowledgement != 0 {
+		return fmt.Errorf("unexpected negotiated heartbeat: %#v", heartbeat)
+	}
+	time.Sleep(acknowledgementDelay)
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: &pb.Heartbeat{Acknowledgement: heartbeat.Sequence}}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetCloseControlChannelReq() == nil {
+		return errUnexpectedTestMessage("CloseControlChannelReq")
+	}
+	return writePbMessage(writer, &pb.Message{Payload: &pb.Message_CloseControlChannelRsp{CloseControlChannelRsp: &pb.CloseControlChannelRsp{}}})
+}
+
+func serveIntermittentNegotiatedControlChannelHeartbeat(conn net.Conn) error {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	msg, err := readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	req := msg.GetOpenControlChannelReq()
+	if req == nil || req.Liveness == nil || req.Liveness.HeartbeatIntervalMs != 1000 {
+		return fmt.Errorf("unexpected OpenControlChannelReq liveness: %#v", req)
+	}
+	liveness := &pb.ControlChannelLiveness{HeartbeatIntervalMs: 1000, HeartbeatTimeoutMs: 2500}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenControlChannelRsp{OpenControlChannelRsp: &pb.OpenControlChannelRsp{Payload: &pb.OpenControlChannelRsp_Ok_{Ok: &pb.OpenControlChannelRsp_Ok{ClientId: "client-1", Liveness: liveness}}}}}); err != nil {
+		return err
+	}
+	for sequence := uint64(1); sequence <= 4; sequence++ {
+		msg, err = readPbMessage(reader)
+		if err != nil {
+			return err
+		}
+		heartbeat := msg.GetHeartbeat()
+		if heartbeat == nil || heartbeat.Sequence != sequence || heartbeat.Acknowledgement != 0 {
+			return fmt.Errorf("unexpected negotiated heartbeat %d: %#v", sequence, heartbeat)
+		}
+		if sequence%2 == 0 {
+			if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: &pb.Heartbeat{Acknowledgement: sequence}}}); err != nil {
+				return err
+			}
+		}
+	}
 	msg, err = readPbMessage(reader)
 	if err != nil {
 		return err

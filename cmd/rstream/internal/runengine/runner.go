@@ -265,6 +265,9 @@ func (r *Runner) serveWithCtx(ctx context.Context, closeFn func() error, fn func
 		<-errCh
 		return context.Canceled
 	case err := <-errCh:
+		if ctx.Err() != nil {
+			return context.Canceled
+		}
 		return err
 	}
 }

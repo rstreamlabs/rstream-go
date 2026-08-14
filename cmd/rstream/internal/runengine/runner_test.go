@@ -624,7 +624,7 @@ func serveRunEngineTunnelLifecycle(conn net.Conn, tunnelReady chan<- struct{}) e
 	}}}); err != nil {
 		return err
 	}
-	msg, err = readRunEnginePBMessage(reader)
+	msg, err = readRunEngineNonHeartbeatMessage(reader)
 	if err != nil {
 		return err
 	}
@@ -643,7 +643,7 @@ func serveRunEngineTunnelLifecycle(conn net.Conn, tunnelReady chan<- struct{}) e
 		return err
 	}
 	close(tunnelReady)
-	msg, err = readRunEnginePBMessage(reader)
+	msg, err = readRunEngineNonHeartbeatMessage(reader)
 	if err != nil {
 		return err
 	}
@@ -654,7 +654,7 @@ func serveRunEngineTunnelLifecycle(conn net.Conn, tunnelReady chan<- struct{}) e
 	if err := writeRunEnginePBMessage(writer, &pb.Message{Payload: &pb.Message_CloseTunnelRsp{CloseTunnelRsp: &pb.CloseTunnelRsp{TunnelId: "tun-1"}}}); err != nil {
 		return err
 	}
-	msg, err = readRunEnginePBMessage(reader)
+	msg, err = readRunEngineNonHeartbeatMessage(reader)
 	if err != nil {
 		return err
 	}
@@ -678,6 +678,18 @@ func readRunEnginePBMessage(r *bufio.Reader) (*pb.Message, error) {
 		return nil, err
 	}
 	return msg, nil
+}
+
+func readRunEngineNonHeartbeatMessage(r *bufio.Reader) (*pb.Message, error) {
+	for {
+		msg, err := readRunEnginePBMessage(r)
+		if err != nil {
+			return nil, err
+		}
+		if msg.GetHeartbeat() == nil {
+			return msg, nil
+		}
+	}
 }
 
 func writeRunEnginePBMessage(w *bufio.Writer, msg *pb.Message) error {

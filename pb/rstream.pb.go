@@ -695,8 +695,9 @@ func (x *TunnelProperties) GetAllowCrossRegionRouting() *wrapperspb.BoolValue {
 }
 
 type OpenControlChannelReq struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ClientDetails *ClientDetails         `protobuf:"bytes,1,opt,name=client_details,json=clientDetails,proto3" json:"client_details,omitempty"`
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	ClientDetails *ClientDetails          `protobuf:"bytes,1,opt,name=client_details,json=clientDetails,proto3" json:"client_details,omitempty"`
+	Liveness      *ControlChannelLiveness `protobuf:"bytes,2,opt,name=liveness,proto3" json:"liveness,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -734,6 +735,13 @@ func (*OpenControlChannelReq) Descriptor() ([]byte, []int) {
 func (x *OpenControlChannelReq) GetClientDetails() *ClientDetails {
 	if x != nil {
 		return x.ClientDetails
+	}
+	return nil
+}
+
+func (x *OpenControlChannelReq) GetLiveness() *ControlChannelLiveness {
+	if x != nil {
+		return x.Liveness
 	}
 	return nil
 }
@@ -1556,15 +1564,69 @@ func (x *DatagramChannelClose) GetError() *Error {
 	return nil
 }
 
+type ControlChannelLiveness struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	HeartbeatIntervalMs uint32                 `protobuf:"varint,1,opt,name=heartbeat_interval_ms,json=heartbeatIntervalMs,proto3" json:"heartbeat_interval_ms,omitempty"`
+	HeartbeatTimeoutMs  uint32                 `protobuf:"varint,2,opt,name=heartbeat_timeout_ms,json=heartbeatTimeoutMs,proto3" json:"heartbeat_timeout_ms,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *ControlChannelLiveness) Reset() {
+	*x = ControlChannelLiveness{}
+	mi := &file_pb_rstream_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ControlChannelLiveness) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ControlChannelLiveness) ProtoMessage() {}
+
+func (x *ControlChannelLiveness) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_rstream_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ControlChannelLiveness.ProtoReflect.Descriptor instead.
+func (*ControlChannelLiveness) Descriptor() ([]byte, []int) {
+	return file_pb_rstream_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *ControlChannelLiveness) GetHeartbeatIntervalMs() uint32 {
+	if x != nil {
+		return x.HeartbeatIntervalMs
+	}
+	return 0
+}
+
+func (x *ControlChannelLiveness) GetHeartbeatTimeoutMs() uint32 {
+	if x != nil {
+		return x.HeartbeatTimeoutMs
+	}
+	return 0
+}
+
 type Heartbeat struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	Sequence        uint64                 `protobuf:"varint,1,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	Acknowledgement uint64                 `protobuf:"varint,2,opt,name=acknowledgement,proto3" json:"acknowledgement,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_pb_rstream_proto_msgTypes[20]
+	mi := &file_pb_rstream_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1576,7 +1638,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[20]
+	mi := &file_pb_rstream_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1589,7 +1651,21 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{20}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *Heartbeat) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetAcknowledgement() uint64 {
+	if x != nil {
+		return x.Acknowledgement
+	}
+	return 0
 }
 
 // Allows the server to send unsolicited messages to the client
@@ -1602,7 +1678,7 @@ type ServerMessage struct {
 
 func (x *ServerMessage) Reset() {
 	*x = ServerMessage{}
-	mi := &file_pb_rstream_proto_msgTypes[21]
+	mi := &file_pb_rstream_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1614,7 +1690,7 @@ func (x *ServerMessage) String() string {
 func (*ServerMessage) ProtoMessage() {}
 
 func (x *ServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[21]
+	mi := &file_pb_rstream_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1627,7 +1703,7 @@ func (x *ServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerMessage.ProtoReflect.Descriptor instead.
 func (*ServerMessage) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{21}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ServerMessage) GetMessage() string {
@@ -1665,7 +1741,7 @@ type Message struct {
 
 func (x *Message) Reset() {
 	*x = Message{}
-	mi := &file_pb_rstream_proto_msgTypes[22]
+	mi := &file_pb_rstream_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1677,7 +1753,7 @@ func (x *Message) String() string {
 func (*Message) ProtoMessage() {}
 
 func (x *Message) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[22]
+	mi := &file_pb_rstream_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1690,7 +1766,7 @@ func (x *Message) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Message.ProtoReflect.Descriptor instead.
 func (*Message) Descriptor() ([]byte, []int) {
-	return file_pb_rstream_proto_rawDescGZIP(), []int{22}
+	return file_pb_rstream_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *Message) GetPayload() isMessage_Payload {
@@ -1960,16 +2036,17 @@ func (*Message_ServerMessage) isMessage_Payload() {}
 func (*Message_DatagramChannelClose) isMessage_Payload() {}
 
 type OpenControlChannelRsp_Ok struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ClientId      string                 `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
-	ServerDetails *ServerDetails         `protobuf:"bytes,2,opt,name=server_details,json=serverDetails,proto3" json:"server_details,omitempty"`
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	ClientId      string                  `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	ServerDetails *ServerDetails          `protobuf:"bytes,2,opt,name=server_details,json=serverDetails,proto3" json:"server_details,omitempty"`
+	Liveness      *ControlChannelLiveness `protobuf:"bytes,3,opt,name=liveness,proto3" json:"liveness,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *OpenControlChannelRsp_Ok) Reset() {
 	*x = OpenControlChannelRsp_Ok{}
-	mi := &file_pb_rstream_proto_msgTypes[24]
+	mi := &file_pb_rstream_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1981,7 +2058,7 @@ func (x *OpenControlChannelRsp_Ok) String() string {
 func (*OpenControlChannelRsp_Ok) ProtoMessage() {}
 
 func (x *OpenControlChannelRsp_Ok) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_rstream_proto_msgTypes[24]
+	mi := &file_pb_rstream_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2007,6 +2084,13 @@ func (x *OpenControlChannelRsp_Ok) GetClientId() string {
 func (x *OpenControlChannelRsp_Ok) GetServerDetails() *ServerDetails {
 	if x != nil {
 		return x.ServerDetails
+	}
+	return nil
+}
+
+func (x *OpenControlChannelRsp_Ok) GetLiveness() *ControlChannelLiveness {
+	if x != nil {
+		return x.Liveness
 	}
 	return nil
 }
@@ -2127,15 +2211,17 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"read-writeR\x17allowCrossRegionRouting\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"h\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xb7\x01\n" +
 	"\x15OpenControlChannelReq\x12O\n" +
-	"\x0eclient_details\x18\x01 \x01(\v2(.rstream.io_rstrm.protobuf.ClientDetailsR\rclientDetails\"\x97\x02\n" +
+	"\x0eclient_details\x18\x01 \x01(\v2(.rstream.io_rstrm.protobuf.ClientDetailsR\rclientDetails\x12M\n" +
+	"\bliveness\x18\x02 \x01(\v21.rstream.io_rstrm.protobuf.ControlChannelLivenessR\bliveness\"\xe7\x02\n" +
 	"\x15OpenControlChannelRsp\x12E\n" +
 	"\x02ok\x18\x01 \x01(\v23.rstream.io_rstrm.protobuf.OpenControlChannelRsp.OkH\x00R\x02ok\x128\n" +
-	"\x05error\x18\x02 \x01(\v2 .rstream.io_rstrm.protobuf.ErrorH\x00R\x05error\x1ar\n" +
+	"\x05error\x18\x02 \x01(\v2 .rstream.io_rstrm.protobuf.ErrorH\x00R\x05error\x1a\xc1\x01\n" +
 	"\x02Ok\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12O\n" +
-	"\x0eserver_details\x18\x02 \x01(\v2(.rstream.io_rstrm.protobuf.ServerDetailsR\rserverDetailsB\t\n" +
+	"\x0eserver_details\x18\x02 \x01(\v2(.rstream.io_rstrm.protobuf.ServerDetailsR\rserverDetails\x12M\n" +
+	"\bliveness\x18\x03 \x01(\v21.rstream.io_rstrm.protobuf.ControlChannelLivenessR\blivenessB\t\n" +
 	"\apayload\"\x18\n" +
 	"\x16CloseControlChannelReq\"\x18\n" +
 	"\x16CloseControlChannelRsp\"\x88\x01\n" +
@@ -2179,8 +2265,13 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\apayload\"k\n" +
 	"\x14DatagramChannelClose\x12\x1b\n" +
 	"\tstream_id\x18\x01 \x01(\tR\bstreamId\x126\n" +
-	"\x05error\x18\x02 \x01(\v2 .rstream.io_rstrm.protobuf.ErrorR\x05error\"\v\n" +
-	"\tHeartbeat\")\n" +
+	"\x05error\x18\x02 \x01(\v2 .rstream.io_rstrm.protobuf.ErrorR\x05error\"~\n" +
+	"\x16ControlChannelLiveness\x122\n" +
+	"\x15heartbeat_interval_ms\x18\x01 \x01(\rR\x13heartbeatIntervalMs\x120\n" +
+	"\x14heartbeat_timeout_ms\x18\x02 \x01(\rR\x12heartbeatTimeoutMs\"Q\n" +
+	"\tHeartbeat\x12\x1a\n" +
+	"\bsequence\x18\x01 \x01(\x04R\bsequence\x12(\n" +
+	"\x0facknowledgement\x18\x02 \x01(\x04R\x0facknowledgement\")\n" +
 	"\rServerMessage\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\"\xde\v\n" +
 	"\aMessage\x12k\n" +
@@ -2220,7 +2311,7 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\x1cERROR_CODE_RESOURCE_CONFLICT\x10\xc0>\x12\x18\n" +
 	"\x13ERROR_CODE_INTERNAL\x10\xa8F:I\n" +
 	"\x10protocol_version\x12\x1c.google.protobuf.FileOptions\x18\xb8\x8e\x03 \x01(\tR\x0fprotocolVersion:7\n" +
-	"\x06access\x12\x1d.google.protobuf.FieldOptions\x18\xa2\x90\x03 \x01(\tR\x06accessB\x0f\xc2\xf3\x18\x051.4.4Z\x04./pbb\x06proto3"
+	"\x06access\x12\x1d.google.protobuf.FieldOptions\x18\xa2\x90\x03 \x01(\tR\x06accessB\x0f\xc2\xf3\x18\x051.4.5Z\x04./pbb\x06proto3"
 
 var (
 	file_pb_rstream_proto_rawDescOnce sync.Once
@@ -2235,7 +2326,7 @@ func file_pb_rstream_proto_rawDescGZIP() []byte {
 }
 
 var file_pb_rstream_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_pb_rstream_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
+var file_pb_rstream_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_pb_rstream_proto_goTypes = []any{
 	(ErrorCode)(0),                    // 0: rstream.io_rstrm.protobuf.ErrorCode
 	(*IpAddress)(nil),                 // 1: rstream.io_rstrm.protobuf.IpAddress
@@ -2258,100 +2349,103 @@ var file_pb_rstream_proto_goTypes = []any{
 	(*StreamReq)(nil),                 // 18: rstream.io_rstrm.protobuf.StreamReq
 	(*StreamRsp)(nil),                 // 19: rstream.io_rstrm.protobuf.StreamRsp
 	(*DatagramChannelClose)(nil),      // 20: rstream.io_rstrm.protobuf.DatagramChannelClose
-	(*Heartbeat)(nil),                 // 21: rstream.io_rstrm.protobuf.Heartbeat
-	(*ServerMessage)(nil),             // 22: rstream.io_rstrm.protobuf.ServerMessage
-	(*Message)(nil),                   // 23: rstream.io_rstrm.protobuf.Message
-	nil,                               // 24: rstream.io_rstrm.protobuf.TunnelProperties.LabelsEntry
-	(*OpenControlChannelRsp_Ok)(nil),  // 25: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok
-	(*wrapperspb.StringValue)(nil),    // 26: google.protobuf.StringValue
-	(*timestamppb.Timestamp)(nil),     // 27: google.protobuf.Timestamp
-	(*wrapperspb.BoolValue)(nil),      // 28: google.protobuf.BoolValue
-	(*wrapperspb.UInt32Value)(nil),    // 29: google.protobuf.UInt32Value
-	(*descriptorpb.FileOptions)(nil),  // 30: google.protobuf.FileOptions
-	(*descriptorpb.FieldOptions)(nil), // 31: google.protobuf.FieldOptions
+	(*ControlChannelLiveness)(nil),    // 21: rstream.io_rstrm.protobuf.ControlChannelLiveness
+	(*Heartbeat)(nil),                 // 22: rstream.io_rstrm.protobuf.Heartbeat
+	(*ServerMessage)(nil),             // 23: rstream.io_rstrm.protobuf.ServerMessage
+	(*Message)(nil),                   // 24: rstream.io_rstrm.protobuf.Message
+	nil,                               // 25: rstream.io_rstrm.protobuf.TunnelProperties.LabelsEntry
+	(*OpenControlChannelRsp_Ok)(nil),  // 26: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok
+	(*wrapperspb.StringValue)(nil),    // 27: google.protobuf.StringValue
+	(*timestamppb.Timestamp)(nil),     // 28: google.protobuf.Timestamp
+	(*wrapperspb.BoolValue)(nil),      // 29: google.protobuf.BoolValue
+	(*wrapperspb.UInt32Value)(nil),    // 30: google.protobuf.UInt32Value
+	(*descriptorpb.FileOptions)(nil),  // 31: google.protobuf.FileOptions
+	(*descriptorpb.FieldOptions)(nil), // 32: google.protobuf.FieldOptions
 }
 var file_pb_rstream_proto_depIdxs = []int32{
 	0,  // 0: rstream.io_rstrm.protobuf.Error.code:type_name -> rstream.io_rstrm.protobuf.ErrorCode
-	26, // 1: rstream.io_rstrm.protobuf.Error.message:type_name -> google.protobuf.StringValue
-	26, // 2: rstream.io_rstrm.protobuf.ClientDetails.agent:type_name -> google.protobuf.StringValue
-	26, // 3: rstream.io_rstrm.protobuf.ClientDetails.channel:type_name -> google.protobuf.StringValue
-	26, // 4: rstream.io_rstrm.protobuf.ClientDetails.version:type_name -> google.protobuf.StringValue
-	26, // 5: rstream.io_rstrm.protobuf.ClientDetails.os:type_name -> google.protobuf.StringValue
-	26, // 6: rstream.io_rstrm.protobuf.ClientDetails.arch:type_name -> google.protobuf.StringValue
-	26, // 7: rstream.io_rstrm.protobuf.ClientDetails.token:type_name -> google.protobuf.StringValue
-	26, // 8: rstream.io_rstrm.protobuf.ClientDetails.protocol_version:type_name -> google.protobuf.StringValue
-	26, // 9: rstream.io_rstrm.protobuf.ServerDetails.agent:type_name -> google.protobuf.StringValue
-	26, // 10: rstream.io_rstrm.protobuf.ServerDetails.channel:type_name -> google.protobuf.StringValue
-	26, // 11: rstream.io_rstrm.protobuf.ServerDetails.version:type_name -> google.protobuf.StringValue
-	26, // 12: rstream.io_rstrm.protobuf.ServerDetails.plan:type_name -> google.protobuf.StringValue
-	26, // 13: rstream.io_rstrm.protobuf.ServerDetails.provider:type_name -> google.protobuf.StringValue
-	26, // 14: rstream.io_rstrm.protobuf.ServerDetails.region:type_name -> google.protobuf.StringValue
-	26, // 15: rstream.io_rstrm.protobuf.ServerDetails.update:type_name -> google.protobuf.StringValue
-	26, // 16: rstream.io_rstrm.protobuf.TunnelProperties.id:type_name -> google.protobuf.StringValue
-	27, // 17: rstream.io_rstrm.protobuf.TunnelProperties.creation_date:type_name -> google.protobuf.Timestamp
-	26, // 18: rstream.io_rstrm.protobuf.TunnelProperties.name:type_name -> google.protobuf.StringValue
-	26, // 19: rstream.io_rstrm.protobuf.TunnelProperties.type:type_name -> google.protobuf.StringValue
-	28, // 20: rstream.io_rstrm.protobuf.TunnelProperties.publish:type_name -> google.protobuf.BoolValue
-	26, // 21: rstream.io_rstrm.protobuf.TunnelProperties.protocol:type_name -> google.protobuf.StringValue
-	24, // 22: rstream.io_rstrm.protobuf.TunnelProperties.labels:type_name -> rstream.io_rstrm.protobuf.TunnelProperties.LabelsEntry
-	26, // 23: rstream.io_rstrm.protobuf.TunnelProperties.host:type_name -> google.protobuf.StringValue
-	26, // 24: rstream.io_rstrm.protobuf.TunnelProperties.tls_mode:type_name -> google.protobuf.StringValue
-	26, // 25: rstream.io_rstrm.protobuf.TunnelProperties.tls_min_version:type_name -> google.protobuf.StringValue
-	28, // 26: rstream.io_rstrm.protobuf.TunnelProperties.mtls_auth:type_name -> google.protobuf.BoolValue
-	26, // 27: rstream.io_rstrm.protobuf.TunnelProperties.mtls_cacert_pem:type_name -> google.protobuf.StringValue
-	26, // 28: rstream.io_rstrm.protobuf.TunnelProperties.http_version:type_name -> google.protobuf.StringValue
-	28, // 29: rstream.io_rstrm.protobuf.TunnelProperties.http_use_tls:type_name -> google.protobuf.BoolValue
-	28, // 30: rstream.io_rstrm.protobuf.TunnelProperties.token_auth:type_name -> google.protobuf.BoolValue
-	28, // 31: rstream.io_rstrm.protobuf.TunnelProperties.rstream_auth:type_name -> google.protobuf.BoolValue
-	28, // 32: rstream.io_rstrm.protobuf.TunnelProperties.challenge_mode:type_name -> google.protobuf.BoolValue
-	26, // 33: rstream.io_rstrm.protobuf.TunnelProperties.hostname:type_name -> google.protobuf.StringValue
-	29, // 34: rstream.io_rstrm.protobuf.TunnelProperties.port:type_name -> google.protobuf.UInt32Value
-	28, // 35: rstream.io_rstrm.protobuf.TunnelProperties.upstream_tls:type_name -> google.protobuf.BoolValue
-	28, // 36: rstream.io_rstrm.protobuf.TunnelProperties.datagram_guaranteed_delivery:type_name -> google.protobuf.BoolValue
-	28, // 37: rstream.io_rstrm.protobuf.TunnelProperties.allow_cross_region_routing:type_name -> google.protobuf.BoolValue
+	27, // 1: rstream.io_rstrm.protobuf.Error.message:type_name -> google.protobuf.StringValue
+	27, // 2: rstream.io_rstrm.protobuf.ClientDetails.agent:type_name -> google.protobuf.StringValue
+	27, // 3: rstream.io_rstrm.protobuf.ClientDetails.channel:type_name -> google.protobuf.StringValue
+	27, // 4: rstream.io_rstrm.protobuf.ClientDetails.version:type_name -> google.protobuf.StringValue
+	27, // 5: rstream.io_rstrm.protobuf.ClientDetails.os:type_name -> google.protobuf.StringValue
+	27, // 6: rstream.io_rstrm.protobuf.ClientDetails.arch:type_name -> google.protobuf.StringValue
+	27, // 7: rstream.io_rstrm.protobuf.ClientDetails.token:type_name -> google.protobuf.StringValue
+	27, // 8: rstream.io_rstrm.protobuf.ClientDetails.protocol_version:type_name -> google.protobuf.StringValue
+	27, // 9: rstream.io_rstrm.protobuf.ServerDetails.agent:type_name -> google.protobuf.StringValue
+	27, // 10: rstream.io_rstrm.protobuf.ServerDetails.channel:type_name -> google.protobuf.StringValue
+	27, // 11: rstream.io_rstrm.protobuf.ServerDetails.version:type_name -> google.protobuf.StringValue
+	27, // 12: rstream.io_rstrm.protobuf.ServerDetails.plan:type_name -> google.protobuf.StringValue
+	27, // 13: rstream.io_rstrm.protobuf.ServerDetails.provider:type_name -> google.protobuf.StringValue
+	27, // 14: rstream.io_rstrm.protobuf.ServerDetails.region:type_name -> google.protobuf.StringValue
+	27, // 15: rstream.io_rstrm.protobuf.ServerDetails.update:type_name -> google.protobuf.StringValue
+	27, // 16: rstream.io_rstrm.protobuf.TunnelProperties.id:type_name -> google.protobuf.StringValue
+	28, // 17: rstream.io_rstrm.protobuf.TunnelProperties.creation_date:type_name -> google.protobuf.Timestamp
+	27, // 18: rstream.io_rstrm.protobuf.TunnelProperties.name:type_name -> google.protobuf.StringValue
+	27, // 19: rstream.io_rstrm.protobuf.TunnelProperties.type:type_name -> google.protobuf.StringValue
+	29, // 20: rstream.io_rstrm.protobuf.TunnelProperties.publish:type_name -> google.protobuf.BoolValue
+	27, // 21: rstream.io_rstrm.protobuf.TunnelProperties.protocol:type_name -> google.protobuf.StringValue
+	25, // 22: rstream.io_rstrm.protobuf.TunnelProperties.labels:type_name -> rstream.io_rstrm.protobuf.TunnelProperties.LabelsEntry
+	27, // 23: rstream.io_rstrm.protobuf.TunnelProperties.host:type_name -> google.protobuf.StringValue
+	27, // 24: rstream.io_rstrm.protobuf.TunnelProperties.tls_mode:type_name -> google.protobuf.StringValue
+	27, // 25: rstream.io_rstrm.protobuf.TunnelProperties.tls_min_version:type_name -> google.protobuf.StringValue
+	29, // 26: rstream.io_rstrm.protobuf.TunnelProperties.mtls_auth:type_name -> google.protobuf.BoolValue
+	27, // 27: rstream.io_rstrm.protobuf.TunnelProperties.mtls_cacert_pem:type_name -> google.protobuf.StringValue
+	27, // 28: rstream.io_rstrm.protobuf.TunnelProperties.http_version:type_name -> google.protobuf.StringValue
+	29, // 29: rstream.io_rstrm.protobuf.TunnelProperties.http_use_tls:type_name -> google.protobuf.BoolValue
+	29, // 30: rstream.io_rstrm.protobuf.TunnelProperties.token_auth:type_name -> google.protobuf.BoolValue
+	29, // 31: rstream.io_rstrm.protobuf.TunnelProperties.rstream_auth:type_name -> google.protobuf.BoolValue
+	29, // 32: rstream.io_rstrm.protobuf.TunnelProperties.challenge_mode:type_name -> google.protobuf.BoolValue
+	27, // 33: rstream.io_rstrm.protobuf.TunnelProperties.hostname:type_name -> google.protobuf.StringValue
+	30, // 34: rstream.io_rstrm.protobuf.TunnelProperties.port:type_name -> google.protobuf.UInt32Value
+	29, // 35: rstream.io_rstrm.protobuf.TunnelProperties.upstream_tls:type_name -> google.protobuf.BoolValue
+	29, // 36: rstream.io_rstrm.protobuf.TunnelProperties.datagram_guaranteed_delivery:type_name -> google.protobuf.BoolValue
+	29, // 37: rstream.io_rstrm.protobuf.TunnelProperties.allow_cross_region_routing:type_name -> google.protobuf.BoolValue
 	3,  // 38: rstream.io_rstrm.protobuf.OpenControlChannelReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
-	25, // 39: rstream.io_rstrm.protobuf.OpenControlChannelRsp.ok:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok
-	2,  // 40: rstream.io_rstrm.protobuf.OpenControlChannelRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
-	5,  // 41: rstream.io_rstrm.protobuf.OpenTunnelReq.tunnel_properties:type_name -> rstream.io_rstrm.protobuf.TunnelProperties
-	5,  // 42: rstream.io_rstrm.protobuf.OpenTunnelRsp.tunnel_properties:type_name -> rstream.io_rstrm.protobuf.TunnelProperties
-	2,  // 43: rstream.io_rstrm.protobuf.OpenTunnelRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
-	26, // 44: rstream.io_rstrm.protobuf.ProxyConnReq.secret:type_name -> google.protobuf.StringValue
-	1,  // 45: rstream.io_rstrm.protobuf.ProxyConnReq.source_ip:type_name -> rstream.io_rstrm.protobuf.IpAddress
-	26, // 46: rstream.io_rstrm.protobuf.ProxyConnReq.proxy_endpoint:type_name -> google.protobuf.StringValue
-	2,  // 47: rstream.io_rstrm.protobuf.ProxyConnRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
-	3,  // 48: rstream.io_rstrm.protobuf.ProxyReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
-	28, // 49: rstream.io_rstrm.protobuf.ProxyReq.zero_rtt:type_name -> google.protobuf.BoolValue
-	2,  // 50: rstream.io_rstrm.protobuf.ProxyRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
-	3,  // 51: rstream.io_rstrm.protobuf.StreamReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
-	28, // 52: rstream.io_rstrm.protobuf.StreamReq.zero_rtt:type_name -> google.protobuf.BoolValue
-	28, // 53: rstream.io_rstrm.protobuf.StreamReq.datagram_channel:type_name -> google.protobuf.BoolValue
-	2,  // 54: rstream.io_rstrm.protobuf.StreamRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
-	2,  // 55: rstream.io_rstrm.protobuf.DatagramChannelClose.error:type_name -> rstream.io_rstrm.protobuf.Error
-	6,  // 56: rstream.io_rstrm.protobuf.Message.open_control_channel_req:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelReq
-	7,  // 57: rstream.io_rstrm.protobuf.Message.open_control_channel_rsp:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelRsp
-	8,  // 58: rstream.io_rstrm.protobuf.Message.close_control_channel_req:type_name -> rstream.io_rstrm.protobuf.CloseControlChannelReq
-	9,  // 59: rstream.io_rstrm.protobuf.Message.close_control_channel_rsp:type_name -> rstream.io_rstrm.protobuf.CloseControlChannelRsp
-	10, // 60: rstream.io_rstrm.protobuf.Message.open_tunnel_req:type_name -> rstream.io_rstrm.protobuf.OpenTunnelReq
-	11, // 61: rstream.io_rstrm.protobuf.Message.open_tunnel_rsp:type_name -> rstream.io_rstrm.protobuf.OpenTunnelRsp
-	12, // 62: rstream.io_rstrm.protobuf.Message.close_tunnel_req:type_name -> rstream.io_rstrm.protobuf.CloseTunnelReq
-	13, // 63: rstream.io_rstrm.protobuf.Message.close_tunnel_rsp:type_name -> rstream.io_rstrm.protobuf.CloseTunnelRsp
-	14, // 64: rstream.io_rstrm.protobuf.Message.proxy_conn_req:type_name -> rstream.io_rstrm.protobuf.ProxyConnReq
-	15, // 65: rstream.io_rstrm.protobuf.Message.proxy_conn_rsp:type_name -> rstream.io_rstrm.protobuf.ProxyConnRsp
-	16, // 66: rstream.io_rstrm.protobuf.Message.proxy_req:type_name -> rstream.io_rstrm.protobuf.ProxyReq
-	17, // 67: rstream.io_rstrm.protobuf.Message.proxy_rsp:type_name -> rstream.io_rstrm.protobuf.ProxyRsp
-	18, // 68: rstream.io_rstrm.protobuf.Message.stream_req:type_name -> rstream.io_rstrm.protobuf.StreamReq
-	19, // 69: rstream.io_rstrm.protobuf.Message.stream_rsp:type_name -> rstream.io_rstrm.protobuf.StreamRsp
-	21, // 70: rstream.io_rstrm.protobuf.Message.heartbeat:type_name -> rstream.io_rstrm.protobuf.Heartbeat
-	22, // 71: rstream.io_rstrm.protobuf.Message.server_message:type_name -> rstream.io_rstrm.protobuf.ServerMessage
-	20, // 72: rstream.io_rstrm.protobuf.Message.datagram_channel_close:type_name -> rstream.io_rstrm.protobuf.DatagramChannelClose
-	4,  // 73: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.server_details:type_name -> rstream.io_rstrm.protobuf.ServerDetails
-	30, // 74: rstream.io_rstrm.protobuf.protocol_version:extendee -> google.protobuf.FileOptions
-	31, // 75: rstream.io_rstrm.protobuf.access:extendee -> google.protobuf.FieldOptions
-	76, // [76:76] is the sub-list for method output_type
-	76, // [76:76] is the sub-list for method input_type
-	76, // [76:76] is the sub-list for extension type_name
-	74, // [74:76] is the sub-list for extension extendee
-	0,  // [0:74] is the sub-list for field type_name
+	21, // 39: rstream.io_rstrm.protobuf.OpenControlChannelReq.liveness:type_name -> rstream.io_rstrm.protobuf.ControlChannelLiveness
+	26, // 40: rstream.io_rstrm.protobuf.OpenControlChannelRsp.ok:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok
+	2,  // 41: rstream.io_rstrm.protobuf.OpenControlChannelRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
+	5,  // 42: rstream.io_rstrm.protobuf.OpenTunnelReq.tunnel_properties:type_name -> rstream.io_rstrm.protobuf.TunnelProperties
+	5,  // 43: rstream.io_rstrm.protobuf.OpenTunnelRsp.tunnel_properties:type_name -> rstream.io_rstrm.protobuf.TunnelProperties
+	2,  // 44: rstream.io_rstrm.protobuf.OpenTunnelRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
+	27, // 45: rstream.io_rstrm.protobuf.ProxyConnReq.secret:type_name -> google.protobuf.StringValue
+	1,  // 46: rstream.io_rstrm.protobuf.ProxyConnReq.source_ip:type_name -> rstream.io_rstrm.protobuf.IpAddress
+	27, // 47: rstream.io_rstrm.protobuf.ProxyConnReq.proxy_endpoint:type_name -> google.protobuf.StringValue
+	2,  // 48: rstream.io_rstrm.protobuf.ProxyConnRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
+	3,  // 49: rstream.io_rstrm.protobuf.ProxyReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
+	29, // 50: rstream.io_rstrm.protobuf.ProxyReq.zero_rtt:type_name -> google.protobuf.BoolValue
+	2,  // 51: rstream.io_rstrm.protobuf.ProxyRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
+	3,  // 52: rstream.io_rstrm.protobuf.StreamReq.client_details:type_name -> rstream.io_rstrm.protobuf.ClientDetails
+	29, // 53: rstream.io_rstrm.protobuf.StreamReq.zero_rtt:type_name -> google.protobuf.BoolValue
+	29, // 54: rstream.io_rstrm.protobuf.StreamReq.datagram_channel:type_name -> google.protobuf.BoolValue
+	2,  // 55: rstream.io_rstrm.protobuf.StreamRsp.error:type_name -> rstream.io_rstrm.protobuf.Error
+	2,  // 56: rstream.io_rstrm.protobuf.DatagramChannelClose.error:type_name -> rstream.io_rstrm.protobuf.Error
+	6,  // 57: rstream.io_rstrm.protobuf.Message.open_control_channel_req:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelReq
+	7,  // 58: rstream.io_rstrm.protobuf.Message.open_control_channel_rsp:type_name -> rstream.io_rstrm.protobuf.OpenControlChannelRsp
+	8,  // 59: rstream.io_rstrm.protobuf.Message.close_control_channel_req:type_name -> rstream.io_rstrm.protobuf.CloseControlChannelReq
+	9,  // 60: rstream.io_rstrm.protobuf.Message.close_control_channel_rsp:type_name -> rstream.io_rstrm.protobuf.CloseControlChannelRsp
+	10, // 61: rstream.io_rstrm.protobuf.Message.open_tunnel_req:type_name -> rstream.io_rstrm.protobuf.OpenTunnelReq
+	11, // 62: rstream.io_rstrm.protobuf.Message.open_tunnel_rsp:type_name -> rstream.io_rstrm.protobuf.OpenTunnelRsp
+	12, // 63: rstream.io_rstrm.protobuf.Message.close_tunnel_req:type_name -> rstream.io_rstrm.protobuf.CloseTunnelReq
+	13, // 64: rstream.io_rstrm.protobuf.Message.close_tunnel_rsp:type_name -> rstream.io_rstrm.protobuf.CloseTunnelRsp
+	14, // 65: rstream.io_rstrm.protobuf.Message.proxy_conn_req:type_name -> rstream.io_rstrm.protobuf.ProxyConnReq
+	15, // 66: rstream.io_rstrm.protobuf.Message.proxy_conn_rsp:type_name -> rstream.io_rstrm.protobuf.ProxyConnRsp
+	16, // 67: rstream.io_rstrm.protobuf.Message.proxy_req:type_name -> rstream.io_rstrm.protobuf.ProxyReq
+	17, // 68: rstream.io_rstrm.protobuf.Message.proxy_rsp:type_name -> rstream.io_rstrm.protobuf.ProxyRsp
+	18, // 69: rstream.io_rstrm.protobuf.Message.stream_req:type_name -> rstream.io_rstrm.protobuf.StreamReq
+	19, // 70: rstream.io_rstrm.protobuf.Message.stream_rsp:type_name -> rstream.io_rstrm.protobuf.StreamRsp
+	22, // 71: rstream.io_rstrm.protobuf.Message.heartbeat:type_name -> rstream.io_rstrm.protobuf.Heartbeat
+	23, // 72: rstream.io_rstrm.protobuf.Message.server_message:type_name -> rstream.io_rstrm.protobuf.ServerMessage
+	20, // 73: rstream.io_rstrm.protobuf.Message.datagram_channel_close:type_name -> rstream.io_rstrm.protobuf.DatagramChannelClose
+	4,  // 74: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.server_details:type_name -> rstream.io_rstrm.protobuf.ServerDetails
+	21, // 75: rstream.io_rstrm.protobuf.OpenControlChannelRsp.Ok.liveness:type_name -> rstream.io_rstrm.protobuf.ControlChannelLiveness
+	31, // 76: rstream.io_rstrm.protobuf.protocol_version:extendee -> google.protobuf.FileOptions
+	32, // 77: rstream.io_rstrm.protobuf.access:extendee -> google.protobuf.FieldOptions
+	78, // [78:78] is the sub-list for method output_type
+	78, // [78:78] is the sub-list for method input_type
+	78, // [78:78] is the sub-list for extension type_name
+	76, // [76:78] is the sub-list for extension extendee
+	0,  // [0:76] is the sub-list for field type_name
 }
 
 func init() { file_pb_rstream_proto_init() }
@@ -2375,7 +2469,7 @@ func file_pb_rstream_proto_init() {
 		(*StreamRsp_StreamId)(nil),
 		(*StreamRsp_Error)(nil),
 	}
-	file_pb_rstream_proto_msgTypes[22].OneofWrappers = []any{
+	file_pb_rstream_proto_msgTypes[23].OneofWrappers = []any{
 		(*Message_OpenControlChannelReq)(nil),
 		(*Message_OpenControlChannelRsp)(nil),
 		(*Message_CloseControlChannelReq)(nil),
@@ -2400,7 +2494,7 @@ func file_pb_rstream_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pb_rstream_proto_rawDesc), len(file_pb_rstream_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   25,
+			NumMessages:   26,
 			NumExtensions: 2,
 			NumServices:   0,
 		},

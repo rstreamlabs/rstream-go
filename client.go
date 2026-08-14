@@ -274,6 +274,12 @@ const (
 	proxyConnectionQueueLimit                  = 256
 	proxyConnectionResponseQueueLimit          = 256
 	defaultCloseTimeout                        = 5 * time.Second
+	defaultHeartbeatInterval                   = 5 * time.Second
+	minHeartbeatInterval                       = time.Second
+	maxHeartbeatInterval                       = 5 * time.Minute
+	maxHeartbeatTimeout                        = 15 * time.Minute
+	minLegacyHeartbeatWriteTimeout             = time.Minute
+	maxDeferredControlChannelMessages          = 64
 )
 
 func (c *Client) dial(ctx context.Context, dialType dialType, raddr Addr, token *string) (net.Conn, error) {
@@ -539,30 +545,33 @@ func (p *pendingOpenTunnelReq) closeReady() {
 }
 
 type controlChannelImpl struct {
-	logger             *slog.Logger
-	client             *Client
-	clientID           string
-	enableHeartbeat    bool
-	heartbeatInterval  time.Duration
-	conn               net.Conn
-	w                  *bufio.Writer
-	r                  *bufio.Reader
-	serverDetails      *ServerDetails
-	doneCh             chan error
-	closedCh           chan struct{}
-	pendingTunnels     map[string]*pendingOpenTunnelReq
-	tunnels            map[string]*bytestreamTunnelImpl
-	proxyTransports    map[string]Dialer
-	proxyRequests      chan proxyConnectionRequest
-	proxyResponses     chan proxyConnectionResponse
-	proxyWorkerLimit   int
-	proxyQueueLimit    int
-	proxyResponseLimit int
-	closing            bool
-	closed             bool
-	mu                 sync.Mutex
-	writeLock          contextMutex
-	err                error
+	logger                   *slog.Logger
+	client                   *Client
+	clientID                 string
+	enableHeartbeat          bool
+	heartbeatInterval        time.Duration
+	heartbeatTimeout         time.Duration
+	heartbeatSequence        uint64
+	heartbeatAcknowledgement uint64
+	conn                     net.Conn
+	w                        *bufio.Writer
+	r                        *bufio.Reader
+	serverDetails            *ServerDetails
+	doneCh                   chan error
+	closedCh                 chan struct{}
+	pendingTunnels           map[string]*pendingOpenTunnelReq
+	tunnels                  map[string]*bytestreamTunnelImpl
+	proxyTransports          map[string]Dialer
+	proxyRequests            chan proxyConnectionRequest
+	proxyResponses           chan proxyConnectionResponse
+	proxyWorkerLimit         int
+	proxyQueueLimit          int
+	proxyResponseLimit       int
+	closing                  bool
+	closed                   bool
+	mu                       sync.Mutex
+	writeLock                contextMutex
+	err                      error
 	// QUIC datagram support — non-nil when the transport implements DatagramProvider.
 	datagramProvider DatagramProvider
 	datagramTunnels  map[string]*quicDatagramListener           // tunnelID -> listener
@@ -606,6 +615,10 @@ type controlChannelCleanup struct {
 }
 
 func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, error) {
+	enableHeartbeat, heartbeatInterval, closeTimeout, err := resolveControlChannelConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
 	engine, err := c.getEngine()
 	if err != nil {
 		return nil, err
@@ -621,21 +634,6 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 	} else {
 		w := bufio.NewWriter(conn)
 		r := bufio.NewReader(conn)
-		if cfg == nil {
-			cfg = &Config{} // default config
-		}
-		enableHeartbeat := true
-		if cfg.EnableHeartbeat != nil {
-			enableHeartbeat = *cfg.EnableHeartbeat
-		}
-		heartbeatInterval := time.Second * 5
-		if cfg.HeartbeatInterval != nil {
-			heartbeatInterval = *cfg.HeartbeatInterval
-		}
-		closeTimeout := defaultCloseTimeout
-		if cfg.CloseTimeout != nil && *cfg.CloseTimeout > 0 {
-			closeTimeout = *cfg.CloseTimeout
-		}
 		ch = &controlChannelImpl{
 			logger:            slog.With("component", "control-channel"),
 			client:            c,
@@ -651,10 +649,15 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 			tunnels:           make(map[string]*bytestreamTunnelImpl),
 			proxyTransports:   make(map[string]Dialer),
 		}
+		var liveness *pb.ControlChannelLiveness
+		if enableHeartbeat && heartbeatInterval > 0 {
+			liveness = &pb.ControlChannelLiveness{HeartbeatIntervalMs: uint32(heartbeatInterval / time.Millisecond)}
+		}
 		msg := &pb.Message{
 			Payload: &pb.Message_OpenControlChannelReq{
 				OpenControlChannelReq: &pb.OpenControlChannelReq{
 					ClientDetails: toClientDetailsPb(ClientDetails),
+					Liveness:      liveness,
 				},
 			},
 		}
@@ -680,10 +683,18 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 					} else {
 						ch.clientID = rspPayload.Ok.ClientId
 						ch.serverDetails = toServerDetails(rspPayload.Ok.ServerDetails)
+						ch.heartbeatTimeout, err = validateNegotiatedControlLiveness(enableHeartbeat, heartbeatInterval, rspPayload.Ok.Liveness)
 					}
 				default:
 					err = fmt.Errorf("unexpected OpenControlChannelRsp payload")
 				}
+			}
+		}
+	}
+	if err == nil {
+		if ch.heartbeatTimeout > 0 {
+			if cause := ch.conn.SetReadDeadline(time.Now().Add(ch.heartbeatTimeout)); cause != nil {
+				err = fmt.Errorf("failed to arm control channel liveness deadline: %w", cause)
 			}
 		}
 	}
@@ -720,6 +731,49 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 		return nil, err
 	}
 	return ch, nil
+}
+
+func resolveControlChannelConfig(cfg *Config) (bool, time.Duration, time.Duration, error) {
+	enableHeartbeat := true
+	heartbeatInterval := defaultHeartbeatInterval
+	closeTimeout := defaultCloseTimeout
+	if cfg != nil {
+		if cfg.EnableHeartbeat != nil {
+			enableHeartbeat = *cfg.EnableHeartbeat
+		}
+		if cfg.HeartbeatInterval != nil {
+			heartbeatInterval = *cfg.HeartbeatInterval
+		}
+		if cfg.CloseTimeout != nil && *cfg.CloseTimeout > 0 {
+			closeTimeout = *cfg.CloseTimeout
+		}
+	}
+	if enableHeartbeat && heartbeatInterval > 0 {
+		if heartbeatInterval < minHeartbeatInterval || heartbeatInterval > maxHeartbeatInterval {
+			return false, 0, 0, fmt.Errorf("heartbeat interval must be between %s and %s", minHeartbeatInterval, maxHeartbeatInterval)
+		}
+		if heartbeatInterval%time.Millisecond != 0 {
+			return false, 0, 0, errors.New("heartbeat interval must use whole milliseconds")
+		}
+	}
+	return enableHeartbeat, heartbeatInterval, closeTimeout, nil
+}
+
+func validateNegotiatedControlLiveness(enabled bool, interval time.Duration, negotiated *pb.ControlChannelLiveness) (time.Duration, error) {
+	if negotiated == nil {
+		return 0, nil
+	}
+	if !enabled || interval <= 0 {
+		return 0, errors.New("server enabled control-channel liveness without a client request")
+	}
+	if negotiated.HeartbeatIntervalMs != uint32(interval/time.Millisecond) {
+		return 0, errors.New("server returned a different control-channel heartbeat interval")
+	}
+	timeout := time.Duration(negotiated.HeartbeatTimeoutMs) * time.Millisecond
+	if timeout < interval || timeout > maxHeartbeatTimeout {
+		return 0, errors.New("server returned an invalid control-channel heartbeat timeout")
+	}
+	return timeout, nil
 }
 
 func (c *controlChannelImpl) runLifecycleLoop(loop func()) {
@@ -914,40 +968,72 @@ func (c *controlChannelImpl) ServerDetails() *ServerDetails {
 
 func (c *controlChannelImpl) readLoop() {
 	var err error = nil
+	var waitCh <-chan struct{}
+	var deferred []*pb.Message
 	c.mu.Lock()
 	for {
-		c.mu.Unlock()
-		msg, cause := readPbMessage(c.r)
-		c.mu.Lock()
-		if cause != nil {
-			err = fmt.Errorf("failed to read message: %w", cause)
-		}
-		if c.closed || err != nil {
-			break
+		var msg *pb.Message
+		if waitCh == nil && len(deferred) > 0 {
+			msg = deferred[0]
+			deferred[0] = nil
+			deferred = deferred[1:]
+			if len(deferred) == 0 {
+				deferred = nil
+			}
 		} else {
-			close, waitCh, cleanup, cause := c.handleMessage(msg)
+			c.mu.Unlock()
+			var cause error
+			var deadlineErr error
+			msg, cause = readPbMessage(c.r)
+			if cause == nil && c.heartbeatTimeout > 0 {
+				deadlineErr = c.conn.SetReadDeadline(time.Now().Add(c.heartbeatTimeout))
+			}
+			c.mu.Lock()
 			if cause != nil {
-				err = fmt.Errorf("failed to handle message: %w", cause)
+				err = fmt.Errorf("failed to read message: %w", cause)
 			}
-			if cleanup != nil {
-				c.mu.Unlock()
-				cleanup()
-				c.mu.Lock()
-			}
-			if close || err != nil {
+			if c.closed || err != nil {
 				break
 			}
-			if waitCh != nil {
-				c.mu.Unlock()
-				select {
-				case <-waitCh:
-				case <-c.closedCh:
-				}
-				c.mu.Lock()
-				if c.closed {
+			if deadlineErr != nil {
+				err = fmt.Errorf("failed to refresh control channel liveness deadline: %w", deadlineErr)
+			}
+		}
+		if waitCh != nil {
+			select {
+			case <-waitCh:
+				waitCh = nil
+			default:
+			}
+		}
+		if waitCh != nil {
+			if _, heartbeat := msg.Payload.(*pb.Message_Heartbeat); !heartbeat {
+				if len(deferred) >= maxDeferredControlChannelMessages {
+					err = errors.New("control channel message queue remained blocked")
 					break
 				}
+				deferred = append(deferred, msg)
+				continue
 			}
+		}
+		closeChannel, nextWaitCh, cleanup, cause := c.handleMessage(msg)
+		if cause != nil {
+			err = fmt.Errorf("failed to handle message: %w", cause)
+		}
+		if cleanup != nil {
+			c.mu.Unlock()
+			cleanup()
+			c.mu.Lock()
+		}
+		if closeChannel {
+			err = nil
+			break
+		}
+		if err != nil {
+			break
+		}
+		if nextWaitCh != nil {
+			waitCh = nextWaitCh
 		}
 	}
 	c.mu.Unlock()
@@ -955,20 +1041,53 @@ func (c *controlChannelImpl) readLoop() {
 }
 
 func (c *controlChannelImpl) heartbeatLoop() {
+	c.mu.Lock()
+	lifecycleCtx := c.lifecycleCtx
+	c.mu.Unlock()
+	if lifecycleCtx == nil {
+		c.onError(errors.New("control channel lifecycle context is not initialized"))
+		return
+	}
 	t := time.NewTicker(c.heartbeatInterval)
 	defer t.Stop()
 	for {
+		if err := c.sendHeartbeat(); err != nil {
+			c.onError(fmt.Errorf("failed to send heartbeat: %w", err))
+			return
+		}
 		select {
-		case <-c.closedCh:
+		case <-lifecycleCtx.Done():
 			return
 		case <-t.C:
-			msg := &pb.Message{Payload: &pb.Message_Heartbeat{}}
-			if err := c.writePbMessage(msg); err != nil {
-				c.onError(fmt.Errorf("failed to send heartbeat: %w", err))
-				return
-			}
 		}
 	}
+}
+
+func (c *controlChannelImpl) sendHeartbeat() error {
+	c.mu.Lock()
+	heartbeat := &pb.Heartbeat{}
+	if c.heartbeatTimeout > 0 {
+		c.heartbeatSequence++
+		if c.heartbeatSequence == 0 {
+			c.heartbeatSequence = 1
+		}
+		heartbeat.Sequence = c.heartbeatSequence
+	}
+	ctx := c.lifecycleCtx
+	writeTimeout := c.heartbeatTimeout
+	if writeTimeout <= 0 {
+		writeTimeout = c.heartbeatInterval * 3
+		if writeTimeout < minLegacyHeartbeatWriteTimeout {
+			writeTimeout = minLegacyHeartbeatWriteTimeout
+		}
+		if writeTimeout > maxHeartbeatTimeout {
+			writeTimeout = maxHeartbeatTimeout
+		}
+	}
+	c.mu.Unlock()
+	writeCtx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
+	return c.writePbMessageContext(writeCtx, &pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: heartbeat}})
 }
 
 func (c *controlChannelImpl) handleMessage(msg *pb.Message) (bool, <-chan struct{}, func(), error) {
@@ -986,9 +1105,22 @@ func (c *controlChannelImpl) handleMessage(msg *pb.Message) (bool, <-chan struct
 		return false, nil, c.handleDatagramChannelClose(payload.DatagramChannelClose), nil
 	case *pb.Message_CloseControlChannelRsp:
 		return true, nil, nil, nil
+	case *pb.Message_Heartbeat:
+		return false, nil, nil, c.handleHeartbeat(payload.Heartbeat)
 	default:
 		return false, nil, nil, nil
 	}
+}
+
+func (c *controlChannelImpl) handleHeartbeat(heartbeat *pb.Heartbeat) error {
+	if c.heartbeatTimeout <= 0 {
+		return errors.New("server sent a heartbeat without negotiated control-channel liveness")
+	}
+	if heartbeat == nil || heartbeat.Sequence != 0 || heartbeat.Acknowledgement == 0 || heartbeat.Acknowledgement <= c.heartbeatAcknowledgement || heartbeat.Acknowledgement > c.heartbeatSequence {
+		return errors.New("server sent an invalid heartbeat acknowledgement")
+	}
+	c.heartbeatAcknowledgement = heartbeat.Acknowledgement
+	return nil
 }
 
 func (c *controlChannelImpl) handleDatagramChannelClose(msg *pb.DatagramChannelClose) func() {
