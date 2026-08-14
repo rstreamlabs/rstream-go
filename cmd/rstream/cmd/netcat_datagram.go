@@ -107,6 +107,7 @@ func runNetcatDatagramSession(ctx context.Context, s *netcatDatagramSession) err
 		stopLoops()
 		_ = s.Conn.Close()
 		loopWG.Wait()
+		logNetcatDatagramReceiveStats(s.Conn, s.Logger)
 	}()
 	outputErrCh := make(chan error, 1)
 	loopWG.Add(1)
@@ -145,14 +146,21 @@ func runNetcatDatagramSession(ctx context.Context, s *netcatDatagramSession) err
 				return err
 			}
 			if s.EndOnInputEOF {
-				_ = s.Conn.Close()
-				return nil
+				return normalizeNetcatCopyError(s.Conn.Close())
 			}
 		case <-ctx.Done():
 			_ = s.Conn.Close()
 			return ctx.Err()
 		}
 	}
+}
+
+func logNetcatDatagramReceiveStats(conn net.PacketConn, logger *slog.Logger) {
+	stats, ok := rstream.PacketConnDatagramReceiveStats(conn)
+	if !ok || stats.Dropped == 0 {
+		return
+	}
+	logger.Warn("datagram receive queue dropped packets", "received", stats.Received, "dropped", stats.Dropped, "queue_capacity", stats.QueueCapacity, "maximum_queue_depth", stats.MaximumQueueDepth)
 }
 
 type netcatContextReaderFunc struct {
@@ -175,6 +183,9 @@ func netcatDatagramRecvLoop(conn net.PacketConn, out io.Writer, idleTimeout time
 		}
 		n, _, err := conn.ReadFrom(buf)
 		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
 			if errors.Is(err, os.ErrDeadlineExceeded) {
 				logger.Info("netcat datagram session idle timeout reached")
 				return nil

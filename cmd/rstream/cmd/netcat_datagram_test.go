@@ -152,11 +152,15 @@ func TestNetcatDatagramRecvLoopIdleTimeout(t *testing.T) {
 }
 
 type netcatFakePacketConn struct {
+	readErr  error
 	writeErr error
 	writes   [][]byte
 }
 
 func (c *netcatFakePacketConn) ReadFrom(p []byte) (int, net.Addr, error) {
+	if c.readErr != nil {
+		return 0, nil, c.readErr
+	}
 	return 0, nil, net.ErrClosed
 }
 
@@ -176,6 +180,46 @@ func (c *netcatFakePacketConn) SetDeadline(time.Time) error        { return nil 
 func (c *netcatFakePacketConn) SetReadDeadline(time.Time) error    { return nil }
 func (c *netcatFakePacketConn) SetWriteDeadline(t time.Time) error { return nil }
 
+type netcatObservablePacketConn struct {
+	*netcatFakePacketConn
+	stats rstream.DatagramReceiveStats
+}
+
+func (c *netcatObservablePacketConn) DatagramReceiveStats() rstream.DatagramReceiveStats {
+	return c.stats
+}
+
+func TestLogNetcatDatagramReceiveStatsReportsDrops(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	conn := &netcatObservablePacketConn{
+		netcatFakePacketConn: &netcatFakePacketConn{},
+		stats: rstream.DatagramReceiveStats{
+			Received:          100,
+			Dropped:           2,
+			QueueCapacity:     64,
+			MaximumQueueDepth: 64,
+		},
+	}
+	logNetcatDatagramReceiveStats(conn, logger)
+	output := logs.String()
+	for _, expected := range []string{"datagram receive queue dropped packets", "received=100", "dropped=2", "queue_capacity=64", "maximum_queue_depth=64"} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("drop log %q does not contain %q", output, expected)
+		}
+	}
+}
+
+func TestLogNetcatDatagramReceiveStatsIgnoresHealthyOrUnsupportedConnections(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	logNetcatDatagramReceiveStats(&netcatFakePacketConn{}, logger)
+	logNetcatDatagramReceiveStats(&netcatObservablePacketConn{netcatFakePacketConn: &netcatFakePacketConn{}}, logger)
+	if logs.Len() != 0 {
+		t.Fatalf("healthy connections produced logs: %q", logs.String())
+	}
+}
+
 func TestNetcatDatagramSendLoopDropsOversizedDatagrams(t *testing.T) {
 	conn := &netcatFakePacketConn{writeErr: fmt.Errorf("%w: 2000 bytes", rstream.ErrDatagramTooLarge)}
 	in := bytes.NewReader(netcatFrameBytes(t, "dropped", "kept"))
@@ -192,6 +236,13 @@ func TestNetcatDatagramSendLoopRejectsTruncatedFrame(t *testing.T) {
 	err := netcatDatagramSendLoop(conn, netcatTestAddr("remote"), bytes.NewReader([]byte{0x00}), slog.Default())
 	if err == nil || !strings.Contains(err.Error(), "truncated") {
 		t.Fatalf("netcatDatagramSendLoop() error = %v, want truncated frame error", err)
+	}
+}
+
+func TestNetcatDatagramRecvLoopTreatsEOFAsRemoteClose(t *testing.T) {
+	err := netcatDatagramRecvLoop(&netcatFakePacketConn{readErr: io.EOF}, io.Discard, 0, slog.Default())
+	if err != nil {
+		t.Fatalf("netcatDatagramRecvLoop() error = %v, want nil", err)
 	}
 }
 

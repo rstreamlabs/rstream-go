@@ -315,7 +315,7 @@ func newNetcatClientConfig(cmd *cobra.Command, logger *slog.Logger, rawTarget st
 	cfg := &netcatClientConfig{
 		Target:      target.String(),
 		Interactive: interactive,
-		HalfClose:   target.Kind == netcatEndpointTCP,
+		HalfClose:   target.Kind == netcatEndpointTCP || target.Kind == netcatEndpointRstream,
 		Datagram:    datagram,
 		IdleTimeout: idleTimeout,
 		Exec:        execCfg,
@@ -398,8 +398,8 @@ func newNetcatServerConfigWithClientFactory(cmd *cobra.Command, logger *slog.Log
 			cfg.UpstreamUDP = remoteTarget.Address
 		default:
 			cfg.Listen = newNetcatListenerFactory(listenTarget, rstreamClient)
-			cfg.DownstreamHalfClose = listenTarget.Kind == netcatEndpointTCP
-			cfg.UpstreamHalfClose = remoteTarget.Kind == netcatEndpointTCP
+			cfg.DownstreamHalfClose = listenTarget.Kind == netcatEndpointTCP || listenTarget.Kind == netcatEndpointRstream
+			cfg.UpstreamHalfClose = remoteTarget.Kind == netcatEndpointTCP || remoteTarget.Kind == netcatEndpointRstream
 			cfg.Upstream = newNetcatDialer(remoteTarget, rstreamClient)
 		}
 		cfg.CloseTransport = newNetcatTransportCloser(rstreamClient)
@@ -423,7 +423,7 @@ func newNetcatServerConfigWithClientFactory(cmd *cobra.Command, logger *slog.Log
 	cfg := &netcatServerConfig{
 		Datagram:            datagram,
 		IdleTimeout:         idleTimeout,
-		DownstreamHalfClose: listenTarget.Kind == netcatEndpointTCP,
+		DownstreamHalfClose: listenTarget.Kind == netcatEndpointTCP || listenTarget.Kind == netcatEndpointRstream,
 		Exec:                execCfg,
 		OpenTimeout:         defaultNetcatOpenTimeout,
 		MaxConnections:      maxConnections,

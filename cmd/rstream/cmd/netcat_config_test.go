@@ -122,6 +122,32 @@ func TestNewNetcatServerConfigValidatesBeforeCreatingRstreamClient(t *testing.T)
 	}
 }
 
+func TestNewNetcatServerConfigPreservesRstreamHalfClose(t *testing.T) {
+	factory := func(*cobra.Command, bool) (*rstream.Client, error) {
+		return &rstream.Client{}, nil
+	}
+	command := newTestNetcatCommand()
+	mustSetFlag(t, command, "listen", "rstrm://echo")
+	mustSetFlag(t, command, "sh-exec", "cat")
+	cfg, err := newNetcatServerConfigWithClientFactory(command, slog.Default(), factory)
+	if err != nil {
+		t.Fatalf("newNetcatServerConfigWithClientFactory() error = %v", err)
+	}
+	if !cfg.DownstreamHalfClose {
+		t.Fatal("rstream listener did not preserve downstream half-close")
+	}
+	command = newTestNetcatCommand()
+	mustSetFlag(t, command, "listen", "rstrm://proxy")
+	mustSetFlag(t, command, "remote", "rstrm://upstream")
+	cfg, err = newNetcatServerConfigWithClientFactory(command, slog.Default(), factory)
+	if err != nil {
+		t.Fatalf("newNetcatServerConfigWithClientFactory() error = %v", err)
+	}
+	if !cfg.DownstreamHalfClose || !cfg.UpstreamHalfClose {
+		t.Fatalf("rstream proxy half-close state downstream=%t upstream=%t", cfg.DownstreamHalfClose, cfg.UpstreamHalfClose)
+	}
+}
+
 func TestNetcatRstreamHelpersFailWithoutClientAndDisplayTunnel(t *testing.T) {
 	t.Setenv("RSTREAM_CONFIG", filepath.Join(t.TempDir(), "missing.yaml"))
 	if _, err := newNetcatRstreamClient(newTestNetcatCommand(), true); err == nil || !strings.Contains(err.Error(), "failed to resolve runtime") {
