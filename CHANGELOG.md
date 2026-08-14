@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.27.4](https://github.com/rstreamlabs/rstream-go/compare/v1.27.3...v1.27.4) (2026-08-14)
+
+
+### Bug Fixes
+
+* close and observe QUIC datagram channels ([2757269](https://github.com/rstreamlabs/rstream-go/commit/27572696affa42d2b2994537a133e583b042c6d6))
+* **netcat:** preserve rstream stream semantics ([f4a8f64](https://github.com/rstreamlabs/rstream-go/commit/f4a8f64e55134355f1e5d7c961b9ab1c17509cf8))
+
 ## [1.27.3](https://github.com/rstreamlabs/rstream-go/compare/v1.27.2...v1.27.3) (2026-08-13)
 
 
