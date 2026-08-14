@@ -8,11 +8,17 @@ RSTREAM_BIN=$(resolve_rstream_cli "$ROOT")
 PYTHON="${PYTHON:-python3}"
 TIMEOUT_SECONDS="${RSTREAM_RUNTIME_TIMEOUT:-60}"
 TMP_DIR=$(mktemp -d "${TMPDIR:-/tmp}/rstream-go-runtime-tcp-policy.XXXXXX")
-UNRESERVED_PORT="${RSTREAM_RUNTIME_UNRESERVED_TCP_PORT:-10000}"
+UNRESERVED_PORT="${RSTREAM_RUNTIME_UNRESERVED_TCP_PORT:-}"
+TEMP_RESERVED_PORT=
 PASS=0
 FAIL=0
 
 cleanup() {
+  if [ -n "$TEMP_RESERVED_PORT" ]; then
+    "$RSTREAM_BIN" project tcp-address release "$TEMP_RESERVED_PORT" \
+      --api-url "$RSTREAM_RUNTIME_API_URL" \
+      --project-id "$RSTREAM_RUNTIME_PROJECT_ID" --output json >/dev/null 2>&1 || true
+  fi
   if [ -f "$TMP_DIR/settings.json" ]; then
     "$PYTHON" "$TMP_DIR/api.py" put-settings "$TMP_DIR/settings.json" >/dev/null 2>&1 || true
   fi
@@ -43,6 +49,24 @@ if [ -z "${RSTREAM_CONTEXT:-}" ] && [ -z "${RSTREAM_ENGINE:-}" ]; then
 fi
 require_runtime_project_engine_match "$RSTREAM_BIN"
 export RSTREAM_AUTHENTICATION_TOKEN="$RSTREAM_RUNTIME_CONTROL_TOKEN"
+export RSTREAM_API_URL="$RSTREAM_RUNTIME_API_URL"
+
+if [ -z "$UNRESERVED_PORT" ]; then
+  reservation=$(
+    "$RSTREAM_BIN" project tcp-address reserve \
+      --api-url "$RSTREAM_RUNTIME_API_URL" \
+      --project-id "$RSTREAM_RUNTIME_PROJECT_ID" --output json
+  )
+  TEMP_RESERVED_PORT=$(
+    "$PYTHON" -c 'import json, sys; print(json.load(sys.stdin)["port"])' \
+      <<<"$reservation"
+  )
+  UNRESERVED_PORT="$TEMP_RESERVED_PORT"
+  "$RSTREAM_BIN" project tcp-address release "$TEMP_RESERVED_PORT" \
+    --api-url "$RSTREAM_RUNTIME_API_URL" \
+    --project-id "$RSTREAM_RUNTIME_PROJECT_ID" --output json >/dev/null
+  TEMP_RESERVED_PORT=
+fi
 
 cat >"$TMP_DIR/api.py" <<'PY'
 import json
