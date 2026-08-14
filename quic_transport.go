@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -21,7 +22,39 @@ import (
 // exceeds what the underlying QUIC connection can carry in a single datagram.
 var ErrDatagramTooLarge = errors.New("datagram payload too large")
 
-const datagramChannelIDSize = 12
+const (
+	datagramChannelIDSize      = 12
+	datagramReceiveQueueSize   = 64
+	defaultQUICKeepAlivePeriod = 10 * time.Second
+)
+
+// DatagramReceiveStats is a concurrency-safe observation of a QUIC datagram
+// channel's bounded receive queue. Fields are sampled independently. A non-zero
+// Dropped value means packets arrived faster than the application consumed them.
+type DatagramReceiveStats struct {
+	Received          uint64
+	Dropped           uint64
+	QueueDepth        int
+	QueueCapacity     int
+	MaximumQueueDepth uint64
+}
+
+// DatagramReceiveStatsProvider is implemented by packet connections that can
+// expose bounded receive-queue statistics.
+type DatagramReceiveStatsProvider interface {
+	DatagramReceiveStats() DatagramReceiveStats
+}
+
+// PacketConnDatagramReceiveStats returns queue statistics when conn exposes
+// them. The snapshot is safe to request concurrently with reads, writes, and
+// close.
+func PacketConnDatagramReceiveStats(conn net.PacketConn) (DatagramReceiveStats, bool) {
+	provider, ok := conn.(DatagramReceiveStatsProvider)
+	if !ok {
+		return DatagramReceiveStats{}, false
+	}
+	return provider.DatagramReceiveStats(), true
+}
 
 type datagramChannelID [datagramChannelIDSize]byte
 
@@ -348,10 +381,7 @@ func (t *QUICTransport) datagramReadLoop(conn *quic.Conn, done chan struct{}) {
 		ch := t.datagramChannels[channelID]
 		t.mu.Unlock()
 		if ch != nil {
-			select {
-			case ch.recvCh <- payload:
-			default:
-			}
+			ch.enqueue(payload)
 		}
 	}
 }
@@ -477,6 +507,7 @@ func (t *QUICTransport) connect(ctx context.Context, addr string, tlsCfg *tls.Co
 	var pconn net.PacketConn
 	quicCfg := &quic.Config{
 		EnableDatagrams: true,
+		KeepAlivePeriod: defaultQUICKeepAlivePeriod,
 	}
 	var remoteAddr net.Addr
 	var proxyCloser io.Closer
@@ -532,6 +563,10 @@ func (c *quicStreamConn) Close() error {
 	// CancelRead sends STOP_SENDING so the remote stops sending and any
 	// pending Read call returns immediately, giving a true bidirectional close.
 	c.stream.CancelRead(0)
+	return c.stream.Close()
+}
+
+func (c *quicStreamConn) CloseWrite() error {
 	return c.stream.Close()
 }
 
@@ -613,9 +648,50 @@ type quicDatagramChannel struct {
 	deadlineMu    sync.Mutex
 	closed        bool
 	onClose       func(*quicDatagramChannel)
+	onLocalClose  func(*quicDatagramChannel) error
+	closeErr      error
 	watchDone     chan struct{}
+	proxyRspDone  chan struct{}
+	proxyRspOnce  sync.Once
 	readDeadline  *packetDeadline
 	writeDeadline *packetDeadline
+	received      atomic.Uint64
+	dropped       atomic.Uint64
+	maximumQueued atomic.Uint64
+}
+
+func (c *quicDatagramChannel) enqueue(payload []byte) bool {
+	select {
+	case <-c.ctx.Done():
+		return false
+	default:
+	}
+	select {
+	case c.recvCh <- payload:
+		c.received.Add(1)
+		depth := uint64(len(c.recvCh))
+		for previous := c.maximumQueued.Load(); depth > previous; previous = c.maximumQueued.Load() {
+			if c.maximumQueued.CompareAndSwap(previous, depth) {
+				break
+			}
+		}
+		return true
+	case <-c.ctx.Done():
+		return false
+	default:
+		c.dropped.Add(1)
+		return false
+	}
+}
+
+func (c *quicDatagramChannel) DatagramReceiveStats() DatagramReceiveStats {
+	return DatagramReceiveStats{
+		Received:          c.received.Load(),
+		Dropped:           c.dropped.Load(),
+		QueueDepth:        len(c.recvCh),
+		QueueCapacity:     cap(c.recvCh),
+		MaximumQueueDepth: c.maximumQueued.Load(),
+	}
 }
 
 func (c *quicDatagramChannel) ReadFrom(p []byte) (int, net.Addr, error) {
@@ -674,14 +750,18 @@ func (c *quicDatagramChannel) WriteTo(p []byte, addr net.Addr) (int, error) {
 }
 
 func (c *quicDatagramChannel) Close() error {
-	c.initiateClose()
+	c.close(true)
 	if c.watchDone != nil {
 		<-c.watchDone
 	}
-	return nil
+	return c.closeErr
 }
 
 func (c *quicDatagramChannel) initiateClose() {
+	c.close(false)
+}
+
+func (c *quicDatagramChannel) close(local bool) {
 	c.once.Do(func() {
 		c.deadlineMu.Lock()
 		c.closed = true
@@ -698,7 +778,16 @@ func (c *quicDatagramChannel) initiateClose() {
 		if c.onClose != nil {
 			c.onClose(c)
 		}
+		if local && c.onLocalClose != nil {
+			c.closeErr = c.onLocalClose(c)
+		}
 	})
+}
+
+func (c *quicDatagramChannel) markProxyResponseWritten() {
+	if c.proxyRspDone != nil {
+		c.proxyRspOnce.Do(func() { close(c.proxyRspDone) })
+	}
 }
 
 func (c *quicDatagramChannel) LocalAddr() net.Addr {
@@ -779,7 +868,11 @@ func (l *quicDatagramListener) Close() error {
 		for {
 			select {
 			case conn := <-l.conns:
-				_ = conn.Close()
+				if ch, ok := conn.(*quicDatagramChannel); ok {
+					ch.initiateClose()
+				} else {
+					_ = conn.Close()
+				}
 			default:
 				return
 			}

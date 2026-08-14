@@ -164,6 +164,40 @@ func TestQUICDatagramChannelReadAndClose(t *testing.T) {
 	}
 }
 
+func TestQUICDatagramChannelQueueSaturationIsObservable(t *testing.T) {
+	channel := newTestQUICDatagramChannel(t)
+	defer channel.Close()
+	if !channel.enqueue([]byte("first")) {
+		t.Fatal("enqueue() rejected packet with available queue capacity")
+	}
+	if channel.enqueue([]byte("dropped")) {
+		t.Fatal("enqueue() accepted packet into a saturated queue")
+	}
+	stats, ok := PacketConnDatagramReceiveStats(channel)
+	if !ok {
+		t.Fatal("PacketConnDatagramReceiveStats() did not recognize QUIC channel")
+	}
+	if stats.Received != 1 || stats.Dropped != 1 || stats.QueueDepth != 1 || stats.QueueCapacity != 1 || stats.MaximumQueueDepth != 1 {
+		t.Fatalf("DatagramReceiveStats = %#v", stats)
+	}
+}
+
+func TestQUICDatagramChannelRemoteCloseDoesNotNotifyPeer(t *testing.T) {
+	channel := newTestQUICDatagramChannel(t)
+	var notifications atomic.Int32
+	channel.onLocalClose = func(*quicDatagramChannel) error {
+		notifications.Add(1)
+		return nil
+	}
+	channel.initiateClose()
+	if err := channel.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if got := notifications.Load(); got != 0 {
+		t.Fatalf("remote close emitted %d peer notifications", got)
+	}
+}
+
 func TestQUICDatagramChannelPendingReadTracksDeadlineChanges(t *testing.T) {
 	t.Run("extended", func(t *testing.T) {
 		channel := newTestQUICDatagramChannel(t)
@@ -494,6 +528,45 @@ func TestQUICTransportReconnectsAfterConnectionLoss(t *testing.T) {
 	}
 	defer conn.Close()
 	assertQUICEchoConn(t, conn)
+}
+
+func TestQUICTransportKeepsIdleMultiplexedConnectionAlive(t *testing.T) {
+	const idleTimeout = 5 * time.Second
+	server := newTestQUICMultiplexServer(t, idleTimeout)
+	defer server.close()
+	transport := &QUICTransport{}
+	defer transport.Close()
+	tlsCfg := &tls.Config{InsecureSkipVerify: true, NextProtos: []string{testQUICALPN}}
+	first, err := transport.Dial(t.Context(), server.addr, tlsCfg)
+	if err != nil {
+		t.Fatalf("first Dial() error = %v", err)
+	}
+	defer first.Close()
+	assertQUICEchoConn(t, first)
+	time.Sleep(7 * time.Second)
+	second, err := transport.Dial(t.Context(), server.addr, tlsCfg)
+	if err != nil {
+		t.Fatalf("second Dial() error = %v", err)
+	}
+	if _, err := second.Write([]byte("ping")); err != nil {
+		t.Fatalf("second Write() error = %v", err)
+	}
+	if err := second.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("second SetReadDeadline() error = %v", err)
+	}
+	buf := make([]byte, 4)
+	if _, err := io.ReadFull(second, buf); err != nil {
+		t.Fatalf("second Read() error = %v (connections=%d streams=%d)", err, server.accepted.Load(), server.streams.Load())
+	}
+	if string(buf) != "ping" {
+		t.Fatalf("second echo payload = %q", buf)
+	}
+	if err := second.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+	if got := server.accepted.Load(); got != 1 {
+		t.Fatalf("accepted QUIC connections = %d, want 1", got)
+	}
 }
 
 func TestQUICTransportOriginBindsAddrAndTLSIdentity(t *testing.T) {
@@ -961,6 +1034,13 @@ type testQUICEchoServer struct {
 	close func()
 }
 
+type testQUICMultiplexServer struct {
+	addr     string
+	accepted *atomic.Int32
+	streams  *atomic.Int32
+	close    func()
+}
+
 func newTestQUICEchoServer(t *testing.T) testQUICEchoServer {
 	return newTestQUICEchoServerAt(t, "127.0.0.1:0")
 }
@@ -1009,6 +1089,88 @@ func newTestQUICEchoServerAt(t *testing.T, addr string) testQUICEchoServer {
 			case <-done:
 			case <-time.After(time.Second):
 				t.Fatalf("QUIC server goroutine did not exit")
+			}
+		},
+	}
+}
+
+func newTestQUICMultiplexServer(t *testing.T, idleTimeout time.Duration) testQUICMultiplexServer {
+	t.Helper()
+	udpConn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatalf("listen QUIC UDP: %v", err)
+	}
+	transport := &quic.Transport{Conn: udpConn}
+	listener, err := transport.Listen(testQUICServerTLSConfig(t, testQUICALPN), &quic.Config{EnableDatagrams: true, InitialPacketSize: 1200, MaxIdleTimeout: idleTimeout})
+	if err != nil {
+		_ = udpConn.Close()
+		t.Fatalf("listen QUIC: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	accepted := &atomic.Int32{}
+	streams := &atomic.Int32{}
+	var connectionsMu sync.Mutex
+	connections := make(map[*quic.Conn]struct{})
+	var workers sync.WaitGroup
+	workers.Add(1)
+	go func() {
+		defer workers.Done()
+		for {
+			conn, err := listener.Accept(ctx)
+			if err != nil {
+				return
+			}
+			accepted.Add(1)
+			connectionsMu.Lock()
+			connections[conn] = struct{}{}
+			connectionsMu.Unlock()
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				defer func() {
+					connectionsMu.Lock()
+					delete(connections, conn)
+					connectionsMu.Unlock()
+				}()
+				for {
+					stream, err := conn.AcceptStream(ctx)
+					if err != nil {
+						return
+					}
+					streams.Add(1)
+					workers.Add(1)
+					go func() {
+						defer workers.Done()
+						_, _ = io.Copy(stream, stream)
+						_ = stream.Close()
+					}()
+				}
+			}()
+		}
+	}()
+	return testQUICMultiplexServer{
+		addr:     udpConn.LocalAddr().String(),
+		accepted: accepted,
+		streams:  streams,
+		close: func() {
+			cancel()
+			_ = listener.Close()
+			connectionsMu.Lock()
+			for conn := range connections {
+				_ = conn.CloseWithError(0, "test stopped")
+			}
+			connectionsMu.Unlock()
+			_ = transport.Close()
+			_ = udpConn.Close()
+			done := make(chan struct{})
+			go func() {
+				workers.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("QUIC multiplex server goroutines did not exit")
 			}
 		},
 	}

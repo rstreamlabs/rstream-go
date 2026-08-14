@@ -4,6 +4,7 @@ package rstream
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -1795,6 +1796,102 @@ func TestDatagramChannelCloseUnregistersFromControlChannel(t *testing.T) {
 	}
 }
 
+func TestDatagramProxyLocalCloseNotifiesEngineOnce(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	listenerCtx, listenerCancel := context.WithCancel(t.Context())
+	defer listenerCancel()
+	var output bytes.Buffer
+	ctrl := &controlChannelImpl{
+		datagramProvider: &recordingDatagramProvider{},
+		lifecycleCtx:     ctx,
+		datagramChannels: make(map[datagramChannelID]*quicDatagramChannel),
+		datagramTunnels: map[string]*quicDatagramListener{
+			"tun-dgram": {conns: make(chan net.PacketConn, 1), ctx: listenerCtx, cancel: listenerCancel, laddr: stubNetAddr("tun-dgram")},
+		},
+		w:      bufio.NewWriter(&output),
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	tunnel := &bytestreamTunnelImpl{tunnelID: "tun-dgram", ctx: ctx, cancel: cancel}
+	streamID := "010203040000000000000001"
+	channel, ok := ctrl.handleDatagramProxyConnReq(&pb.ProxyConnReq{StreamId: streamID}, tunnel)
+	if !ok {
+		t.Fatal("datagram proxy connection was not accepted")
+	}
+	channel.markProxyResponseWritten()
+	packetConn, _, err := ctrl.datagramTunnels["tun-dgram"].Accept()
+	if err != nil {
+		t.Fatalf("Accept() error = %v", err)
+	}
+	const closers = 64
+	var wg sync.WaitGroup
+	errs := make(chan error, closers)
+	for range closers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs <- packetConn.Close()
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	}
+	msg, err := readPbMessage(bufio.NewReader(&output))
+	if err != nil {
+		t.Fatalf("read close notification: %v", err)
+	}
+	if closeMsg := msg.GetDatagramChannelClose(); closeMsg == nil || closeMsg.StreamId != streamID {
+		t.Fatalf("close notification = %#v, want stream %q", msg, streamID)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("concurrent Close() emitted %d unexpected bytes", output.Len())
+	}
+}
+
+func TestDatagramProxyCloseTimeoutClosesInconsistentControlChannel(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	listenerCtx, listenerCancel := context.WithCancel(t.Context())
+	defer listenerCancel()
+	ctrl := &controlChannelImpl{
+		datagramProvider: &recordingDatagramProvider{},
+		lifecycleCtx:     ctx,
+		lifecycleCancel:  cancel,
+		closeTimeout:     20 * time.Millisecond,
+		doneCh:           make(chan error, 1),
+		closedCh:         make(chan struct{}),
+		datagramChannels: make(map[datagramChannelID]*quicDatagramChannel),
+		datagramTunnels: map[string]*quicDatagramListener{
+			"tun-dgram": {conns: make(chan net.PacketConn, 1), ctx: listenerCtx, cancel: listenerCancel, laddr: stubNetAddr("tun-dgram")},
+		},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	tunnel := &bytestreamTunnelImpl{tunnelID: "tun-dgram", ctx: ctx, cancel: cancel}
+	if _, ok := ctrl.handleDatagramProxyConnReq(&pb.ProxyConnReq{StreamId: "010203040000000000000001"}, tunnel); !ok {
+		t.Fatal("datagram proxy connection was not accepted")
+	}
+	packetConn, _, err := ctrl.datagramTunnels["tun-dgram"].Accept()
+	if err != nil {
+		t.Fatalf("Accept() error = %v", err)
+	}
+	err = packetConn.Close()
+	if err == nil || !strings.Contains(err.Error(), "timed out waiting to close datagram channel") {
+		t.Fatalf("Close() error = %v, want proxy-response timeout", err)
+	}
+	select {
+	case <-ctrl.closedCh:
+	case <-time.After(time.Second):
+		t.Fatal("control channel remained open after losing close ordering")
+	}
+	if !errors.Is(ctrl.Err(), context.DeadlineExceeded) {
+		t.Fatalf("control channel error = %v, want deadline exceeded", ctrl.Err())
+	}
+}
+
 func TestDatagramProxyRejectsInvalidAndCollidingStreamIDs(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1815,13 +1912,13 @@ func TestDatagramProxyRejectsInvalidAndCollidingStreamIDs(t *testing.T) {
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	tunnel := &bytestreamTunnelImpl{tunnelID: "tun-dgram", ctx: ctx, cancel: cancel}
-	if ctrl.handleDatagramProxyConnReq(&pb.ProxyConnReq{StreamId: "zzzzzzzz0000"}, tunnel) {
+	if _, ok := ctrl.handleDatagramProxyConnReq(&pb.ProxyConnReq{StreamId: "zzzzzzzz0000"}, tunnel); ok {
 		t.Fatalf("invalid stream ID should not be accepted")
 	}
 	if len(ctrl.datagramChannels) != 0 || len(ctrl.datagramTunnels["tun-dgram"].conns) != 0 {
 		t.Fatalf("invalid stream ID should not create channel")
 	}
-	if !ctrl.handleDatagramProxyConnReq(&pb.ProxyConnReq{StreamId: "010203040000000000000001"}, tunnel) {
+	if _, ok := ctrl.handleDatagramProxyConnReq(&pb.ProxyConnReq{StreamId: "010203040000000000000001"}, tunnel); !ok {
 		t.Fatalf("valid stream ID should be accepted")
 	}
 	firstID := mustDatagramChannelID(t, "010203040000000000000001")
@@ -1830,7 +1927,7 @@ func TestDatagramProxyRejectsInvalidAndCollidingStreamIDs(t *testing.T) {
 		t.Fatalf("first datagram channel was not registered")
 	}
 	secondID := mustDatagramChannelID(t, "01020304ffffffffffffffff")
-	if !ctrl.handleDatagramProxyConnReq(&pb.ProxyConnReq{StreamId: "01020304ffffffffffffffff"}, tunnel) {
+	if _, ok := ctrl.handleDatagramProxyConnReq(&pb.ProxyConnReq{StreamId: "01020304ffffffffffffffff"}, tunnel); !ok {
 		t.Fatalf("same-prefix stream ID should be accepted with full-width channel routing")
 	}
 	if got := ctrl.datagramChannels[firstID]; got != first {
@@ -1865,7 +1962,7 @@ func TestDatagramProxyChannelUsesTunnelLifecycle(t *testing.T) {
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 	tunnel := &bytestreamTunnelImpl{tunnelID: "tun-dgram", ctx: tunnelCtx, cancel: tunnelCancel}
-	if !ctrl.handleDatagramProxyConnReq(&pb.ProxyConnReq{StreamId: "010203040000000000000001"}, tunnel) {
+	if _, ok := ctrl.handleDatagramProxyConnReq(&pb.ProxyConnReq{StreamId: "010203040000000000000001"}, tunnel); !ok {
 		t.Fatal("datagram proxy request was rejected")
 	}
 	channelID := mustDatagramChannelID(t, "010203040000000000000001")
