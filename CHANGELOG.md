@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.28.0](https://github.com/rstreamlabs/rstream-go/compare/v1.27.4...v1.28.0) (2026-08-15)
+
+
+### Features
+
+* **runtime:** negotiate bounded control liveness ([63b8732](https://github.com/rstreamlabs/rstream-go/commit/63b873278e8aaa3314dd4e4c949ef387b9ccb048))
+* **runtime:** negotiate bounded control liveness ([42745b2](https://github.com/rstreamlabs/rstream-go/commit/42745b2dc6cb236d9b1a1b2c2c93bd60d08b4358))
+
+
+### Bug Fixes
+
+* **runtime:** drain sessions across control reconnects ([3acccdc](https://github.com/rstreamlabs/rstream-go/commit/3acccdc3e1c6669c4bb2af700efef95e204d957e))
+* **runtime:** preserve coalesced handshake payloads ([c62a8b0](https://github.com/rstreamlabs/rstream-go/commit/c62a8b0cd08534573833fd938c50c66cb6174bbb))
+* **runtime:** publish tunnels atomically ([22297f9](https://github.com/rstreamlabs/rstream-go/commit/22297f936ec7a130ba71f6f386f21082f5477de3))
+
 ## [1.27.4](https://github.com/rstreamlabs/rstream-go/compare/v1.27.3...v1.27.4) (2026-08-14)
 
 
