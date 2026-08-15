@@ -392,6 +392,30 @@ bash test/e2e/runtime-mtls-permissions.sh
 
 Runtime suites create temporary auth tokens, temporary mTLS credentials, local upstream servers, and live tunnels. The scripts clean up temporary credentials and child processes on exit.
 
+## Direct real-Engine SDK integration
+
+The opt-in `integration` build tag adds direct SDK tests against a running Engine. They create private bytestream tunnels, resolve them by name and ID, exercise normal and zero-RTT handshakes, run concurrent dialers, stay connected across negotiated heartbeats, and verify cleanup. A pausing TCP proxy also interrupts both directions of a live control connection for several heartbeat periods, restores the link, and requires the same connection to create a tunnel and relay data. The tests deliberately fail instead of skipping when their required environment is incomplete.
+
+```sh
+RSTREAM_GO_E2E_ENGINE=localhost:55443 \
+RSTREAM_GO_E2E_TOKEN="$RSTREAM_AUTHENTICATION_TOKEN" \
+RSTREAM_GO_E2E_TLS_INSECURE=1 \
+go test -race -tags integration \
+  -run '^TestRealEngine(PrivateBytestreamLivenessAndConcurrency|ControlChannelSurvivesTemporaryNetworkPartition)$' .
+```
+
+`RSTREAM_GO_E2E_TLS_INSECURE=1` is only for a local Engine using a generated certificate. It disables certificate verification but does not change TLS SNI routing: use the configured Engine hostname, such as `localhost`, rather than its numeric loopback address.
+
+Set `RSTREAM_GO_E2E_TUNNEL_TRANSPORT=tls` or `quic` to qualify one transport
+explicitly; the default is `auto`. The partition proxy always uses TLS and
+retains the original Engine hostname for certificate verification and SNI, so
+the same test can target a local or remote Engine without weakening TLS.
+
+Set `RSTREAM_GO_E2E_CONTROL_TRANSPORT` to force the transport used by the
+tunnel-owning control client independently. When unset, it follows
+`RSTREAM_GO_E2E_TUNNEL_TRANSPORT`; setting both variables enables a directional
+TLS/QUIC matrix that localizes multiplexing and relay failures.
+
 ## Structure
 
 ```

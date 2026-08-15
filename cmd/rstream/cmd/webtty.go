@@ -182,10 +182,69 @@ rstream webtty server -v --listen 127.0.0.1:8080 --allow-unauthenticated`),
 		shutdownTimeoutMs, _ := cmd.Flags().GetInt64("shutdown-timeout")
 		shutdownTimeout := time.Duration(shutdownTimeoutMs) * time.Millisecond
 		var stableHostname *string
-		return runWebTTYServerRetryLoop(ctx, logger, autoReconnect, retryInterval, func() error {
-			return runWebTTYServerOnce(ctx, cmd, logger, shutdownTimeout, &stableHostname)
+		serverCtx, cancel := context.WithCancel(ctx)
+		generations := &webTTYGenerationGroup{}
+		err = runWebTTYServerRetryLoop(serverCtx, logger, autoReconnect, retryInterval, func() error {
+			return runWebTTYServerOnce(serverCtx, cmd, logger, shutdownTimeout, &stableHostname, generations)
 		})
+		cancel()
+		generations.Wait()
+		return err
 	},
+}
+
+type webTTYGenerationGroup struct {
+	wg sync.WaitGroup
+}
+
+func (g *webTTYGenerationGroup) Drain(ctx context.Context, handler *webtty.Handler, timeout time.Duration, logger *slog.Logger, cleanup func(context.Context)) {
+	if g == nil || handler == nil {
+		return
+	}
+	drained := handler.BeginDrain()
+	g.wg.Add(1)
+	go func() {
+		defer g.wg.Done()
+		reason := "sessions completed"
+		select {
+		case <-drained:
+		case <-ctx.Done():
+			reason = "server stopped"
+		}
+		shutdownCtx, cancel := webTTYShutdownContext(ctx, timeout)
+		defer cancel()
+		if err := handler.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			logger.Warn("draining webtty generation shutdown failed", "reason", reason, "error", err)
+		}
+		if cleanup != nil {
+			cleanup(shutdownCtx)
+		}
+	}()
+}
+
+func (g *webTTYGenerationGroup) Wait() {
+	if g != nil {
+		g.wg.Wait()
+	}
+}
+
+func stopWebTTYGeneration(ctx context.Context, handler *webtty.Handler, timeout time.Duration, logger *slog.Logger, cleanup func(context.Context)) {
+	shutdownCtx, cancel := webTTYShutdownContext(ctx, timeout)
+	defer cancel()
+	handler.BeginDrain()
+	if err := handler.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		logger.Warn("webtty session shutdown failed", "error", err)
+	}
+	if cleanup != nil {
+		cleanup(shutdownCtx)
+	}
+}
+
+func retryableWebTTYServeError(transport string, err error) error {
+	if err == nil || errors.Is(err, net.ErrClosed) || errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("%s webtty admission ended unexpectedly: %w", transport, net.ErrClosed)
+	}
+	return err
 }
 
 func runWebTTYServerRetryLoop(ctx context.Context, logger *slog.Logger, autoReconnect bool, retryInterval time.Duration, runOnce func() error) error {
@@ -272,7 +331,7 @@ func webTTYServerRetryableError(err error) bool {
 	return false
 }
 
-func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.Logger, shutdownTimeout time.Duration, stableHostname **string) error {
+func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.Logger, shutdownTimeout time.Duration, stableHostname **string, generations *webTTYGenerationGroup) error {
 	executionMode, err := webTTYExecutionModeFromFlag(cmd)
 	if err != nil {
 		return err
@@ -397,22 +456,30 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 		addr, _ := cmd.Flags().GetString("listen")
 		certFile, _ := cmd.Flags().GetString("tls-cert-file")
 		keyFile, _ := cmd.Flags().GetString("tls-key-file")
-		return serveWebTransportWebTTY(ctx, addr, terminalHandler, authToken, allowUnauthenticated, allowedOrigins, shutdownTimeout, certFile, keyFile, logger)
+		return serveWebTransportWebTTY(ctx, addr, terminalHandler, authToken, allowUnauthenticated, allowedOrigins, shutdownTimeout, certFile, keyFile, logger, generations)
 	}
 	server := &http.Server{Handler: handler}
 	var listener net.Listener
+	var admissionEnded <-chan error
+	var releaseRstreamResources func(context.Context)
+	resourcesHandedOff := false
+	defer func() {
+		if releaseRstreamResources != nil && !resourcesHandedOff {
+			releaseRstreamResources(context.WithoutCancel(ctx))
+		}
+	}()
 	address := ""
 	if useRstream {
 		client, err := newClientFromResolved(runtime.Resolved)
 		if err != nil {
 			return fmt.Errorf("failed to create rstream client: %w", err)
 		}
-		defer closeRstreamClientLogged(client, logger)
 		ctrl, err := client.Connect(ctx, nil)
 		if err != nil {
+			closeRstreamClientLogged(client, logger)
 			return fmt.Errorf("failed to connect to rstream engine server: %w", err)
 		}
-		defer ctrl.Close()
+		admissionEnded = ctrl.Done()
 		props := newWebTTYServerTunnelProperties(cmd, serverEnrollment)
 		applyWebTTYRuntimeSecurityLabels(props.Labels, payloadCryptoConfig, serverEnrollment, requireClientProof, hostKeyID)
 		if props.Publish != nil && *props.Publish {
@@ -432,9 +499,24 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 		}
 		tunnel, err := ctrl.CreateTunnel(ctx, props)
 		if err != nil {
+			if closeErr := ctrl.Close(); closeErr != nil {
+				logger.Debug("failed to close webtty control channel after tunnel creation failure", "error", closeErr)
+			}
+			closeRstreamClientLogged(client, logger)
 			return fmt.Errorf("failed to create tunnel: %w", err)
 		}
-		defer tunnel.Close()
+		releaseOnce := sync.Once{}
+		releaseRstreamResources = func(context.Context) {
+			releaseOnce.Do(func() {
+				if closeErr := tunnel.Close(); closeErr != nil {
+					logger.Debug("failed to close webtty tunnel", "error", closeErr)
+				}
+				if closeErr := ctrl.Close(); closeErr != nil {
+					logger.Debug("failed to close webtty control channel", "error", closeErr)
+				}
+				closeRstreamClientLogged(client, logger)
+			})
+		}
 		address, err = tunnel.ForwardingAddress()
 		if err != nil {
 			return fmt.Errorf("failed to get forwarding address: %w", err)
@@ -449,7 +531,8 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 				return err
 			}
 			logger.Info("webtty webtransport server started", "address", address)
-			return serveWebTransportWebTTYOnPacketConn(ctx, rstream.PacketConnFromPacketListener(packetListener), terminalHandler, authToken, allowUnauthenticated, allowedOrigins, shutdownTimeout, tlsConfig, true, logger)
+			resourcesHandedOff = true
+			return serveWebTransportWebTTYOnPacketConn(ctx, rstream.PacketConnFromPacketListener(packetListener), terminalHandler, authToken, allowUnauthenticated, allowedOrigins, shutdownTimeout, tlsConfig, true, logger, generations, releaseRstreamResources, admissionEnded)
 		}
 		nl, ok := tunnel.(interface{ net.Listener })
 		if !ok {
@@ -477,41 +560,44 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 	}
 	logger.Info("webtty server started", "address", address)
 	if transport == webtty.WebTTYTransportPlain {
-		return servePlainWebTTY(ctx, listener, terminalHandler, shutdownTimeout, logger)
+		resourcesHandedOff = releaseRstreamResources != nil
+		return servePlainWebTTY(ctx, listener, terminalHandler, shutdownTimeout, logger, generations, releaseRstreamResources)
 	}
-	shutdownOnce := sync.Once{}
-	shutdown := func(reason string) {
-		shutdownOnce.Do(func() {
-			logger.Info("stopping webtty server", "reason", reason)
-			shutdownCtx, cancel := webTTYShutdownContext(ctx, shutdownTimeout)
-			defer cancel()
-			terminalHandler.BeginDrain()
-			if err := terminalHandler.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				logger.Warn("session shutdown failed", "error", err)
-			}
-			if err := server.Shutdown(shutdownCtx); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				logger.Warn("http server shutdown failed", "error", err)
-			}
-		})
-	}
+	resourcesHandedOff = releaseRstreamResources != nil
+	return serveWebSocketWebTTY(ctx, listener, server, terminalHandler, shutdownTimeout, logger, generations, releaseRstreamResources)
+}
+
+func serveWebSocketWebTTY(ctx context.Context, listener net.Listener, server *http.Server, terminalHandler *webtty.Handler, shutdownTimeout time.Duration, logger *slog.Logger, generations *webTTYGenerationGroup, release func(context.Context)) error {
 	stopShutdownWatcher := make(chan struct{})
 	shutdownWatcherDone := make(chan struct{})
 	go func() {
 		defer close(shutdownWatcherDone)
 		select {
 		case <-ctx.Done():
-			shutdown("context canceled")
+			_ = listener.Close()
 		case <-stopShutdownWatcher:
 		}
 	}()
-	err = server.Serve(listener)
+	err := server.Serve(listener)
 	close(stopShutdownWatcher)
-	shutdown("serve loop ended")
 	<-shutdownWatcherDone
-	if err == nil || errors.Is(err, http.ErrServerClosed) {
+	cleanup := func(shutdownCtx context.Context) {
+		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil && !errors.Is(shutdownErr, http.ErrServerClosed) && !errors.Is(shutdownErr, context.Canceled) && !errors.Is(shutdownErr, context.DeadlineExceeded) {
+			logger.Warn("http webtty server shutdown failed", "error", shutdownErr)
+		}
+		_ = listener.Close()
+		if release != nil {
+			release(shutdownCtx)
+		}
+	}
+	if ctx.Err() != nil {
+		logger.Info("stopping webtty server", "reason", "context canceled")
+		stopWebTTYGeneration(ctx, terminalHandler, shutdownTimeout, logger, cleanup)
 		return nil
 	}
-	return err
+	logger.Warn("webtty admission generation ended; draining established sessions", "error", err)
+	generations.Drain(ctx, terminalHandler, shutdownTimeout, logger, cleanup)
+	return retryableWebTTYServeError("websocket", err)
 }
 
 func webTTYShutdownContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
@@ -522,54 +608,47 @@ func webTTYShutdownContext(ctx context.Context, timeout time.Duration) (context.
 	return context.WithTimeout(ctx, timeout)
 }
 
-func servePlainWebTTY(ctx context.Context, listener net.Listener, terminalHandler *webtty.Handler, shutdownTimeout time.Duration, logger *slog.Logger) error {
-	shutdownOnce := sync.Once{}
-	shutdown := func(reason string) {
-		shutdownOnce.Do(func() {
-			logger.Info("stopping plain webtty server", "reason", reason)
-			_ = listener.Close()
-			shutdownCtx, cancel := webTTYShutdownContext(ctx, shutdownTimeout)
-			defer cancel()
-			terminalHandler.BeginDrain()
-			if err := terminalHandler.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				logger.Warn("plain session shutdown failed", "error", err)
-			}
-		})
-	}
+func servePlainWebTTY(ctx context.Context, listener net.Listener, terminalHandler *webtty.Handler, shutdownTimeout time.Duration, logger *slog.Logger, generations *webTTYGenerationGroup, release func(context.Context)) error {
 	stopShutdownWatcher := make(chan struct{})
 	shutdownWatcherDone := make(chan struct{})
 	go func() {
 		defer close(shutdownWatcherDone)
 		select {
 		case <-ctx.Done():
-			shutdown("context canceled")
+			_ = listener.Close()
 		case <-stopShutdownWatcher:
 		}
 	}()
-	var serveWG sync.WaitGroup
-	defer func() {
-		shutdown("serve loop ended")
-		close(stopShutdownWatcher)
-		<-shutdownWatcherDone
-		serveWG.Wait()
-	}()
+	var acceptErr error
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
-				return nil
-			}
-			return err
+			acceptErr = err
+			break
 		}
-		serveWG.Add(1)
 		go func() {
-			defer serveWG.Done()
 			terminalHandler.ServeConn(conn)
 		}()
 	}
+	close(stopShutdownWatcher)
+	<-shutdownWatcherDone
+	cleanup := func(shutdownCtx context.Context) {
+		_ = listener.Close()
+		if release != nil {
+			release(shutdownCtx)
+		}
+	}
+	if ctx.Err() != nil {
+		logger.Info("stopping plain webtty server", "reason", "context canceled")
+		stopWebTTYGeneration(ctx, terminalHandler, shutdownTimeout, logger, cleanup)
+		return nil
+	}
+	logger.Warn("plain webtty admission generation ended; draining established sessions", "error", acceptErr)
+	generations.Drain(ctx, terminalHandler, shutdownTimeout, logger, cleanup)
+	return retryableWebTTYServeError("plain", acceptErr)
 }
 
-func serveWebTransportWebTTY(ctx context.Context, addr string, terminalHandler *webtty.Handler, authToken *string, allowUnauthenticated bool, allowedOrigins []string, shutdownTimeout time.Duration, certFile string, keyFile string, logger *slog.Logger) error {
+func serveWebTransportWebTTY(ctx context.Context, addr string, terminalHandler *webtty.Handler, authToken *string, allowUnauthenticated bool, allowedOrigins []string, shutdownTimeout time.Duration, certFile string, keyFile string, logger *slog.Logger, generations *webTTYGenerationGroup) error {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return fmt.Errorf("failed to load WebTransport TLS certificate: %w", err)
@@ -578,17 +657,16 @@ func serveWebTransportWebTTY(ctx context.Context, addr string, terminalHandler *
 	if err != nil {
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
-	defer packetConn.Close()
 	tlsConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS13,
 		NextProtos:   []string{http3.NextProtoH3},
 	}
 	logger.Info("webtty webtransport server started", "address", packetConn.LocalAddr().String())
-	return serveWebTransportWebTTYOnPacketConn(ctx, packetConn, terminalHandler, authToken, allowUnauthenticated, allowedOrigins, shutdownTimeout, tlsConfig, false, logger)
+	return serveWebTransportWebTTYOnPacketConn(ctx, packetConn, terminalHandler, authToken, allowUnauthenticated, allowedOrigins, shutdownTimeout, tlsConfig, false, logger, generations, func(context.Context) { _ = packetConn.Close() }, nil)
 }
 
-func serveWebTransportWebTTYOnPacketConn(ctx context.Context, packetConn net.PacketConn, terminalHandler *webtty.Handler, authToken *string, allowUnauthenticated bool, allowedOrigins []string, shutdownTimeout time.Duration, tlsConfig *tls.Config, tunneled bool, logger *slog.Logger) error {
+func serveWebTransportWebTTYOnPacketConn(ctx context.Context, packetConn net.PacketConn, terminalHandler *webtty.Handler, authToken *string, allowUnauthenticated bool, allowedOrigins []string, shutdownTimeout time.Duration, tlsConfig *tls.Config, tunneled bool, logger *slog.Logger, generations *webTTYGenerationGroup, release func(context.Context), admissionEnded <-chan error) error {
 	mux := http.NewServeMux()
 	server := &webtransport.Server{
 		H3: &http3.Server{
@@ -602,7 +680,6 @@ func serveWebTransportWebTTYOnPacketConn(ctx context.Context, packetConn net.Pac
 		},
 	}
 	webtransport.ConfigureHTTP3Server(server.H3)
-	var sessionWG sync.WaitGroup
 	mux.Handle("/", webtty.NewBearerAuthHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session, err := server.Upgrade(w, r)
 		if err != nil {
@@ -610,46 +687,48 @@ func serveWebTransportWebTTYOnPacketConn(ctx context.Context, packetConn net.Pac
 			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 			return
 		}
-		sessionWG.Add(1)
 		go func() {
-			defer sessionWG.Done()
 			terminalHandler.ServeWebTransportSession(session.Context(), session)
 		}()
 	}), authToken, allowUnauthenticated))
-	shutdownOnce := sync.Once{}
-	shutdown := func(reason string) {
-		shutdownOnce.Do(func() {
-			logger.Info("stopping webtransport webtty server", "reason", reason)
-			shutdownCtx, cancel := webTTYShutdownContext(ctx, shutdownTimeout)
-			defer cancel()
-			terminalHandler.BeginDrain()
-			if err := server.Close(); err != nil {
-				logger.Warn("webtransport server shutdown failed", "error", err)
-			}
-			if err := terminalHandler.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				logger.Warn("webtransport session shutdown failed", "error", err)
-			}
-			sessionWG.Wait()
-		})
-	}
-	stopShutdownWatcher := make(chan struct{})
-	shutdownWatcherDone := make(chan struct{})
+	serveResult := make(chan error, 1)
+	serveDone := make(chan struct{})
 	go func() {
-		defer close(shutdownWatcherDone)
-		select {
-		case <-ctx.Done():
-			shutdown("context canceled")
-		case <-stopShutdownWatcher:
-		}
+		defer close(serveDone)
+		serveResult <- server.Serve(packetConn)
 	}()
-	err := server.Serve(packetConn)
-	close(stopShutdownWatcher)
-	shutdown("serve loop ended")
-	<-shutdownWatcherDone
-	if err == nil || ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
+	var err error
+	select {
+	case err = <-serveResult:
+	case controlErr, ok := <-admissionEnded:
+		if !ok || controlErr == nil {
+			controlErr = io.EOF
+		}
+		err = fmt.Errorf("webtransport control admission ended: %w", controlErr)
+	case <-ctx.Done():
+	}
+	cleanup := func(shutdownCtx context.Context) {
+		if closeErr := server.Close(); closeErr != nil {
+			logger.Debug("webtransport webtty server close failed", "error", closeErr)
+		}
+		_ = packetConn.Close()
+		select {
+		case <-serveDone:
+		case <-shutdownCtx.Done():
+			logger.Warn("webtransport webtty serve loop did not stop before shutdown deadline", "error", shutdownCtx.Err())
+		}
+		if release != nil {
+			release(shutdownCtx)
+		}
+	}
+	if ctx.Err() != nil {
+		logger.Info("stopping webtransport webtty server", "reason", "context canceled")
+		stopWebTTYGeneration(ctx, terminalHandler, shutdownTimeout, logger, cleanup)
 		return nil
 	}
-	return err
+	logger.Warn("webtransport webtty admission generation ended; draining established sessions", "error", err)
+	generations.Drain(ctx, terminalHandler, shutdownTimeout, logger, cleanup)
+	return retryableWebTTYServeError("webtransport", err)
 }
 
 func webTTYWebTransportQUICConfig(tunneled bool) *quic.Config {

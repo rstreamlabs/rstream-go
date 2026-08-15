@@ -58,6 +58,16 @@ rstream supports two fundamental tunnel types:
 
 **Resilience**: Long-lived agents, reconnect behavior, and transport-level multiplexing for stable connectivity.
 
+Control-channel liveness and payload lifetime are intentionally separate. A
+negotiated heartbeat grace absorbs short network interruptions. If that grace
+expires, the listener stops admitting new streams and reconnects, while already
+accepted byte streams and registered QUIC datagram channels remain usable until
+the application closes them or the data path itself ends. Explicit tunnel,
+control-channel, client or process shutdown still closes owned sessions. SDK
+callers therefore retain normal ownership of every connection returned by
+`Accept`; they must close it even if `ControlChannel.Done` reports a transport
+failure.
+
 ## Supported protocols
 
 **HTTP protocols**: HTTP/1.1, HTTP/2 (H2C), HTTP/3 with WebSocket and WebTransport support.

@@ -22,6 +22,7 @@ import (
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/sessiongroup"
 	"github.com/rstreamlabs/rstream-go/config"
 	"github.com/rstreamlabs/rstream-go/pb"
 	"google.golang.org/protobuf/proto"
@@ -314,19 +315,95 @@ func TestTCPAndUDPProxiesStopOnContextCancellation(t *testing.T) {
 
 func TestServeTCPAndUDPReturnAcceptErrors(t *testing.T) {
 	runner := New()
+	sessions := sessiongroup.New(t.Context())
+	defer sessions.Close()
 	tcpErr := errors.New("tcp closed")
 	tcpListener := &errorListener{err: tcpErr}
-	if err := runner.serveTCP(t.Context(), tcpListener, runmodel.ForwardTarget{Host: "127.0.0.1", Port: "1"}, slog.Default()); !errors.Is(err, tcpErr) {
+	if err := runner.serveTCP(t.Context(), tcpListener, runmodel.ForwardTarget{Host: "127.0.0.1", Port: "1"}, slog.Default(), sessions); !errors.Is(err, tcpErr) {
 		t.Fatalf("serveTCP() = %v, want %v", err, tcpErr)
 	}
 	udpErr := errors.New("udp closed")
 	packetListener := &errorPacketListener{err: udpErr}
-	if err := runner.serveUDP(t.Context(), packetListener, runmodel.ForwardTarget{Host: "127.0.0.1", Port: "1"}, slog.Default()); !errors.Is(err, udpErr) {
+	if err := runner.serveUDP(t.Context(), packetListener, runmodel.ForwardTarget{Host: "127.0.0.1", Port: "1"}, slog.Default(), sessions); !errors.Is(err, udpErr) {
 		t.Fatalf("serveUDP() = %v, want %v", err, udpErr)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	runner.run(ctx, runmodel.DesiredTunnel{Name: "web", Forward: runmodel.ForwardTarget{Host: "127.0.0.1", Port: "1"}})
+}
+
+func TestServeTCPKeepsAcceptedRelayAliveAfterListenerGenerationEnds(t *testing.T) {
+	backendListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen backend: %v", err)
+	}
+	defer backendListener.Close()
+	_, backendPort, err := net.SplitHostPort(backendListener.Addr().String())
+	if err != nil {
+		t.Fatalf("split backend address: %v", err)
+	}
+	generationListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen tunnel generation: %v", err)
+	}
+	sessions := sessiongroup.New(t.Context())
+	defer sessions.Close()
+	serveErr := make(chan error, 1)
+	go func() {
+		serveErr <- New().serveTCP(t.Context(), generationListener, runmodel.ForwardTarget{Host: "127.0.0.1", Port: backendPort}, slog.Default(), sessions)
+	}()
+	clientConn, err := net.Dial("tcp", generationListener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial tunnel generation: %v", err)
+	}
+	defer clientConn.Close()
+	backendConn, err := backendListener.Accept()
+	if err != nil {
+		t.Fatalf("accept backend relay: %v", err)
+	}
+	defer backendConn.Close()
+	if err := generationListener.Close(); err != nil {
+		t.Fatalf("close tunnel generation listener: %v", err)
+	}
+	select {
+	case err := <-serveErr:
+		if !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("serveTCP() generation error = %v, want net.ErrClosed", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("serveTCP() did not release the ended generation")
+	}
+	deadline := time.Now().Add(time.Second)
+	if err := clientConn.SetDeadline(deadline); err != nil {
+		t.Fatalf("set client deadline: %v", err)
+	}
+	if err := backendConn.SetDeadline(deadline); err != nil {
+		t.Fatalf("set backend deadline: %v", err)
+	}
+	if _, err := clientConn.Write([]byte("request-after-control-loss")); err != nil {
+		t.Fatalf("write after listener generation ended: %v", err)
+	}
+	request := make([]byte, len("request-after-control-loss"))
+	if _, err := io.ReadFull(backendConn, request); err != nil {
+		t.Fatalf("read after listener generation ended: %v", err)
+	}
+	if string(request) != "request-after-control-loss" {
+		t.Fatalf("relayed request = %q", request)
+	}
+	if _, err := backendConn.Write([]byte("response-after-control-loss")); err != nil {
+		t.Fatalf("write response after listener generation ended: %v", err)
+	}
+	response := make([]byte, len("response-after-control-loss"))
+	if _, err := io.ReadFull(clientConn, response); err != nil {
+		t.Fatalf("read response after listener generation ended: %v", err)
+	}
+	if string(response) != "response-after-control-loss" {
+		t.Fatalf("relayed response = %q", response)
+	}
+	sessions.Close()
+	if _, err := clientConn.Read(make([]byte, 1)); err == nil {
+		t.Fatal("root session shutdown left the accepted relay open")
+	}
 }
 
 func TestRunnerRunOnceCreatesTunnelAndClosesOnContextCancel(t *testing.T) {
@@ -624,7 +701,7 @@ func serveRunEngineTunnelLifecycle(conn net.Conn, tunnelReady chan<- struct{}) e
 	}}}); err != nil {
 		return err
 	}
-	msg, err = readRunEnginePBMessage(reader)
+	msg, err = readRunEngineNonHeartbeatMessage(reader)
 	if err != nil {
 		return err
 	}
@@ -643,7 +720,7 @@ func serveRunEngineTunnelLifecycle(conn net.Conn, tunnelReady chan<- struct{}) e
 		return err
 	}
 	close(tunnelReady)
-	msg, err = readRunEnginePBMessage(reader)
+	msg, err = readRunEngineNonHeartbeatMessage(reader)
 	if err != nil {
 		return err
 	}
@@ -654,7 +731,7 @@ func serveRunEngineTunnelLifecycle(conn net.Conn, tunnelReady chan<- struct{}) e
 	if err := writeRunEnginePBMessage(writer, &pb.Message{Payload: &pb.Message_CloseTunnelRsp{CloseTunnelRsp: &pb.CloseTunnelRsp{TunnelId: "tun-1"}}}); err != nil {
 		return err
 	}
-	msg, err = readRunEnginePBMessage(reader)
+	msg, err = readRunEngineNonHeartbeatMessage(reader)
 	if err != nil {
 		return err
 	}
@@ -678,6 +755,18 @@ func readRunEnginePBMessage(r *bufio.Reader) (*pb.Message, error) {
 		return nil, err
 	}
 	return msg, nil
+}
+
+func readRunEngineNonHeartbeatMessage(r *bufio.Reader) (*pb.Message, error) {
+	for {
+		msg, err := readRunEnginePBMessage(r)
+		if err != nil {
+			return nil, err
+		}
+		if msg.GetHeartbeat() == nil {
+			return msg, nil
+		}
+	}
 }
 
 func writeRunEnginePBMessage(w *bufio.Writer, msg *pb.Message) error {

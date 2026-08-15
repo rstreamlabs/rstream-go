@@ -3,6 +3,7 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -235,6 +236,25 @@ func TestCmdWebTTYEchoStdinHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
+func TestCmdWebTTYLineEchoHelperProcess(t *testing.T) {
+	if os.Getenv("RSTREAM_CMD_WEBTTY_TEST_LINE_ECHO_HELPER") != "1" {
+		return
+	}
+	if _, err := os.Stdout.Write([]byte("ready\n")); err != nil {
+		os.Exit(8)
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		if _, err := fmt.Fprintln(os.Stdout, scanner.Text()); err != nil {
+			os.Exit(8)
+		}
+	}
+	if scanner.Err() != nil {
+		os.Exit(8)
+	}
+	os.Exit(0)
+}
+
 func TestRunWebTTYClientCaptureForwardsPipedStdin(t *testing.T) {
 	zero := time.Duration(0)
 	allowUnauthenticated := true
@@ -291,7 +311,7 @@ func TestServePlainWebTTYGracefulShutdownDeliversProtocolClose(t *testing.T) {
 	defer cancel()
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- servePlainWebTTY(ctx, listener, handler, closeDeadline, slog.Default())
+		errCh <- servePlainWebTTY(ctx, listener, handler, closeDeadline, slog.Default(), &webTTYGenerationGroup{}, nil)
 	}()
 	clientOpenDeadline := time.Second
 	clientCloseDeadline := time.Second
@@ -322,6 +342,382 @@ func TestServePlainWebTTYGracefulShutdownDeliversProtocolClose(t *testing.T) {
 	case <-time.After(closeDeadline + time.Second):
 		t.Fatalf("servePlainWebTTY() did not return after context cancellation")
 	}
+}
+
+func TestServePlainWebTTYDrainsEstablishedSessionAfterAdmissionFailure(t *testing.T) {
+	zero := time.Duration(0)
+	closeDeadline := 2 * time.Second
+	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{HeartbeatInterval: &zero, SessionCloseDeadline: &closeDeadline})
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	generations := &webTTYGenerationGroup{}
+	var releases atomic.Int64
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- servePlainWebTTY(ctx, listener, handler, closeDeadline, slog.Default(), generations, func(context.Context) { releases.Add(1) })
+	}()
+	clientOpenDeadline := time.Second
+	clientCloseDeadline := time.Second
+	session, err := webtty.OpenClientSession(t.Context(), &webtty.SessionConfig{
+		URL:           "tcp://" + listener.Addr().String(),
+		CmdArgs:       []string{os.Args[0], "-test.run=^TestCmdWebTTYLineEchoHelperProcess$"},
+		EnvVars:       []string{"RSTREAM_CMD_WEBTTY_TEST_LINE_ECHO_HELPER=1", "GOCOVERDIR=" + t.TempDir()},
+		OpenDeadline:  &clientOpenDeadline,
+		CloseDeadline: &clientCloseDeadline,
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	waitForCmdWebTTYStdout(t, session, "ready\n")
+	if err := listener.Close(); err != nil {
+		t.Fatalf("listener.Close() error = %v", err)
+	}
+	select {
+	case serveErr := <-errCh:
+		if !errors.Is(serveErr, net.ErrClosed) {
+			t.Fatalf("servePlainWebTTY() error = %v, want retryable net.ErrClosed", serveErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("servePlainWebTTY() did not return after admission failure")
+	}
+	if got := releases.Load(); got != 0 {
+		t.Fatalf("generation resources released while session remained active: %d", got)
+	}
+	if err := session.SendText("survived\n"); err != nil {
+		t.Fatalf("SendText() after admission failure error = %v", err)
+	}
+	waitForCmdWebTTYStdout(t, session, "survived\n")
+	if err := session.SendEOF(); err != nil {
+		t.Fatalf("SendEOF() error = %v", err)
+	}
+	exitCode, err := session.Wait()
+	if err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0", exitCode)
+	}
+	waitDone := make(chan struct{})
+	go func() {
+		generations.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(closeDeadline):
+		t.Fatal("draining generation did not release after session completed")
+	}
+	if got := releases.Load(); got != 1 {
+		t.Fatalf("generation resource releases = %d, want 1", got)
+	}
+}
+
+func TestServeWebSocketWebTTYDrainsEstablishedSessionAfterAdmissionFailure(t *testing.T) {
+	zero := time.Duration(0)
+	closeDeadline := 2 * time.Second
+	allowUnauthenticated := true
+	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{HeartbeatInterval: &zero, SessionCloseDeadline: &closeDeadline, AllowUnauthenticated: &allowUnauthenticated})
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	server := &http.Server{Handler: handler}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	generations := &webTTYGenerationGroup{}
+	var releases atomic.Int64
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- serveWebSocketWebTTY(ctx, listener, server, handler, closeDeadline, slog.Default(), generations, func(context.Context) { releases.Add(1) })
+	}()
+	session := openCmdWebTTYLineEchoSessionURL(t, "ws://"+listener.Addr().String())
+	waitForCmdWebTTYStdout(t, session, "ready\n")
+	if err := listener.Close(); err != nil {
+		t.Fatalf("listener.Close() error = %v", err)
+	}
+	select {
+	case serveErr := <-errCh:
+		if !webTTYServerRetryableError(serveErr) {
+			t.Fatalf("serveWebSocketWebTTY() error = %v, want retryable error", serveErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("serveWebSocketWebTTY() did not return after admission failure")
+	}
+	if got := releases.Load(); got != 0 {
+		t.Fatalf("generation resources released while session remained active: %d", got)
+	}
+	if err := session.SendText("websocket-survived\n"); err != nil {
+		t.Fatalf("SendText() after admission failure error = %v", err)
+	}
+	waitForCmdWebTTYStdout(t, session, "websocket-survived\n")
+	if err := session.SendEOF(); err != nil {
+		t.Fatalf("SendEOF() error = %v", err)
+	}
+	if exitCode, err := session.Wait(); err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v; want 0, nil", exitCode, err)
+	}
+	waitDone := make(chan struct{})
+	go func() {
+		generations.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(closeDeadline):
+		t.Fatal("draining WebSocket generation did not release after session completed")
+	}
+	if got := releases.Load(); got != 1 {
+		t.Fatalf("generation resource releases = %d, want 1", got)
+	}
+}
+
+func TestServeWebTransportWebTTYDrainsEstablishedSessionAfterControlFailure(t *testing.T) {
+	zero := time.Duration(0)
+	closeDeadline := 2 * time.Second
+	allowUnauthenticated := true
+	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{HeartbeatInterval: &zero, SessionCloseDeadline: &closeDeadline, AllowUnauthenticated: &allowUnauthenticated})
+	packetConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket() error = %v", err)
+	}
+	tlsConfig, err := generateWebTTYInternalWebTransportTLSConfig()
+	if err != nil {
+		_ = packetConn.Close()
+		t.Fatalf("generateWebTTYInternalWebTransportTLSConfig() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	generations := &webTTYGenerationGroup{}
+	admissionEnded := make(chan error, 1)
+	var releases atomic.Int64
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- serveWebTransportWebTTYOnPacketConn(ctx, packetConn, handler, nil, true, nil, closeDeadline, tlsConfig, false, slog.Default(), generations, func(context.Context) { releases.Add(1) }, admissionEnded)
+	}()
+	openDeadline := 3 * time.Second
+	clientCloseDeadline := time.Second
+	session, err := webtty.OpenClientSession(t.Context(), &webtty.SessionConfig{
+		URL:           "https://" + packetConn.LocalAddr().String() + "/",
+		Transport:     webtty.WebTTYTransportWebTransport,
+		TLSConfig:     &tls.Config{InsecureSkipVerify: true},
+		CmdArgs:       []string{os.Args[0], "-test.run=^TestCmdWebTTYLineEchoHelperProcess$"},
+		EnvVars:       []string{"RSTREAM_CMD_WEBTTY_TEST_LINE_ECHO_HELPER=1", "GOCOVERDIR=" + t.TempDir()},
+		OpenDeadline:  &openDeadline,
+		CloseDeadline: &clientCloseDeadline,
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	waitForCmdWebTTYStdout(t, session, "ready\n")
+	admissionEnded <- io.ErrUnexpectedEOF
+	select {
+	case serveErr := <-errCh:
+		if !webTTYServerRetryableError(serveErr) {
+			t.Fatalf("serveWebTransportWebTTYOnPacketConn() error = %v, want retryable error", serveErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("serveWebTransportWebTTYOnPacketConn() did not return after control failure")
+	}
+	if got := releases.Load(); got != 0 {
+		t.Fatalf("generation resources released while session remained active: %d", got)
+	}
+	if err := session.SendText("webtransport-survived\n"); err != nil {
+		t.Fatalf("SendText() after control failure error = %v", err)
+	}
+	waitForCmdWebTTYStdout(t, session, "webtransport-survived\n")
+	if err := session.SendEOF(); err != nil {
+		t.Fatalf("SendEOF() error = %v", err)
+	}
+	if exitCode, err := session.Wait(); err != nil || exitCode != 0 {
+		t.Fatalf("Wait() = %d, %v; want 0, nil", exitCode, err)
+	}
+	waitDone := make(chan struct{})
+	go func() {
+		generations.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(closeDeadline):
+		t.Fatal("draining WebTransport generation did not release after session completed")
+	}
+	if got := releases.Load(); got != 1 {
+		t.Fatalf("generation resource releases = %d, want 1", got)
+	}
+}
+
+func TestServePlainWebTTYRootCancellationStopsDrainingGeneration(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX signal trap test")
+	}
+	zero := time.Duration(0)
+	closeDeadline := 2 * time.Second
+	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{HeartbeatInterval: &zero, SessionCloseDeadline: &closeDeadline})
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	generations := &webTTYGenerationGroup{}
+	var releases atomic.Int64
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- servePlainWebTTY(ctx, listener, handler, closeDeadline, slog.Default(), generations, func(context.Context) { releases.Add(1) })
+	}()
+	clientOpenDeadline := time.Second
+	clientCloseDeadline := time.Second
+	session, err := webtty.OpenClientSession(t.Context(), &webtty.SessionConfig{
+		URL:           "tcp://" + listener.Addr().String(),
+		CmdArgs:       []string{os.Args[0], "-test.run=^TestCmdWebTTYInterruptHelperProcess$"},
+		EnvVars:       []string{"RSTREAM_CMD_WEBTTY_TEST_INTERRUPT_HELPER=1", "GOCOVERDIR=" + t.TempDir()},
+		OpenDeadline:  &clientOpenDeadline,
+		CloseDeadline: &clientCloseDeadline,
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	waitForCmdWebTTYStdout(t, session, "ready\n")
+	if err := listener.Close(); err != nil {
+		t.Fatalf("listener.Close() error = %v", err)
+	}
+	select {
+	case serveErr := <-errCh:
+		if !errors.Is(serveErr, net.ErrClosed) {
+			t.Fatalf("servePlainWebTTY() error = %v, want retryable net.ErrClosed", serveErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("servePlainWebTTY() did not return after admission failure")
+	}
+	cancel()
+	waitDone := make(chan struct{})
+	go func() {
+		generations.Wait()
+		close(waitDone)
+	}()
+	select {
+	case <-waitDone:
+	case <-time.After(closeDeadline + time.Second):
+		t.Fatal("draining generation did not stop with root context")
+	}
+	exitCode, err := session.Wait()
+	if err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if exitCode != 7 {
+		t.Fatalf("shutdown exit code = %d, want trapped interrupt exit code 7", exitCode)
+	}
+	if got := releases.Load(); got != 1 {
+		t.Fatalf("generation resource releases = %d, want 1", got)
+	}
+}
+
+func TestRunWebTTYServerRetryLoopReplacesAdmissionBeforeOldSessionDrains(t *testing.T) {
+	zero := time.Duration(0)
+	closeDeadline := 2 * time.Second
+	firstHandler := webtty.NewWebTTYHandler(&webtty.ServerConfig{HeartbeatInterval: &zero, SessionCloseDeadline: &closeDeadline})
+	secondHandler := webtty.NewWebTTYHandler(&webtty.ServerConfig{HeartbeatInterval: &zero, SessionCloseDeadline: &closeDeadline})
+	firstListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("first Listen() error = %v", err)
+	}
+	secondListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		_ = firstListener.Close()
+		t.Fatalf("second Listen() error = %v", err)
+	}
+	firstAddress := firstListener.Addr().String()
+	secondAddress := secondListener.Addr().String()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	generations := &webTTYGenerationGroup{}
+	var attempts atomic.Int64
+	var releases atomic.Int64
+	secondStarted := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runWebTTYServerRetryLoop(ctx, slog.Default(), true, time.Millisecond, func() error {
+			switch attempt := attempts.Add(1); attempt {
+			case 1:
+				return servePlainWebTTY(ctx, firstListener, firstHandler, closeDeadline, slog.Default(), generations, func(context.Context) { releases.Add(1) })
+			case 2:
+				close(secondStarted)
+				return servePlainWebTTY(ctx, secondListener, secondHandler, closeDeadline, slog.Default(), generations, func(context.Context) { releases.Add(1) })
+			default:
+				return fmt.Errorf("unexpected admission generation %d", attempt)
+			}
+		})
+	}()
+	firstSession := openCmdWebTTYLineEchoSession(t, firstAddress)
+	waitForCmdWebTTYStdout(t, firstSession, "ready\n")
+	if err := firstListener.Close(); err != nil {
+		t.Fatalf("first listener Close() error = %v", err)
+	}
+	select {
+	case <-secondStarted:
+	case <-time.After(time.Second):
+		t.Fatal("replacement admission generation did not start")
+	}
+	secondSession := openCmdWebTTYLineEchoSession(t, secondAddress)
+	waitForCmdWebTTYStdout(t, secondSession, "ready\n")
+	if err := firstSession.SendText("old-generation-alive\n"); err != nil {
+		t.Fatalf("first SendText() after replacement error = %v", err)
+	}
+	waitForCmdWebTTYStdout(t, firstSession, "old-generation-alive\n")
+	if err := secondSession.SendText("new-generation-alive\n"); err != nil {
+		t.Fatalf("second SendText() error = %v", err)
+	}
+	waitForCmdWebTTYStdout(t, secondSession, "new-generation-alive\n")
+	for name, session := range map[string]*webtty.ClientSession{"first": firstSession, "second": secondSession} {
+		if err := session.SendEOF(); err != nil {
+			t.Fatalf("%s SendEOF() error = %v", name, err)
+		}
+		if exitCode, err := session.Wait(); err != nil || exitCode != 0 {
+			t.Fatalf("%s Wait() = %d, %v; want 0, nil", name, exitCode, err)
+		}
+	}
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("runWebTTYServerRetryLoop() error = %v", err)
+		}
+	case <-time.After(closeDeadline + time.Second):
+		t.Fatal("retry loop did not stop with root context")
+	}
+	generations.Wait()
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("admission attempts = %d, want 2", got)
+	}
+	if got := releases.Load(); got != 2 {
+		t.Fatalf("generation resource releases = %d, want 2", got)
+	}
+}
+
+func openCmdWebTTYLineEchoSession(t *testing.T, address string) *webtty.ClientSession {
+	t.Helper()
+	return openCmdWebTTYLineEchoSessionURL(t, "tcp://"+address)
+}
+
+func openCmdWebTTYLineEchoSessionURL(t *testing.T, url string) *webtty.ClientSession {
+	t.Helper()
+	openDeadline := time.Second
+	closeDeadline := time.Second
+	session, err := webtty.OpenClientSession(t.Context(), &webtty.SessionConfig{
+		URL:           url,
+		CmdArgs:       []string{os.Args[0], "-test.run=^TestCmdWebTTYLineEchoHelperProcess$"},
+		EnvVars:       []string{"RSTREAM_CMD_WEBTTY_TEST_LINE_ECHO_HELPER=1", "GOCOVERDIR=" + t.TempDir()},
+		OpenDeadline:  &openDeadline,
+		CloseDeadline: &closeDeadline,
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession(%s) error = %v", url, err)
+	}
+	return session
 }
 
 func waitForCmdWebTTYStdout(t *testing.T, session *webtty.ClientSession, want string) {

@@ -77,6 +77,8 @@ type Handler struct {
 	sessionWG  sync.WaitGroup
 	sessionIDs *sessionIDGenerator
 	draining   atomic.Bool
+	drainedCh  chan struct{}
+	drained    sync.Once
 }
 
 func NewWebTTYHandler(cfg *ServerConfig) *Handler {
@@ -95,6 +97,7 @@ func NewWebTTYHandler(cfg *ServerConfig) *Handler {
 		logger:     resolved.Logger.With("component", "webtty.server"),
 		sessions:   make(map[*session]struct{}),
 		sessionIDs: newSessionIDGenerator(),
+		drainedCh:  make(chan struct{}),
 	}
 }
 
@@ -273,6 +276,9 @@ func (h *Handler) unregisterSession(s *session) {
 	}
 	delete(h.sessions, s)
 	h.sessionWG.Done()
+	if h.draining.Load() && len(h.sessions) == 0 {
+		h.drained.Do(func() { close(h.drainedCh) })
+	}
 }
 
 func (h *Handler) snapshotSessions() []*session {
@@ -285,10 +291,14 @@ func (h *Handler) snapshotSessions() []*session {
 	return out
 }
 
-func (h *Handler) BeginDrain() {
+func (h *Handler) BeginDrain() <-chan struct{} {
 	h.sessionsMu.Lock()
 	defer h.sessionsMu.Unlock()
 	h.draining.Store(true)
+	if len(h.sessions) == 0 {
+		h.drained.Do(func() { close(h.drainedCh) })
+	}
+	return h.drainedCh
 }
 
 func (h *Handler) Shutdown(ctx context.Context) error {

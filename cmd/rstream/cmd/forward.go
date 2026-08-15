@@ -12,12 +12,12 @@ import (
 	"net"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/cmd/logging"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/netretry"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/sessiongroup"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/streamrelay"
 	"github.com/spf13/cobra"
 )
@@ -64,60 +64,10 @@ type forwardCtx struct {
 	clientCloser     *ownedRstreamClient
 }
 
-type forwardSessionGroup struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	mu     sync.Mutex
-	active map[io.Closer]struct{}
-	closed bool
-	wg     sync.WaitGroup
-}
+type forwardSessionGroup = sessiongroup.Group
 
 func newForwardSessionGroup(ctx context.Context) *forwardSessionGroup {
-	sessionCtx, cancel := context.WithCancel(ctx)
-	return &forwardSessionGroup{ctx: sessionCtx, cancel: cancel, active: make(map[io.Closer]struct{})}
-}
-
-func (g *forwardSessionGroup) start(closer io.Closer, run func(context.Context)) bool {
-	g.mu.Lock()
-	if g.closed {
-		g.mu.Unlock()
-		_ = closer.Close()
-		return false
-	}
-	g.active[closer] = struct{}{}
-	g.wg.Add(1)
-	g.mu.Unlock()
-	go func() {
-		defer g.wg.Done()
-		defer func() {
-			g.mu.Lock()
-			delete(g.active, closer)
-			g.mu.Unlock()
-		}()
-		run(g.ctx)
-	}()
-	return true
-}
-
-func (g *forwardSessionGroup) close() {
-	g.mu.Lock()
-	if g.closed {
-		g.mu.Unlock()
-		g.wg.Wait()
-		return
-	}
-	g.closed = true
-	g.cancel()
-	active := make([]io.Closer, 0, len(g.active))
-	for closer := range g.active {
-		active = append(active, closer)
-	}
-	g.mu.Unlock()
-	for _, closer := range active {
-		_ = closer.Close()
-	}
-	g.wg.Wait()
+	return sessiongroup.New(ctx)
 }
 
 func (s *forwardCtx) Close() error {
@@ -354,11 +304,13 @@ func newForwardStatus(details *rstream.ServerDetails) forwardStatus {
 }
 
 func (s *forwardCtx) run(ctx context.Context) error {
+	sessions := newForwardSessionGroup(ctx)
+	defer sessions.Close()
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		err := s.runOnce(ctx)
+		err := s.runOnce(ctx, sessions)
 		var reported statusReportedError
 		if err != nil && !errors.As(err, &reported) {
 			status := newForwardStatus(nil)
@@ -396,7 +348,7 @@ func forwardRetryableError(err error) bool {
 	return true
 }
 
-func (s *forwardCtx) runOnce(ctx context.Context) error {
+func (s *forwardCtx) runOnce(ctx context.Context, sessions *forwardSessionGroup) error {
 	connectingStatus := newForwardStatus(nil)
 	connectingStatus.Status = rstream.StringPtr("connecting")
 	s.setStatus(connectingStatus)
@@ -448,13 +400,9 @@ func (s *forwardCtx) runOnce(ctx context.Context) error {
 	onlineStatus.Forwarded = &forwarded
 	s.setStatus(onlineStatus)
 	if l, ok := tunnel.(interface{ net.Listener }); ok {
-		sessions := newForwardSessionGroup(ctx)
-		defer sessions.close()
 		return s.serveWithCtx(ctx, l.Close, func() error { return s.serveTCP(ctx, l, sessions) })
 	}
 	if pl, ok := tunnel.(rstream.PacketListener); ok {
-		sessions := newForwardSessionGroup(ctx)
-		defer sessions.close()
 		return s.serveWithCtx(ctx, pl.Close, func() error { return s.serveUDP(ctx, pl, sessions) })
 	}
 	return fmt.Errorf("tunnel does not implement net.Listener or rstream.PacketListener")
@@ -492,7 +440,7 @@ func (s *forwardCtx) withTrackedConn(sessions *forwardSessionGroup, closer io.Cl
 		sourceIP = &ra.SourceIP
 	}
 	idx := s.addConn(forwardConnInfo{Active: true, Date: time.Now(), StreamID: streamID, SourceIP: sourceIP})
-	sessions.start(closer, func(ctx context.Context) {
+	sessions.Start(closer, func(ctx context.Context) {
 		defer func() {
 			if idx != nil {
 				s.closeConn(*idx)

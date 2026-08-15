@@ -86,11 +86,21 @@ func TestResolveServerConfigDefaultsAndHandlerDrain(t *testing.T) {
 	if got := handler.snapshotSessions(); len(got) != 1 || got[0] != sessionObj {
 		t.Fatalf("unexpected snapshot: %#v", got)
 	}
+	drained := handler.BeginDrain()
+	select {
+	case <-drained:
+		t.Fatal("drain completed while a session remained registered")
+	default:
+	}
 	handler.unregisterSession(sessionObj)
 	if got := handler.snapshotSessions(); len(got) != 0 {
 		t.Fatalf("expected empty snapshot after unregister")
 	}
-	handler.BeginDrain()
+	select {
+	case <-drained:
+	default:
+		t.Fatal("drain did not complete after the last session ended")
+	}
 	if handler.registerSession(&session{}) {
 		t.Fatalf("registration should fail while draining")
 	}

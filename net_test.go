@@ -580,11 +580,12 @@ func TestPacketConnFromPacketListenerPendingReadTracksDeadline(t *testing.T) {
 	}
 }
 
-func TestPacketConnFromPacketListenerPropagatesListenerClose(t *testing.T) {
+func TestPacketConnFromPacketListenerDrainsAcceptedConnectionsAfterAdmissionClose(t *testing.T) {
 	remote := stubNetAddr("remote")
 	inner := newFakePacketConn(stubNetAddr("inner"))
 	listener := newFakePacketListener(stubNetAddr("listener"))
 	packetConn := PacketConnFromPacketListener(listener)
+	defer packetConn.Close()
 	listener.accepted <- acceptedPacketConn{conn: inner, addr: remote}
 	inner.reads <- []byte("ready")
 	buf := make([]byte, 16)
@@ -594,9 +595,55 @@ func TestPacketConnFromPacketListenerPropagatesListenerClose(t *testing.T) {
 	if err := listener.Close(); err != nil {
 		t.Fatalf("listener Close() error = %v", err)
 	}
+	wrapper := packetConn.(*packetListenerWrapper)
+	select {
+	case <-wrapper.admissionDone:
+	case <-time.After(time.Second):
+		t.Fatal("packet listener did not observe admission close")
+	}
+	select {
+	case <-inner.closed:
+		t.Fatal("accepted connection closed with listener admission")
+	default:
+	}
+	inner.reads <- []byte("survived")
+	n, addr, err := packetConn.ReadFrom(buf)
+	if err != nil {
+		t.Fatalf("ReadFrom() after admission close error = %v", err)
+	}
+	if got := string(buf[:n]); got != "survived" || addr != remote {
+		t.Fatalf("ReadFrom() after admission close = %q from %v, want survived from %v", got, addr, remote)
+	}
+	if n, err := packetConn.WriteTo([]byte("reply"), remote); err != nil || n != len("reply") {
+		t.Fatalf("WriteTo() after admission close = %d, %v; want %d, nil", n, err, len("reply"))
+	}
+	select {
+	case got := <-inner.writes:
+		if string(got) != "reply" {
+			t.Fatalf("routed write after admission close = %q, want reply", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for write after admission close")
+	}
+	if err := packetConn.Close(); err != nil {
+		t.Fatalf("packetConn.Close() error = %v", err)
+	}
+	select {
+	case <-inner.closed:
+	case <-time.After(time.Second):
+		t.Fatal("accepted connection remained open after packetConn close")
+	}
+}
+
+func TestPacketConnFromPacketListenerAdmissionCloseWithoutConnectionsUnblocksRead(t *testing.T) {
+	listener := newFakePacketListener(stubNetAddr("listener"))
+	packetConn := PacketConnFromPacketListener(listener)
+	if err := listener.Close(); err != nil {
+		t.Fatalf("listener.Close() error = %v", err)
+	}
 	result := make(chan error, 1)
 	go func() {
-		_, _, err := packetConn.ReadFrom(buf)
+		_, _, err := packetConn.ReadFrom(make([]byte, 1))
 		result <- err
 	}()
 	select {
@@ -605,12 +652,47 @@ func TestPacketConnFromPacketListenerPropagatesListenerClose(t *testing.T) {
 			t.Fatalf("ReadFrom() error = %v, want net.ErrClosed", err)
 		}
 	case <-time.After(time.Second):
-		t.Fatalf("ReadFrom() remained blocked after listener close")
+		t.Fatal("ReadFrom() remained blocked after admission closed without connections")
 	}
+}
+
+func TestPacketConnFromPacketListenerAdmissionCloseEndsAfterLastConnection(t *testing.T) {
+	remote := stubNetAddr("remote")
+	inner := newFakePacketConn(stubNetAddr("inner"))
+	listener := newFakePacketListener(stubNetAddr("listener"))
+	packetConn := PacketConnFromPacketListener(listener)
+	listener.accepted <- acceptedPacketConn{conn: inner, addr: remote}
+	inner.reads <- []byte("ready")
+	if _, _, err := packetConn.ReadFrom(make([]byte, 16)); err != nil {
+		t.Fatalf("initial ReadFrom() error = %v", err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatalf("listener.Close() error = %v", err)
+	}
+	wrapper := packetConn.(*packetListenerWrapper)
 	select {
-	case <-inner.closed:
+	case <-wrapper.admissionDone:
 	case <-time.After(time.Second):
-		t.Fatalf("accepted connection remained open after listener close")
+		t.Fatal("packet listener did not observe admission close")
+	}
+	if err := inner.Close(); err != nil {
+		t.Fatalf("inner.Close() error = %v", err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := packetConn.ReadFrom(make([]byte, 1))
+		result <- err
+	}()
+	select {
+	case err := <-result:
+		if !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("ReadFrom() error = %v, want admission close error", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ReadFrom() remained blocked after the last accepted connection ended")
+	}
+	if err := packetConn.Close(); err != nil {
+		t.Fatalf("packetConn.Close() error = %v", err)
 	}
 }
 

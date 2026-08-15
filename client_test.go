@@ -81,6 +81,141 @@ type closeTrackingDialer struct {
 	closeErr   error
 }
 
+type drainingProxyTestDialer struct {
+	closeCalls atomic.Int32
+	peers      chan net.Conn
+}
+
+type gatedDrainingProxyTestDialer struct {
+	started    chan struct{}
+	release    chan struct{}
+	peer       chan net.Conn
+	closeCalls atomic.Int32
+}
+
+func (d *gatedDrainingProxyTestDialer) Dial(context.Context, string, *tls.Config) (net.Conn, error) {
+	client, peer := net.Pipe()
+	d.peer <- peer
+	close(d.started)
+	<-d.release
+	return client, nil
+}
+
+func (d *gatedDrainingProxyTestDialer) Close() error {
+	d.closeCalls.Add(1)
+	return nil
+}
+
+func (d *drainingProxyTestDialer) Dial(context.Context, string, *tls.Config) (net.Conn, error) {
+	client, peer := net.Pipe()
+	d.peers <- peer
+	return client, nil
+}
+
+func (d *drainingProxyTestDialer) Close() error {
+	d.closeCalls.Add(1)
+	return nil
+}
+
+func TestDrainingProxyTransportDefersCloseUntilAcceptedStreamsFinish(t *testing.T) {
+	underlying := &drainingProxyTestDialer{peers: make(chan net.Conn, 1)}
+	transport := &drainingProxyTransport{dialer: underlying}
+	conn, err := transport.Dial(t.Context(), "ingress.example.com:443", &tls.Config{})
+	if err != nil {
+		t.Fatalf("Dial() error = %v", err)
+	}
+	peer := <-underlying.peers
+	defer peer.Close()
+	transport.Detach()
+	if got := underlying.closeCalls.Load(); got != 0 {
+		t.Fatalf("Detach() close calls with active stream = %d", got)
+	}
+	writeErr := make(chan error, 1)
+	go func() {
+		_, err := conn.Write([]byte("still-active"))
+		writeErr <- err
+	}()
+	payload := make([]byte, len("still-active"))
+	if _, err := io.ReadFull(peer, payload); err != nil {
+		t.Fatalf("read after Detach(): %v", err)
+	}
+	if err := <-writeErr; err != nil {
+		t.Fatalf("write after Detach(): %v", err)
+	}
+	if string(payload) != "still-active" {
+		t.Fatalf("payload after Detach() = %q", payload)
+	}
+	if _, err := transport.Dial(t.Context(), "ingress.example.com:443", &tls.Config{}); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("Dial() after Detach() error = %v, want net.ErrClosed", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("accepted stream Close() error = %v", err)
+	}
+	if got := underlying.closeCalls.Load(); got != 1 {
+		t.Fatalf("underlying close calls after drain = %d, want 1", got)
+	}
+	for range 32 {
+		transport.Detach()
+		if err := transport.Close(); err != nil {
+			t.Fatalf("repeat Close() error = %v", err)
+		}
+	}
+	if got := underlying.closeCalls.Load(); got != 1 {
+		t.Fatalf("underlying repeat close calls = %d, want 1", got)
+	}
+}
+
+func TestDrainingProxyTransportHardCloseDoesNotWaitForStreams(t *testing.T) {
+	underlying := &drainingProxyTestDialer{peers: make(chan net.Conn, 1)}
+	transport := &drainingProxyTransport{dialer: underlying}
+	conn, err := transport.Dial(t.Context(), "ingress.example.com:443", &tls.Config{})
+	if err != nil {
+		t.Fatalf("Dial() error = %v", err)
+	}
+	defer conn.Close()
+	defer (<-underlying.peers).Close()
+	if err := transport.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if got := underlying.closeCalls.Load(); got != 1 {
+		t.Fatalf("hard close calls = %d, want 1", got)
+	}
+}
+
+func TestDrainingProxyTransportRejectsDialCompletingAfterDetach(t *testing.T) {
+	underlying := &gatedDrainingProxyTestDialer{started: make(chan struct{}), release: make(chan struct{}), peer: make(chan net.Conn, 1)}
+	transport := &drainingProxyTransport{dialer: underlying}
+	result := make(chan error, 1)
+	go func() {
+		conn, err := transport.Dial(t.Context(), "ingress.example.com:443", &tls.Config{})
+		if conn != nil {
+			_ = conn.Close()
+		}
+		result <- err
+	}()
+	<-underlying.started
+	peer := <-underlying.peer
+	defer peer.Close()
+	transport.Detach()
+	close(underlying.release)
+	select {
+	case err := <-result:
+		if !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("Dial() after concurrent Detach() error = %v, want net.ErrClosed", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Dial() did not converge after concurrent Detach()")
+	}
+	if got := underlying.closeCalls.Load(); got != 1 {
+		t.Fatalf("underlying close calls = %d, want 1", got)
+	}
+	if err := peer.SetReadDeadline(time.Now().Add(time.Second)); err == nil {
+		if _, err := peer.Read(make([]byte, 1)); err == nil {
+			t.Fatal("rejected post-detach dial remained open")
+		}
+	}
+}
+
 func (d *closeTrackingDialer) Dial(context.Context, string, *tls.Config) (net.Conn, error) {
 	return nil, errors.New("unexpected dial")
 }
@@ -495,7 +630,7 @@ func TestControlChannelHeartbeatSendsPeriodicMessage(t *testing.T) {
 	}}
 	engine := "engine.example.com:443"
 	token := "token"
-	interval := 10 * time.Millisecond
+	interval := time.Second
 	client := &Client{EngineURL: &engine, Token: &token, Transport: dialer}
 	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(true), HeartbeatInterval: &interval})
 	if err != nil {
@@ -511,6 +646,374 @@ func TestControlChannelHeartbeatSendsPeriodicMessage(t *testing.T) {
 	}
 	if err := <-serverErr; err != nil {
 		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestControlChannelNegotiatesHeartbeatLiveness(t *testing.T) {
+	heartbeatSeen := make(chan struct{}, 1)
+	serverErr := make(chan error, 1)
+	dialer := pipeDialer{serve: func(conn net.Conn) {
+		serverErr <- serveNegotiatedControlChannelHeartbeat(conn, heartbeatSeen, true)
+	}}
+	engine := "engine.example.com:443"
+	token := "token"
+	interval := time.Second
+	client := &Client{EngineURL: &engine, Token: &token, Transport: dialer}
+	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(true), HeartbeatInterval: &interval})
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	select {
+	case <-heartbeatSeen:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for negotiated heartbeat acknowledgement")
+	}
+	if err := channel.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestControlChannelDelayedHeartbeatAcknowledgementPreservesConnection(t *testing.T) {
+	serverErr := make(chan error, 1)
+	dialer := acceleratedReadDeadlinePipeDialer{maximum: 100 * time.Millisecond, serve: func(conn net.Conn) {
+		serverErr <- serveDelayedNegotiatedControlChannelHeartbeat(conn, 80*time.Millisecond)
+	}}
+	engine := "engine.example.com:443"
+	token := "token"
+	interval := time.Second
+	client := &Client{EngineURL: &engine, Token: &token, Transport: dialer}
+	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(true), HeartbeatInterval: &interval})
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	select {
+	case channelErr := <-channel.Done():
+		t.Fatalf("control channel closed after a delayed acknowledgement: %v", channelErr)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if err := channel.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestControlChannelIntermittentHeartbeatLossPreservesConnection(t *testing.T) {
+	serverErr := make(chan error, 1)
+	heartbeatsSeen := make(chan uint64)
+	dialer := pipeDialer{serve: func(conn net.Conn) {
+		serverErr <- serveIntermittentNegotiatedControlChannelHeartbeat(conn, heartbeatsSeen)
+	}}
+	engine := "engine.example.com:443"
+	token := "token"
+	interval := time.Second
+	client := &Client{EngineURL: &engine, Token: &token, Transport: dialer}
+	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(true), HeartbeatInterval: &interval})
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	for want := uint64(1); want <= 4; want++ {
+		select {
+		case got := <-heartbeatsSeen:
+			if got != want {
+				t.Fatalf("heartbeat sequence = %d, want %d", got, want)
+			}
+		case channelErr := <-channel.Done():
+			t.Fatalf("control channel closed after heartbeat %d: %v", want-1, channelErr)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for heartbeat %d", want)
+		}
+	}
+	if err := channel.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestControlChannelMissingNegotiatedHeartbeatAcknowledgementExpires(t *testing.T) {
+	serverErr := make(chan error, 1)
+	armed := make(chan time.Duration, 1)
+	dialer := acceleratedReadDeadlinePipeDialer{maximum: 100 * time.Millisecond, armed: armed, serve: func(conn net.Conn) {
+		serverErr <- serveNegotiatedControlChannelHeartbeat(conn, nil, false)
+	}}
+	engine := "engine.example.com:443"
+	token := "token"
+	interval := time.Second
+	client := &Client{EngineURL: &engine, Token: &token, Transport: dialer}
+	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(true), HeartbeatInterval: &interval})
+	if err != nil {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	implementation, ok := channel.(*controlChannelImpl)
+	if !ok || implementation.heartbeatTimeout != time.Second {
+		t.Fatalf("control channel liveness = type %T timeout %v", channel, implementation.heartbeatTimeout)
+	}
+	if _, ok := implementation.conn.(*acceleratedReadDeadlineConn); !ok {
+		t.Fatalf("control channel connection = %T, want accelerated deadline connection", implementation.conn)
+	}
+	select {
+	case deadline := <-armed:
+		if deadline <= 0 || deadline > 150*time.Millisecond {
+			t.Fatalf("accelerated read deadline = %v", deadline)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("control channel read deadline was not armed")
+	}
+	select {
+	case channelErr := <-channel.Done():
+		if channelErr == nil {
+			t.Fatal("control channel expired without an error")
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("control channel remained open after the negotiated acknowledgement deadline")
+	}
+	if err := <-serverErr; err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestResolveControlChannelConfigValidatesHeartbeatInterval(t *testing.T) {
+	minimum := time.Second
+	maximum := 5 * time.Minute
+	subMillisecond := time.Second + time.Microsecond
+	tooShort := time.Second - time.Millisecond
+	tooLong := 5*time.Minute + time.Millisecond
+	disabled := false
+	tests := []struct {
+		name     string
+		config   *Config
+		enabled  bool
+		interval time.Duration
+		wantErr  bool
+	}{
+		{name: "defaults", enabled: true, interval: 5 * time.Second},
+		{name: "minimum", config: &Config{HeartbeatInterval: &minimum}, enabled: true, interval: time.Second},
+		{name: "maximum", config: &Config{HeartbeatInterval: &maximum}, enabled: true, interval: 5 * time.Minute},
+		{name: "disabled_ignores_interval", config: &Config{EnableHeartbeat: &disabled, HeartbeatInterval: &tooShort}, interval: tooShort},
+		{name: "too_short", config: &Config{HeartbeatInterval: &tooShort}, wantErr: true},
+		{name: "too_long", config: &Config{HeartbeatInterval: &tooLong}, wantErr: true},
+		{name: "fractional_millisecond", config: &Config{HeartbeatInterval: &subMillisecond}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			enabled, interval, _, err := resolveControlChannelConfig(test.config)
+			if test.wantErr {
+				if err == nil {
+					t.Fatal("resolveControlChannelConfig() succeeded, want error")
+				}
+				return
+			}
+			if err != nil || enabled != test.enabled || interval != test.interval {
+				t.Fatalf("resolveControlChannelConfig() = enabled=%v interval=%v error=%v", enabled, interval, err)
+			}
+		})
+	}
+}
+
+func TestValidateNegotiatedControlLivenessRejectsInvalidServerPolicy(t *testing.T) {
+	valid := &pb.ControlChannelLiveness{HeartbeatIntervalMs: 5000, HeartbeatTimeoutMs: 15000}
+	if timeout, err := validateNegotiatedControlLiveness(true, 5*time.Second, valid); err != nil || timeout != 15*time.Second {
+		t.Fatalf("valid policy = timeout=%v error=%v", timeout, err)
+	}
+	invalid := []*pb.ControlChannelLiveness{
+		{HeartbeatIntervalMs: 4000, HeartbeatTimeoutMs: 15000},
+		{HeartbeatIntervalMs: 5000, HeartbeatTimeoutMs: 4999},
+		{HeartbeatIntervalMs: 5000, HeartbeatTimeoutMs: uint32((15*time.Minute + time.Millisecond) / time.Millisecond)},
+	}
+	for _, policy := range invalid {
+		if _, err := validateNegotiatedControlLiveness(true, 5*time.Second, policy); err == nil {
+			t.Fatalf("invalid policy accepted: %#v", policy)
+		}
+	}
+	if _, err := validateNegotiatedControlLiveness(false, 5*time.Second, valid); err == nil {
+		t.Fatal("unsolicited liveness policy was accepted")
+	}
+	if timeout, err := validateNegotiatedControlLiveness(true, 5*time.Second, nil); err != nil || timeout != 0 {
+		t.Fatalf("legacy policy = timeout=%v error=%v", timeout, err)
+	}
+}
+
+func TestControlChannelRejectsInvalidHeartbeatAcknowledgements(t *testing.T) {
+	channel := &controlChannelImpl{heartbeatTimeout: 15 * time.Second, heartbeatSequence: 2}
+	invalid := []*pb.Heartbeat{nil, {}, {Sequence: 1, Acknowledgement: 1}, {Acknowledgement: 3}}
+	for _, heartbeat := range invalid {
+		if err := channel.handleHeartbeat(heartbeat); err == nil {
+			t.Fatalf("invalid heartbeat acknowledgement accepted: %#v", heartbeat)
+		}
+	}
+	for _, acknowledgement := range []uint64{1, 2} {
+		if err := channel.handleHeartbeat(&pb.Heartbeat{Acknowledgement: acknowledgement}); err != nil {
+			t.Fatalf("valid acknowledgement %d rejected: %v", acknowledgement, err)
+		}
+	}
+	for _, acknowledgement := range []uint64{2, 1} {
+		if err := channel.handleHeartbeat(&pb.Heartbeat{Acknowledgement: acknowledgement}); err == nil {
+			t.Fatalf("replayed acknowledgement %d was accepted", acknowledgement)
+		}
+	}
+}
+
+func TestControlChannelProcessesHeartbeatBeforeCallerReceivesOpenResult(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	lifecycleCtx, lifecycleCancel := context.WithCancel(t.Context())
+	pending := &pendingOpenTunnelReq{respCh: make(chan openTunnelResult, 1)}
+	channel := &controlChannelImpl{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), heartbeatTimeout: time.Minute, heartbeatSequence: 1, conn: clientConn, w: bufio.NewWriter(clientConn), r: bufio.NewReader(clientConn), doneCh: make(chan error, 1), closedCh: make(chan struct{}), pendingTunnels: map[string]*pendingOpenTunnelReq{"request-1": pending}, tunnels: make(map[string]*bytestreamTunnelImpl), proxyTransports: make(map[string]Dialer), datagramTunnels: make(map[string]*quicDatagramListener), datagramChannels: make(map[datagramChannelID]*quicDatagramChannel), lifecycleCtx: lifecycleCtx, lifecycleCancel: lifecycleCancel}
+	channel.lifecycleWG.Add(1)
+	go channel.runLifecycleLoop(channel.readLoop)
+	serverErr := make(chan error, 1)
+	go func() {
+		writer := bufio.NewWriter(serverConn)
+		response := &pb.OpenTunnelRsp{RequestId: "request-1", Payload: &pb.OpenTunnelRsp_Error{Error: &pb.Error{Code: pb.ErrorCode_ERROR_CODE_SERVICE_UNAVAILABLE}}}
+		if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenTunnelRsp{OpenTunnelRsp: response}}); err != nil {
+			serverErr <- err
+			return
+		}
+		serverErr <- writePbMessage(writer, &pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: &pb.Heartbeat{Acknowledgement: 2}}})
+	}()
+	select {
+	case err := <-channel.Done():
+		if err == nil || !strings.Contains(err.Error(), "invalid heartbeat acknowledgement") {
+			t.Fatalf("Done() error = %v, want invalid heartbeat acknowledgement", err)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("heartbeat acknowledgement was not processed before the caller received the open result")
+	}
+	if err := <-serverErr; err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("server error = %v", err)
+	}
+}
+
+func TestControlChannelPublishesTunnelBeforeFollowingProxyRequest(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	lifecycleCtx, lifecycleCancel := context.WithCancel(t.Context())
+	pending := &pendingOpenTunnelReq{respCh: make(chan openTunnelResult, 1)}
+	channel := &controlChannelImpl{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), conn: clientConn, w: bufio.NewWriter(clientConn), r: bufio.NewReader(clientConn), doneCh: make(chan error, 1), closedCh: make(chan struct{}), pendingTunnels: map[string]*pendingOpenTunnelReq{"request-1": pending}, tunnels: make(map[string]*bytestreamTunnelImpl), proxyTransports: make(map[string]Dialer), datagramTunnels: make(map[string]*quicDatagramListener), datagramChannels: make(map[datagramChannelID]*quicDatagramChannel), lifecycleCtx: lifecycleCtx, lifecycleCancel: lifecycleCancel}
+	channel.lifecycleWG.Add(1)
+	go channel.runLifecycleLoop(channel.readLoop)
+	serverErr := make(chan error, 1)
+	go func() {
+		reader := bufio.NewReader(serverConn)
+		writer := bufio.NewWriter(serverConn)
+		props := TunnelProperties{ID: StringPtr("tun-1"), Name: StringPtr("web"), Type: TunnelTypePtr(TunnelTypeBytestream)}
+		response := &pb.OpenTunnelRsp{RequestId: "request-1", Payload: &pb.OpenTunnelRsp_TunnelProperties{TunnelProperties: toTunnelPropertiesPb(props)}}
+		if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenTunnelRsp{OpenTunnelRsp: response}}); err != nil {
+			serverErr <- err
+			return
+		}
+		request := &pb.ProxyConnReq{TunnelId: "tun-1", StreamId: "stream-1", ProxyEndpoint: wrapperspb.String("ingress.example.com:443")}
+		if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_ProxyConnReq{ProxyConnReq: request}}); err != nil {
+			serverErr <- err
+			return
+		}
+		message, err := readPbMessage(reader)
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		proxyResponse := message.GetProxyConnRsp()
+		if proxyResponse == nil {
+			serverErr <- errUnexpectedTestMessage("ProxyConnRsp")
+			return
+		}
+		responseErr := proxyResponse.GetError()
+		if responseErr == nil || responseErr.Code != pb.ErrorCode_ERROR_CODE_SERVICE_UNAVAILABLE {
+			serverErr <- fmt.Errorf("ProxyConnRsp error = %#v, want service unavailable", responseErr)
+			return
+		}
+		serverErr <- nil
+	}()
+	select {
+	case err := <-serverErr:
+		if err != nil {
+			t.Fatalf("server error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("following ProxyConnReq was not processed before the caller received the open result")
+	}
+	result := <-pending.respCh
+	if result.err != nil || result.tunnel == nil {
+		t.Fatalf("open tunnel result = %#v", result)
+	}
+	if properties, err := result.tunnel.Properties(); err != nil || properties.ID == nil || *properties.ID != "tun-1" {
+		t.Fatalf("opened tunnel properties = %#v, error = %v", properties, err)
+	}
+	if err := serverConn.Close(); err != nil {
+		t.Fatalf("server connection Close() error = %v", err)
+	}
+	select {
+	case <-channel.Done():
+	case <-time.After(time.Second):
+		t.Fatal("control channel did not stop after the server connection closed")
+	}
+}
+
+func TestAwaitOpenTunnelResultPrefersCommittedResultOverCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	tunnel := &bytestreamTunnelImpl{props: TunnelProperties{ID: StringPtr("tun-1")}}
+	pending := &pendingOpenTunnelReq{respCh: make(chan openTunnelResult, 1)}
+	pending.respCh <- openTunnelResult{tunnel: tunnel}
+	channel := &controlChannelImpl{pendingTunnels: make(map[string]*pendingOpenTunnelReq)}
+	opened, err := channel.awaitOpenTunnelResult(ctx, "request-1", pending)
+	if err != nil || opened != tunnel {
+		t.Fatalf("awaitOpenTunnelResult() = %#v, %v; want committed tunnel", opened, err)
+	}
+}
+
+func TestOpenTunnelRejectsDuplicateIDWithoutReplacingExistingTunnel(t *testing.T) {
+	lifecycleCtx, lifecycleCancel := context.WithCancel(t.Context())
+	defer lifecycleCancel()
+	existing := &bytestreamTunnelImpl{tunnelID: "tun-1"}
+	channel := &controlChannelImpl{lifecycleCtx: lifecycleCtx, tunnels: map[string]*bytestreamTunnelImpl{"tun-1": existing}}
+	result := channel.openTunnelFromPropertiesLocked(TunnelProperties{ID: StringPtr("tun-1"), Type: TunnelTypePtr(TunnelTypeBytestream)})
+	if result.err == nil || !strings.Contains(result.err.Error(), "duplicate tunnel ID") {
+		t.Fatalf("duplicate tunnel result error = %v", result.err)
+	}
+	if channel.tunnels["tun-1"] != existing {
+		t.Fatal("duplicate tunnel response replaced the existing tunnel")
+	}
+}
+
+func TestControlChannelHeartbeatSocketWriteIsBounded(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	lifecycleCtx, lifecycleCancel := context.WithCancel(t.Context())
+	interval := 20 * time.Millisecond
+	heartbeatTimeout := 200 * time.Millisecond
+	channel := &controlChannelImpl{
+		conn:              clientConn,
+		w:                 bufio.NewWriter(clientConn),
+		heartbeatInterval: interval,
+		heartbeatTimeout:  heartbeatTimeout,
+		doneCh:            make(chan error, 1),
+		closedCh:          make(chan struct{}),
+		pendingTunnels:    make(map[string]*pendingOpenTunnelReq),
+		tunnels:           make(map[string]*bytestreamTunnelImpl),
+		proxyTransports:   make(map[string]Dialer),
+		datagramTunnels:   make(map[string]*quicDatagramListener),
+		datagramChannels:  make(map[datagramChannelID]*quicDatagramChannel),
+		lifecycleCtx:      lifecycleCtx,
+		lifecycleCancel:   lifecycleCancel,
+	}
+	startedAt := time.Now()
+	channel.heartbeatLoop()
+	if elapsed := time.Since(startedAt); elapsed < heartbeatTimeout-50*time.Millisecond || elapsed > 500*time.Millisecond {
+		t.Fatalf("blocked heartbeat write returned after %v", elapsed)
+	}
+	select {
+	case err := <-channel.Done():
+		if err == nil || !strings.Contains(err.Error(), "failed to send heartbeat") {
+			t.Fatalf("Done() error = %v, want heartbeat write failure", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("blocked heartbeat cleanup did not complete")
 	}
 }
 
@@ -677,6 +1180,69 @@ func TestClientDialWaitsForStreamResponseAndUsesReturnedConnection(t *testing.T)
 		t.Fatalf("stream reply = %q, want pong", buf)
 	}
 	dialer.wait(t, 1)
+}
+
+func TestClientDialPreservesPayloadCoalescedWithStreamResponse(t *testing.T) {
+	dialer := newQueuedDialer(1)
+	dialer.enqueue(func(conn net.Conn) error {
+		if _, err := expectStreamReq(bufio.NewReader(conn), "web", "token"); err != nil {
+			return err
+		}
+		return writePbMessageWithPayload(conn, &pb.Message{Payload: &pb.Message_StreamRsp{StreamRsp: &pb.StreamRsp{Payload: &pb.StreamRsp_StreamId{StreamId: "stream-1"}}}}, "banner")
+	})
+	client := newTestClientWithDialer(dialer)
+	conn, err := client.Dial(t.Context(), Addr{IdOrName: "web"})
+	if err != nil {
+		t.Fatalf("Dial() error = %v", err)
+	}
+	defer conn.Close()
+	if err := readExactString(bufio.NewReader(conn), "banner"); err != nil {
+		t.Fatalf("coalesced stream payload error = %v", err)
+	}
+	dialer.wait(t, 1)
+}
+
+func TestBufferedReadConnPreservesConcurrentReadContract(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	const buffered = "abcdefgh"
+	const streamed = "ijklmnopqrstuvwxyz"
+	conn := &bufferedReadConn{Conn: left, reader: bufio.NewReader(strings.NewReader(buffered))}
+	writerDone := make(chan error, 1)
+	go func() {
+		_, err := right.Write([]byte(streamed))
+		if closeErr := right.Close(); err == nil {
+			err = closeErr
+		}
+		writerDone <- err
+	}()
+	var counts [256]atomic.Int64
+	var waitGroup sync.WaitGroup
+	for range 8 {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			byteBuffer := make([]byte, 1)
+			for {
+				n, err := conn.Read(byteBuffer)
+				if n == 1 {
+					counts[byteBuffer[0]].Add(1)
+				}
+				if err != nil {
+					return
+				}
+			}
+		}()
+	}
+	waitGroup.Wait()
+	if err := <-writerDone; err != nil {
+		t.Fatalf("write test payload: %v", err)
+	}
+	for _, value := range []byte(buffered + streamed) {
+		if got := counts[value].Load(); got != 1 {
+			t.Fatalf("byte %q read count = %d, want 1", value, got)
+		}
+	}
 }
 
 func TestClientDialReportsStreamError(t *testing.T) {
@@ -991,11 +1557,15 @@ func TestClientPacketDialFallsBackWhenQUICDatagramChannelIsUnavailable(t *testin
 }
 
 func TestControlChannelAcceptsProxyConnectionAndClosesTunnel(t *testing.T) {
-	testControlChannelAcceptsProxyConnection(t, "")
+	testControlChannelAcceptsProxyConnection(t, "", serveProxyConnection)
 }
 
 func TestControlChannelAcceptsProxyConnectionAtIngressEndpoint(t *testing.T) {
-	testControlChannelAcceptsProxyConnection(t, "ingress.example.com:443")
+	testControlChannelAcceptsProxyConnection(t, "ingress.example.com:443", serveProxyConnection)
+}
+
+func TestControlChannelPreservesPayloadCoalescedWithProxyResponse(t *testing.T) {
+	testControlChannelAcceptsProxyConnection(t, "", serveProxyConnectionWithCoalescedPayload)
 }
 
 func TestProxyConnectionRetriesTimedOutDial(t *testing.T) {
@@ -1203,6 +1773,97 @@ func TestTunnelCloseReleasesQueuedConnections(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("queued connection remained blocked after tunnel closure")
+	}
+}
+
+func TestUnexpectedControlLossPreservesAcceptedProxyConnection(t *testing.T) {
+	lifecycleCtx, lifecycleCancel := context.WithCancel(t.Context())
+	channel := &controlChannelImpl{doneCh: make(chan error, 1), closedCh: make(chan struct{}), pendingTunnels: make(map[string]*pendingOpenTunnelReq), tunnels: make(map[string]*bytestreamTunnelImpl), proxyTransports: make(map[string]Dialer), datagramTunnels: make(map[string]*quicDatagramListener), datagramChannels: make(map[datagramChannelID]*quicDatagramChannel), lifecycleCtx: lifecycleCtx, lifecycleCancel: lifecycleCancel}
+	tunnelCtx, tunnelCancel := context.WithCancel(lifecycleCtx)
+	tunnel := &bytestreamTunnelImpl{ctrl: channel, tunnelID: "tunnel-1", closedCh: make(chan struct{}), conns: make(chan net.Conn, 1), ctx: tunnelCtx, cancel: tunnelCancel}
+	channel.tunnels[tunnel.tunnelID] = tunnel
+	queued, peer := net.Pipe()
+	tunnel.conns <- queued
+	accepted, err := tunnel.Accept()
+	if err != nil {
+		t.Fatalf("Accept() error = %v", err)
+	}
+	defer accepted.Close()
+	defer peer.Close()
+	want := errors.New("control transport lost")
+	channel.onError(want)
+	select {
+	case <-channel.closedCh:
+	case <-time.After(time.Second):
+		t.Fatal("control cleanup did not complete")
+	}
+	if !errors.Is(channel.Err(), want) {
+		t.Fatalf("control error = %v, want %v", channel.Err(), want)
+	}
+	writeErr := make(chan error, 1)
+	go func() {
+		_, err := accepted.Write([]byte("active-after-control-loss"))
+		writeErr <- err
+	}()
+	payload := make([]byte, len("active-after-control-loss"))
+	if _, err := io.ReadFull(peer, payload); err != nil {
+		t.Fatalf("read accepted stream after control loss: %v", err)
+	}
+	if err := <-writeErr; err != nil {
+		t.Fatalf("write accepted stream after control loss: %v", err)
+	}
+	if string(payload) != "active-after-control-loss" {
+		t.Fatalf("accepted stream payload = %q", payload)
+	}
+}
+
+func TestUnexpectedControlLossPreservesAcceptedRegisteredDatagramChannel(t *testing.T) {
+	provider := &recordingDatagramProvider{}
+	lifecycleCtx, lifecycleCancel := context.WithCancel(t.Context())
+	channel := &controlChannelImpl{doneCh: make(chan error, 1), closedCh: make(chan struct{}), pendingTunnels: make(map[string]*pendingOpenTunnelReq), tunnels: make(map[string]*bytestreamTunnelImpl), proxyTransports: make(map[string]Dialer), datagramTunnels: make(map[string]*quicDatagramListener), datagramChannels: make(map[datagramChannelID]*quicDatagramChannel), lifecycleCtx: lifecycleCtx, lifecycleCancel: lifecycleCancel}
+	channelID := mustDatagramChannelID(t, "01020304-0000-0000-0000-000000000000")
+	datagramCtx, datagramCancel := context.WithCancel(context.Background())
+	datagram := &quicDatagramChannel{channelID: channelID, provider: provider, laddr: &Addr{IdOrName: "tunnel-1"}, raddr: &Addr{IdOrName: "stream-1"}, recvCh: make(chan []byte, 1), ctx: datagramCtx, cancel: datagramCancel, readDeadline: newPacketDeadline(), writeDeadline: newPacketDeadline(), registryBacked: true}
+	if !datagram.accept() {
+		t.Fatal("datagram channel could not enter accepted state")
+	}
+	channel.datagramChannels[channelID] = datagram
+	channel.onError(errors.New("control transport lost"))
+	select {
+	case <-channel.closedCh:
+	case <-time.After(time.Second):
+		t.Fatal("control cleanup did not complete")
+	}
+	select {
+	case <-datagram.ctx.Done():
+		t.Fatal("unexpected control loss closed accepted datagram channel")
+	default:
+	}
+	if n, err := datagram.WriteTo([]byte("packet"), datagram.raddr); err != nil || n != len("packet") {
+		t.Fatalf("WriteTo() after control loss = %d, %v", n, err)
+	}
+	if err := datagram.Close(); err != nil {
+		t.Fatalf("datagram Close() error = %v", err)
+	}
+}
+
+func TestUnexpectedControlLossClosesUnacceptedDatagramChannel(t *testing.T) {
+	lifecycleCtx, lifecycleCancel := context.WithCancel(t.Context())
+	channel := &controlChannelImpl{doneCh: make(chan error, 1), closedCh: make(chan struct{}), pendingTunnels: make(map[string]*pendingOpenTunnelReq), tunnels: make(map[string]*bytestreamTunnelImpl), proxyTransports: make(map[string]Dialer), datagramTunnels: make(map[string]*quicDatagramListener), datagramChannels: make(map[datagramChannelID]*quicDatagramChannel), lifecycleCtx: lifecycleCtx, lifecycleCancel: lifecycleCancel}
+	channelID := mustDatagramChannelID(t, "01020304-0000-0000-0000-000000000000")
+	datagramCtx, datagramCancel := context.WithCancel(context.Background())
+	datagram := &quicDatagramChannel{channelID: channelID, provider: &recordingDatagramProvider{}, laddr: &Addr{IdOrName: "tunnel-1"}, raddr: &Addr{IdOrName: "stream-1"}, recvCh: make(chan []byte, 1), ctx: datagramCtx, cancel: datagramCancel, readDeadline: newPacketDeadline(), writeDeadline: newPacketDeadline(), registryBacked: true}
+	channel.datagramChannels[channelID] = datagram
+	channel.onError(errors.New("control transport lost"))
+	select {
+	case <-channel.closedCh:
+	case <-time.After(time.Second):
+		t.Fatal("control cleanup did not complete")
+	}
+	select {
+	case <-datagram.ctx.Done():
+	default:
+		t.Fatal("unaccepted datagram channel survived control loss")
 	}
 }
 
@@ -1522,11 +2183,11 @@ func TestControlChannelBoundsProxyWorkAndJoinsWorkersOnClose(t *testing.T) {
 	}
 }
 
-func testControlChannelAcceptsProxyConnection(t *testing.T, proxyEndpoint string) {
+func testControlChannelAcceptsProxyConnection(t *testing.T, proxyEndpoint string, proxyServer func(net.Conn) error) {
 	t.Helper()
 	dialer := newQueuedDialer(2)
 	dialer.enqueue(func(conn net.Conn) error { return serveControlChannelWithProxyConnectionAt(conn, proxyEndpoint) })
-	dialer.enqueue(serveProxyConnection)
+	dialer.enqueue(proxyServer)
 	client := newTestClientWithDialer(dialer)
 	client.TLSClientConfig.ServerName = "engine.example.com"
 	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(false)})
@@ -1737,7 +2398,11 @@ func TestControlChannelProxyTransportUsesOneQUICTransportPerEndpoint(t *testing.
 	if first == selected {
 		t.Fatalf("redirected proxy reused the control-channel QUIC transport")
 	}
-	firstQUIC, ok := first.(*QUICTransport)
+	firstManaged, ok := first.(*drainingProxyTransport)
+	if !ok {
+		t.Fatalf("redirected proxy transport = %T, want draining transport", first)
+	}
+	firstQUIC, ok := firstManaged.dialer.(*QUICTransport)
 	if !ok || firstQUIC.ForceIPv4 == selected.ForceIPv4 || firstQUIC.ForceIPv4 == nil || !*firstQUIC.ForceIPv4 || firstQUIC.ProxyHTTPHeaders["X-Test"] != "value" || firstQUIC.TLSProxyConfig == tlsProxyConfig || firstQUIC.TLSProxyConfig.ServerName != tlsProxyConfig.ServerName {
 		t.Fatalf("redirected proxy transport = %#v, want cloned QUIC configuration", first)
 	}
@@ -1950,6 +2615,7 @@ func TestDatagramProxyChannelUsesTunnelLifecycle(t *testing.T) {
 	ctrl := &controlChannelImpl{
 		datagramProvider: &recordingDatagramProvider{},
 		lifecycleCtx:     ctrlCtx,
+		tunnels:          make(map[string]*bytestreamTunnelImpl),
 		datagramChannels: make(map[datagramChannelID]*quicDatagramChannel),
 		datagramTunnels: map[string]*quicDatagramListener{
 			"tun-dgram": {
@@ -1961,7 +2627,8 @@ func TestDatagramProxyChannelUsesTunnelLifecycle(t *testing.T) {
 		},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	tunnel := &bytestreamTunnelImpl{tunnelID: "tun-dgram", ctx: tunnelCtx, cancel: tunnelCancel}
+	tunnel := &bytestreamTunnelImpl{ctrl: ctrl, tunnelID: "tun-dgram", closedCh: make(chan struct{}), conns: make(chan net.Conn, 1), ctx: tunnelCtx, cancel: tunnelCancel}
+	ctrl.tunnels[tunnel.tunnelID] = tunnel
 	if _, ok := ctrl.handleDatagramProxyConnReq(&pb.ProxyConnReq{StreamId: "010203040000000000000001"}, tunnel); !ok {
 		t.Fatal("datagram proxy request was rejected")
 	}
@@ -1970,7 +2637,11 @@ func TestDatagramProxyChannelUsesTunnelLifecycle(t *testing.T) {
 	if channel == nil {
 		t.Fatal("datagram channel was not registered")
 	}
-	tunnelCancel()
+	cleanup := ctrl.handleCloseTunnelRsp(&pb.CloseTunnelRsp{TunnelId: tunnel.tunnelID})
+	if cleanup == nil {
+		t.Fatal("explicit tunnel close did not return cleanup")
+	}
+	cleanup()
 	select {
 	case <-channel.ctx.Done():
 	case <-time.After(time.Second):
@@ -1981,6 +2652,18 @@ func TestDatagramProxyChannelUsesTunnelLifecycle(t *testing.T) {
 
 type pipeDialer struct {
 	serve func(net.Conn)
+}
+
+type acceleratedReadDeadlinePipeDialer struct {
+	maximum time.Duration
+	serve   func(net.Conn)
+	armed   chan<- time.Duration
+}
+
+type acceleratedReadDeadlineConn struct {
+	net.Conn
+	maximum time.Duration
+	armed   chan<- time.Duration
 }
 
 type countingFailDialer struct {
@@ -2031,6 +2714,25 @@ func (d pipeDialer) Dial(_ context.Context, _ string, _ *tls.Config) (net.Conn, 
 	client, server := net.Pipe()
 	go d.serve(server)
 	return client, nil
+}
+
+func (d acceleratedReadDeadlinePipeDialer) Dial(_ context.Context, _ string, _ *tls.Config) (net.Conn, error) {
+	client, server := net.Pipe()
+	go d.serve(server)
+	return &acceleratedReadDeadlineConn{Conn: client, maximum: d.maximum, armed: d.armed}, nil
+}
+
+func (c *acceleratedReadDeadlineConn) SetReadDeadline(deadline time.Time) error {
+	if !deadline.IsZero() && c.maximum > 0 && time.Until(deadline) > c.maximum {
+		deadline = time.Now().Add(c.maximum)
+	}
+	if c.armed != nil {
+		select {
+		case c.armed <- time.Until(deadline):
+		default:
+		}
+	}
+	return c.Conn.SetReadDeadline(deadline)
 }
 
 type queuedDialer struct {
@@ -2357,6 +3059,128 @@ func serveControlChannelHeartbeat(conn net.Conn, heartbeatSeen chan<- struct{}) 
 	return writePbMessage(writer, &pb.Message{Payload: &pb.Message_CloseControlChannelRsp{CloseControlChannelRsp: &pb.CloseControlChannelRsp{}}})
 }
 
+func serveNegotiatedControlChannelHeartbeat(conn net.Conn, heartbeatSeen chan<- struct{}, acknowledge bool) error {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	msg, err := readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	req := msg.GetOpenControlChannelReq()
+	if req == nil || req.Liveness == nil || req.Liveness.HeartbeatIntervalMs != 1000 || req.Liveness.HeartbeatTimeoutMs != 0 {
+		return fmt.Errorf("unexpected OpenControlChannelReq liveness: %#v", req)
+	}
+	liveness := &pb.ControlChannelLiveness{HeartbeatIntervalMs: 1000, HeartbeatTimeoutMs: 1000}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenControlChannelRsp{OpenControlChannelRsp: &pb.OpenControlChannelRsp{Payload: &pb.OpenControlChannelRsp_Ok_{Ok: &pb.OpenControlChannelRsp_Ok{ClientId: "client-1", Liveness: liveness}}}}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	heartbeat := msg.GetHeartbeat()
+	if heartbeat == nil || heartbeat.Sequence != 1 || heartbeat.Acknowledgement != 0 {
+		return fmt.Errorf("unexpected negotiated heartbeat: %#v", heartbeat)
+	}
+	if !acknowledge {
+		_, err = readPbMessage(reader)
+		return err
+	}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: &pb.Heartbeat{Acknowledgement: heartbeat.Sequence}}}); err != nil {
+		return err
+	}
+	heartbeatSeen <- struct{}{}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetCloseControlChannelReq() == nil {
+		return errUnexpectedTestMessage("CloseControlChannelReq")
+	}
+	return writePbMessage(writer, &pb.Message{Payload: &pb.Message_CloseControlChannelRsp{CloseControlChannelRsp: &pb.CloseControlChannelRsp{}}})
+}
+
+func serveDelayedNegotiatedControlChannelHeartbeat(conn net.Conn, acknowledgementDelay time.Duration) error {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	msg, err := readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	req := msg.GetOpenControlChannelReq()
+	if req == nil || req.Liveness == nil || req.Liveness.HeartbeatIntervalMs != 1000 {
+		return fmt.Errorf("unexpected OpenControlChannelReq liveness: %#v", req)
+	}
+	liveness := &pb.ControlChannelLiveness{HeartbeatIntervalMs: 1000, HeartbeatTimeoutMs: 60000}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenControlChannelRsp{OpenControlChannelRsp: &pb.OpenControlChannelRsp{Payload: &pb.OpenControlChannelRsp_Ok_{Ok: &pb.OpenControlChannelRsp_Ok{ClientId: "client-1", Liveness: liveness}}}}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	heartbeat := msg.GetHeartbeat()
+	if heartbeat == nil || heartbeat.Sequence != 1 || heartbeat.Acknowledgement != 0 {
+		return fmt.Errorf("unexpected negotiated heartbeat: %#v", heartbeat)
+	}
+	time.Sleep(acknowledgementDelay)
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: &pb.Heartbeat{Acknowledgement: heartbeat.Sequence}}}); err != nil {
+		return err
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetCloseControlChannelReq() == nil {
+		return errUnexpectedTestMessage("CloseControlChannelReq")
+	}
+	return writePbMessage(writer, &pb.Message{Payload: &pb.Message_CloseControlChannelRsp{CloseControlChannelRsp: &pb.CloseControlChannelRsp{}}})
+}
+
+func serveIntermittentNegotiatedControlChannelHeartbeat(conn net.Conn, heartbeatsSeen chan<- uint64) error {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+	msg, err := readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	req := msg.GetOpenControlChannelReq()
+	if req == nil || req.Liveness == nil || req.Liveness.HeartbeatIntervalMs != 1000 {
+		return fmt.Errorf("unexpected OpenControlChannelReq liveness: %#v", req)
+	}
+	liveness := &pb.ControlChannelLiveness{HeartbeatIntervalMs: 1000, HeartbeatTimeoutMs: 2500}
+	if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_OpenControlChannelRsp{OpenControlChannelRsp: &pb.OpenControlChannelRsp{Payload: &pb.OpenControlChannelRsp_Ok_{Ok: &pb.OpenControlChannelRsp_Ok{ClientId: "client-1", Liveness: liveness}}}}}); err != nil {
+		return err
+	}
+	for sequence := uint64(1); sequence <= 4; sequence++ {
+		msg, err = readPbMessage(reader)
+		if err != nil {
+			return err
+		}
+		heartbeat := msg.GetHeartbeat()
+		if heartbeat == nil || heartbeat.Sequence != sequence || heartbeat.Acknowledgement != 0 {
+			return fmt.Errorf("unexpected negotiated heartbeat %d: %#v", sequence, heartbeat)
+		}
+		if sequence%2 == 0 {
+			if err := writePbMessage(writer, &pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: &pb.Heartbeat{Acknowledgement: sequence}}}); err != nil {
+				return err
+			}
+		}
+		heartbeatsSeen <- sequence
+	}
+	msg, err = readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	if msg.GetCloseControlChannelReq() == nil {
+		return errUnexpectedTestMessage("CloseControlChannelReq")
+	}
+	return writePbMessage(writer, &pb.Message{Payload: &pb.Message_CloseControlChannelRsp{CloseControlChannelRsp: &pb.CloseControlChannelRsp{}}})
+}
+
 func serveCreateTunnelResponse(conn net.Conn, rsp *pb.OpenTunnelRsp) error {
 	reader := bufio.NewReader(conn)
 	writer := bufio.NewWriter(conn)
@@ -2649,6 +3473,34 @@ func serveProxyConnection(conn net.Conn) error {
 		return err
 	}
 	return writer.Flush()
+}
+
+func serveProxyConnectionWithCoalescedPayload(conn net.Conn) error {
+	reader := bufio.NewReader(conn)
+	msg, err := readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	proxyReq := msg.GetProxyReq()
+	if proxyReq == nil || proxyReq.StreamId != "stream-1" {
+		return errUnexpectedTestMessage("ProxyReq for stream-1")
+	}
+	if err := writePbMessageWithPayload(conn, &pb.Message{Payload: &pb.Message_ProxyRsp{ProxyRsp: &pb.ProxyRsp{}}}, "world"); err != nil {
+		return err
+	}
+	return readExactString(reader, "hello")
+}
+
+func writePbMessageWithPayload(conn net.Conn, msg *pb.Message, payload string) error {
+	var coalesced bytes.Buffer
+	if err := writePbMessage(bufio.NewWriter(&coalesced), msg); err != nil {
+		return err
+	}
+	if _, err := coalesced.WriteString(payload); err != nil {
+		return err
+	}
+	_, err := io.Copy(conn, &coalesced)
+	return err
 }
 
 func serveStreamDial(conn net.Conn, wantTunnel, wantToken, wantPayload, reply string) error {

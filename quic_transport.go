@@ -637,27 +637,42 @@ func hexNibble(c byte) (byte, bool) {
 // recvCh after the datagramReadLoop strips the channel ID prefix and routes them
 // here.
 type quicDatagramChannel struct {
-	channelID     datagramChannelID
-	provider      DatagramProvider
-	laddr         net.Addr
-	raddr         net.Addr
-	recvCh        chan []byte
-	ctx           context.Context
-	cancel        context.CancelFunc
-	once          sync.Once
-	deadlineMu    sync.Mutex
-	closed        bool
-	onClose       func(*quicDatagramChannel)
-	onLocalClose  func(*quicDatagramChannel) error
-	closeErr      error
-	watchDone     chan struct{}
-	proxyRspDone  chan struct{}
-	proxyRspOnce  sync.Once
-	readDeadline  *packetDeadline
-	writeDeadline *packetDeadline
-	received      atomic.Uint64
-	dropped       atomic.Uint64
-	maximumQueued atomic.Uint64
+	channelID      datagramChannelID
+	provider       DatagramProvider
+	laddr          net.Addr
+	raddr          net.Addr
+	recvCh         chan []byte
+	ctx            context.Context
+	cancel         context.CancelFunc
+	once           sync.Once
+	deadlineMu     sync.Mutex
+	closed         bool
+	onClose        func(*quicDatagramChannel)
+	onLocalClose   func(*quicDatagramChannel) error
+	closeErr       error
+	watchDone      chan struct{}
+	proxyRspDone   chan struct{}
+	proxyRspOnce   sync.Once
+	registryBacked bool
+	deliveryState  atomic.Uint32
+	readDeadline   *packetDeadline
+	writeDeadline  *packetDeadline
+	received       atomic.Uint64
+	dropped        atomic.Uint64
+	maximumQueued  atomic.Uint64
+}
+
+const (
+	datagramDeliveryQueued uint32 = iota
+	datagramDeliveryAccepted
+)
+
+func (c *quicDatagramChannel) accept() bool {
+	return c != nil && c.deliveryState.CompareAndSwap(datagramDeliveryQueued, datagramDeliveryAccepted)
+}
+
+func (c *quicDatagramChannel) accepted() bool {
+	return c != nil && c.deliveryState.Load() == datagramDeliveryAccepted
 }
 
 func (c *quicDatagramChannel) enqueue(payload []byte) bool {
@@ -854,6 +869,15 @@ func (l *quicDatagramListener) Accept() (net.PacketConn, net.Addr, error) {
 		default:
 		}
 		if ch, ok := conn.(*quicDatagramChannel); ok {
+			if !ch.accept() {
+				ch.initiateClose()
+				return nil, nil, net.ErrClosed
+			}
+			select {
+			case <-ch.ctx.Done():
+				return nil, nil, net.ErrClosed
+			default:
+			}
 			return conn, ch.raddr, nil
 		}
 		return conn, conn.LocalAddr(), nil

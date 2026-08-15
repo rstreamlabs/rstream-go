@@ -14,7 +14,7 @@ extend google.protobuf.FieldOptions {
   string access = 51234;
 }
 
-option (protocol_version) = "1.4.4";
+option (protocol_version) = "1.4.5";
 
 package rstream.io_rstrm.protobuf;
 
@@ -142,6 +142,7 @@ message TunnelProperties {
 
 message OpenControlChannelReq {
   ClientDetails client_details = 1;
+  ControlChannelLiveness liveness = 2;
 }
 
 // The server responds to an 'OpenControlChannelReq' message with an
@@ -154,6 +155,7 @@ message OpenControlChannelRsp {
   message Ok {
     string client_id = 1;
     ServerDetails server_details = 2;
+    ControlChannelLiveness liveness = 3;
   }
   oneof payload {
     Ok ok = 1;
@@ -269,7 +271,15 @@ message DatagramChannelClose {
 
 // Sent by client and/or server to maintain the control channel active
 
-message Heartbeat { }
+message ControlChannelLiveness {
+  uint32 heartbeat_interval_ms = 1;
+  uint32 heartbeat_timeout_ms = 2;
+}
+
+message Heartbeat {
+  uint64 sequence = 1;
+  uint64 acknowledgement = 2;
+}
 
 // Allows the server to send unsolicited messages to the client
 message ServerMessage {

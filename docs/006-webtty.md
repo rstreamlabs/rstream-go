@@ -322,6 +322,29 @@ Do not reset macOS privacy permissions as a routine upgrade step. Restart and
 test first, then investigate TCC only when the protected resource returns an
 actual privacy denial.
 
+## Liveness, Reconnection, and Session Drain
+
+An rstream-backed WebTTY server retries automatically unless `--no-retry` is
+set. Heartbeats protect the control channel used to advertise the server and
+admit new sessions; they are not a lease on terminal payloads. Missing a few
+heartbeats below the negotiated grace changes nothing. If that grace expires,
+the old generation stops admitting immediately and a replacement generation
+reconnects with bounded retries.
+
+Terminal sessions already accepted by the old generation keep their original
+byte-stream or QUIC data path. They can finish normally while the replacement
+accepts new sessions. The old listener, tunnel, control channel, transport,
+goroutines, and child processes remain owned until the last session finishes;
+they are then released exactly once. An explicit tunnel close, server stop, or
+process cancellation is different: it performs bounded graceful shutdown and
+then closes every remaining session. Local WebTTY servers do not retry unless
+`--retry` is explicitly enabled.
+
+This separation avoids both failure modes: a short or control-only network
+incident must not kill a working shell, while a reconnect loop must not leak
+old sockets or processes. Operational checks should therefore distinguish an
+admission outage from a draining established session.
+
 ## Local Files
 
 WebTTY files live under the WebTTY subtree, separate from workspace-managed
