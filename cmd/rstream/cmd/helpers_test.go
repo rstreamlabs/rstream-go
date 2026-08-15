@@ -156,6 +156,40 @@ func TestNewTunnelPropertiesFromFlagsMapsDatagramGuaranteedDelivery(t *testing.T
 	}
 }
 
+func TestNewTunnelPropertiesFromFlagsRejectsPublishedRawDatagram(t *testing.T) {
+	command := tunnelFlagsCommand()
+	mustSetFlag(t, command, "datagram", "true")
+	mustSetFlag(t, command, "publish", "true")
+	_, err := newTunnelPropertiesFromFlags(command)
+	if err == nil || !strings.Contains(err.Error(), "requires --dtls, --quic, or --http --http-version h3") {
+		t.Fatalf("expected published datagram protocol error, got %v", err)
+	}
+}
+
+func TestNewTunnelPropertiesFromFlagsAllowsPublishedDatagramProtocols(t *testing.T) {
+	tests := []struct {
+		name  string
+		flags [][2]string
+	}{
+		{name: "DTLS", flags: [][2]string{{"dtls", "true"}}},
+		{name: "QUIC", flags: [][2]string{{"quic", "true"}}},
+		{name: "HTTP3", flags: [][2]string{{"http", "true"}, {"http-version", "h3"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			command := tunnelFlagsCommand()
+			mustSetFlag(t, command, "datagram", "true")
+			mustSetFlag(t, command, "publish", "true")
+			for _, flag := range tt.flags {
+				mustSetFlag(t, command, flag[0], flag[1])
+			}
+			if _, err := newTunnelPropertiesFromFlags(command); err != nil {
+				t.Fatalf("newTunnelPropertiesFromFlags() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestNewTunnelPropertiesFromFlagsRejectsDatagramGuaranteedDeliveryForBytestream(t *testing.T) {
 	command := tunnelFlagsCommand()
 	mustSetFlag(t, command, "bytestream", "true")

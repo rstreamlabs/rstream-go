@@ -221,6 +221,12 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 	if httpUseTLSPtr == nil && upstreamTLSPtr != nil && (protocol == nil || *protocol == rstream.ProtocolHTTP) {
 		httpUseTLSPtr = upstreamTLSPtr
 	}
+	if typePtr != nil && *typePtr == rstream.TunnelTypeDatagram && publishFinalPtr != nil && *publishFinalPtr {
+		publishedDatagramProtocol := protocol != nil && (*protocol == rstream.ProtocolDTLS || *protocol == rstream.ProtocolQUIC || (*protocol == rstream.ProtocolHTTP && httpVersionPtr != nil && *httpVersionPtr == rstream.HTTP3))
+		if !publishedDatagramProtocol {
+			return nil, fmt.Errorf("--datagram with --publish requires --dtls, --quic, or --http --http-version h3")
+		}
+	}
 	tokenAuthPtr := getBoolPtr(cmd, "token-auth")
 	rstreamAuthPtr := getBoolPtr(cmd, "rstream-auth")
 	challengeModePtr := getBoolPtr(cmd, "challenge-mode")

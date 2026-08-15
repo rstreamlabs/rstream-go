@@ -121,7 +121,7 @@ func mcpLocalTunnelExposeToolProperties() map[string]any {
 		"host":                         mcpStringSchema("Optional local host, defaults to localhost."),
 		"name":                         mcpStringSchema("Optional tunnel name."),
 		"publish":                      map[string]any{"type": "boolean", "description": "Publish the tunnel. Defaults to true. Set false for a private rstrm:// target."},
-		"protocol":                     mcpStringEnumSchema("Optional protocol: http, http/1.1, h2c, h3, tls, dtls, quic, tcp, bytestream, udp, or datagram. Defaults to http.", []string{"http", "http/1.1", "h2c", "h3", "tls", "dtls", "quic", "tcp", "bytestream", "udp", "datagram"}),
+		"protocol":                     mcpStringEnumSchema("Optional protocol: http, http/1.1, h2c, h3, tls, dtls, quic, tcp, bytestream, udp, or datagram. Raw udp/datagram tunnels require publish=false; use dtls, quic, or h3 for published datagrams. Defaults to http.", []string{"http", "http/1.1", "h2c", "h3", "tls", "dtls", "quic", "tcp", "bytestream", "udp", "datagram"}),
 		"tunnel_type":                  mcpStringEnumSchema("Optional raw tunnel type override. Use bytestream for TCP-like services or datagram for UDP-like services.", []string{"bytestream", "datagram"}),
 		"stable_domain":                mcpStringSchema("Optional stable published host. Requires publish=true."),
 		"tcp_port":                     map[string]any{"type": "number", "description": "Optional reserved public TCP port. Requires protocol=tcp and publish=true."},
@@ -414,6 +414,9 @@ func mcpLocalTunnelValidateTunnelProperties(props *rstream.TunnelProperties) err
 	}
 	if boolPtrValue(props.DatagramGuaranteedDelivery) && !mcpLocalTunnelUsesDatagram(props) {
 		return fmt.Errorf("datagram_guaranteed_delivery requires a datagram tunnel")
+	}
+	if props.Publish != nil && *props.Publish && props.Type != nil && *props.Type == rstream.TunnelTypeDatagram && props.Protocol == nil {
+		return fmt.Errorf("protocol=udp/datagram requires publish=false or protocol=dtls, quic, or h3")
 	}
 	return nil
 }

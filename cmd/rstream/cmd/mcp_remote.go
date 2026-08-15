@@ -259,6 +259,11 @@ func mcpRemoteExposeArgs(args map[string]json.RawMessage) (remoteExposeArgs, err
 	if strings.EqualFold(strings.TrimSpace(protocol), "tcp") && (stableDomain != "" || tokenAuth || rstreamAuth || mcpPath != "") {
 		return remoteExposeArgs{}, fmt.Errorf("protocol=tcp does not accept stable_domain, HTTP, or edge authentication options")
 	}
+	if publish {
+		if _, err := remoteExposeForwardProtocolArgs(protocol, true); err != nil {
+			return remoteExposeArgs{}, err
+		}
+	}
 	if !publish {
 		tokenAuth = false
 		rstreamAuth = false
@@ -376,6 +381,10 @@ func remoteExposeProtocolArgs(protocol string) ([]string, error) {
 
 func remoteExposeForwardProtocolArgs(protocol string, publish bool) ([]string, error) {
 	if publish {
+		switch strings.ToLower(strings.TrimSpace(protocol)) {
+		case "datagram", "udp":
+			return nil, fmt.Errorf("protocol=%s requires publish=false; use dtls, quic, or h3 for published datagrams", strings.ToLower(strings.TrimSpace(protocol)))
+		}
 		return remoteExposeProtocolArgs(protocol)
 	}
 	switch strings.ToLower(strings.TrimSpace(protocol)) {
