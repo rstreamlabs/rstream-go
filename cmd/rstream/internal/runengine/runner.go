@@ -11,12 +11,12 @@ import (
 	"math/rand/v2"
 	"net"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/netretry"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/sessiongroup"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/streamrelay"
 	"github.com/rstreamlabs/rstream-go/config"
 )
@@ -114,6 +114,8 @@ func (r *Runner) run(ctx context.Context, desired runmodel.DesiredTunnel) {
 	)
 	backoff := newBackoff(r.retryInitial, r.retryMax)
 	failures := &retryFailureLog{}
+	sessions := sessiongroup.New(ctx)
+	defer sessions.Close()
 	if desired.Context.Transport == nil {
 		transport, err := r.newTransport(desired.Context.TransportConfig)
 		if err != nil {
@@ -134,7 +136,7 @@ func (r *Runner) run(ctx context.Context, desired runmodel.DesiredTunnel) {
 			logger.Info("Tunnel stopped")
 			return
 		}
-		err := r.runOnceReady(ctx, desired, logger, func() {
+		err := r.runOnceReady(ctx, desired, logger, sessions, func() {
 			backoff.Reset()
 			failures.Recovered(logger)
 		})
@@ -205,10 +207,12 @@ func legacyResourceConflictMessage(message string) bool {
 }
 
 func (r *Runner) runOnce(ctx context.Context, desired runmodel.DesiredTunnel, logger *slog.Logger) error {
-	return r.runOnceReady(ctx, desired, logger, nil)
+	sessions := sessiongroup.New(ctx)
+	defer sessions.Close()
+	return r.runOnceReady(ctx, desired, logger, sessions, nil)
 }
 
-func (r *Runner) runOnceReady(ctx context.Context, desired runmodel.DesiredTunnel, logger *slog.Logger, ready func()) error {
+func (r *Runner) runOnceReady(ctx context.Context, desired runmodel.DesiredTunnel, logger *slog.Logger, sessions *sessiongroup.Group, ready func()) error {
 	opts := rstream.ClientOptions{
 		Engine: desired.Context.Engine,
 		Token:  desired.Context.Token,
@@ -248,10 +252,10 @@ func (r *Runner) runOnceReady(ctx context.Context, desired runmodel.DesiredTunne
 		ready()
 	}
 	if l, ok := tunnel.(net.Listener); ok {
-		return r.serveWithCtx(ctx, l.Close, func() error { return r.serveTCP(ctx, l, desired.Forward, logger) })
+		return r.serveWithCtx(ctx, l.Close, func() error { return r.serveTCP(ctx, l, desired.Forward, logger, sessions) })
 	}
 	if pl, ok := tunnel.(rstream.PacketListener); ok {
-		return r.serveWithCtx(ctx, pl.Close, func() error { return r.serveUDP(ctx, pl, desired.Forward, logger) })
+		return r.serveWithCtx(ctx, pl.Close, func() error { return r.serveUDP(ctx, pl, desired.Forward, logger, sessions) })
 	}
 	return fmt.Errorf("tunnel does not implement net.Listener or PacketListener")
 }
@@ -272,13 +276,7 @@ func (r *Runner) serveWithCtx(ctx context.Context, closeFn func() error, fn func
 	}
 }
 
-func (r *Runner) serveTCP(ctx context.Context, l net.Listener, target runmodel.ForwardTarget, logger *slog.Logger) error {
-	proxyCtx, cancel := context.WithCancel(ctx)
-	var proxies sync.WaitGroup
-	defer func() {
-		cancel()
-		proxies.Wait()
-	}()
+func (r *Runner) serveTCP(ctx context.Context, l net.Listener, target runmodel.ForwardTarget, logger *slog.Logger, sessions *sessiongroup.Group) error {
 	var acceptRetryDelay time.Duration
 	for {
 		inbound, err := l.Accept()
@@ -291,11 +289,9 @@ func (r *Runner) serveTCP(ctx context.Context, l net.Listener, target runmodel.F
 			return err
 		}
 		acceptRetryDelay = 0
-		proxies.Add(1)
-		go func() {
-			defer proxies.Done()
-			r.proxyTCP(proxyCtx, inbound, target, logger)
-		}()
+		if !sessions.Start(inbound, func(sessionCtx context.Context) { r.proxyTCP(sessionCtx, inbound, target, logger) }) {
+			return context.Canceled
+		}
 	}
 }
 
@@ -315,13 +311,7 @@ func (r *Runner) proxyTCP(ctx context.Context, inbound net.Conn, target runmodel
 	streamrelay.Bidirectional(inbound, outbound)
 }
 
-func (r *Runner) serveUDP(ctx context.Context, l rstream.PacketListener, target runmodel.ForwardTarget, logger *slog.Logger) error {
-	proxyCtx, cancel := context.WithCancel(ctx)
-	var proxies sync.WaitGroup
-	defer func() {
-		cancel()
-		proxies.Wait()
-	}()
+func (r *Runner) serveUDP(ctx context.Context, l rstream.PacketListener, target runmodel.ForwardTarget, logger *slog.Logger, sessions *sessiongroup.Group) error {
 	var acceptRetryDelay time.Duration
 	for {
 		inbound, raddr, err := l.Accept()
@@ -334,11 +324,9 @@ func (r *Runner) serveUDP(ctx context.Context, l rstream.PacketListener, target 
 			return err
 		}
 		acceptRetryDelay = 0
-		proxies.Add(1)
-		go func() {
-			defer proxies.Done()
-			r.proxyUDP(proxyCtx, inbound, raddr, target, logger)
-		}()
+		if !sessions.Start(inbound, func(sessionCtx context.Context) { r.proxyUDP(sessionCtx, inbound, raddr, target, logger) }) {
+			return context.Canceled
+		}
 	}
 }
 

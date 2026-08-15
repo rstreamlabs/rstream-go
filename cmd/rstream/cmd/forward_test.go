@@ -280,7 +280,7 @@ func TestForwardProxyTCPForwardsBytes(t *testing.T) {
 	}
 	ctx := &forwardCtx{Host: "127.0.0.1", Port: port, OutputFormat: forwardOutputFormatNone, Logger: slog.Default()}
 	sessions := newForwardSessionGroup(t.Context())
-	defer sessions.close()
+	defer sessions.Close()
 	ctx.proxyTCP(sessions, inbound)
 	if _, err := client.Write([]byte("ping")); err != nil {
 		t.Fatalf("client Write() error = %v", err)
@@ -322,7 +322,7 @@ func TestForwardProxyUDPForwardsPackets(t *testing.T) {
 	inbound.reads <- []byte("ping")
 	ctx := &forwardCtx{Host: "127.0.0.1", Port: port, OutputFormat: forwardOutputFormatNone, Logger: slog.Default()}
 	sessions := newForwardSessionGroup(t.Context())
-	defer sessions.close()
+	defer sessions.Close()
 	ctx.proxyUDP(sessions, inbound, forwardStubAddr("client"))
 	select {
 	case got := <-inbound.writes:
@@ -352,7 +352,7 @@ func TestForwardSessionGroupCloseJoinsActiveSessions(t *testing.T) {
 	closer := &forwardTestCloser{closed: make(chan struct{})}
 	started := make(chan struct{})
 	stopped := make(chan struct{})
-	if !sessions.start(closer, func(ctx context.Context) {
+	if !sessions.Start(closer, func(ctx context.Context) {
 		close(started)
 		<-ctx.Done()
 		<-closer.closed
@@ -361,14 +361,14 @@ func TestForwardSessionGroupCloseJoinsActiveSessions(t *testing.T) {
 		t.Fatal("start() rejected an active session group")
 	}
 	<-started
-	sessions.close()
+	sessions.Close()
 	select {
 	case <-stopped:
 	default:
 		t.Fatal("close() returned before the active session stopped")
 	}
 	late := &forwardTestCloser{closed: make(chan struct{})}
-	if sessions.start(late, func(context.Context) {}) {
+	if sessions.Start(late, func(context.Context) {}) {
 		t.Fatal("start() accepted a session after close")
 	}
 	select {

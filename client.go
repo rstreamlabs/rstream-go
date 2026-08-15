@@ -600,6 +600,7 @@ type proxyConnectionResponse struct {
 
 type controlChannelCleanup struct {
 	err              error
+	preserveStreams  bool
 	pendingTunnels   []*pendingOpenTunnelReq
 	tunnels          []*bytestreamTunnelImpl
 	datagramTunnels  []*quicDatagramListener
@@ -610,6 +611,102 @@ type controlChannelCleanup struct {
 	doneCh           chan error
 	closedCh         chan struct{}
 	lifecycleWG      *sync.WaitGroup
+}
+
+type drainingProxyTransport struct {
+	dialer    Dialer
+	mu        sync.Mutex
+	active    int
+	detached  bool
+	closed    bool
+	closeOnce sync.Once
+	closeErr  error
+}
+
+type drainingProxyConn struct {
+	net.Conn
+	release func()
+	once    sync.Once
+	err     error
+}
+
+func (t *drainingProxyTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (net.Conn, error) {
+	if t == nil || t.dialer == nil {
+		return nil, net.ErrClosed
+	}
+	t.mu.Lock()
+	if t.detached || t.closed {
+		t.mu.Unlock()
+		return nil, net.ErrClosed
+	}
+	t.active++
+	t.mu.Unlock()
+	conn, err := t.dialer.Dial(ctx, addr, tlsCfg)
+	if err != nil {
+		t.release()
+		return nil, err
+	}
+	t.mu.Lock()
+	detached := t.detached || t.closed
+	t.mu.Unlock()
+	if detached {
+		_ = conn.Close()
+		t.release()
+		return nil, net.ErrClosed
+	}
+	return &drainingProxyConn{Conn: conn, release: t.release}, nil
+}
+
+func (t *drainingProxyTransport) Detach() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	t.detached = true
+	closeNow := t.active == 0
+	t.mu.Unlock()
+	if closeNow {
+		t.closeUnderlying()
+	}
+}
+
+func (t *drainingProxyTransport) Close() error {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	t.closed = true
+	t.detached = true
+	t.mu.Unlock()
+	t.closeUnderlying()
+	return t.closeErr
+}
+
+func (t *drainingProxyTransport) release() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	if t.active > 0 {
+		t.active--
+	}
+	closeNow := t.detached && t.active == 0
+	t.mu.Unlock()
+	if closeNow {
+		t.closeUnderlying()
+	}
+}
+
+func (t *drainingProxyTransport) closeUnderlying() {
+	t.closeOnce.Do(func() { t.closeErr = closeAutoTransport(t.dialer) })
+}
+
+func (c *drainingProxyConn) Close() error {
+	c.once.Do(func() {
+		c.err = c.Conn.Close()
+		c.release()
+	})
+	return c.err
 }
 
 func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, error) {
@@ -1428,7 +1525,7 @@ func (c *controlChannelImpl) proxyTransportLocked(endpoint *string) Dialer {
 	if c.proxyTransports == nil {
 		c.proxyTransports = make(map[string]Dialer)
 	}
-	transport := cloneQUICTransport(quicTransport)
+	transport := &drainingProxyTransport{dialer: cloneQUICTransport(quicTransport)}
 	c.proxyTransports[key] = transport
 	return transport
 }
@@ -1470,18 +1567,19 @@ func (c *controlChannelImpl) handleDatagramProxyConnReq(req *pb.ProxyConnReq, tu
 	laddr := &Addr{IdOrName: tunnel.tunnelID}
 	raddr := &Addr{IdOrName: req.StreamId, SourceIP: NetIPFromPbValue(req.SourceIp)}
 	registry, _ := c.datagramProvider.(datagramChannelRegistry)
-	chCtx, chCancel := context.WithCancel(tunnel.ctx)
+	chCtx, chCancel := context.WithCancel(context.WithoutCancel(tunnel.ctx))
 	ch := &quicDatagramChannel{
-		channelID:     channelID,
-		provider:      c.datagramProvider,
-		laddr:         laddr,
-		raddr:         raddr,
-		recvCh:        make(chan []byte, datagramReceiveQueueSize),
-		ctx:           chCtx,
-		cancel:        chCancel,
-		readDeadline:  newPacketDeadline(),
-		writeDeadline: newPacketDeadline(),
-		proxyRspDone:  make(chan struct{}),
+		channelID:      channelID,
+		provider:       c.datagramProvider,
+		laddr:          laddr,
+		raddr:          raddr,
+		recvCh:         make(chan []byte, datagramReceiveQueueSize),
+		ctx:            chCtx,
+		cancel:         chCancel,
+		readDeadline:   newPacketDeadline(),
+		writeDeadline:  newPacketDeadline(),
+		proxyRspDone:   make(chan struct{}),
+		registryBacked: registry != nil,
 		onClose: func(ch *quicDatagramChannel) {
 			if registry != nil {
 				registry.unregisterDatagramChannel(channelID, ch)
@@ -1705,6 +1803,7 @@ func (c *controlChannelImpl) detachCleanupLocked(err error) *controlChannelClean
 	c.err = err
 	cleanup := &controlChannelCleanup{
 		err:             err,
+		preserveStreams: err != nil && !c.closing,
 		lifecycleCancel: c.lifecycleCancel,
 		conn:            c.conn,
 		doneCh:          c.doneCh,
@@ -1753,9 +1852,17 @@ func (c *controlChannelCleanup) run() {
 		_ = listener.Close()
 	}
 	for _, channel := range c.datagramChannels {
-		channel.initiateClose()
+		if !c.preserveStreams || !channel.registryBacked || !channel.accepted() {
+			channel.initiateClose()
+		}
 	}
 	for _, transport := range c.proxyTransports {
+		if c.preserveStreams {
+			if draining, ok := transport.(*drainingProxyTransport); ok {
+				draining.Detach()
+				continue
+			}
+		}
 		_ = closeAutoTransport(transport)
 	}
 	if c.conn != nil {

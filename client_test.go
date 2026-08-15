@@ -81,6 +81,141 @@ type closeTrackingDialer struct {
 	closeErr   error
 }
 
+type drainingProxyTestDialer struct {
+	closeCalls atomic.Int32
+	peers      chan net.Conn
+}
+
+type gatedDrainingProxyTestDialer struct {
+	started    chan struct{}
+	release    chan struct{}
+	peer       chan net.Conn
+	closeCalls atomic.Int32
+}
+
+func (d *gatedDrainingProxyTestDialer) Dial(context.Context, string, *tls.Config) (net.Conn, error) {
+	client, peer := net.Pipe()
+	d.peer <- peer
+	close(d.started)
+	<-d.release
+	return client, nil
+}
+
+func (d *gatedDrainingProxyTestDialer) Close() error {
+	d.closeCalls.Add(1)
+	return nil
+}
+
+func (d *drainingProxyTestDialer) Dial(context.Context, string, *tls.Config) (net.Conn, error) {
+	client, peer := net.Pipe()
+	d.peers <- peer
+	return client, nil
+}
+
+func (d *drainingProxyTestDialer) Close() error {
+	d.closeCalls.Add(1)
+	return nil
+}
+
+func TestDrainingProxyTransportDefersCloseUntilAcceptedStreamsFinish(t *testing.T) {
+	underlying := &drainingProxyTestDialer{peers: make(chan net.Conn, 1)}
+	transport := &drainingProxyTransport{dialer: underlying}
+	conn, err := transport.Dial(t.Context(), "ingress.example.com:443", &tls.Config{})
+	if err != nil {
+		t.Fatalf("Dial() error = %v", err)
+	}
+	peer := <-underlying.peers
+	defer peer.Close()
+	transport.Detach()
+	if got := underlying.closeCalls.Load(); got != 0 {
+		t.Fatalf("Detach() close calls with active stream = %d", got)
+	}
+	writeErr := make(chan error, 1)
+	go func() {
+		_, err := conn.Write([]byte("still-active"))
+		writeErr <- err
+	}()
+	payload := make([]byte, len("still-active"))
+	if _, err := io.ReadFull(peer, payload); err != nil {
+		t.Fatalf("read after Detach(): %v", err)
+	}
+	if err := <-writeErr; err != nil {
+		t.Fatalf("write after Detach(): %v", err)
+	}
+	if string(payload) != "still-active" {
+		t.Fatalf("payload after Detach() = %q", payload)
+	}
+	if _, err := transport.Dial(t.Context(), "ingress.example.com:443", &tls.Config{}); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("Dial() after Detach() error = %v, want net.ErrClosed", err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("accepted stream Close() error = %v", err)
+	}
+	if got := underlying.closeCalls.Load(); got != 1 {
+		t.Fatalf("underlying close calls after drain = %d, want 1", got)
+	}
+	for range 32 {
+		transport.Detach()
+		if err := transport.Close(); err != nil {
+			t.Fatalf("repeat Close() error = %v", err)
+		}
+	}
+	if got := underlying.closeCalls.Load(); got != 1 {
+		t.Fatalf("underlying repeat close calls = %d, want 1", got)
+	}
+}
+
+func TestDrainingProxyTransportHardCloseDoesNotWaitForStreams(t *testing.T) {
+	underlying := &drainingProxyTestDialer{peers: make(chan net.Conn, 1)}
+	transport := &drainingProxyTransport{dialer: underlying}
+	conn, err := transport.Dial(t.Context(), "ingress.example.com:443", &tls.Config{})
+	if err != nil {
+		t.Fatalf("Dial() error = %v", err)
+	}
+	defer conn.Close()
+	defer (<-underlying.peers).Close()
+	if err := transport.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if got := underlying.closeCalls.Load(); got != 1 {
+		t.Fatalf("hard close calls = %d, want 1", got)
+	}
+}
+
+func TestDrainingProxyTransportRejectsDialCompletingAfterDetach(t *testing.T) {
+	underlying := &gatedDrainingProxyTestDialer{started: make(chan struct{}), release: make(chan struct{}), peer: make(chan net.Conn, 1)}
+	transport := &drainingProxyTransport{dialer: underlying}
+	result := make(chan error, 1)
+	go func() {
+		conn, err := transport.Dial(t.Context(), "ingress.example.com:443", &tls.Config{})
+		if conn != nil {
+			_ = conn.Close()
+		}
+		result <- err
+	}()
+	<-underlying.started
+	peer := <-underlying.peer
+	defer peer.Close()
+	transport.Detach()
+	close(underlying.release)
+	select {
+	case err := <-result:
+		if !errors.Is(err, net.ErrClosed) {
+			t.Fatalf("Dial() after concurrent Detach() error = %v, want net.ErrClosed", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Dial() did not converge after concurrent Detach()")
+	}
+	if got := underlying.closeCalls.Load(); got != 1 {
+		t.Fatalf("underlying close calls = %d, want 1", got)
+	}
+	if err := peer.SetReadDeadline(time.Now().Add(time.Second)); err == nil {
+		if _, err := peer.Read(make([]byte, 1)); err == nil {
+			t.Fatal("rejected post-detach dial remained open")
+		}
+	}
+}
+
 func (d *closeTrackingDialer) Dial(context.Context, string, *tls.Config) (net.Conn, error) {
 	return nil, errors.New("unexpected dial")
 }
@@ -1574,6 +1709,97 @@ func TestTunnelCloseReleasesQueuedConnections(t *testing.T) {
 	}
 }
 
+func TestUnexpectedControlLossPreservesAcceptedProxyConnection(t *testing.T) {
+	lifecycleCtx, lifecycleCancel := context.WithCancel(t.Context())
+	channel := &controlChannelImpl{doneCh: make(chan error, 1), closedCh: make(chan struct{}), pendingTunnels: make(map[string]*pendingOpenTunnelReq), tunnels: make(map[string]*bytestreamTunnelImpl), proxyTransports: make(map[string]Dialer), datagramTunnels: make(map[string]*quicDatagramListener), datagramChannels: make(map[datagramChannelID]*quicDatagramChannel), lifecycleCtx: lifecycleCtx, lifecycleCancel: lifecycleCancel}
+	tunnelCtx, tunnelCancel := context.WithCancel(lifecycleCtx)
+	tunnel := &bytestreamTunnelImpl{ctrl: channel, tunnelID: "tunnel-1", closedCh: make(chan struct{}), conns: make(chan net.Conn, 1), ctx: tunnelCtx, cancel: tunnelCancel}
+	channel.tunnels[tunnel.tunnelID] = tunnel
+	queued, peer := net.Pipe()
+	tunnel.conns <- queued
+	accepted, err := tunnel.Accept()
+	if err != nil {
+		t.Fatalf("Accept() error = %v", err)
+	}
+	defer accepted.Close()
+	defer peer.Close()
+	want := errors.New("control transport lost")
+	channel.onError(want)
+	select {
+	case <-channel.closedCh:
+	case <-time.After(time.Second):
+		t.Fatal("control cleanup did not complete")
+	}
+	if !errors.Is(channel.Err(), want) {
+		t.Fatalf("control error = %v, want %v", channel.Err(), want)
+	}
+	writeErr := make(chan error, 1)
+	go func() {
+		_, err := accepted.Write([]byte("active-after-control-loss"))
+		writeErr <- err
+	}()
+	payload := make([]byte, len("active-after-control-loss"))
+	if _, err := io.ReadFull(peer, payload); err != nil {
+		t.Fatalf("read accepted stream after control loss: %v", err)
+	}
+	if err := <-writeErr; err != nil {
+		t.Fatalf("write accepted stream after control loss: %v", err)
+	}
+	if string(payload) != "active-after-control-loss" {
+		t.Fatalf("accepted stream payload = %q", payload)
+	}
+}
+
+func TestUnexpectedControlLossPreservesAcceptedRegisteredDatagramChannel(t *testing.T) {
+	provider := &recordingDatagramProvider{}
+	lifecycleCtx, lifecycleCancel := context.WithCancel(t.Context())
+	channel := &controlChannelImpl{doneCh: make(chan error, 1), closedCh: make(chan struct{}), pendingTunnels: make(map[string]*pendingOpenTunnelReq), tunnels: make(map[string]*bytestreamTunnelImpl), proxyTransports: make(map[string]Dialer), datagramTunnels: make(map[string]*quicDatagramListener), datagramChannels: make(map[datagramChannelID]*quicDatagramChannel), lifecycleCtx: lifecycleCtx, lifecycleCancel: lifecycleCancel}
+	channelID := mustDatagramChannelID(t, "01020304-0000-0000-0000-000000000000")
+	datagramCtx, datagramCancel := context.WithCancel(context.Background())
+	datagram := &quicDatagramChannel{channelID: channelID, provider: provider, laddr: &Addr{IdOrName: "tunnel-1"}, raddr: &Addr{IdOrName: "stream-1"}, recvCh: make(chan []byte, 1), ctx: datagramCtx, cancel: datagramCancel, readDeadline: newPacketDeadline(), writeDeadline: newPacketDeadline(), registryBacked: true}
+	if !datagram.accept() {
+		t.Fatal("datagram channel could not enter accepted state")
+	}
+	channel.datagramChannels[channelID] = datagram
+	channel.onError(errors.New("control transport lost"))
+	select {
+	case <-channel.closedCh:
+	case <-time.After(time.Second):
+		t.Fatal("control cleanup did not complete")
+	}
+	select {
+	case <-datagram.ctx.Done():
+		t.Fatal("unexpected control loss closed accepted datagram channel")
+	default:
+	}
+	if n, err := datagram.WriteTo([]byte("packet"), datagram.raddr); err != nil || n != len("packet") {
+		t.Fatalf("WriteTo() after control loss = %d, %v", n, err)
+	}
+	if err := datagram.Close(); err != nil {
+		t.Fatalf("datagram Close() error = %v", err)
+	}
+}
+
+func TestUnexpectedControlLossClosesUnacceptedDatagramChannel(t *testing.T) {
+	lifecycleCtx, lifecycleCancel := context.WithCancel(t.Context())
+	channel := &controlChannelImpl{doneCh: make(chan error, 1), closedCh: make(chan struct{}), pendingTunnels: make(map[string]*pendingOpenTunnelReq), tunnels: make(map[string]*bytestreamTunnelImpl), proxyTransports: make(map[string]Dialer), datagramTunnels: make(map[string]*quicDatagramListener), datagramChannels: make(map[datagramChannelID]*quicDatagramChannel), lifecycleCtx: lifecycleCtx, lifecycleCancel: lifecycleCancel}
+	channelID := mustDatagramChannelID(t, "01020304-0000-0000-0000-000000000000")
+	datagramCtx, datagramCancel := context.WithCancel(context.Background())
+	datagram := &quicDatagramChannel{channelID: channelID, provider: &recordingDatagramProvider{}, laddr: &Addr{IdOrName: "tunnel-1"}, raddr: &Addr{IdOrName: "stream-1"}, recvCh: make(chan []byte, 1), ctx: datagramCtx, cancel: datagramCancel, readDeadline: newPacketDeadline(), writeDeadline: newPacketDeadline(), registryBacked: true}
+	channel.datagramChannels[channelID] = datagram
+	channel.onError(errors.New("control transport lost"))
+	select {
+	case <-channel.closedCh:
+	case <-time.After(time.Second):
+		t.Fatal("control cleanup did not complete")
+	}
+	select {
+	case <-datagram.ctx.Done():
+	default:
+		t.Fatal("unaccepted datagram channel survived control loss")
+	}
+}
+
 func TestControlChannelGracefulCloseDoesNotInventTunnelError(t *testing.T) {
 	channel := &controlChannelImpl{
 		conn:             stubConn{},
@@ -2105,7 +2331,11 @@ func TestControlChannelProxyTransportUsesOneQUICTransportPerEndpoint(t *testing.
 	if first == selected {
 		t.Fatalf("redirected proxy reused the control-channel QUIC transport")
 	}
-	firstQUIC, ok := first.(*QUICTransport)
+	firstManaged, ok := first.(*drainingProxyTransport)
+	if !ok {
+		t.Fatalf("redirected proxy transport = %T, want draining transport", first)
+	}
+	firstQUIC, ok := firstManaged.dialer.(*QUICTransport)
 	if !ok || firstQUIC.ForceIPv4 == selected.ForceIPv4 || firstQUIC.ForceIPv4 == nil || !*firstQUIC.ForceIPv4 || firstQUIC.ProxyHTTPHeaders["X-Test"] != "value" || firstQUIC.TLSProxyConfig == tlsProxyConfig || firstQUIC.TLSProxyConfig.ServerName != tlsProxyConfig.ServerName {
 		t.Fatalf("redirected proxy transport = %#v, want cloned QUIC configuration", first)
 	}
@@ -2318,6 +2548,7 @@ func TestDatagramProxyChannelUsesTunnelLifecycle(t *testing.T) {
 	ctrl := &controlChannelImpl{
 		datagramProvider: &recordingDatagramProvider{},
 		lifecycleCtx:     ctrlCtx,
+		tunnels:          make(map[string]*bytestreamTunnelImpl),
 		datagramChannels: make(map[datagramChannelID]*quicDatagramChannel),
 		datagramTunnels: map[string]*quicDatagramListener{
 			"tun-dgram": {
@@ -2329,7 +2560,8 @@ func TestDatagramProxyChannelUsesTunnelLifecycle(t *testing.T) {
 		},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	tunnel := &bytestreamTunnelImpl{tunnelID: "tun-dgram", ctx: tunnelCtx, cancel: tunnelCancel}
+	tunnel := &bytestreamTunnelImpl{ctrl: ctrl, tunnelID: "tun-dgram", closedCh: make(chan struct{}), conns: make(chan net.Conn, 1), ctx: tunnelCtx, cancel: tunnelCancel}
+	ctrl.tunnels[tunnel.tunnelID] = tunnel
 	if _, ok := ctrl.handleDatagramProxyConnReq(&pb.ProxyConnReq{StreamId: "010203040000000000000001"}, tunnel); !ok {
 		t.Fatal("datagram proxy request was rejected")
 	}
@@ -2338,7 +2570,11 @@ func TestDatagramProxyChannelUsesTunnelLifecycle(t *testing.T) {
 	if channel == nil {
 		t.Fatal("datagram channel was not registered")
 	}
-	tunnelCancel()
+	cleanup := ctrl.handleCloseTunnelRsp(&pb.CloseTunnelRsp{TunnelId: tunnel.tunnelID})
+	if cleanup == nil {
+		t.Fatal("explicit tunnel close did not return cleanup")
+	}
+	cleanup()
 	select {
 	case <-channel.ctx.Done():
 	case <-time.After(time.Second):

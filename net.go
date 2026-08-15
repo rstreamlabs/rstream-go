@@ -60,19 +60,24 @@ type packetConnWrapper struct {
 }
 
 type packetListenerWrapper struct {
-	mu            sync.Mutex
-	closed        bool
-	closeErr      error
-	shutdownErr   error
-	shutdownOnce  sync.Once
-	shutdownDone  chan struct{}
-	readers       sync.WaitGroup
-	inner         PacketListener
-	conns         map[string]*packetListenerConn
-	pkts          chan packet
-	done          chan struct{}
-	readDeadline  *packetDeadline
-	writeDeadline *packetDeadline
+	mu               sync.Mutex
+	closed           bool
+	admissionStopped bool
+	closeErr         error
+	shutdownErr      error
+	shutdownOnce     sync.Once
+	innerClose       sync.Once
+	doneOnce         sync.Once
+	admissionOnce    sync.Once
+	admissionDone    chan struct{}
+	shutdownDone     chan struct{}
+	readers          sync.WaitGroup
+	inner            PacketListener
+	conns            map[string]*packetListenerConn
+	pkts             chan packet
+	done             chan struct{}
+	readDeadline     *packetDeadline
+	writeDeadline    *packetDeadline
 }
 
 type packetListenerConn struct {
@@ -234,12 +239,17 @@ func sameAddr(a, b net.Addr) bool {
 	return a.Network() == b.Network() && a.String() == b.String()
 }
 
+// PacketConnFromPacketListener adapts an admitting packet listener into one
+// packet socket. When listener admission ends, already accepted packet paths
+// remain usable until they end naturally or the returned PacketConn is closed.
+// This keeps control-plane liveness independent from established data paths.
 func PacketConnFromPacketListener(l PacketListener) net.PacketConn {
 	pl := &packetListenerWrapper{
 		inner:         l,
 		conns:         make(map[string]*packetListenerConn),
 		pkts:          make(chan packet, 100),
 		done:          make(chan struct{}),
+		admissionDone: make(chan struct{}),
 		shutdownDone:  make(chan struct{}),
 		readDeadline:  newPacketDeadline(),
 		writeDeadline: newPacketDeadline(),
@@ -251,12 +261,13 @@ func PacketConnFromPacketListener(l PacketListener) net.PacketConn {
 func (pl *packetListenerWrapper) accept() {
 	defer func() {
 		pl.readers.Wait()
+		pl.closeInner()
 		close(pl.shutdownDone)
 	}()
 	for {
 		conn, raddr, err := pl.inner.Accept()
 		if err != nil {
-			pl.initiateShutdown(err)
+			pl.stopAdmission(err)
 			return
 		}
 		pl.mu.Lock()
@@ -298,6 +309,10 @@ func (pl *packetListenerWrapper) read(entry *packetListenerConn, key string) {
 		}
 		if pl.conns[key] == entry {
 			delete(pl.conns, key)
+		}
+		if pl.admissionStopped && len(pl.conns) == 0 {
+			pl.closed = true
+			pl.doneOnce.Do(func() { close(pl.done) })
 		}
 	}()
 	buf := make([]byte, 65535)
@@ -387,19 +402,44 @@ func (pl *packetListenerWrapper) initiateShutdown(err error) {
 			err = net.ErrClosed
 		}
 		pl.closeErr = err
+		pl.admissionOnce.Do(func() { close(pl.admissionDone) })
 		conns := pl.conns
 		pl.conns = nil
 		for _, entry := range conns {
 			entry.active.Store(false)
 		}
-		close(pl.done)
+		pl.doneOnce.Do(func() { close(pl.done) })
 		pl.mu.Unlock()
-		shutdownErr := pl.inner.Close()
+		pl.closeInner()
 		for _, entry := range conns {
 			_ = entry.conn.Close()
 		}
+	})
+}
+
+func (pl *packetListenerWrapper) stopAdmission(err error) {
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
+	if pl.closed {
+		return
+	}
+	if err == nil {
+		err = net.ErrClosed
+	}
+	pl.admissionStopped = true
+	pl.closeErr = err
+	pl.admissionOnce.Do(func() { close(pl.admissionDone) })
+	if len(pl.conns) == 0 {
+		pl.closed = true
+		pl.doneOnce.Do(func() { close(pl.done) })
+	}
+}
+
+func (pl *packetListenerWrapper) closeInner() {
+	pl.innerClose.Do(func() {
+		err := pl.inner.Close()
 		pl.mu.Lock()
-		pl.shutdownErr = shutdownErr
+		pl.shutdownErr = err
 		pl.mu.Unlock()
 	})
 }
