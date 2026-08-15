@@ -153,7 +153,7 @@ func init() {
 	forwardCmd.Flags().StringP("output", "o", "", "output mode (text, json, xterm, none)")
 	forwardCmd.Flags().String("name", "", "tunnel name")
 	forwardCmd.Flags().Bool("bytestream", false, "create a bytestream tunnel")
-	forwardCmd.Flags().Bool("datagram", false, "create a datagram tunnel")
+	forwardCmd.Flags().Bool("datagram", false, "create a raw private datagram tunnel")
 	forwardCmd.MarkFlagsMutuallyExclusive("bytestream", "datagram")
 	forwardCmd.Flags().Bool("publish", false, "publish the tunnel")
 	forwardCmd.Flags().Bool("no-publish", false, "do not publish the tunnel")

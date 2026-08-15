@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -97,6 +98,20 @@ func TestMCPLocalTunnelForwardArgsUsesPrivateRawTunnel(t *testing.T) {
 	}
 }
 
+func TestMCPLocalTunnelArgsAllowsPublishedDatagramProtocols(t *testing.T) {
+	for _, protocol := range []string{"dtls", "quic", "h3"} {
+		t.Run(protocol, func(t *testing.T) {
+			_, _, props, err := mcpLocalTunnelArgs(map[string]json.RawMessage{"port": json.RawMessage(`"3000"`), "protocol": json.RawMessage(strconv.Quote(protocol))}, "project.cluster.example.com:443")
+			if err != nil {
+				t.Fatalf("mcpLocalTunnelArgs returned error: %v", err)
+			}
+			if props.Publish == nil || !*props.Publish {
+				t.Fatalf("published protocol properties = %#v", props)
+			}
+		})
+	}
+}
+
 func TestMCPLocalTunnelArgsRejectsInvalidPort(t *testing.T) {
 	_, _, _, err := mcpLocalTunnelArgs(map[string]json.RawMessage{"port": json.RawMessage(`"not-a-port"`)}, "project.cluster.example.com:443")
 	if err == nil || !strings.Contains(err.Error(), "port must be numeric") {
@@ -119,6 +134,7 @@ func TestMCPLocalTunnelArgsRejectsIncompatibleOptions(t *testing.T) {
 		{name: "tcp port on http", args: map[string]json.RawMessage{"port": json.RawMessage(`"3000"`), "tcp_port": json.RawMessage(`10042`)}, want: "tcp_port requires protocol=tcp"},
 		{name: "invalid tcp port", args: map[string]json.RawMessage{"port": json.RawMessage(`"3000"`), "protocol": json.RawMessage(`"tcp"`), "tcp_port": json.RawMessage(`65536`)}, want: "tcp_port must be between 1 and 65535"},
 		{name: "private published tcp", args: map[string]json.RawMessage{"port": json.RawMessage(`"3000"`), "protocol": json.RawMessage(`"tcp"`), "publish": json.RawMessage(`false`)}, want: "protocol=tcp requires publish=true"},
+		{name: "published raw datagram", args: map[string]json.RawMessage{"port": json.RawMessage(`"3000"`), "protocol": json.RawMessage(`"udp"`)}, want: "protocol=udp/datagram requires publish=false or protocol=dtls, quic, or h3"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

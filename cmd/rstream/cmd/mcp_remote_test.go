@@ -58,6 +58,12 @@ func TestMCPRemoteExposeSupportsPrivateDatagram(t *testing.T) {
 	if _, err := remoteExposeProtocolArgs("smtp"); err == nil {
 		t.Fatalf("expected invalid protocol error")
 	}
+	if _, err := remoteExposeForwardProtocolArgs("udp", true); err == nil || !strings.Contains(err.Error(), "requires publish=false") {
+		t.Fatalf("expected published raw datagram error, got %v", err)
+	}
+	if _, err := mcpRemoteExposeArgs(map[string]json.RawMessage{"webtty_url": json.RawMessage(`"rstrm://robot"`), "port": json.RawMessage(`"9999"`), "protocol": json.RawMessage(`"udp"`)}); err == nil || !strings.Contains(err.Error(), "requires publish=false") {
+		t.Fatalf("expected remote expose validation error, got %v", err)
+	}
 }
 
 func TestMCPRemoteExposeSupportsReservedPublishedTCP(t *testing.T) {
