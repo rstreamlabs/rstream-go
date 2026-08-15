@@ -5,7 +5,6 @@
 
 ### Bug Fixes
 
-* **cli:** reject unsupported raw datagram publication ([6e0b2ae](https://github.com/rstreamlabs/rstream-go/commit/6e0b2ae8ff32db293a7f9cfe87f0ca7fce82b845))
 * **cli:** reject unsupported raw datagram publication ([39b3f47](https://github.com/rstreamlabs/rstream-go/commit/39b3f47b4f1f382701e41d6b11a89844b0b399fa))
 
 ## [1.28.0](https://github.com/rstreamlabs/rstream-go/compare/v1.27.4...v1.28.0) (2026-08-15)
