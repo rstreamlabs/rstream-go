@@ -20,6 +20,12 @@ If a change affects examples, documentation, or generated output, update the cor
 
 Public pull requests do not automatically run the repository release/build workflows. Maintainers run CI after reviewing the change; include the local commands you ran in the PR description.
 
+## Stable releases
+
+A release tag builds every supported target but does not publish packages. Publish the reviewed tag by dispatching `cross-compile, package, and deploy` on that tag with `publish_stable` enabled.
+
+Protocol releases are ordered. The Engine accepts clients on the same protocol minor version at its own patch level or below, and deliberately rejects a newer client patch. When `pb/rstream.proto` advances the protocol version, release and deploy the matching Engine to staging and then production first. Prove that a client built from the SDK tag opens a control channel against both environments before enabling stable publication. A green build or a published Engine image is not evidence that production has been promoted.
+
 ## Style
 
 Keep changes small, explicit, and idiomatic.
