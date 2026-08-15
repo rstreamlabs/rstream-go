@@ -23,7 +23,7 @@ import (
 func TestRealEnginePrivateBytestreamLivenessAndConcurrency(t *testing.T) {
 	engine := requiredRealEngineEnvironment(t, "RSTREAM_GO_E2E_ENGINE")
 	token := requiredRealEngineEnvironment(t, "RSTREAM_GO_E2E_TOKEN")
-	client := newRealEngineClient(t, engine, token, false)
+	client := newRealEngineControlClient(t, engine, token, false)
 	t.Cleanup(func() { assertRealEngineClose(t, "client", client.Close()) })
 	ctx, cancel := context.WithTimeout(t.Context(), 45*time.Second)
 	defer cancel()
@@ -54,8 +54,9 @@ func TestRealEnginePrivateBytestreamLivenessAndConcurrency(t *testing.T) {
 		for _, zeroRTT := range []bool{false, true} {
 			dialClient := newRealEngineClient(t, engine, token, zeroRTT)
 			if err := realEngineRoundTrip(ctx, dialClient, tunnel, target, []byte(fmt.Sprintf("%s:%t", target, zeroRTT))); err != nil {
+				transport := realEngineTransportLabel(dialClient)
 				_ = dialClient.Close()
-				t.Fatalf("round trip target=%q zero_rtt=%t: %v", target, zeroRTT, err)
+				t.Fatalf("round trip transport=%s target=%q zero_rtt=%t: %v", transport, target, zeroRTT, err)
 			}
 			assertRealEngineClose(t, "dial client", dialClient.Close())
 		}
@@ -96,7 +97,14 @@ func TestRealEngineControlChannelSurvivesTemporaryNetworkPartition(t *testing.T)
 	engine := requiredRealEngineEnvironment(t, "RSTREAM_GO_E2E_ENGINE")
 	token := requiredRealEngineEnvironment(t, "RSTREAM_GO_E2E_TOKEN")
 	proxy := newPausingTCPProxy(t, engine)
-	client := newRealEngineClient(t, proxy.Address(), token, false)
+	serverName, _, err := net.SplitHostPort(engine)
+	if err != nil {
+		t.Fatalf("split real Engine address: %v", err)
+	}
+	client, err := newRealEngineClientForGoroutineWithServerName(proxy.Address(), token, false, serverName)
+	if err != nil {
+		t.Fatalf("create proxied real Engine client: %v", err)
+	}
 	t.Cleanup(func() { assertRealEngineClose(t, "client", client.Close()) })
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
@@ -123,9 +131,27 @@ func TestRealEngineControlChannelSurvivesTemporaryNetworkPartition(t *testing.T)
 	t.Cleanup(func() { assertRealEngineClose(t, "accepted connection", acceptedConnection.Close()) })
 	assertRealEngineStreamExchange(t, dialConnection, acceptedConnection, []byte("before-temporary-partition"))
 	proxy.Pause()
-	time.Sleep(4200 * time.Millisecond)
-	assertRealEngineStreamExchange(t, dialConnection, acceptedConnection, []byte("during-temporary-partition"))
+	defer proxy.Resume()
+	exchangeDone := make(chan error, 1)
+	go func() {
+		exchangeDone <- realEngineStreamExchange(dialConnection, acceptedConnection, []byte("during-temporary-partition"))
+	}()
+	select {
+	case exchangeErr := <-exchangeDone:
+		t.Fatalf("established stream completed during the paused data path: %v", exchangeErr)
+	case channelErr := <-control.Done():
+		t.Fatalf("control channel closed during a recoverable network partition: %v", channelErr)
+	case <-time.After(4200 * time.Millisecond):
+	}
 	proxy.Resume()
+	select {
+	case exchangeErr := <-exchangeDone:
+		if exchangeErr != nil {
+			t.Fatalf("established stream did not recover after the network partition: %v", exchangeErr)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("established stream did not resume after the network partition")
+	}
 	if err := realEngineRoundTrip(ctx, dialClient, tunnel, name, []byte("after-temporary-partition")); err != nil {
 		t.Fatalf("round trip after temporary partition error = %v", err)
 	}
@@ -165,34 +191,41 @@ func establishRealEngineStream(t *testing.T, ctx context.Context, client *Client
 
 func assertRealEngineStreamExchange(t *testing.T, dialConnection, acceptedConnection net.Conn, payload []byte) {
 	t.Helper()
+	if err := realEngineStreamExchange(dialConnection, acceptedConnection, payload); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func realEngineStreamExchange(dialConnection, acceptedConnection net.Conn, payload []byte) error {
 	deadline := time.Now().Add(10 * time.Second)
 	if err := dialConnection.SetDeadline(deadline); err != nil {
-		t.Fatalf("set dial connection deadline: %v", err)
+		return fmt.Errorf("set dial connection deadline: %w", err)
 	}
 	if err := acceptedConnection.SetDeadline(deadline); err != nil {
-		t.Fatalf("set accepted connection deadline: %v", err)
+		return fmt.Errorf("set accepted connection deadline: %w", err)
 	}
 	if _, err := dialConnection.Write(payload); err != nil {
-		t.Fatalf("write established stream request: %v", err)
+		return fmt.Errorf("write established stream request: %w", err)
 	}
 	request := make([]byte, len(payload))
 	if _, err := io.ReadFull(acceptedConnection, request); err != nil {
-		t.Fatalf("read established stream request: %v", err)
+		return fmt.Errorf("read established stream request: %w", err)
 	}
 	if string(request) != string(payload) {
-		t.Fatalf("established stream request = %q, want %q", request, payload)
+		return fmt.Errorf("established stream request = %q, want %q", request, payload)
 	}
 	response := []byte(strings.ToUpper(string(request)))
 	if _, err := acceptedConnection.Write(response); err != nil {
-		t.Fatalf("write established stream response: %v", err)
+		return fmt.Errorf("write established stream response: %w", err)
 	}
 	got := make([]byte, len(response))
 	if _, err := io.ReadFull(dialConnection, got); err != nil {
-		t.Fatalf("read established stream response: %v", err)
+		return fmt.Errorf("read established stream response: %w", err)
 	}
 	if string(got) != string(response) {
-		t.Fatalf("established stream response = %q, want %q", got, response)
+		return fmt.Errorf("established stream response = %q, want %q", got, response)
 	}
+	return nil
 }
 
 func requiredRealEngineEnvironment(t *testing.T, name string) string {
@@ -213,13 +246,71 @@ func newRealEngineClient(t *testing.T, engine, token string, zeroRTT bool) *Clie
 	return client
 }
 
-func newRealEngineClientForGoroutine(engine, token string, zeroRTT bool) (*Client, error) {
-	var tlsConfig *tls.Config
-	if os.Getenv("RSTREAM_GO_E2E_TLS_INSECURE") == "1" {
-		// #nosec G402 -- explicit opt-in for locally generated integration certificates.
-		tlsConfig = &tls.Config{InsecureSkipVerify: true}
+func newRealEngineControlClient(t *testing.T, engine, token string, zeroRTT bool) *Client {
+	t.Helper()
+	value := os.Getenv("RSTREAM_GO_E2E_CONTROL_TRANSPORT")
+	if strings.TrimSpace(value) == "" {
+		value = os.Getenv("RSTREAM_GO_E2E_TUNNEL_TRANSPORT")
 	}
-	return NewClient(ClientOptions{Engine: engine, Token: token, TLSClientConfig: tlsConfig, ZeroRTT: &zeroRTT})
+	transport, err := realEngineIntegrationTransport(value)
+	if err != nil {
+		t.Fatalf("create control transport: %v", err)
+	}
+	client, err := newRealEngineClientForGoroutineWithOptions(engine, token, zeroRTT, "", transport)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	return client
+}
+
+func newRealEngineClientForGoroutine(engine, token string, zeroRTT bool) (*Client, error) {
+	transport, err := realEngineIntegrationTransport(os.Getenv("RSTREAM_GO_E2E_TUNNEL_TRANSPORT"))
+	if err != nil {
+		return nil, err
+	}
+	return newRealEngineClientForGoroutineWithOptions(engine, token, zeroRTT, "", transport)
+}
+
+func newRealEngineClientForGoroutineWithServerName(engine, token string, zeroRTT bool, serverName string) (*Client, error) {
+	return newRealEngineClientForGoroutineWithOptions(engine, token, zeroRTT, serverName, &Transport{})
+}
+
+func newRealEngineClientForGoroutineWithOptions(engine, token string, zeroRTT bool, serverName string, transport Dialer) (*Client, error) {
+	var tlsConfig *tls.Config
+	if serverName != "" || os.Getenv("RSTREAM_GO_E2E_TLS_INSECURE") == "1" {
+		// #nosec G402 -- explicit opt-in for locally generated integration certificates.
+		tlsConfig = &tls.Config{ServerName: serverName, InsecureSkipVerify: os.Getenv("RSTREAM_GO_E2E_TLS_INSECURE") == "1"}
+	}
+	return NewClient(ClientOptions{Engine: engine, Token: token, Transport: transport, TLSClientConfig: tlsConfig, ZeroRTT: &zeroRTT})
+}
+
+func realEngineIntegrationTransport(value string) (Dialer, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "auto":
+		return nil, nil
+	case "tls":
+		return &Transport{}, nil
+	case "quic":
+		return &QUICTransport{}, nil
+	default:
+		return nil, fmt.Errorf("unsupported real-Engine integration transport %q", value)
+	}
+}
+
+func realEngineTransportLabel(client *Client) string {
+	if client == nil {
+		return "nil"
+	}
+	switch transport := client.Transport.(type) {
+	case *AutoTransport:
+		return string(transport.SelectedMode())
+	case *Transport:
+		return string(TunnelTransportModeTLS)
+	case *QUICTransport:
+		return string(TunnelTransportModeQUIC)
+	default:
+		return fmt.Sprintf("%T", client.Transport)
+	}
 }
 
 func realEngineRoundTrip(ctx context.Context, client *Client, tunnel BytestreamTunnel, target string, payload []byte) error {
@@ -248,18 +339,18 @@ func realEngineRoundTrip(ctx context.Context, client *Client, tunnel BytestreamT
 	}()
 	conn, err := client.Dial(ctx, Addr{IdOrName: target})
 	if err != nil {
-		return fmt.Errorf("dial: %w", err)
+		return realEngineRoundTripFailure(ctx, fmt.Errorf("dial: %w", err), serverResult)
 	}
 	defer conn.Close()
 	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
-		return fmt.Errorf("set dial connection deadline: %w", err)
+		return realEngineRoundTripFailure(ctx, fmt.Errorf("set dial connection deadline: %w", err), serverResult)
 	}
 	if _, err := conn.Write(payload); err != nil {
-		return fmt.Errorf("write: %w", err)
+		return realEngineRoundTripFailure(ctx, fmt.Errorf("write: %w", err), serverResult)
 	}
 	response := make([]byte, len(payload))
 	if _, err := io.ReadFull(conn, response); err != nil {
-		return fmt.Errorf("read: %w", err)
+		return realEngineRoundTripFailure(ctx, fmt.Errorf("read: %w", err), serverResult)
 	}
 	if want := strings.ToUpper(string(payload)); string(response) != want {
 		return fmt.Errorf("response = %q, want %q", response, want)
@@ -269,6 +360,22 @@ func realEngineRoundTrip(ctx context.Context, client *Client, tunnel BytestreamT
 		return err
 	case <-ctx.Done():
 		return context.Cause(ctx)
+	}
+}
+
+func realEngineRoundTripFailure(ctx context.Context, clientErr error, serverResult <-chan error) error {
+	timer := time.NewTimer(250 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case serverErr := <-serverResult:
+		if serverErr == nil {
+			return fmt.Errorf("%w; accepted side completed its response write", clientErr)
+		}
+		return errors.Join(clientErr, fmt.Errorf("accepted side: %w", serverErr))
+	case <-ctx.Done():
+		return errors.Join(clientErr, context.Cause(ctx))
+	case <-timer.C:
+		return fmt.Errorf("%w; accepted side remained blocked", clientErr)
 	}
 }
 

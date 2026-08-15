@@ -406,6 +406,16 @@ go test -race -tags integration \
 
 `RSTREAM_GO_E2E_TLS_INSECURE=1` is only for a local Engine using a generated certificate. It disables certificate verification but does not change TLS SNI routing: use the configured Engine hostname, such as `localhost`, rather than its numeric loopback address.
 
+Set `RSTREAM_GO_E2E_TUNNEL_TRANSPORT=tls` or `quic` to qualify one transport
+explicitly; the default is `auto`. The partition proxy always uses TLS and
+retains the original Engine hostname for certificate verification and SNI, so
+the same test can target a local or remote Engine without weakening TLS.
+
+Set `RSTREAM_GO_E2E_CONTROL_TRANSPORT` to force the transport used by the
+tunnel-owning control client independently. When unset, it follows
+`RSTREAM_GO_E2E_TUNNEL_TRANSPORT`; setting both variables enables a directional
+TLS/QUIC matrix that localizes multiplexing and relay failures.
+
 ## Structure
 
 ```
