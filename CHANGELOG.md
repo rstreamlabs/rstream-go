@@ -5,7 +5,6 @@
 
 ### Features
 
-* **runtime:** negotiate bounded control liveness ([63b8732](https://github.com/rstreamlabs/rstream-go/commit/63b873278e8aaa3314dd4e4c949ef387b9ccb048))
 * **runtime:** negotiate bounded control liveness ([42745b2](https://github.com/rstreamlabs/rstream-go/commit/42745b2dc6cb236d9b1a1b2c2c93bd60d08b4358))
 
 
