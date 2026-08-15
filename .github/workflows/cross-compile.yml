@@ -7,10 +7,17 @@ on:
     tags:
       - "*"
   workflow_dispatch:
+    inputs:
+      publish_stable:
+        description: Publish packages after the matching Engine protocol is live in production
+        required: true
+        type: boolean
+        default: false
 env:
   CHANNEL: "${{ github.ref_type == 'tag' && 'stable' || 'dev' }}"
   NPM_PACKAGE_NAME: "rstream-cli"
   PACKAGE_NAME: "rstream"
+  PUBLISH_STABLE: "${{ github.event_name == 'workflow_dispatch' && github.ref_type == 'tag' && inputs.publish_stable && 'true' || 'false' }}"
   RSTREAM_CROSS_BUILD_JOBS: "2"
   RSTREAM_URL: "${{ github.ref_type == 'tag' && 'https://rstream.io' || 'https://dev.rstream.io' }}"
   VERSION: "${{ github.ref_name }}"
@@ -73,7 +80,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
   build:
-    name: ${{ github.ref_type == 'tag' && 'build non-macOS targets, sign, and publish' || 'build development targets' }}
+    name: ${{ github.event_name == 'workflow_dispatch' && github.ref_type == 'tag' && inputs.publish_stable && 'build, sign, and publish stable release' || github.ref_type == 'tag' && 'build stable release candidates' || 'build development targets' }}
     needs: build-macos
     if: ${{ always() && github.actor == vars.CI_ALLOWED_ACTOR && (github.ref_type == 'tag' || github.ref_name == 'main') && (github.ref_type != 'tag' || needs.build-macos.result == 'success') }}
     runs-on: ubuntu-latest
@@ -87,6 +94,15 @@ jobs:
             exit 1
           fi
           echo "VERSION=${VERSION#v}" >> "$GITHUB_ENV"
+      - name: Validate stable publication gate
+        if: ${{ inputs.publish_stable }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then
+            echo "stable publication must be dispatched on the reviewed release tag" >&2
+            exit 1
+          fi
       - name: Install dependencies
         shell: bash
         run: |
@@ -214,16 +230,16 @@ jobs:
           fi
           make -j "$(getconf _NPROCESSORS_ONLN)" "${PACKAGE_NAME}-macos-rcodesign"
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ env.PUBLISH_STABLE == 'true' }}
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ env.PUBLISH_STABLE == 'true' }}
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ env.PUBLISH_STABLE == 'true' }}
         with:
           username: rstream
           password: ${{ secrets.DOCKERHUB_TOKEN }}
       - name: Package and deploy binaries
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ env.PUBLISH_STABLE == 'true' }}
         shell: bash
         env:
           APTLY_DIGEST: ${{ secrets.APTLY_DIGEST }}
@@ -235,19 +251,19 @@ jobs:
           set -euo pipefail
           make -j "$(getconf _NPROCESSORS_ONLN)" "${PACKAGE_NAME}-deploy-pkg-cross" "${PACKAGE_NAME}-deploy-deb" "${PACKAGE_NAME}-deploy-nupkg" "${PACKAGE_NAME}-docker"
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ env.PUBLISH_STABLE == 'true' }}
         with:
           repository: rstreamlabs/homebrew
           token: ${{ secrets.GIT_TOKEN }}
           path: homebrew
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ env.PUBLISH_STABLE == 'true' }}
         with:
           repository: rstreamlabs/winget
           token: ${{ secrets.GIT_TOKEN }}
           path: winget
       - name: Update homebrew cask file
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ env.PUBLISH_STABLE == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -275,7 +291,7 @@ jobs:
             git -C homebrew push
           fi
       - name: Update winget manifests
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ env.PUBLISH_STABLE == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -296,19 +312,19 @@ jobs:
             git -C winget push
           fi
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ env.PUBLISH_STABLE == 'true' }}
         with:
           repository: rstreamlabs/npm
           token: ${{ secrets.GIT_TOKEN }}
           path: npm
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ env.PUBLISH_STABLE == 'true' }}
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - name: Publish NPM package
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ env.PUBLISH_STABLE == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -326,7 +342,7 @@ jobs:
           npm install --ignore-scripts
           npm publish
       - name: Prepare MCP Registry metadata
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ env.PUBLISH_STABLE == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -335,7 +351,7 @@ jobs:
             server.json > server.tmp.json
           mv server.tmp.json server.json
       - name: Install MCP Registry publisher
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ env.PUBLISH_STABLE == 'true' }}
         shell: bash
         env:
           MCP_PUBLISHER_SHA256: 1370446bbe74d562608e8005a6ccce02d146a661fbd78674e11cc70b9618d6cf
@@ -348,7 +364,7 @@ jobs:
           printf '%s  %s\n' "${MCP_PUBLISHER_SHA256}" "${archive}" | sha256sum --check
           tar -xzf "${archive}" mcp-publisher
       - name: Publish MCP server metadata
-        if: ${{ github.ref_type == 'tag' }}
+        if: ${{ env.PUBLISH_STABLE == 'true' }}
         shell: bash
         run: |
           set -euo pipefail
