@@ -106,13 +106,10 @@ func TestRealEngineControlChannelSurvivesTemporaryNetworkPartition(t *testing.T)
 		t.Fatalf("Connect() error = %v", err)
 	}
 	t.Cleanup(func() { assertRealEngineClose(t, "control channel", control.Close()) })
-	proxy.Pause()
-	time.Sleep(4200 * time.Millisecond)
-	proxy.Resume()
 	name := "go-partition-e2e-" + uuid.NewString()[:12]
 	created, err := control.CreateTunnel(ctx, TunnelProperties{Name: &name, Type: TunnelTypePtr(TunnelTypeBytestream), Publish: BoolPtr(false)})
 	if err != nil {
-		t.Fatalf("CreateTunnel() after temporary partition error = %v", err)
+		t.Fatalf("CreateTunnel() before temporary partition error = %v", err)
 	}
 	tunnel, ok := created.(BytestreamTunnel)
 	if !ok {
@@ -120,11 +117,82 @@ func TestRealEngineControlChannelSurvivesTemporaryNetworkPartition(t *testing.T)
 	}
 	t.Cleanup(func() { assertRealEngineClose(t, "tunnel", tunnel.Close()) })
 	dialClient := newRealEngineClient(t, engine, token, false)
+	t.Cleanup(func() { assertRealEngineClose(t, "dial client", dialClient.Close()) })
+	dialConnection, acceptedConnection := establishRealEngineStream(t, ctx, dialClient, tunnel, name)
+	t.Cleanup(func() { assertRealEngineClose(t, "dial connection", dialConnection.Close()) })
+	t.Cleanup(func() { assertRealEngineClose(t, "accepted connection", acceptedConnection.Close()) })
+	assertRealEngineStreamExchange(t, dialConnection, acceptedConnection, []byte("before-temporary-partition"))
+	proxy.Pause()
+	time.Sleep(4200 * time.Millisecond)
+	assertRealEngineStreamExchange(t, dialConnection, acceptedConnection, []byte("during-temporary-partition"))
+	proxy.Resume()
 	if err := realEngineRoundTrip(ctx, dialClient, tunnel, name, []byte("after-temporary-partition")); err != nil {
-		_ = dialClient.Close()
 		t.Fatalf("round trip after temporary partition error = %v", err)
 	}
 	assertRealEngineClose(t, "dial client", dialClient.Close())
+}
+
+func establishRealEngineStream(t *testing.T, ctx context.Context, client *Client, tunnel BytestreamTunnel, target string) (net.Conn, net.Conn) {
+	t.Helper()
+	acceptedCh := make(chan struct {
+		connection net.Conn
+		err        error
+	}, 1)
+	go func() {
+		connection, err := tunnel.Accept()
+		acceptedCh <- struct {
+			connection net.Conn
+			err        error
+		}{connection: connection, err: err}
+	}()
+	dialConnection, err := client.Dial(ctx, Addr{IdOrName: target})
+	if err != nil {
+		t.Fatalf("dial established stream: %v", err)
+	}
+	select {
+	case accepted := <-acceptedCh:
+		if accepted.err != nil {
+			_ = dialConnection.Close()
+			t.Fatalf("accept established stream: %v", accepted.err)
+		}
+		return dialConnection, accepted.connection
+	case <-ctx.Done():
+		_ = dialConnection.Close()
+		t.Fatalf("accept established stream: %v", context.Cause(ctx))
+		return nil, nil
+	}
+}
+
+func assertRealEngineStreamExchange(t *testing.T, dialConnection, acceptedConnection net.Conn, payload []byte) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	if err := dialConnection.SetDeadline(deadline); err != nil {
+		t.Fatalf("set dial connection deadline: %v", err)
+	}
+	if err := acceptedConnection.SetDeadline(deadline); err != nil {
+		t.Fatalf("set accepted connection deadline: %v", err)
+	}
+	if _, err := dialConnection.Write(payload); err != nil {
+		t.Fatalf("write established stream request: %v", err)
+	}
+	request := make([]byte, len(payload))
+	if _, err := io.ReadFull(acceptedConnection, request); err != nil {
+		t.Fatalf("read established stream request: %v", err)
+	}
+	if string(request) != string(payload) {
+		t.Fatalf("established stream request = %q, want %q", request, payload)
+	}
+	response := []byte(strings.ToUpper(string(request)))
+	if _, err := acceptedConnection.Write(response); err != nil {
+		t.Fatalf("write established stream response: %v", err)
+	}
+	got := make([]byte, len(response))
+	if _, err := io.ReadFull(dialConnection, got); err != nil {
+		t.Fatalf("read established stream response: %v", err)
+	}
+	if string(got) != string(response) {
+		t.Fatalf("established stream response = %q, want %q", got, response)
+	}
 }
 
 func requiredRealEngineEnvironment(t *testing.T, name string) string {
