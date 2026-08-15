@@ -1182,6 +1182,69 @@ func TestClientDialWaitsForStreamResponseAndUsesReturnedConnection(t *testing.T)
 	dialer.wait(t, 1)
 }
 
+func TestClientDialPreservesPayloadCoalescedWithStreamResponse(t *testing.T) {
+	dialer := newQueuedDialer(1)
+	dialer.enqueue(func(conn net.Conn) error {
+		if _, err := expectStreamReq(bufio.NewReader(conn), "web", "token"); err != nil {
+			return err
+		}
+		return writePbMessageWithPayload(conn, &pb.Message{Payload: &pb.Message_StreamRsp{StreamRsp: &pb.StreamRsp{Payload: &pb.StreamRsp_StreamId{StreamId: "stream-1"}}}}, "banner")
+	})
+	client := newTestClientWithDialer(dialer)
+	conn, err := client.Dial(t.Context(), Addr{IdOrName: "web"})
+	if err != nil {
+		t.Fatalf("Dial() error = %v", err)
+	}
+	defer conn.Close()
+	if err := readExactString(bufio.NewReader(conn), "banner"); err != nil {
+		t.Fatalf("coalesced stream payload error = %v", err)
+	}
+	dialer.wait(t, 1)
+}
+
+func TestBufferedReadConnPreservesConcurrentReadContract(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	const buffered = "abcdefgh"
+	const streamed = "ijklmnopqrstuvwxyz"
+	conn := &bufferedReadConn{Conn: left, reader: bufio.NewReader(strings.NewReader(buffered))}
+	writerDone := make(chan error, 1)
+	go func() {
+		_, err := right.Write([]byte(streamed))
+		if closeErr := right.Close(); err == nil {
+			err = closeErr
+		}
+		writerDone <- err
+	}()
+	var counts [256]atomic.Int64
+	var waitGroup sync.WaitGroup
+	for range 8 {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			byteBuffer := make([]byte, 1)
+			for {
+				n, err := conn.Read(byteBuffer)
+				if n == 1 {
+					counts[byteBuffer[0]].Add(1)
+				}
+				if err != nil {
+					return
+				}
+			}
+		}()
+	}
+	waitGroup.Wait()
+	if err := <-writerDone; err != nil {
+		t.Fatalf("write test payload: %v", err)
+	}
+	for _, value := range []byte(buffered + streamed) {
+		if got := counts[value].Load(); got != 1 {
+			t.Fatalf("byte %q read count = %d, want 1", value, got)
+		}
+	}
+}
+
 func TestClientDialReportsStreamError(t *testing.T) {
 	dialer := newQueuedDialer(1)
 	dialer.enqueue(func(conn net.Conn) error {
@@ -1494,11 +1557,15 @@ func TestClientPacketDialFallsBackWhenQUICDatagramChannelIsUnavailable(t *testin
 }
 
 func TestControlChannelAcceptsProxyConnectionAndClosesTunnel(t *testing.T) {
-	testControlChannelAcceptsProxyConnection(t, "")
+	testControlChannelAcceptsProxyConnection(t, "", serveProxyConnection)
 }
 
 func TestControlChannelAcceptsProxyConnectionAtIngressEndpoint(t *testing.T) {
-	testControlChannelAcceptsProxyConnection(t, "ingress.example.com:443")
+	testControlChannelAcceptsProxyConnection(t, "ingress.example.com:443", serveProxyConnection)
+}
+
+func TestControlChannelPreservesPayloadCoalescedWithProxyResponse(t *testing.T) {
+	testControlChannelAcceptsProxyConnection(t, "", serveProxyConnectionWithCoalescedPayload)
 }
 
 func TestProxyConnectionRetriesTimedOutDial(t *testing.T) {
@@ -2116,11 +2183,11 @@ func TestControlChannelBoundsProxyWorkAndJoinsWorkersOnClose(t *testing.T) {
 	}
 }
 
-func testControlChannelAcceptsProxyConnection(t *testing.T, proxyEndpoint string) {
+func testControlChannelAcceptsProxyConnection(t *testing.T, proxyEndpoint string, proxyServer func(net.Conn) error) {
 	t.Helper()
 	dialer := newQueuedDialer(2)
 	dialer.enqueue(func(conn net.Conn) error { return serveControlChannelWithProxyConnectionAt(conn, proxyEndpoint) })
-	dialer.enqueue(serveProxyConnection)
+	dialer.enqueue(proxyServer)
 	client := newTestClientWithDialer(dialer)
 	client.TLSClientConfig.ServerName = "engine.example.com"
 	channel, err := client.Connect(t.Context(), &Config{EnableHeartbeat: BoolPtr(false)})
@@ -3406,6 +3473,34 @@ func serveProxyConnection(conn net.Conn) error {
 		return err
 	}
 	return writer.Flush()
+}
+
+func serveProxyConnectionWithCoalescedPayload(conn net.Conn) error {
+	reader := bufio.NewReader(conn)
+	msg, err := readPbMessage(reader)
+	if err != nil {
+		return err
+	}
+	proxyReq := msg.GetProxyReq()
+	if proxyReq == nil || proxyReq.StreamId != "stream-1" {
+		return errUnexpectedTestMessage("ProxyReq for stream-1")
+	}
+	if err := writePbMessageWithPayload(conn, &pb.Message{Payload: &pb.Message_ProxyRsp{ProxyRsp: &pb.ProxyRsp{}}}, "world"); err != nil {
+		return err
+	}
+	return readExactString(reader, "hello")
+}
+
+func writePbMessageWithPayload(conn net.Conn, msg *pb.Message, payload string) error {
+	var coalesced bytes.Buffer
+	if err := writePbMessage(bufio.NewWriter(&coalesced), msg); err != nil {
+		return err
+	}
+	if _, err := coalesced.WriteString(payload); err != nil {
+		return err
+	}
+	_, err := io.Copy(conn, &coalesced)
+	return err
 }
 
 func serveStreamDial(conn net.Conn, wantTunnel, wantToken, wantPayload, reply string) error {

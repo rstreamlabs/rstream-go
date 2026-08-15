@@ -377,12 +377,48 @@ func (c *Client) dialEndpoint(ctx context.Context, dialType dialType, endpoint *
 				}
 			}
 		}
+		// A framed response and the first application bytes can share one read,
+		// especially on multiplexed QUIC streams. Retain only actual read-ahead.
+		if err == nil && r.Buffered() > 0 {
+			conn = &bufferedReadConn{Conn: conn, reader: r}
+		}
 	}
 	if err != nil {
 		conn.Close()
 		conn = nil
 	}
 	return conn, err
+}
+
+type bufferedReadConn struct {
+	net.Conn
+	readMu sync.Mutex
+	reader *bufio.Reader
+}
+
+func (c *bufferedReadConn) Read(p []byte) (int, error) {
+	c.readMu.Lock()
+	if c.reader != nil {
+		n, err := c.reader.Read(p)
+		if c.reader.Buffered() == 0 {
+			c.reader = nil
+		}
+		c.readMu.Unlock()
+		return n, err
+	}
+	c.readMu.Unlock()
+	return c.Conn.Read(p)
+}
+
+func (c *bufferedReadConn) CloseWrite() error {
+	if closer, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return closer.CloseWrite()
+	}
+	return c.Conn.Close()
+}
+
+func (c *bufferedReadConn) Unwrap() net.Conn {
+	return c.Conn
 }
 
 func (c *Client) Dial(ctx context.Context, raddr Addr) (net.Conn, error) {
