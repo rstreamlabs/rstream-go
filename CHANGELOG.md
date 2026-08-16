@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.28.2](https://github.com/rstreamlabs/rstream-go/compare/v1.28.1...v1.28.2) (2026-08-16)
+
+
+### Bug Fixes
+
+* **turn:** separate relay domain from authentication realm ([b3b29c3](https://github.com/rstreamlabs/rstream-go/commit/b3b29c3a481205884544d0ba0a899bb940805c77))
+
 ## [1.28.1](https://github.com/rstreamlabs/rstream-go/compare/v1.28.0...v1.28.1) (2026-08-15)
 
 
