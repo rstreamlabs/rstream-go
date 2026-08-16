@@ -113,7 +113,9 @@ func TestUpsertProjectContextReusesAndRefreshesContext(t *testing.T) {
 		Domain:     "new.example",
 		EnginePort: 8443,
 		Routing:    "global",
+		TurnDomain: "relay.example",
 		TurnPort:   3478,
+		TurnRealm:  "realm.example",
 		TurnsPort:  5349,
 		RegionalEndpoints: []controlplane.ProjectRegionalEndpoint{{
 			Region:     "us-east-1",
@@ -130,6 +132,9 @@ func TestUpsertProjectContextReusesAndRefreshesContext(t *testing.T) {
 	}
 	if contextValue.Region != "us-east-1" {
 		t.Fatalf("context region = %q, want us-east-1", contextValue.Region)
+	}
+	if contextValue.TURNDomain != "relay.example" || contextValue.TURNRealm != "realm.example" {
+		t.Fatalf("TURN target = %q realm %q", contextValue.TURNDomain, contextValue.TURNRealm)
 	}
 	if cfg.Defaults.Context == nil || cfg.Defaults.Context.Name != "existing" {
 		t.Fatalf("default context = %#v, want existing", cfg.Defaults.Context)

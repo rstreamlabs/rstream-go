@@ -32,6 +32,7 @@ type Project struct {
 	Plan              string                    `json:"plan"`
 	Deployment        string                    `json:"deployment"`
 	TurnDomain        string                    `json:"turnDomain,omitempty"`
+	TurnRealm         string                    `json:"turnRealm,omitempty"`
 	TurnPort          int                       `json:"turnPort,omitempty"`
 	TurnsPort         int                       `json:"turnsPort,omitempty"`
 }

@@ -266,8 +266,14 @@ func mcpApplyRuntimeContext(cfg *config.Config, apiURL string, project controlpl
 		contextValue.ProjectEndpoint = project.Endpoint
 		changed = true
 	}
-	if contextValue.TURNDomain != project.Domain {
-		contextValue.TURNDomain = project.Domain
+	turnDomain := projectTURNDomain(project)
+	if contextValue.TURNDomain != turnDomain {
+		contextValue.TURNDomain = turnDomain
+		changed = true
+	}
+	turnRealm := strings.TrimSpace(project.TurnRealm)
+	if contextValue.TURNRealm != turnRealm {
+		contextValue.TURNRealm = turnRealm
 		changed = true
 	}
 	if contextValue.TURNPort != project.TurnPort {

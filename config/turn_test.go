@@ -58,8 +58,9 @@ func TestCreateTURNCredentialsFromEnvUsesPATDerivation(t *testing.T) {
 			Name:            "prod",
 			APIURL:          "https://rstream.io",
 			ProjectEndpoint: "abc12345",
-			Engine:          "abc12345.aws-eu-west-3-1.c.rstream.io:443",
-			TURNDomain:      "aws-eu-west-3-1.c.rstream.io",
+			Engine:          "abc12345.regional.example.rstream.test:443",
+			TURNDomain:      "regional.example.rstream.test",
+			TURNRealm:       "global.example.rstream.test",
 			TURNPort:        3478,
 			TURNSPort:       5349,
 		}},
@@ -73,7 +74,7 @@ func TestCreateTURNCredentialsFromEnvUsesPATDerivation(t *testing.T) {
 	if !strings.Contains(res.Username, ":pat:abc12345:b95faf7f") {
 		t.Fatalf("unexpected username: %s", res.Username)
 	}
-	if len(res.URLs) != 4 || res.URLs[0] != "turn:aws-eu-west-3-1.c.rstream.io:3478?transport=udp" {
+	if len(res.URLs) != 4 || res.URLs[0] != "turn:regional.example.rstream.test:3478?transport=udp" {
 		t.Fatalf("unexpected urls: %+v", res.URLs)
 	}
 }
@@ -127,7 +128,10 @@ func TestCreateTURNCredentialsFromEnvFallsBackToAPIWithoutTURNContext(t *testing
 			Name:            "prod",
 			APIURL:          server.URL,
 			ProjectEndpoint: "abc12345",
-			Engine:          "abc12345.aws-eu-west-3-1.c.rstream.io:443",
+			Engine:          "abc12345.regional.example.rstream.test:443",
+			TURNDomain:      "regional.example.rstream.test",
+			TURNPort:        3478,
+			TURNSPort:       5349,
 		}},
 	})
 	res, err := CreateTURNCredentialsFromEnv(context.Background(), TURNCredentialsEnvOptions{

@@ -1073,7 +1073,7 @@ func TestMCPRuntimePrepareUsesLoginTokenInsteadOfShortContextToken(t *testing.T)
 		if got := r.Header.Get("Authorization"); got != "Bearer login-token" {
 			t.Fatalf("Authorization = %q", got)
 		}
-		_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{{ID: "p1", WorkspaceID: "w1", Name: "Prod", Endpoint: "abc12345", Domain: "cluster.example.com", EnginePort: 443, Status: "active", Plan: "pro", Routing: "regional", Region: "eu-west-3", TurnPort: 3478, TurnsPort: 5349}}})
+		_ = json.NewEncoder(w).Encode(controlplane.ListProjectsResponse{Projects: []controlplane.Project{{ID: "p1", WorkspaceID: "w1", Name: "Prod", Endpoint: "abc12345", Domain: "cluster.example.com", EnginePort: 443, Status: "active", Plan: "pro", Routing: "regional", Region: "eu-west-3", TurnDomain: "relay.example.com", TurnPort: 3478, TurnRealm: "realm.example.com", TurnsPort: 5349}}})
 	}))
 	defer server.Close()
 	configPath := filepath.Join(t.TempDir(), "config.yaml")
@@ -1118,7 +1118,7 @@ contexts:
 	if err != nil || contextValue == nil {
 		t.Fatalf("FindContextByName returned %#v, %v", contextValue, err)
 	}
-	if contextValue.Auth != nil || contextValue.Engine != "abc12345.cluster.example.com:443" || contextValue.ProjectEndpoint != "abc12345" {
+	if contextValue.Auth != nil || contextValue.Engine != "abc12345.cluster.example.com:443" || contextValue.ProjectEndpoint != "abc12345" || contextValue.TURNDomain != "relay.example.com" || contextValue.TURNRealm != "realm.example.com" {
 		t.Fatalf("unexpected prepared context: %#v", contextValue)
 	}
 	resolved, err := config.Resolve(config.ResolveInput{Config: cfg, EnvAPIURL: server.URL, RequireEngine: true, RequireToken: true, ResolveToken: true})

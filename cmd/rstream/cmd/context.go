@@ -244,7 +244,8 @@ func runContextCreate(cmd *cobra.Command, args []string) error {
 		}
 		newCtx.ProjectEndpoint = project.Endpoint
 		newCtx.Engine = project.EngineAddress()
-		newCtx.TURNDomain = project.Domain
+		newCtx.TURNDomain = projectTURNDomain(project)
+		newCtx.TURNRealm = strings.TrimSpace(project.TurnRealm)
 		newCtx.TURNPort = project.TurnPort
 		newCtx.TURNSPort = project.TurnsPort
 	}
@@ -432,7 +433,8 @@ func refreshContextProject(cmd *cobra.Command, cfg config.Config, ctx *config.Co
 	}
 	ctx.ProjectEndpoint = project.Endpoint
 	ctx.Engine = project.EngineAddress()
-	ctx.TURNDomain = project.Domain
+	ctx.TURNDomain = projectTURNDomain(project)
+	ctx.TURNRealm = strings.TrimSpace(project.TurnRealm)
 	ctx.TURNPort = project.TurnPort
 	ctx.TURNSPort = project.TurnsPort
 	return nil
