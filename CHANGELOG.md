@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.28.3](https://github.com/rstreamlabs/rstream-go/compare/v1.28.2...v1.28.3) (2026-08-16)
+
+
+### Bug Fixes
+
+* **release:** keep npm lockfile version aligned ([8ae1cb2](https://github.com/rstreamlabs/rstream-go/commit/8ae1cb219fedde7fe5f596fb8c521103bc520574))
+* **release:** keep npm lockfile version aligned ([bd6263a](https://github.com/rstreamlabs/rstream-go/commit/bd6263ac26152714a65ac899338084fb804a323f))
+
 ## [1.28.2](https://github.com/rstreamlabs/rstream-go/compare/v1.28.1...v1.28.2) (2026-08-16)
 
 
