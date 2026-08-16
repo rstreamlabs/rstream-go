@@ -36,6 +36,7 @@ type Context struct {
 	Engine          string           `yaml:"engine,omitempty"`
 	Region          string           `yaml:"region,omitempty"`
 	TURNDomain      string           `yaml:"turnDomain,omitempty"`
+	TURNRealm       string           `yaml:"turnRealm,omitempty"`
 	TURNPort        int              `yaml:"turnPort,omitempty"`
 	TURNSPort       int              `yaml:"turnsPort,omitempty"`
 	Auth            *Auth            `yaml:"auth,omitempty"`

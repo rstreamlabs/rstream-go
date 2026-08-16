@@ -343,13 +343,21 @@ func upsertProjectContext(cfg *config.Config, apiURL string, project controlplan
 	ctx.ProjectEndpoint = project.Endpoint
 	ctx.Engine = engine
 	ctx.Region = region
-	ctx.TURNDomain = project.Domain
+	ctx.TURNDomain = projectTURNDomain(project)
+	ctx.TURNRealm = strings.TrimSpace(project.TurnRealm)
 	ctx.TURNPort = project.TurnPort
 	ctx.TURNSPort = project.TurnsPort
 	if setDefault {
 		cfg.Defaults.Context = &config.DefaultContext{Name: ctx.Name}
 	}
 	return ctx, nil
+}
+
+func projectTURNDomain(project controlplane.Project) string {
+	if domain := strings.TrimSpace(project.TurnDomain); domain != "" {
+		return domain
+	}
+	return strings.TrimSpace(project.Domain)
 }
 
 func selectProjectContextForUpsert(cfg *config.Config, apiURL string, project controlplane.Project, name string) (*config.Context, error) {

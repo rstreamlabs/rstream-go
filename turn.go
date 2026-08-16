@@ -33,11 +33,14 @@ const (
 )
 
 type CreateTURNCredentialsOptions struct {
-	APIURL              string
-	Token               string
-	ProjectID           string
-	ProjectEndpoint     string
+	APIURL          string
+	Token           string
+	ProjectID       string
+	ProjectEndpoint string
+	// Deprecated: use TURNDomain and TURNRealm when the relay host and authentication realm may differ.
 	ClusterDomain       string
+	TURNDomain          string
+	TURNRealm           string
 	TURNPort            int
 	TURNSPort           int
 	TTL                 time.Duration
@@ -106,9 +109,20 @@ func createPATTURNCredentials(opts CreateTURNCredentialsOptions, token string, c
 	if projectEndpoint == "" {
 		return nil, errors.New("project endpoint is required for TURN PAT mode")
 	}
-	clusterDomain := normalizeTURNClusterDomain(opts.ClusterDomain)
-	if clusterDomain == "" {
-		return nil, errors.New("cluster domain is required for TURN PAT mode")
+	legacyDomain := normalizeTURNClusterDomain(opts.ClusterDomain)
+	turnDomain := normalizeTURNClusterDomain(opts.TURNDomain)
+	if turnDomain == "" {
+		turnDomain = legacyDomain
+	}
+	turnRealm := normalizeTURNClusterDomain(opts.TURNRealm)
+	if turnRealm == "" {
+		turnRealm = legacyDomain
+	}
+	if turnDomain == "" {
+		return nil, errors.New("TURN domain is required for TURN PAT mode")
+	}
+	if turnRealm == "" {
+		return nil, errors.New("TURN realm is required for TURN PAT mode")
 	}
 	now := time.Now()
 	ttl, err := normalizePATTURNCredentialTTL(opts.TTL, claims, now)
@@ -122,7 +136,7 @@ func createPATTURNCredentials(opts CreateTURNCredentialsOptions, token string, c
 		claims.TokenEndpoint,
 	)
 	tokenHash := sha256.Sum256([]byte(token))
-	key, err := hkdf.Key(sha256.New, tokenHash[:], []byte(clusterDomain), "turn-pat-v1", 32)
+	key, err := hkdf.Key(sha256.New, tokenHash[:], []byte(turnRealm), "turn-pat-v1", 32)
 	if err != nil {
 		return nil, err
 	}
@@ -131,7 +145,7 @@ func createPATTURNCredentials(opts CreateTURNCredentialsOptions, token string, c
 	return &TURNCredentials{
 		Username:   username,
 		Credential: base64.StdEncoding.EncodeToString(mac.Sum(nil)),
-		URLs:       turnURLs(clusterDomain, opts.TURNPort, opts.TURNSPort),
+		URLs:       turnURLs(turnDomain, opts.TURNPort, opts.TURNSPort),
 		TTL:        int(ttl / time.Second),
 	}, nil
 }

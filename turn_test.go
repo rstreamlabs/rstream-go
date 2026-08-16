@@ -4,6 +4,9 @@ package rstream
 
 import (
 	"context"
+	"crypto/hkdf"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -34,6 +37,44 @@ func TestCreateTURNCredentialsAutoUsesPATDerivation(t *testing.T) {
 	}
 	if len(res.URLs) != 4 || res.TTL != int(defaultTURNCredentialTTL.Seconds()) {
 		t.Fatalf("unexpected response: %+v", res)
+	}
+}
+
+func TestCreateTURNCredentialsPATSeparatesRelayDomainFromAuthenticationRealm(t *testing.T) {
+	token := turnTestToken(t, map[string]string{"type": "pat", "token_endpoint": "b95faf7f"})
+	res, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{
+		Token:           token,
+		ProjectEndpoint: "abc12345",
+		TURNDomain:      "regional.example.rstream.test",
+		TURNRealm:       "global.example.rstream.test",
+		Mode:            modePtr(TURNCredentialModePAT),
+	})
+	if err != nil {
+		t.Fatalf("create failed: %v", err)
+	}
+	if len(res.URLs) != 4 || res.URLs[0] != "turn:regional.example.rstream.test:3478?transport=udp" {
+		t.Fatalf("unexpected URLs: %+v", res.URLs)
+	}
+	tokenHash := sha256.Sum256([]byte(token))
+	key, err := hkdf.Key(sha256.New, tokenHash[:], []byte("global.example.rstream.test"), "turn-pat-v1", 32)
+	if err != nil {
+		t.Fatalf("derive expected key: %v", err)
+	}
+	mac := hmac.New(sha256.New, key)
+	if _, err := mac.Write([]byte(res.Username)); err != nil {
+		t.Fatalf("sign expected credential: %v", err)
+	}
+	expected := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	if res.Credential != expected {
+		t.Fatal("credential was not derived from the explicit TURN realm")
+	}
+}
+
+func TestCreateTURNCredentialsPATRequiresExplicitRealmWithoutLegacyClusterDomain(t *testing.T) {
+	token := turnTestToken(t, map[string]string{"type": "pat", "token_endpoint": "b95faf7f"})
+	_, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{Token: token, ProjectEndpoint: "abc12345", TURNDomain: "regional.example.rstream.test", Mode: modePtr(TURNCredentialModePAT)})
+	if err == nil || err.Error() != "TURN realm is required for TURN PAT mode" {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

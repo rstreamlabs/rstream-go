@@ -638,8 +638,16 @@ The Go SDK enables applications to create and manage tunnels programmatically. T
 The SDK also exposes helpers to generate managed TURN credentials.
 
 - `config.CreateTURNCredentialsFromEnv(...)` resolves the current config, context, and token automatically.
-- Auto mode selects local PAT derivation when the active token is a PAT carrying `token_endpoint`. It falls back to the hosted API for other token types.
+- Auto mode selects local PAT derivation when the active token carries
+  `token_endpoint` and the context includes the TURN domain, realm, and listener
+  ports. It falls back to the Control plane API when that routing contract is
+  incomplete.
 - Explicit `PAT` mode requires a PAT token. Explicit `API` mode can use either a project ID or a project endpoint.
+
+The TURN domain is the relay hostname placed in ICE URLs. The TURN realm is the
+authentication scope used for credential derivation. A regional relay attached
+to a global edge network can use different values. Context resolution keeps
+both fields explicit and never infers the realm from the engine address.
 
 ```go
 package main

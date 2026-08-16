@@ -19,11 +19,14 @@ type TURNCredentialsEnvOptions struct {
 	Token           string
 	ProjectID       string
 	ProjectEndpoint string
-	ClusterDomain   string
-	TURNPort        int
-	TURNSPort       int
-	TTL             time.Duration
-	Mode            *rstream.TURNCredentialMode
+	// Deprecated: use TURNDomain and TURNRealm when the relay host and authentication realm may differ.
+	ClusterDomain string
+	TURNDomain    string
+	TURNRealm     string
+	TURNPort      int
+	TURNSPort     int
+	TTL           time.Duration
+	Mode          *rstream.TURNCredentialMode
 }
 
 func CreateTURNCredentialsFromEnv(
@@ -49,7 +52,15 @@ func CreateTURNCredentialsFromEnv(
 		return nil, err
 	}
 	projectEndpoint := strings.TrimSpace(resolvedOpts.ProjectEndpoint)
-	clusterDomain := strings.TrimSpace(resolvedOpts.ClusterDomain)
+	legacyDomain := strings.TrimSpace(resolvedOpts.ClusterDomain)
+	turnDomain := strings.TrimSpace(resolvedOpts.TURNDomain)
+	if turnDomain == "" {
+		turnDomain = legacyDomain
+	}
+	turnRealm := strings.TrimSpace(resolvedOpts.TURNRealm)
+	if turnRealm == "" {
+		turnRealm = legacyDomain
+	}
 	turnPort := resolvedOpts.TURNPort
 	turnsPort := resolvedOpts.TURNSPort
 	if resolution.Resolved.Context != nil {
@@ -58,8 +69,11 @@ func CreateTURNCredentialsFromEnv(
 			projectEndpoint = strings.TrimSpace(configured.ProjectEndpoint)
 		}
 		if projectEndpoint != "" && projectEndpoint == strings.TrimSpace(configured.ProjectEndpoint) {
-			if clusterDomain == "" {
-				clusterDomain = strings.TrimSpace(configured.TURNDomain)
+			if turnDomain == "" {
+				turnDomain = strings.TrimSpace(configured.TURNDomain)
+			}
+			if turnRealm == "" {
+				turnRealm = strings.TrimSpace(configured.TURNRealm)
 			}
 			if turnPort == 0 {
 				turnPort = configured.TURNPort
@@ -69,13 +83,13 @@ func CreateTURNCredentialsFromEnv(
 			}
 		}
 	}
-	if clusterDomain == "" && projectEndpoint != "" && resolution.Resolved.Engine != "" {
-		clusterDomain, err = clusterDomainFromEngine(projectEndpoint, resolution.Resolved.Engine)
+	if turnDomain == "" && projectEndpoint != "" && resolution.Resolved.Engine != "" {
+		turnDomain, err = clusterDomainFromEngine(projectEndpoint, resolution.Resolved.Engine)
 		if err != nil && resolvedOpts.Mode != nil && *resolvedOpts.Mode == rstream.TURNCredentialModePAT {
 			return nil, err
 		}
 	}
-	if resolvedMode == nil && (clusterDomain == "" || turnPort == 0 || turnsPort == 0) {
+	if resolvedMode == nil && (turnDomain == "" || turnRealm == "" || turnPort == 0 || turnsPort == 0) {
 		apiMode := rstream.TURNCredentialModeAPI
 		resolvedMode = &apiMode
 	}
@@ -84,7 +98,8 @@ func CreateTURNCredentialsFromEnv(
 		Token:               resolution.Resolved.Token,
 		ProjectID:           strings.TrimSpace(resolvedOpts.ProjectID),
 		ProjectEndpoint:     projectEndpoint,
-		ClusterDomain:       clusterDomain,
+		TURNDomain:          turnDomain,
+		TURNRealm:           turnRealm,
 		TURNPort:            turnPort,
 		TURNSPort:           turnsPort,
 		TTL:                 resolvedOpts.TTL,
