@@ -331,15 +331,17 @@ jobs:
           PACKAGE_JSON="npm/${NPM_PACKAGE_NAME}/package.json"
           sed -i "s|\"version\": \".*\"|\"version\": \"${VERSION}\"|" "$PACKAGE_JSON"
           sed -i "s|\"registry\": \".*\"|\"registry\": \"${RSTREAM_URL}\"|" "$PACKAGE_JSON"
+          pushd "./npm/${NPM_PACKAGE_NAME}"
+          npm install --ignore-scripts
+          popd
           git -C npm config user.name 'CI automation'
           git -C npm config user.email 'ci@rstream.io'
-          git -C npm add "${NPM_PACKAGE_NAME}/package.json"
+          git -C npm add "${NPM_PACKAGE_NAME}/package.json" "${NPM_PACKAGE_NAME}/package-lock.json"
           if ! git -C npm diff --cached --quiet; then
             git -C npm commit -m "update ${NPM_PACKAGE_NAME} version to ${VERSION}"
             git -C npm push
           fi
           cd "./npm/${NPM_PACKAGE_NAME}"
-          npm install --ignore-scripts
           npm publish
       - name: Prepare MCP Registry metadata
         if: ${{ env.PUBLISH_STABLE == 'true' }}
