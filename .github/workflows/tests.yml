@@ -62,6 +62,8 @@ jobs:
         run: make test-bins
       - name: Test runtime harness helpers
         run: ./test/e2e/runtime-common-unit.sh
+      - name: Test release package retry policy
+        run: ./test/release-package-retries.sh
       - name: Test with coverage
         shell: bash
         run: |

@@ -106,6 +106,9 @@ RSTREAM_URL ?= https://rstream.io
 # rstream storage type
 RSTREAM_STORAGE_TYPE ?= s3
 
+# Package publication retries
+CURL_RETRY_FLAGS ?= --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 30
+
 # aptly repository
 APTLY_URL ?= https://aptly.rstream.io
 
@@ -238,6 +241,7 @@ CHECKSUM=$$$$(shasum -a 256 $(call pkg_path,$1,$2,$3) | awk '{print $$$$1}') ;\
 echo "Deploying $(call pkg_path,$1,$2,$3)" ;\
 RESPONSE=$$$$(curl \
 --fail \
+$(CURL_RETRY_FLAGS) \
 -H "Authorization: Bearer $(RSTREAM_TOKEN)" \
 -i \
 -s \
@@ -248,6 +252,7 @@ PACKAGE_ID=$$$$(echo "$$$$RESPONSE" | grep 'x-package-id' | cut -d ' ' -f2 | tr 
 SIGNED_URL=$$$$(echo "$$$$RESPONSE" | grep 'location:' | cut -d ' ' -f2 | tr -d '\r') ;\
 curl \
 --progress-bar \
+$(CURL_RETRY_FLAGS) \
 --upload-file "$(call pkg_path,$1,$2,$3)" \
 -fail \
 -H "Content-Type: application/octet-stream" \
