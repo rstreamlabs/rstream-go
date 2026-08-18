@@ -182,6 +182,7 @@ type ListProjectsParams struct {
 type CreateTokenRequest struct {
 	Permissions *[]string        `json:"permissions"`
 	Resources   *json.RawMessage `json:"resources,omitempty"`
+	ExpiresIn   *int             `json:"expires_in,omitempty"`
 }
 
 type CreateTokenResponse struct {
