@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+const maximumTokenLifetimeSeconds = 3600
+
 var tokenCmd = &cobra.Command{
 	GroupID:      "management",
 	Use:          "token",
@@ -58,6 +60,7 @@ func init() {
 	tokenCmd.PersistentFlags().SortFlags = false
 	tokenCreateCmd.Flags().SortFlags = false
 	tokenCreateCmd.Flags().StringArrayP("permission", "p", nil, "permission to include in the minted token (may be specified multiple times)")
+	tokenCreateCmd.Flags().Int("expires-in", 0, "token lifetime in seconds, from 1 through 3600")
 	tokenCreateCmd.Flags().String("resources-json", "", "resource boundary JSON")
 	tokenCreateCmd.Flags().String("resources-file", "", "read resource boundary JSON from file")
 	tokenCreateCmd.Flags().StringP("output", "o", "text", "output mode (text, json, yaml)")
@@ -67,6 +70,14 @@ func init() {
 }
 
 func createTokenRequestFromFlags(cmd *cobra.Command) (controlplane.CreateTokenRequest, error) {
+	var expiresIn *int
+	if cmd.Flags().Changed("expires-in") {
+		value, _ := cmd.Flags().GetInt("expires-in")
+		if value < 1 || value > maximumTokenLifetimeSeconds {
+			return controlplane.CreateTokenRequest{}, fmt.Errorf("--expires-in must be from 1 through %d seconds", maximumTokenLifetimeSeconds)
+		}
+		expiresIn = &value
+	}
 	var permissions *[]string
 	if cmd.Flags().Changed("permission") {
 		values, _ := cmd.Flags().GetStringArray("permission")
@@ -77,7 +88,7 @@ func createTokenRequestFromFlags(cmd *cobra.Command) (controlplane.CreateTokenRe
 	if err != nil {
 		return controlplane.CreateTokenRequest{}, err
 	}
-	return controlplane.CreateTokenRequest{Permissions: permissions, Resources: resources}, nil
+	return controlplane.CreateTokenRequest{Permissions: permissions, Resources: resources, ExpiresIn: expiresIn}, nil
 }
 
 func normalizeTokenCreatePermissions(values []string) []string {

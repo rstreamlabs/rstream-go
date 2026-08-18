@@ -698,15 +698,19 @@ func mcpProjectSettingsReset(ctx context.Context, args map[string]json.RawMessag
 }
 
 func mcpTokenCreate(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
-	client, _, err := mcpControlPlaneClient(ctx)
-	if err != nil {
-		return nil, err
-	}
 	permissions, err := mcpRequiredStringSliceArg(args, "permissions")
 	if err != nil {
 		return nil, err
 	}
 	request := controlplane.CreateTokenRequest{Permissions: &permissions}
+	ttlSeconds, err := mcpOptionalIntArg(args, "ttl_seconds")
+	if err != nil {
+		return nil, err
+	}
+	if ttlSeconds != nil && (*ttlSeconds < 1 || *ttlSeconds > maximumTokenLifetimeSeconds) {
+		return nil, fmt.Errorf("argument %q must be from 1 through %d", "ttl_seconds", maximumTokenLifetimeSeconds)
+	}
+	request.ExpiresIn = ttlSeconds
 	resourcesJSON, err := mcpOptionalStringArg(args, "resources_json", "")
 	if err != nil {
 		return nil, err
@@ -717,6 +721,10 @@ func mcpTokenCreate(ctx context.Context, args map[string]json.RawMessage) (map[s
 			return mcpJSONResult(mcpTokenCreateErrorPayload("resources_json must be valid JSON."), true)
 		}
 		request.Resources = &raw
+	}
+	client, _, err := mcpControlPlaneClient(ctx)
+	if err != nil {
+		return nil, err
 	}
 	response, err := client.CreateToken(ctx, request)
 	if err != nil {

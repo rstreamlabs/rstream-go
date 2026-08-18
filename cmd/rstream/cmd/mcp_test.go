@@ -979,6 +979,54 @@ func TestMCPTokenCreateResultPayloadIncludesMetadata(t *testing.T) {
 	}
 }
 
+func TestMCPTokenCreatePostsRequestedLifetime(t *testing.T) {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`))
+	claims := base64.RawURLEncoding.EncodeToString([]byte(`{"type":"auth","iat":10,"exp":130,"permissions":["tunnels.resources.read-only"]}`))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/tokens" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		var request controlplane.CreateTokenRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("Decode returned error: %v", err)
+		}
+		if request.ExpiresIn == nil || *request.ExpiresIn != 120 {
+			t.Fatalf("ExpiresIn = %#v", request.ExpiresIn)
+		}
+		_ = json.NewEncoder(w).Encode(controlplane.CreateTokenResponse{Token: header + "." + claims + "."})
+	}))
+	defer server.Close()
+	configPath := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(configPath, []byte(fmt.Sprintf(`version: 1
+environments:
+  - apiUrl: %s
+    auth:
+      token:
+        storage:
+          kind: inline
+          value: login-token
+`, server.URL)), 0o600); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	t.Setenv("RSTREAM_CONFIG", configPath)
+	result, err := mcpTokenCreate(t.Context(), map[string]json.RawMessage{"permissions": json.RawMessage(`["tunnels.resources.read-only"]`), "ttl_seconds": json.RawMessage(`120`)})
+	if err != nil {
+		t.Fatalf("mcpTokenCreate returned error: %v", err)
+	}
+	if text := mcpResultText(t, result); !strings.Contains(text, `"ttl_seconds": 120`) {
+		t.Fatalf("unexpected token result: %s", text)
+	}
+}
+
+func TestMCPTokenCreateRejectsInvalidLifetimeBeforeRequest(t *testing.T) {
+	for _, value := range []string{"0", "3601", "1.5"} {
+		_, err := mcpTokenCreate(t.Context(), map[string]json.RawMessage{"permissions": json.RawMessage(`["tunnels.resources.read-only"]`), "ttl_seconds": json.RawMessage(value)})
+		if err == nil || !strings.Contains(err.Error(), "ttl_seconds") {
+			t.Fatalf("lifetime %s error = %v", value, err)
+		}
+	}
+}
+
 func TestMCPProjectListIgnoresExpiredDefaultContextWhenLoginTokenExists(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/projects/tunnels" {
