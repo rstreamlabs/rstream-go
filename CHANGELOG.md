@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.29.0](https://github.com/rstreamlabs/rstream-go/compare/v1.28.2...v1.29.0) (2026-08-18)
+
+
+### Features
+
+* **auth:** support bounded delegated token lifetimes ([91ae162](https://github.com/rstreamlabs/rstream-go/commit/91ae16293bcb06e59d4ae9d7ee0bb8ed1522166a))
+* **auth:** support bounded delegated token lifetimes ([0da99c8](https://github.com/rstreamlabs/rstream-go/commit/0da99c8da56464e95f34c8f1eb2bd51789ceb4aa))
+
+
+### Bug Fixes
+
+* **release:** keep npm lockfile version aligned ([8ae1cb2](https://github.com/rstreamlabs/rstream-go/commit/8ae1cb219fedde7fe5f596fb8c521103bc520574))
+* **release:** keep npm lockfile version aligned ([bd6263a](https://github.com/rstreamlabs/rstream-go/commit/bd6263ac26152714a65ac899338084fb804a323f))
+
 ## [1.28.2](https://github.com/rstreamlabs/rstream-go/compare/v1.28.1...v1.28.2) (2026-08-16)
 
 
