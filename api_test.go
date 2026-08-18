@@ -293,6 +293,9 @@ func TestAPIClientRetryRetainsBudgetAfterStalledAttempt(t *testing.T) {
 	var attempts atomic.Int32
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if attempts.Add(1) == 1 {
+			w.Header().Set("Content-Length", "2")
+			w.WriteHeader(http.StatusOK)
+			w.(http.Flusher).Flush()
 			<-r.Context().Done()
 			return
 		}
