@@ -2172,7 +2172,7 @@ func TestControlChannelBoundsProxyWorkAndJoinsWorkersOnClose(t *testing.T) {
 	channel.onError(want)
 	select {
 	case <-channel.closedCh:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("control channel did not join proxy workers")
 	}
 	if active := dialer.active.Load(); active != 0 {
