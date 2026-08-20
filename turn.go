@@ -86,6 +86,9 @@ func createAPITURNCredentials(ctx context.Context, opts CreateTURNCredentialsOpt
 		clientOpts = append(clientOpts, controlplane.WithHTTPClient(opts.HTTPClient))
 	}
 	client := controlplane.NewClient(apiURL, token, clientOpts...)
+	if opts.HTTPClient == nil {
+		defer client.CloseIdleConnections()
+	}
 	request := controlplane.CreateTURNCredentialsRequest{}
 	if opts.TTL > 0 {
 		ttlSeconds := int(normalizeTURNCredentialTTL(opts.TTL) / time.Second)

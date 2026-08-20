@@ -38,6 +38,19 @@ func TestNewClientOptionsAndRequireToken(t *testing.T) {
 	}
 }
 
+func TestNewClientOwnsFreshDefaultTransport(t *testing.T) {
+	first := NewClient("https://api.example.com", "token")
+	second := NewClient("https://api.example.com", "token")
+	firstTransport, firstOK := first.httpClient.Transport.(*http.Transport)
+	secondTransport, secondOK := second.httpClient.Transport.(*http.Transport)
+	if !firstOK || !secondOK {
+		t.Fatalf("default transports = %T / %T, want *http.Transport", first.httpClient.Transport, second.httpClient.Transport)
+	}
+	if firstTransport == secondTransport || firstTransport == http.DefaultTransport || secondTransport == http.DefaultTransport {
+		t.Fatal("control-plane clients share connection state across independent lifecycles")
+	}
+}
+
 func TestControlPlaneHeadersAndRedirectIsolation(t *testing.T) {
 	var redirected atomic.Int32
 	redirectTarget := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
