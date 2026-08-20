@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -70,7 +71,7 @@ func NewClient(apiURL, token string, opts ...Option) *Client {
 	client := &Client{
 		apiURL:     strings.TrimRight(strings.TrimSpace(apiURL), "/"),
 		token:      strings.TrimSpace(token),
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		httpClient: &http.Client{Timeout: 10 * time.Second, Transport: newDefaultTransport()},
 		logger:     slog.With("component", "control-plane.client"),
 	}
 	for _, opt := range opts {
@@ -80,6 +81,18 @@ func NewClient(apiURL, token string, opts ...Option) *Client {
 	configuredHTTPClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
 	client.httpClient = &configuredHTTPClient
 	return client
+}
+
+func newDefaultTransport() *http.Transport {
+	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+		return transport.Clone()
+	}
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+	return &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: dialer.DialContext, ForceAttemptHTTP2: true, MaxIdleConns: 100, IdleConnTimeout: 90 * time.Second, TLSHandshakeTimeout: 10 * time.Second, ExpectContinueTimeout: time.Second}
+}
+
+func (c *Client) CloseIdleConnections() {
+	c.httpClient.CloseIdleConnections()
 }
 
 func (c *Client) RequireToken() error {

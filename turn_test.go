@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -168,6 +169,30 @@ func TestCreateTURNCredentialsAPIModeForwardsExplicitTTL(t *testing.T) {
 	}
 	if res.TTL != 120 {
 		t.Fatalf("TTL = %d, want 120", res.TTL)
+	}
+}
+
+func TestCreateTURNCredentialsAPIModeDoesNotReuseObsoleteNetworkConnections(t *testing.T) {
+	var mu sync.Mutex
+	connections := map[string]struct{}{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		connections[r.RemoteAddr] = struct{}{}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"username":"u","credential":"c","urls":["turn:example.com:3478?transport=udp"],"ttl":60}`))
+	}))
+	defer server.Close()
+	options := CreateTURNCredentialsOptions{APIURL: server.URL, Token: "opaque-token", ProjectEndpoint: "abc12345", Mode: modePtr(TURNCredentialModeAPI)}
+	for range 2 {
+		if _, err := CreateTURNCredentials(context.Background(), options); err != nil {
+			t.Fatalf("create credentials: %v", err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(connections) != 2 {
+		t.Fatalf("control-plane connections = %d, want 2 fresh connections", len(connections))
 	}
 }
 
