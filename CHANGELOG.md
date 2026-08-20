@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.29.1](https://github.com/rstreamlabs/rstream-go/compare/v1.29.0...v1.29.1) (2026-08-20)
+
+
+### Bug Fixes
+
+* **controlplane:** isolate transient connection state ([#80](https://github.com/rstreamlabs/rstream-go/issues/80)) ([24b7df7](https://github.com/rstreamlabs/rstream-go/commit/24b7df7994ae39a72334972b0e41e43b849a1066))
+
 ## [1.29.0](https://github.com/rstreamlabs/rstream-go/compare/v1.28.2...v1.29.0) (2026-08-18)
 
 
