@@ -1,3 +1,9 @@
-3ff3ff6b4aa47dfe441bd9d44227b60d450c5932:turn_test.go:generic-api-key:18
-3ff3ff6b4aa47dfe441bd9d44227b60d450c5932:turn_test.go:generic-api-key:36
-3ff3ff6b4aa47dfe441bd9d44227b60d450c5932:turn_test.go:generic-api-key:49
+# Exact historical fingerprints for deterministic protocol fixtures and
+# algorithm-name test values.
+26f410222dc31c973bfeafb1e8932f13296bdea5:cmd/rstream/cmd/webtty_server_admin_test.go:generic-api-key:1067
+26f410222dc31c973bfeafb1e8932f13296bdea5:controlplane/client_test.go:generic-api-key:283
+26f410222dc31c973bfeafb1e8932f13296bdea5:controlplane/client_test.go:generic-api-key:415
+26f410222dc31c973bfeafb1e8932f13296bdea5:controlplane/client_test.go:generic-api-key:524
+ca16e16bef86018a63bc1b0a35ad0000f5d362bd:turn_test.go:generic-api-key:18
+ca16e16bef86018a63bc1b0a35ad0000f5d362bd:turn_test.go:generic-api-key:36
+ca16e16bef86018a63bc1b0a35ad0000f5d362bd:turn_test.go:generic-api-key:49
