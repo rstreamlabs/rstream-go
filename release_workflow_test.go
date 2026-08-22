@@ -89,6 +89,8 @@ func TestStableReleaseBuildCreatesCandidateWithoutPublishing(t *testing.T) {
 		t.Fatal("candidate workflow does not define the build job")
 	}
 	candidateFound := false
+	nodeFound := false
+	npmSourceFound := false
 	uploadFound := false
 	for _, step := range build.Steps {
 		if step.Name == "Package stable release candidate" {
@@ -100,15 +102,23 @@ func TestStableReleaseBuildCreatesCandidateWithoutPublishing(t *testing.T) {
 		if strings.HasPrefix(step.Uses, "docker/login-action@") {
 			t.Fatal("candidate workflow must not log in to a container registry")
 		}
+		if strings.HasPrefix(step.Uses, "actions/setup-node@") {
+			nodeFound = step.If == "${{ github.ref_type == 'tag' }}"
+		}
 		if slices.Contains([]string{"rstreamlabs/homebrew", "rstreamlabs/winget"}, step.With.Repository) {
 			t.Fatalf("candidate workflow must not mutate %s", step.With.Repository)
 		}
-		if step.With.Repository == "rstreamlabs/npm" && step.With.PersistCredentials {
-			t.Fatal("candidate workflow must not persist npm repository credentials")
+		if step.With.Repository == "rstreamlabs/npm" {
+			npmSourceFound = step.If == "${{ github.ref_type == 'tag' }}" && !step.With.PersistCredentials
 		}
 	}
-	if !candidateFound || !uploadFound {
-		t.Fatalf("candidate workflow is incomplete: package=%t upload=%t", candidateFound, uploadFound)
+	if !candidateFound || !nodeFound || !npmSourceFound || !uploadFound {
+		t.Fatalf("candidate workflow is incomplete: package=%t node=%t npm=%t upload=%t", candidateFound, nodeFound, npmSourceFound, uploadFound)
+	}
+	for _, step := range workflow.Jobs["build-macos"].Steps {
+		if strings.HasPrefix(step.Uses, "actions/setup-node@") || step.With.Repository == "rstreamlabs/npm" {
+			t.Fatal("macOS binary jobs must not prepare the npm candidate")
+		}
 	}
 }
 
