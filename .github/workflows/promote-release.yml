@@ -1,0 +1,481 @@
+name: promote stable releases
+
+on:
+  workflow_run:
+    workflows:
+      - build release candidates
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: stable-release
+  cancel-in-progress: false
+
+env:
+  CHANNEL: stable
+  PACKAGE_NAME: rstream
+  RSTREAM_URL: https://rstream.io
+
+jobs:
+  prepare:
+    name: approve and verify candidate
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.actor.login == vars.CI_ALLOWED_ACTOR &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+    runs-on: ubuntu-latest
+    environment: stable-release
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Validate release metadata
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+(\.[0-9]+){2}$ ]]; then
+            echo "invalid stable release tag: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+          version=${RELEASE_TAG#v}
+          release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")
+          if [[ "$(jq -r '.draft' <<<"$release")" != true ]]; then
+            echo "GitHub release ${RELEASE_TAG} must still be a draft" >&2
+            exit 1
+          fi
+          latest_tag=$(gh api "repos/${GITHUB_REPOSITORY}/releases/latest" --jq '.tag_name' 2>/dev/null || true)
+          if [[ -n "$latest_tag" ]]; then
+            if [[ ! "$latest_tag" =~ ^v[0-9]+(\.[0-9]+){2}$ ]]; then
+              echo "latest published release has an unexpected tag: ${latest_tag}" >&2
+              exit 1
+            fi
+            latest_version=${latest_tag#v}
+            if [[ "$(printf '%s\n' "$latest_version" "$version" | sort -V | tail -n 1)" != "$version" ]]; then
+              echo "refusing to promote ${RELEASE_TAG} after newer release ${latest_tag}" >&2
+              exit 1
+            fi
+          fi
+          tag_ref=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}")
+          tag_sha=$(jq -r '.object.sha' <<<"$tag_ref")
+          if [[ "$(jq -r '.object.type' <<<"$tag_ref")" == tag ]]; then
+            tag_sha=$(gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_sha}" --jq '.object.sha')
+          fi
+          if [[ "$tag_sha" != "$RELEASE_SHA" ]]; then
+            echo "release tag does not match the candidate workflow commit" >&2
+            exit 1
+          fi
+          echo "tag=${RELEASE_TAG}" >>"$GITHUB_OUTPUT"
+          echo "version=${version}" >>"$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-candidate-${{ steps.release.outputs.version }}
+          path: candidate
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Verify candidate checksum
+        shell: bash
+        working-directory: candidate
+        run: shasum -a 256 --check "release-candidate-${{ steps.release.outputs.version }}.tar.gz.sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-candidate-${{ steps.release.outputs.version }}
+          path: candidate
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish-package-api:
+    name: publish package API archives
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+      - uses: ./.github/actions/restore-release-candidate
+        with:
+          version: ${{ needs.prepare.outputs.version }}
+      - name: Publish and verify archives
+        env:
+          RSTREAM_TOKEN: ${{ secrets.RSTREAM_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: ./.github/scripts/publish-package-api.sh "$PACKAGE_NAME" "$CHANNEL" "$VERSION" "$RSTREAM_URL" "$RSTREAM_TOKEN"
+      - name: Package published archive metadata
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          mapfile -d '' metadata_files < <(
+            find "out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}" -type f -name '*.info' -print0 |
+              LC_ALL=C sort -z
+          )
+          if ((${#metadata_files[@]} == 0)); then
+            echo "no published package metadata was generated" >&2
+            exit 1
+          fi
+          printf '%s\0' "${metadata_files[@]}" |
+            tar --null --create --gzip \
+              --file "package-metadata-${VERSION}.tar.gz" \
+              --files-from -
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package-metadata-${{ needs.prepare.outputs.version }}
+          path: package-metadata-${{ needs.prepare.outputs.version }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-debian:
+    name: publish Debian packages
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+      - uses: ./.github/actions/restore-release-candidate
+        with:
+          version: ${{ needs.prepare.outputs.version }}
+      - name: Publish and verify Debian packages
+        env:
+          APTLY_DIGEST: ${{ secrets.APTLY_DIGEST }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: ./.github/scripts/publish-debian-packages.sh "$PACKAGE_NAME" "$CHANNEL" "$VERSION" https://aptly.rstream.io "$APTLY_DIGEST"
+
+  publish-nuget:
+    name: publish NuGet package
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install NuGet client
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
+          echo "deb https://download.mono-project.com/repo/ubuntu stable-focal main" | sudo tee /etc/apt/sources.list.d/mono-official-stable.list
+          sudo apt update
+          sudo apt-get install -y nuget
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+      - uses: ./.github/actions/restore-release-candidate
+        with:
+          version: ${{ needs.prepare.outputs.version }}
+      - name: Publish and verify NuGet package
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: >-
+          ./.github/scripts/publish-nuget-package.sh
+          "$PACKAGE_NAME" "$CHANNEL" "$VERSION"
+          https://nexus.rstream.io/repository/windows/ "$NUGET_API_KEY"
+
+  publish-docker:
+    name: publish Docker image
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install OCI copy client
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+      - uses: ./.github/actions/restore-release-candidate
+        with:
+          version: ${{ needs.prepare.outputs.version }}
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: rstream
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Publish and verify Docker image
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: >-
+          ./.github/scripts/publish-docker-image.sh
+          "out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/${PACKAGE_NAME}-${VERSION}-docker.oci.tar"
+          docker.io/rstream/rstream "$VERSION"
+
+  publish-homebrew:
+    name: update Homebrew formula
+    needs:
+      - prepare
+      - publish-package-api
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install formula update dependency
+        run: sudo apt-get update && sudo apt-get install -y gawk
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: package-metadata-${{ needs.prepare.outputs.version }}
+          path: metadata
+      - name: Restore published archive metadata
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: tar -xzf "metadata/package-metadata-${VERSION}.tar.gz"
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          repository: rstreamlabs/homebrew
+          token: ${{ secrets.GIT_TOKEN }}
+          path: homebrew
+      - name: Update formula
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          formula="homebrew/Formula/${PACKAGE_NAME}.rb"
+          sed -i "s/version \".*\"/version \"${VERSION}\"/" "$formula"
+          platforms=("macos/x86_64" "macos/arm64" "linux/x86_64" "linux/arm64")
+          for platform in "${platforms[@]}"; do
+            os=${platform%%/*}
+            arch=${platform#*/}
+            metadata="out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/${os}/${arch}/${PACKAGE_NAME}-${VERSION}-${os}-${arch}.tar.gz.info"
+            package_id=$(awk -F: '$1 == "id" {print $2}' "$metadata")
+            checksum=$(awk -F: '$1 == "checksum" {print $2}' "$metadata")
+            package_url="${RSTREAM_URL}/api/packages/${package_id}/download"
+            gawk -i inplace -v os="$os" -v arch="$arch" -v url="$package_url" -v sha256="$checksum" 'BEGIN{in_os=in_arch=0} /^  on_macos do$/ {in_os=(os=="macos"); in_arch=0} /^  on_linux do$/ {in_os=(os=="linux"); in_arch=0} in_os && /^    if Hardware::CPU\.intel\?$/ {in_arch=(arch=="x86_64")} in_os && /^    else$/ {in_arch=(arch=="arm64")} in_os && in_arch && /url "/ {gsub(/url ".*/, "url \"" url "\"")} in_os && in_arch && /sha256 "/ {gsub(/sha256 ".*/, "sha256 \"" sha256 "\"")} in_os && /^    end$/ {in_arch=0} in_os && /^  end$/ {in_os=in_arch=0} {print}' "$formula"
+          done
+          ruby -c "$formula"
+          git -C homebrew config user.name "CI automation"
+          git -C homebrew config user.email "ci@rstream.io"
+          git -C homebrew add "Formula/${PACKAGE_NAME}.rb"
+          if ! git -C homebrew diff --cached --quiet; then
+            git -C homebrew commit -m "update ${PACKAGE_NAME} formula to ${VERSION}"
+            git -C homebrew push
+          fi
+          grep -F "version \"${VERSION}\"" "$formula"
+
+  publish-winget:
+    name: update WinGet source manifests
+    needs:
+      - prepare
+      - publish-package-api
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: package-metadata-${{ needs.prepare.outputs.version }}
+          path: metadata
+      - name: Restore published archive metadata
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: tar -xzf "metadata/package-metadata-${VERSION}.tar.gz"
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          repository: rstreamlabs/winget
+          token: ${{ secrets.GIT_TOKEN }}
+          path: winget
+      - name: Update source manifests
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          x64_metadata="out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/windows/x86_64/${PACKAGE_NAME}-${VERSION}-windows-x86_64.zip.info"
+          arm64_metadata="out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/windows/arm64/${PACKAGE_NAME}-${VERSION}-windows-arm64.zip.info"
+          x64_id=$(awk -F: '$1 == "id" {print $2}' "$x64_metadata")
+          x64_checksum=$(awk -F: '$1 == "checksum" {print $2}' "$x64_metadata")
+          arm64_id=$(awk -F: '$1 == "id" {print $2}' "$arm64_metadata")
+          arm64_checksum=$(awk -F: '$1 == "checksum" {print $2}' "$arm64_metadata")
+          ./.github/scripts/write-winget-manifests.sh \
+            winget "$VERSION" \
+            "${RSTREAM_URL}/api/packages/${x64_id}/download" "$x64_checksum" \
+            "${RSTREAM_URL}/api/packages/${arm64_id}/download" "$arm64_checksum"
+          python3 -m venv winget/.venv
+          winget/.venv/bin/pip install --disable-pip-version-check PyYAML==6.0.2
+          winget/.venv/bin/python winget/tools/validate_manifests.py
+          git -C winget config user.name "CI automation"
+          git -C winget config user.email "ci@rstream.io"
+          git -C winget add "manifests/r/rstream/rstream/${VERSION}"
+          if ! git -C winget diff --cached --quiet; then
+            git -C winget commit -m "add ${PACKAGE_NAME} winget manifests for ${VERSION}"
+            git -C winget push
+          fi
+
+  publish-npm:
+    name: publish npm CLI package
+    needs:
+      - prepare
+      - publish-package-api
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+      - uses: ./.github/actions/restore-release-candidate
+        with:
+          version: ${{ needs.prepare.outputs.version }}
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          repository: rstreamlabs/npm
+          token: ${{ secrets.GIT_TOKEN }}
+          path: npm
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Publish and verify package
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPMJS_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          package_dir="npm/rstream-cli"
+          package_name="@rstreamlabs/rstream-cli"
+          candidate_source=$(<"out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/npm/source-commit")
+          current_source=$(git -C npm rev-parse HEAD)
+          printf 'npm candidate source %s, current source %s\n' "$candidate_source" "$current_source"
+          pushd "$package_dir"
+          current_version=$(npm pkg get version | tr -d '"')
+          if [[ "$current_version" != "$VERSION" ]]; then
+            npm version "$VERSION" --no-git-tag-version --ignore-scripts
+          fi
+          npm ci --ignore-scripts
+          npm run prepack
+          verification_directory=$(mktemp -d)
+          npm pack --ignore-scripts --pack-destination "$verification_directory"
+          popd
+          candidate="out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/npm/rstreamlabs-rstream-cli-${VERSION}.tgz"
+          generated="${verification_directory}/rstreamlabs-rstream-cli-${VERSION}.tgz"
+          if [[ "$(shasum -a 512 "$generated" | awk '{print $1}')" != "$(shasum -a 512 "$candidate" | awk '{print $1}')" ]]; then
+            echo "npm source package no longer matches the immutable release candidate" >&2
+            exit 1
+          fi
+          ./.github/scripts/publish-npm-package.sh "$package_name" "$VERSION" "$candidate" npm
+
+  publish-mcp:
+    name: publish Official MCP Registry metadata
+    needs:
+      - prepare
+      - publish-docker
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+      - name: Prepare local stdio MCP metadata
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          jq --arg version "$VERSION" \
+            '.version = $version | .packages[0].identifier = "docker.io/rstream/rstream:" + $version' \
+            server.json >server.tmp.json
+          mv server.tmp.json server.json
+      - name: Install MCP Registry publisher
+        env:
+          MCP_PUBLISHER_SHA256: 1370446bbe74d562608e8005a6ccce02d146a661fbd78674e11cc70b9618d6cf
+          MCP_PUBLISHER_VERSION: 1.8.0
+        run: |
+          set -euo pipefail
+          archive=mcp-publisher_linux_amd64.tar.gz
+          curl --fail --location --output "$archive" \
+            "https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/${archive}"
+          printf '%s  %s\n' "$MCP_PUBLISHER_SHA256" "$archive" | sha256sum --check
+          tar -xzf "$archive" mcp-publisher
+      - name: Publish and verify metadata
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          registry_url='https://registry.modelcontextprotocol.io/v0.1/servers?search=io.github.rstreamlabs%2Frstream'
+          response=$(curl --fail --silent --show-error --retry 5 --retry-all-errors "$registry_url")
+          matches=$(jq --arg version "$VERSION" \
+            '[.servers[] | select(.server.name == "io.github.rstreamlabs/rstream" and .server.version == $version)]' \
+            <<<"$response")
+          match_count=$(jq 'length' <<<"$matches")
+          if [[ "$match_count" != 0 ]]; then
+            if [[ "$match_count" != 1 ]] || ! jq --exit-status --arg version "$VERSION" '
+              .[0].server.packages as $packages |
+              ($packages | length) == 1 and
+              $packages[0].registryType == "oci" and
+              $packages[0].identifier == ("docker.io/rstream/rstream:" + $version) and
+              $packages[0].transport.type == "stdio" and
+              $packages[0].packageArguments == [
+                {value: "mcp", type: "positional"},
+                {value: "serve", type: "positional"}
+              ]
+            ' <<<"$matches" >/dev/null; then
+              echo "immutable MCP Registry conflict for ${VERSION}" >&2
+              exit 1
+            fi
+            echo "Official MCP Registry already exposes version ${VERSION}"
+            exit 0
+          fi
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
+          for _ in {1..24}; do
+            response=$(curl --fail --silent --show-error --retry 5 --retry-all-errors "$registry_url")
+            if jq --exit-status --arg version "$VERSION" '
+              any(.servers[];
+                .server.version == $version and
+                .server.packages[0].identifier == ("docker.io/rstream/rstream:" + $version)
+              )
+            ' <<<"$response" >/dev/null; then
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Official MCP Registry did not expose version ${VERSION}" >&2
+          exit 1
+
+  finalize:
+    name: publish GitHub release
+    needs:
+      - prepare
+      - publish-package-api
+      - publish-debian
+      - publish-nuget
+      - publish-docker
+      - publish-homebrew
+      - publish-winget
+      - publish-npm
+      - publish-mcp
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false \
+            --latest
+          if [[ "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" --jq '.draft')" != false ]]; then
+            echo "GitHub release is still a draft: ${RELEASE_TAG}" >&2
+            exit 1
+          fi
+          printf 'Published %s after all stable channels passed verification.\n' "$RELEASE_TAG" >>"$GITHUB_STEP_SUMMARY"

@@ -3,45 +3,69 @@
 package rstream
 
 import (
+	"encoding/json"
+	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
 
-type releaseWorkflowInput struct {
-	Description string `yaml:"description"`
-	Required    bool   `yaml:"required"`
-	Type        string `yaml:"type"`
-	Default     bool   `yaml:"default"`
-}
-
 type releaseWorkflowStep struct {
 	Name string `yaml:"name"`
 	Uses string `yaml:"uses"`
 	If   string `yaml:"if"`
 	With struct {
-		Repository string `yaml:"repository"`
+		Repository         string `yaml:"repository"`
+		PersistCredentials bool   `yaml:"persist-credentials"`
 	} `yaml:"with"`
 }
 
 type releaseWorkflowJob struct {
-	Steps []releaseWorkflowStep `yaml:"steps"`
+	Environment string                `yaml:"environment"`
+	If          string                `yaml:"if"`
+	Needs       releaseNeeds          `yaml:"needs"`
+	Permissions map[string]string     `yaml:"permissions"`
+	Steps       []releaseWorkflowStep `yaml:"steps"`
+}
+
+type releaseNeeds []string
+
+func (needs *releaseNeeds) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		var value string
+		if err := node.Decode(&value); err != nil {
+			return err
+		}
+		*needs = releaseNeeds{value}
+		return nil
+	case yaml.SequenceNode:
+		var values []string
+		if err := node.Decode(&values); err != nil {
+			return err
+		}
+		*needs = values
+		return nil
+	default:
+		return fmt.Errorf("unexpected needs node kind %d", node.Kind)
+	}
 }
 
 type releaseWorkflow struct {
-	On struct {
-		WorkflowDispatch struct {
-			Inputs map[string]releaseWorkflowInput `yaml:"inputs"`
-		} `yaml:"workflow_dispatch"`
-	} `yaml:"on"`
-	Env  map[string]string             `yaml:"env"`
-	Jobs map[string]releaseWorkflowJob `yaml:"jobs"`
+	Concurrency struct {
+		Group string `yaml:"group"`
+	} `yaml:"concurrency"`
+	Jobs        map[string]releaseWorkflowJob `yaml:"jobs"`
+	On          map[string]any                `yaml:"on"`
+	Permissions map[string]string             `yaml:"permissions"`
 }
 
-func TestStableReleasePublicationRequiresExplicitDispatch(t *testing.T) {
-	payload, err := os.ReadFile(".github/workflows/cross-compile.yml")
+func readReleaseWorkflow(t *testing.T, path string) releaseWorkflow {
+	t.Helper()
+	payload, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read release workflow: %v", err)
 	}
@@ -49,69 +73,124 @@ func TestStableReleasePublicationRequiresExplicitDispatch(t *testing.T) {
 	if err := yaml.Unmarshal(payload, &workflow); err != nil {
 		t.Fatalf("parse release workflow: %v", err)
 	}
-	input, ok := workflow.On.WorkflowDispatch.Inputs["publish_stable"]
-	if !ok || input.Type != "boolean" || !input.Required || input.Default || strings.TrimSpace(input.Description) == "" {
-		t.Fatalf("publish_stable input does not fail closed: %#v", input)
+	return workflow
+}
+
+func TestStableReleaseBuildCreatesCandidateWithoutPublishing(t *testing.T) {
+	workflow := readReleaseWorkflow(t, ".github/workflows/cross-compile.yml")
+	if _, ok := workflow.On["workflow_dispatch"]; ok {
+		t.Fatal("release candidates must not expose a manual publication dispatch")
 	}
-	gate := workflow.Env["PUBLISH_STABLE"]
-	for _, fragment := range []string{"github.event_name == 'workflow_dispatch'", "github.ref_type == 'tag'", "inputs.publish_stable"} {
-		if !strings.Contains(gate, fragment) {
-			t.Fatalf("PUBLISH_STABLE gate %q is missing %q", gate, fragment)
+	if workflow.Permissions["contents"] != "read" {
+		t.Fatalf("candidate workflow contents permission is %q", workflow.Permissions["contents"])
+	}
+	build, ok := workflow.Jobs["build"]
+	if !ok {
+		t.Fatal("candidate workflow does not define the build job")
+	}
+	candidateFound := false
+	uploadFound := false
+	for _, step := range build.Steps {
+		if step.Name == "Package stable release candidate" {
+			candidateFound = step.If == "${{ github.ref_type == 'tag' }}"
+		}
+		if strings.HasPrefix(step.Uses, "actions/upload-artifact@") {
+			uploadFound = step.If == "${{ github.ref_type == 'tag' }}"
+		}
+		if strings.HasPrefix(step.Uses, "docker/login-action@") {
+			t.Fatal("candidate workflow must not log in to a container registry")
+		}
+		if slices.Contains([]string{"rstreamlabs/homebrew", "rstreamlabs/winget"}, step.With.Repository) {
+			t.Fatalf("candidate workflow must not mutate %s", step.With.Repository)
+		}
+		if step.With.Repository == "rstreamlabs/npm" && step.With.PersistCredentials {
+			t.Fatal("candidate workflow must not persist npm repository credentials")
 		}
 	}
-	publishCondition := "${{ env.PUBLISH_STABLE == 'true' }}"
-	requiredNames := map[string]bool{
-		"Package and deploy binaries":    false,
-		"Update homebrew cask file":      false,
-		"Update winget manifests":        false,
-		"Publish NPM package":            false,
-		"Prepare MCP Registry metadata":  false,
-		"Install MCP Registry publisher": false,
-		"Publish MCP server metadata":    false,
+	if !candidateFound || !uploadFound {
+		t.Fatalf("candidate workflow is incomplete: package=%t upload=%t", candidateFound, uploadFound)
 	}
-	requiredActions := map[string]bool{
-		"docker/setup-qemu-action@":   false,
-		"docker/setup-buildx-action@": false,
-		"docker/login-action@":        false,
+}
+
+func TestStableReleasePromotionIsApprovedAndOrdered(t *testing.T) {
+	workflow := readReleaseWorkflow(t, ".github/workflows/promote-release.yml")
+	if _, ok := workflow.On["workflow_run"]; !ok {
+		t.Fatal("promotion workflow is not connected to the candidate workflow")
 	}
-	requiredRepositories := map[string]bool{
-		"rstreamlabs/homebrew": false,
-		"rstreamlabs/winget":   false,
-		"rstreamlabs/npm":      false,
+	if workflow.Concurrency.Group != "stable-release" {
+		t.Fatalf("stable releases are not serialized: %q", workflow.Concurrency.Group)
 	}
-	validationFound := false
-	for _, step := range workflow.Jobs["build"].Steps {
-		if step.Name == "Validate stable publication gate" {
-			validationFound = step.If == "${{ inputs.publish_stable }}"
-		}
-		if _, required := requiredNames[step.Name]; required {
-			requiredNames[step.Name] = step.If == publishCondition
-		}
-		for prefix := range requiredActions {
-			if strings.HasPrefix(step.Uses, prefix) {
-				requiredActions[prefix] = step.If == publishCondition
-			}
-		}
-		if _, required := requiredRepositories[step.With.Repository]; required {
-			requiredRepositories[step.With.Repository] = step.If == publishCondition
+	if workflow.Permissions["contents"] != "read" || workflow.Permissions["actions"] != "read" {
+		t.Fatalf("promotion defaults are not read-only: %#v", workflow.Permissions)
+	}
+	if _, ok := workflow.Permissions["id-token"]; ok {
+		t.Fatal("OIDC permission must not be granted to every promotion job")
+	}
+	prepare, ok := workflow.Jobs["prepare"]
+	if !ok {
+		t.Fatal("promotion workflow does not define the approval job")
+	}
+	if prepare.Environment != "stable-release" {
+		t.Fatalf("promotion approval environment is %q", prepare.Environment)
+	}
+	for _, fragment := range []string{"conclusion == 'success'", "actor.login == vars.CI_ALLOWED_ACTOR", "startsWith"} {
+		if !strings.Contains(prepare.If, fragment) {
+			t.Fatalf("promotion approval condition %q is missing %q", prepare.If, fragment)
 		}
 	}
-	if !validationFound {
-		t.Fatal("stable publication input is not rejected on a branch dispatch")
+	publishJobs := []string{
+		"publish-package-api",
+		"publish-debian",
+		"publish-nuget",
+		"publish-docker",
+		"publish-homebrew",
+		"publish-winget",
+		"publish-npm",
+		"publish-mcp",
 	}
-	for name, guarded := range requiredNames {
-		if !guarded {
-			t.Errorf("release mutation %q is not guarded by PUBLISH_STABLE", name)
+	for _, name := range publishJobs {
+		job, ok := workflow.Jobs[name]
+		if !ok {
+			t.Errorf("promotion workflow does not define %s", name)
+			continue
+		}
+		if !slices.Contains(job.Needs, "prepare") {
+			t.Errorf("%s can run without approved candidate verification", name)
 		}
 	}
-	for action, guarded := range requiredActions {
-		if !guarded {
-			t.Errorf("release action %q is not guarded by PUBLISH_STABLE", action)
+	if workflow.Jobs["publish-mcp"].Permissions["id-token"] != "write" {
+		t.Fatal("MCP publication does not have its scoped OIDC permission")
+	}
+	finalize, ok := workflow.Jobs["finalize"]
+	if !ok {
+		t.Fatal("promotion workflow does not define final release publication")
+	}
+	if finalize.Permissions["contents"] != "write" {
+		t.Fatal("only final release publication should receive contents write permission")
+	}
+	for _, dependency := range append([]string{"prepare"}, publishJobs...) {
+		if !slices.Contains(finalize.Needs, dependency) {
+			t.Errorf("GitHub release can be published without %s", dependency)
 		}
 	}
-	for repository, guarded := range requiredRepositories {
-		if !guarded {
-			t.Errorf("release repository %q is not guarded by PUBLISH_STABLE", repository)
-		}
+}
+
+func TestReleasePleaseCreatesDraftAndTag(t *testing.T) {
+	payload, err := os.ReadFile("release-please-config.json")
+	if err != nil {
+		t.Fatalf("read release-please config: %v", err)
+	}
+	var config struct {
+		Packages map[string]struct {
+			Draft            bool `json:"draft"`
+			ForceTagCreation bool `json:"force-tag-creation"`
+		} `json:"packages"`
+	}
+	if err := json.Unmarshal(payload, &config); err != nil {
+		t.Fatalf("parse release-please config: %v", err)
+	}
+	root := config.Packages["."]
+	if !root.Draft || !root.ForceTagCreation {
+		t.Fatalf("release-please must create a tagged draft: %#v", root)
 	}
 }

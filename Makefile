@@ -118,6 +118,9 @@ NUGET_SOURCE ?= https://nexus.rstream.io/repository/windows/
 # Docker repository
 DOCKER_REPO ?= rstream
 
+# Docker output
+DOCKER_OUTPUT ?= $(if $(filter stable,$(CHANNEL)),type=registry,type=docker)
+
 # List of docker platforms
 DOCKER_PLATFORMS := $(if $(filter $(CHANNEL),stable),$(filter $(PLATFORMS),linux/arm64 linux/x86_64 linux/x86_64_v2 linux/ppc64le linux/x86_i686 linux/armv7hf linux/armv6hf),linux/$(CURRENT_ARCH))
 
@@ -316,7 +319,7 @@ docker buildx build \
 --pull \
 --tag ${IMAGE}:$(VERSION)$(if $(filter-out stable,$(CHANNEL)),-$(CHANNEL)) \
 $(if $(filter stable,$(CHANNEL)),--tag ${IMAGE}:latest) \
-$(if $(filter stable,$(CHANNEL)),--output=type=registry,--output=type=docker) \
+--output=$(DOCKER_OUTPUT) \
 $(call base_dir_cmd,$1)
 endef
 

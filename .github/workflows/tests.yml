@@ -64,6 +64,16 @@ jobs:
         run: ./test/e2e/runtime-common-unit.sh
       - name: Test release package retry policy
         run: ./test/release-package-retries.sh
+      - name: Test release candidate round trip
+        run: ./test/release-candidate.sh
+      - name: Validate release automation
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n .github/scripts/*.sh test/release-*.sh
+          shellcheck .github/scripts/*.sh test/release-*.sh
+          jq empty release-please-config.json .release-please-manifest.json server.json
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -color
       - name: Test with coverage
         shell: bash
         run: |
