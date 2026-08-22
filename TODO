@@ -29,3 +29,6 @@
 
 - Keep secret-bearing MCP results out of model context
   `rstream_token_create` and `rstream_project_turn_credentials_create` currently return credential material through MCP `content` and `structuredContent`, which makes the values available to the model and its conversation transcript. This is acceptable only for an explicit, trusted workstation handoff. Before delegating these tools to less-trusted or published agents, replace direct disclosure with short-lived server-side handles and a narrowly scoped delivery or reveal path that requires explicit user approval, expires promptly, and never logs the secret. Coordinate this with server-side tool-surface restriction; annotations and client-side allow-lists are not security boundaries.
+
+- Upgrade the QUIC connectivity dependency set together
+  `quic-go` 0.61 removes `http3.ParseCapsule`, which is still used by `masque-go` 0.4 and by the current MASQUE implementation. `connect-ip-go` 0.2 and `webtransport-go` 0.12 both require `quic-go` 0.61, so they cannot be upgraded independently while `masque-go` has no compatible release. Keep `connect-ip-go` 0.1, `quic-go` 0.60, and `webtransport-go` 0.11 together until the MASQUE dependency and the rstream capsule parsing paths have migrated and the full MASQUE, CONNECT-IP, and WebTransport suites pass.
