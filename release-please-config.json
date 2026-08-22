@@ -3,6 +3,8 @@
   "pull-request-header": "New release created",
   "packages": {
     ".": {
+      "draft": true,
+      "force-tag-creation": true,
       "release-type": "simple",
       "include-v-in-tag": true
     }

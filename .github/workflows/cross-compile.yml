@@ -1,30 +1,19 @@
-name: cross-compile, package, and deploy
+name: build release candidates
 
 on:
   push:
     branches:
       - main
     tags:
-      - "*"
-  workflow_dispatch:
-    inputs:
-      publish_stable:
-        description: Publish packages after the matching Engine protocol is live in production
-        required: true
-        type: boolean
-        default: false
+      - "v*"
 env:
   CHANNEL: "${{ github.ref_type == 'tag' && 'stable' || 'dev' }}"
-  NPM_PACKAGE_NAME: "rstream-cli"
   PACKAGE_NAME: "rstream"
-  PUBLISH_STABLE: "${{ github.event_name == 'workflow_dispatch' && github.ref_type == 'tag' && inputs.publish_stable && 'true' || 'false' }}"
   RSTREAM_CROSS_BUILD_JOBS: "2"
-  RSTREAM_URL: "${{ github.ref_type == 'tag' && 'https://rstream.io' || 'https://dev.rstream.io' }}"
   VERSION: "${{ github.ref_name }}"
 permissions:
   actions: read
   contents: read
-  id-token: write
 jobs:
   build-macos:
     name: macOS native binaries (${{ matrix.artifact }})
@@ -56,6 +45,17 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        if: ${{ github.ref_type == 'tag' }}
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        if: ${{ github.ref_type == 'tag' }}
+        with:
+          repository: rstreamlabs/npm
+          path: npm
+          persist-credentials: false
       - name: Print Go version
         shell: bash
         run: go version
@@ -80,7 +80,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
   build:
-    name: ${{ github.event_name == 'workflow_dispatch' && github.ref_type == 'tag' && inputs.publish_stable && 'build, sign, and publish stable release' || github.ref_type == 'tag' && 'build stable release candidates' || 'build development targets' }}
+    name: ${{ github.ref_type == 'tag' && 'build and sign stable release candidate' || 'build development targets' }}
     needs: build-macos
     if: ${{ always() && github.actor == vars.CI_ALLOWED_ACTOR && (github.ref_type == 'tag' || github.ref_name == 'main') && (github.ref_type != 'tag' || needs.build-macos.result == 'success') }}
     runs-on: ubuntu-latest
@@ -94,15 +94,6 @@ jobs:
             exit 1
           fi
           echo "VERSION=${VERSION#v}" >> "$GITHUB_ENV"
-      - name: Validate stable publication gate
-        if: ${{ inputs.publish_stable }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [[ "$GITHUB_REF_TYPE" != tag ]]; then
-            echo "stable publication must be dispatched on the reviewed release tag" >&2
-            exit 1
-          fi
       - name: Install dependencies
         shell: bash
         run: |
@@ -111,6 +102,7 @@ jobs:
             dpkg              \
             gawk              \
             git               \
+            jq                \
             make              \
             npm               \
             protobuf-compiler \
@@ -230,145 +222,40 @@ jobs:
           fi
           make -j "$(getconf _NPROCESSORS_ONLN)" "${PACKAGE_NAME}-macos-rcodesign"
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
-        if: ${{ env.PUBLISH_STABLE == 'true' }}
+        if: ${{ github.ref_type == 'tag' }}
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-        if: ${{ env.PUBLISH_STABLE == 'true' }}
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        if: ${{ env.PUBLISH_STABLE == 'true' }}
+        if: ${{ github.ref_type == 'tag' }}
+      - name: Package stable release candidate
+        if: ${{ github.ref_type == 'tag' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -j "$(getconf _NPROCESSORS_ONLN)" \
+            "${PACKAGE_NAME}-pkg-cross" \
+            "${PACKAGE_NAME}-deb-cross" \
+            "${PACKAGE_NAME}-nupkg"
+          docker_archive="${PWD}/out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/${PACKAGE_NAME}-${VERSION}-docker.oci.tar"
+          make -j "$(getconf _NPROCESSORS_ONLN)" \
+            DOCKER_REPO="docker.io/rstream" \
+            DOCKER_OUTPUT="type=oci,dest=${docker_archive}" \
+            "${PACKAGE_NAME}-docker"
+          ./.github/scripts/create-npm-candidate.sh \
+            npm/rstream-cli "$VERSION" https://rstream.io \
+            "out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/npm"
+          go clean -cache
+          rm -rf npm/rstream-cli/node_modules
+          rm -rf native-macos-artifacts
+          docker builder prune --all --force >/dev/null
+          archive="release-candidate-${VERSION}.tar.gz"
+          ./.github/scripts/create-release-candidate.sh \
+            "$PACKAGE_NAME" "$CHANNEL" "$VERSION" "$archive"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ github.ref_type == 'tag' }}
         with:
-          username: rstream
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-      - name: Package and deploy binaries
-        if: ${{ env.PUBLISH_STABLE == 'true' }}
-        shell: bash
-        env:
-          APTLY_DIGEST: ${{ secrets.APTLY_DIGEST }}
-          APTLY_URL: "https://aptly.rstream.io"
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-          NUGET_SOURCE: "https://nexus.rstream.io/repository/windows/"
-          RSTREAM_TOKEN: ${{ secrets.RSTREAM_TOKEN }}
-        run: |
-          set -euo pipefail
-          make -j "$(getconf _NPROCESSORS_ONLN)" "${PACKAGE_NAME}-deploy-pkg-cross" "${PACKAGE_NAME}-deploy-deb" "${PACKAGE_NAME}-deploy-nupkg" "${PACKAGE_NAME}-docker"
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        if: ${{ env.PUBLISH_STABLE == 'true' }}
-        with:
-          repository: rstreamlabs/homebrew
-          token: ${{ secrets.GIT_TOKEN }}
-          path: homebrew
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        if: ${{ env.PUBLISH_STABLE == 'true' }}
-        with:
-          repository: rstreamlabs/winget
-          token: ${{ secrets.GIT_TOKEN }}
-          path: winget
-      - name: Update homebrew cask file
-        if: ${{ env.PUBLISH_STABLE == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          formula_suffix=""
-          if [[ "$CHANNEL" != "stable" ]]; then
-            formula_suffix="-dev"
-          fi
-          BREW_FORMULA="homebrew/Formula/${PACKAGE_NAME}${formula_suffix}.rb"
-          sed -i "s/version \".*\"/version \"${VERSION}\"/" "$BREW_FORMULA"
-          PLATFORMS=("macos/x86_64" "macos/arm64" "linux/x86_64" "linux/arm64")
-          for PLATFORM in "${PLATFORMS[@]}"; do
-            OS=$(echo "$PLATFORM" | cut -d '/' -f1)
-            ARCH=$(echo "$PLATFORM" | cut -d '/' -f2)
-            FILEPATH="out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/${OS}/${ARCH}/${PACKAGE_NAME}-${VERSION}-${OS}-${ARCH}.tar.gz.info"
-            PACKAGE_ID=$(grep "id:" "$FILEPATH" | cut -d ':' -f2 | xargs)
-            PACKAGE_URL="${RSTREAM_URL}/api/packages/${PACKAGE_ID}/download"
-            CHECKSUM=$(grep "checksum:" "$FILEPATH" | cut -d ':' -f2 | xargs)
-            gawk -i inplace -v os="${OS}" -v arch="${ARCH}" -v url="${PACKAGE_URL}" -v sha256="${CHECKSUM}" 'BEGIN{in_os=in_arch=0} /^  on_macos do$/ {in_os=(os=="macos"); in_arch=0} /^  on_linux do$/ {in_os=(os=="linux"); in_arch=0} in_os && /^    if Hardware::CPU\.intel\?$/ {in_arch=(arch=="x86_64")} in_os && /^    else$/ {in_arch=(arch=="arm64")} in_os && in_arch && /url "/ {gsub(/url ".*/, "url \"" url "\"")} in_os && in_arch && /sha256 "/ {gsub(/sha256 ".*/, "sha256 \"" sha256 "\"")} in_os && /^    end$/ {in_arch=0} in_os && /^  end$/ {in_os=in_arch=0} {print}' "$BREW_FORMULA"
-          done
-          git -C homebrew config user.name 'CI automation'
-          git -C homebrew config user.email 'ci@rstream.io'
-          git -C homebrew add "Formula/${PACKAGE_NAME}${formula_suffix}.rb"
-          if ! git -C homebrew diff --cached --quiet; then
-            git -C homebrew commit -m "update ${PACKAGE_NAME}${formula_suffix} formula to ${VERSION}"
-            git -C homebrew push
-          fi
-      - name: Update winget manifests
-        if: ${{ env.PUBLISH_STABLE == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          X64_FILEPATH="out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/windows/x86_64/${PACKAGE_NAME}-${VERSION}-windows-x86_64.zip.info"
-          ARM64_FILEPATH="out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/windows/arm64/${PACKAGE_NAME}-${VERSION}-windows-arm64.zip.info"
-          X64_PACKAGE_ID=$(grep "id:" "$X64_FILEPATH" | cut -d ':' -f2 | xargs)
-          X64_PACKAGE_URL="${RSTREAM_URL}/api/packages/${X64_PACKAGE_ID}/download"
-          X64_CHECKSUM=$(grep "checksum:" "$X64_FILEPATH" | cut -d ':' -f2 | xargs)
-          ARM64_PACKAGE_ID=$(grep "id:" "$ARM64_FILEPATH" | cut -d ':' -f2 | xargs)
-          ARM64_PACKAGE_URL="${RSTREAM_URL}/api/packages/${ARM64_PACKAGE_ID}/download"
-          ARM64_CHECKSUM=$(grep "checksum:" "$ARM64_FILEPATH" | cut -d ':' -f2 | xargs)
-          ./.github/scripts/write-winget-manifests.sh winget "$VERSION" "$X64_PACKAGE_URL" "$X64_CHECKSUM" "$ARM64_PACKAGE_URL" "$ARM64_CHECKSUM"
-          git -C winget config user.name 'CI automation'
-          git -C winget config user.email 'ci@rstream.io'
-          git -C winget add "manifests/r/rstream/rstream/${VERSION}"
-          if ! git -C winget diff --cached --quiet; then
-            git -C winget commit -m "add ${PACKAGE_NAME} winget manifests for ${VERSION}"
-            git -C winget push
-          fi
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-        if: ${{ env.PUBLISH_STABLE == 'true' }}
-        with:
-          repository: rstreamlabs/npm
-          token: ${{ secrets.GIT_TOKEN }}
-          path: npm
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        if: ${{ env.PUBLISH_STABLE == 'true' }}
-        with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
-          package-manager-cache: false
-      - name: Publish NPM package
-        if: ${{ env.PUBLISH_STABLE == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          PACKAGE_JSON="npm/${NPM_PACKAGE_NAME}/package.json"
-          sed -i "s|\"version\": \".*\"|\"version\": \"${VERSION}\"|" "$PACKAGE_JSON"
-          sed -i "s|\"registry\": \".*\"|\"registry\": \"${RSTREAM_URL}\"|" "$PACKAGE_JSON"
-          pushd "./npm/${NPM_PACKAGE_NAME}"
-          npm install --ignore-scripts
-          popd
-          git -C npm config user.name 'CI automation'
-          git -C npm config user.email 'ci@rstream.io'
-          git -C npm add "${NPM_PACKAGE_NAME}/package.json" "${NPM_PACKAGE_NAME}/package-lock.json"
-          if ! git -C npm diff --cached --quiet; then
-            git -C npm commit -m "update ${NPM_PACKAGE_NAME} version to ${VERSION}"
-            git -C npm push
-          fi
-          cd "./npm/${NPM_PACKAGE_NAME}"
-          npm publish
-      - name: Prepare MCP Registry metadata
-        if: ${{ env.PUBLISH_STABLE == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          jq --arg version "${VERSION}" \
-            '.version = $version | .packages[0].identifier = "docker.io/rstream/rstream:" + $version' \
-            server.json > server.tmp.json
-          mv server.tmp.json server.json
-      - name: Install MCP Registry publisher
-        if: ${{ env.PUBLISH_STABLE == 'true' }}
-        shell: bash
-        env:
-          MCP_PUBLISHER_SHA256: 1370446bbe74d562608e8005a6ccce02d146a661fbd78674e11cc70b9618d6cf
-          MCP_PUBLISHER_VERSION: 1.8.0
-        run: |
-          set -euo pipefail
-          archive="mcp-publisher_linux_amd64.tar.gz"
-          curl --fail --location --output "${archive}" \
-            "https://github.com/modelcontextprotocol/registry/releases/download/v${MCP_PUBLISHER_VERSION}/${archive}"
-          printf '%s  %s\n' "${MCP_PUBLISHER_SHA256}" "${archive}" | sha256sum --check
-          tar -xzf "${archive}" mcp-publisher
-      - name: Publish MCP server metadata
-        if: ${{ env.PUBLISH_STABLE == 'true' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          ./mcp-publisher login github-oidc
-          ./mcp-publisher publish
+          name: release-candidate-${{ env.VERSION }}
+          path: |
+            release-candidate-${{ env.VERSION }}.tar.gz
+            release-candidate-${{ env.VERSION }}.tar.gz.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
