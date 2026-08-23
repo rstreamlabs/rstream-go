@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
       - name: Check formatting
         shell: bash
         run: |
@@ -55,7 +55,7 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Install staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@v0.7.0
+        run: go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
       - name: Staticcheck
         run: staticcheck ./...
       - name: Build runtime test binaries

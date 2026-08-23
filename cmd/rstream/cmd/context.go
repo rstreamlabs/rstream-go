@@ -617,7 +617,7 @@ func setContextTokenFromFlags(cmd *cobra.Command, ctx *config.Context, token, ap
 	case config.TokenStorageInline:
 		setContextToken(ctx, token)
 	case config.TokenStorageKeychain:
-		if err := config.StoreToken(storage, token); err != nil {
+		if err := storeTokenInCredentialProvider(storage, token); err != nil {
 			return err
 		}
 		setContextTokenStorage(ctx, storage)
