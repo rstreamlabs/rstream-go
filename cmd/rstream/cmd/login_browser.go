@@ -44,6 +44,8 @@ const (
 	tokenStorageMacOSKeychain = "macos-keychain"
 )
 
+var storeTokenInCredentialProvider = config.StoreToken
+
 func storeToken(ctx context.Context, path string, cfg config.Config, apiURL, token string) error {
 	return storeTokenWithStorage(ctx, path, cfg, apiURL, token, config.TokenStorage{Kind: config.TokenStorageInline, Value: token})
 }
@@ -68,7 +70,7 @@ func storeTokenWithStorage(ctx context.Context, path string, cfg config.Config, 
 	switch storage.Kind {
 	case config.TokenStorageInline:
 	case config.TokenStorageKeychain:
-		if err := config.StoreToken(storage, token); err != nil {
+		if err := storeTokenInCredentialProvider(storage, token); err != nil {
 			return err
 		}
 	default:
