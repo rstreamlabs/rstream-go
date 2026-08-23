@@ -76,7 +76,7 @@ jobs:
           fi
           echo "tag=${RELEASE_TAG}" >>"$GITHUB_OUTPUT"
           echo "version=${version}" >>"$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-candidate-${{ steps.release.outputs.version }}
           path: candidate
@@ -87,7 +87,7 @@ jobs:
         shell: bash
         working-directory: candidate
         run: shasum -a 256 --check "release-candidate-${{ steps.release.outputs.version }}.tar.gz.sha256"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-candidate-${{ steps.release.outputs.version }}
           path: candidate
@@ -100,7 +100,7 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.tag }}
           persist-credentials: false
@@ -129,7 +129,7 @@ jobs:
             tar --null --create --gzip \
               --file "package-metadata-${VERSION}.tar.gz" \
               --files-from -
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: package-metadata-${{ needs.prepare.outputs.version }}
           path: package-metadata-${{ needs.prepare.outputs.version }}.tar.gz
@@ -141,7 +141,7 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.tag }}
           persist-credentials: false
@@ -167,7 +167,7 @@ jobs:
           echo "deb https://download.mono-project.com/repo/ubuntu stable-focal main" | sudo tee /etc/apt/sources.list.d/mono-official-stable.list
           sudo apt update
           sudo apt-get install -y nuget
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.tag }}
           persist-credentials: false
@@ -190,14 +190,14 @@ jobs:
     steps:
       - name: Install OCI copy client
         run: sudo apt-get update && sudo apt-get install -y skopeo
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.tag }}
           persist-credentials: false
       - uses: ./.github/actions/restore-release-candidate
         with:
           version: ${{ needs.prepare.outputs.version }}
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           username: rstream
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -218,11 +218,11 @@ jobs:
     steps:
       - name: Install formula update dependency
         run: sudo apt-get update && sudo apt-get install -y gawk
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.tag }}
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: package-metadata-${{ needs.prepare.outputs.version }}
           path: metadata
@@ -230,7 +230,7 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: tar -xzf "metadata/package-metadata-${VERSION}.tar.gz"
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: rstreamlabs/homebrew
           token: ${{ secrets.GIT_TOKEN }}
@@ -270,11 +270,11 @@ jobs:
       - publish-package-api
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.tag }}
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: package-metadata-${{ needs.prepare.outputs.version }}
           path: metadata
@@ -282,7 +282,7 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: tar -xzf "metadata/package-metadata-${VERSION}.tar.gz"
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: rstreamlabs/winget
           token: ${{ secrets.GIT_TOKEN }}
@@ -321,19 +321,19 @@ jobs:
       - publish-package-api
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.tag }}
           persist-credentials: false
       - uses: ./.github/actions/restore-release-candidate
         with:
           version: ${{ needs.prepare.outputs.version }}
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: rstreamlabs/npm
           token: ${{ secrets.GIT_TOKEN }}
           path: npm
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
@@ -378,7 +378,7 @@ jobs:
       id-token: write
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.prepare.outputs.tag }}
           persist-credentials: false
