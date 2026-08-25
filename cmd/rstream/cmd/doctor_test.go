@@ -260,11 +260,31 @@ func TestProbeDoctorTunnelCreationExercisesLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("probeDoctorTunnelCreation() error = %v", err)
 	}
-	if details["tunnelId"] != "tunnel-1" || tunnel.closeCalls != 1 || control.closeCalls != 1 {
+	if details["tunnelId"] != "tunnel-1" || details["mode"] != "private" || tunnel.closeCalls != 1 || control.closeCalls != 1 {
 		t.Fatalf("unexpected lifecycle: details=%#v tunnelClose=%d controlClose=%d", details, tunnel.closeCalls, control.closeCalls)
 	}
 	if control.props.Type == nil || *control.props.Type != rstream.TunnelTypeBytestream || control.props.Publish == nil || *control.props.Publish {
 		t.Fatalf("unexpected tunnel properties: %#v", control.props)
+	}
+}
+
+func TestProbeDoctorTunnelCreationFallsBackWhenPrivateIsUnavailable(t *testing.T) {
+	privateControl := &doctorTestControlChannel{createErr: &rstream.EngineError{Code: rstream.EngineErrorCodeFeatureNotAvailable, Message: "private tunnels are unavailable"}}
+	tunnel := &doctorTestTunnel{props: rstream.TunnelProperties{ID: rstream.StringPtr("tunnel-2")}}
+	publishedControl := &doctorTestControlChannel{tunnel: tunnel}
+	client := &doctorTestTunnelClient{controls: []rstream.ControlChannel{privateControl, publishedControl}}
+	details, err := probeDoctorTunnelCreation(t.Context(), client)
+	if err != nil {
+		t.Fatalf("probeDoctorTunnelCreation() error = %v", err)
+	}
+	if details["tunnelId"] != "tunnel-2" || details["mode"] != "published_http" || details["fallbackReason"] != "private_feature_unavailable" {
+		t.Fatalf("unexpected fallback details: %#v", details)
+	}
+	if client.connectCalls != 2 || privateControl.closeCalls != 1 || publishedControl.closeCalls != 1 || tunnel.closeCalls != 1 {
+		t.Fatalf("unexpected lifecycle: connects=%d privateClose=%d publishedClose=%d tunnelClose=%d", client.connectCalls, privateControl.closeCalls, publishedControl.closeCalls, tunnel.closeCalls)
+	}
+	if publishedControl.props.Type == nil || *publishedControl.props.Type != rstream.TunnelTypeBytestream || publishedControl.props.Publish == nil || !*publishedControl.props.Publish || publishedControl.props.Protocol == nil || *publishedControl.props.Protocol != rstream.ProtocolHTTP || publishedControl.props.HTTPVersion == nil || *publishedControl.props.HTTPVersion != rstream.HTTP1_1 {
+		t.Fatalf("unexpected fallback tunnel properties: %#v", publishedControl.props)
 	}
 }
 
@@ -295,11 +315,21 @@ func doctorToken(claims map[string]any) string {
 }
 
 type doctorTestTunnelClient struct {
-	control rstream.ControlChannel
-	err     error
+	control      rstream.ControlChannel
+	controls     []rstream.ControlChannel
+	err          error
+	connectCalls int
 }
 
 func (c *doctorTestTunnelClient) Connect(context.Context, *rstream.Config) (rstream.ControlChannel, error) {
+	c.connectCalls++
+	if len(c.controls) > 0 {
+		index := c.connectCalls - 1
+		if index >= len(c.controls) {
+			return nil, errors.New("unexpected control channel connection")
+		}
+		return c.controls[index], nil
+	}
 	return c.control, c.err
 }
 
