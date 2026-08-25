@@ -71,6 +71,11 @@ type doctorTunnelClient interface {
 	Connect(context.Context, *rstream.Config) (rstream.ControlChannel, error)
 }
 
+type doctorTunnelProbe struct {
+	mode       string
+	properties rstream.TunnelProperties
+}
+
 var doctorCmd = &cobra.Command{
 	GroupID:      "utils",
 	Use:          "doctor",
@@ -100,7 +105,7 @@ func init() {
 	doctorCmd.Flags().SortFlags = false
 	doctorCmd.PersistentFlags().SortFlags = false
 	doctorCmd.Flags().StringP("output", "o", "table", "output mode (table, json)")
-	doctorCmd.Flags().Bool("deep", false, "create and close a private tunnel")
+	doctorCmd.Flags().Bool("deep", false, "create and close a tunnel lifecycle probe")
 	rootCmd.AddCommand(doctorCmd)
 }
 
@@ -396,13 +401,30 @@ func checkDoctorTunnelCreation(ctx context.Context, report *doctorReport, resolv
 	defer cancel()
 	details, err := probeDoctorTunnelCreation(runCtx, client)
 	if err != nil {
-		report.add("tunnel_creation", doctorStatusFail, "private tunnel lifecycle failed", map[string]string{"error": err.Error()})
+		report.add("tunnel_creation", doctorStatusFail, "tunnel lifecycle failed", map[string]string{"error": err.Error()})
 		return
 	}
-	report.add("tunnel_creation", doctorStatusPass, "private tunnel lifecycle succeeded", details)
+	report.add("tunnel_creation", doctorStatusPass, "tunnel lifecycle succeeded", details)
 }
 
 func probeDoctorTunnelCreation(ctx context.Context, client doctorTunnelClient) (map[string]string, error) {
+	details, err := probeDoctorTunnelLifecycle(ctx, client, doctorPrivateTunnelProbe())
+	if err == nil {
+		return details, nil
+	}
+	var engineErr *rstream.EngineError
+	if !errors.As(err, &engineErr) || engineErr.Code != rstream.EngineErrorCodeFeatureNotAvailable {
+		return nil, err
+	}
+	details, fallbackErr := probeDoctorTunnelLifecycle(ctx, client, doctorPublishedHTTPTunnelProbe())
+	if fallbackErr != nil {
+		return nil, fmt.Errorf("private tunnel is unavailable and published HTTP fallback failed: %w", fallbackErr)
+	}
+	details["fallbackReason"] = "private_feature_unavailable"
+	return details, nil
+}
+
+func probeDoctorTunnelLifecycle(ctx context.Context, client doctorTunnelClient, probe doctorTunnelProbe) (map[string]string, error) {
 	control, err := client.Connect(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("opening control channel: %w", err)
@@ -413,12 +435,9 @@ func probeDoctorTunnelCreation(ctx context.Context, client doctorTunnelClient) (
 			_ = control.Close()
 		}
 	}()
-	tunnel, err := control.CreateTunnel(ctx, rstream.TunnelProperties{
-		Type:    rstream.TunnelTypePtr(rstream.TunnelTypeBytestream),
-		Publish: rstream.BoolPtr(false),
-	})
+	tunnel, err := control.CreateTunnel(ctx, probe.properties)
 	if err != nil {
-		return nil, fmt.Errorf("creating private tunnel: %w", err)
+		return nil, fmt.Errorf("creating %s tunnel: %w", probe.mode, err)
 	}
 	props, err := tunnel.Properties()
 	if err != nil {
@@ -426,17 +445,25 @@ func probeDoctorTunnelCreation(ctx context.Context, client doctorTunnelClient) (
 		return nil, fmt.Errorf("reading tunnel properties: %w", err)
 	}
 	if err := tunnel.Close(); err != nil {
-		return nil, fmt.Errorf("closing private tunnel: %w", err)
+		return nil, fmt.Errorf("closing %s tunnel: %w", probe.mode, err)
 	}
 	if err := control.Close(); err != nil {
 		return nil, fmt.Errorf("closing control channel: %w", err)
 	}
 	controlClosed = true
-	details := map[string]string{}
+	details := map[string]string{"mode": probe.mode}
 	if props.ID != nil {
 		details["tunnelId"] = *props.ID
 	}
 	return details, nil
+}
+
+func doctorPrivateTunnelProbe() doctorTunnelProbe {
+	return doctorTunnelProbe{mode: "private", properties: rstream.TunnelProperties{Type: rstream.TunnelTypePtr(rstream.TunnelTypeBytestream), Publish: rstream.BoolPtr(false)}}
+}
+
+func doctorPublishedHTTPTunnelProbe() doctorTunnelProbe {
+	return doctorTunnelProbe{mode: "published_http", properties: rstream.TunnelProperties{Type: rstream.TunnelTypePtr(rstream.TunnelTypeBytestream), Publish: rstream.BoolPtr(true), Protocol: rstream.ProtocolPtr(rstream.ProtocolHTTP), HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP1_1)}}
 }
 
 type doctorTransportProbe struct {
