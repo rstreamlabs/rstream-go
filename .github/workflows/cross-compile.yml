@@ -118,6 +118,7 @@ jobs:
         if: ${{ github.ref_type == 'tag' }}
         with:
           repository: rstreamlabs/npm
+          token: ${{ secrets.GIT_TOKEN }}
           path: npm
           persist-credentials: false
       - name: Print Go version

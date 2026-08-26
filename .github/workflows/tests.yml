@@ -64,6 +64,8 @@ jobs:
         run: ./test/e2e/runtime-common-unit.sh
       - name: Test release package retry policy
         run: ./test/release-package-retries.sh
+      - name: Test private release repository access
+        run: ./test/release-private-repository-access.sh
       - name: Test release candidate round trip
         run: ./test/release-candidate.sh
       - name: Validate release automation
