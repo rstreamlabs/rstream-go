@@ -18,6 +18,10 @@ if printf '%s\n' "$duplicate_pages" | "$selector" v1.29.3 >/dev/null 2>&1; then
 fi
 workflow="${repo_root}/.github/workflows/promote-release.yml"
 grep -F 'releases?per_page=100' "$workflow" >/dev/null
+# Promotion helpers must be loaded from the trusted default branch. A release
+# candidate predating this helper cannot provide it itself.
+# shellcheck disable=SC2016
+grep -F 'ref: ${{ github.event.repository.default_branch }}' "$workflow" >/dev/null
 # These are literal workflow expressions, not shell expansions in this test.
 # shellcheck disable=SC2016
 grep -F 'select-release-by-tag.sh "$RELEASE_TAG"' "$workflow" >/dev/null
