@@ -30,6 +30,11 @@ jobs:
       startsWith(github.event.workflow_run.head_branch, 'v')
     runs-on: ubuntu-latest
     environment: stable-release
+    # GitHub only exposes draft releases to tokens with push access. Keep this
+    # elevation scoped to the environment-gated metadata verification job.
+    permissions:
+      actions: read
+      contents: write
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
