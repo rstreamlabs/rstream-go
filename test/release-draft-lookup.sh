@@ -18,6 +18,9 @@ if printf '%s\n' "$duplicate_pages" | "$selector" v1.29.3 >/dev/null 2>&1; then
 fi
 workflow="${repo_root}/.github/workflows/promote-release.yml"
 grep -F 'releases?per_page=100' "$workflow" >/dev/null
+prepare_job=$(sed -n '/^  prepare:/,/^  publish-package-api:/p' "$workflow")
+grep -F 'actions: read' <<<"$prepare_job" >/dev/null
+grep -F 'contents: write' <<<"$prepare_job" >/dev/null
 # Promotion helpers must be loaded from the trusted default branch. A release
 # candidate predating this helper cannot provide it itself.
 # shellcheck disable=SC2016
