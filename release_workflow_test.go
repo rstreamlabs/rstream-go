@@ -14,9 +14,11 @@ import (
 )
 
 type releaseWorkflowStep struct {
-	Name string `yaml:"name"`
-	Uses string `yaml:"uses"`
-	If   string `yaml:"if"`
+	Name string            `yaml:"name"`
+	Uses string            `yaml:"uses"`
+	If   string            `yaml:"if"`
+	Run  string            `yaml:"run"`
+	Env  map[string]string `yaml:"env"`
 	With struct {
 		Repository         string `yaml:"repository"`
 		Ref                string `yaml:"ref"`
@@ -197,6 +199,22 @@ func TestStableReleasePromotionIsApprovedAndOrdered(t *testing.T) {
 	}
 	if workflow.Jobs["publish-mcp"].Permissions["id-token"] != "write" {
 		t.Fatal("MCP publication does not have its scoped OIDC permission")
+	}
+	npmJob := workflow.Jobs["publish-npm"]
+	if npmJob.Permissions["contents"] != "read" || npmJob.Permissions["id-token"] != "write" {
+		t.Fatalf("npm publication does not have scoped OIDC permissions: %#v", npmJob.Permissions)
+	}
+	trustedNPMPublisher := false
+	for _, step := range npmJob.Steps {
+		if _, ok := step.Env["NODE_AUTH_TOKEN"]; ok {
+			t.Fatal("npm trusted publication must not depend on a long-lived registry token")
+		}
+		if strings.Contains(step.Run, ".promotion-policy/.github/scripts/publish-npm-package.sh") {
+			trustedNPMPublisher = true
+		}
+	}
+	if !trustedNPMPublisher {
+		t.Fatal("npm publication does not execute trusted default-branch policy")
 	}
 	finalize, ok := workflow.Jobs["finalize"]
 	if !ok {

@@ -72,6 +72,8 @@ jobs:
         run: ./test/release-candidate-run-validation.sh
       - name: Test release candidate round trip
         run: ./test/release-candidate.sh
+      - name: Test Docker release publication
+        run: ./test/release-docker-image.sh
       - name: Validate release automation
         shell: bash
         run: |
