@@ -34,6 +34,10 @@ jobs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
       - name: Validate release metadata
         id: release
         shell: bash
@@ -48,7 +52,10 @@ jobs:
             exit 1
           fi
           version=${RELEASE_TAG#v}
-          release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}")
+          release=$(
+            gh api "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --paginate |
+              ./.github/scripts/select-release-by-tag.sh "$RELEASE_TAG"
+          )
           if [[ "$(jq -r '.draft' <<<"$release")" != true ]]; then
             echo "GitHub release ${RELEASE_TAG} must still be a draft" >&2
             exit 1
