@@ -449,7 +449,12 @@ TEST_GOARCH := $(shell go env GOARCH)
 TEST_GOAMD64 := $(shell go env GOAMD64)
 TEST_COMMON_SOURCES := $(shell find . -maxdepth 1 -name '*.go' ! -name '*.pb.go' -print) $(shell find config internal pb webtty -name '*.go' 2>/dev/null)
 
-$(foreach role,$(TEST_ROLES),$(eval TEST_SOURCES_$(subst /,_,$(role)) := $(shell find test/$(role) -name '*.go' 2>/dev/null)))
+define test_tags
+$(strip $(shell if [ -f test/$1/tags ]; then awk '!/^[[:space:]]*(#|$$)/{print}' test/$1/tags | paste -sd, -; fi))
+endef
+
+$(foreach role,$(TEST_ROLES),$(eval TEST_SOURCES_$(subst /,_,$(role)) := $(shell find test/$(role) -name '*.go' 2>/dev/null) $(wildcard test/$(role)/tags)))
+$(foreach role,$(TEST_ROLES),$(eval TEST_TAGS_$(subst /,_,$(role)) := $(call test_tags,$(role))))
 
 .PHONY: test-bins
 
@@ -458,9 +463,9 @@ test-bins: $(foreach r,$(TEST_ROLES),$(TEST_OUT)/$(r)) $(call base_dir_examples)
 define template_test_bin
 $(TEST_OUT)/$1: $$(TEST_SOURCES_$(subst /,_,$1)) $(TEST_COMMON_SOURCES)
 	@set -e; echo "Building test/$1 for $(CURRENT_OS)/$(CURRENT_ARCH)"; \
-	CGO_ENABLED=0 GOPRIVATE=github.com/rstreamlabs \
+	CGO_ENABLED=$(call target_cgo_enabled,$(CURRENT_OS),$(TEST_GOARCH)) GOPRIVATE=github.com/rstreamlabs \
 	GOOS=$(TEST_GOOS) GOARCH=$(TEST_GOARCH) $(if $(filter amd64,$(TEST_GOARCH)),GOAMD64=$(TEST_GOAMD64),) \
-	go build -buildvcs=false \
+	go build -buildvcs=false $(if $(TEST_TAGS_$(subst /,_,$1)),-tags=$(TEST_TAGS_$(subst /,_,$1))) \
 	  -ldflags="-X '$(GO_MODULE).Agent=$(AGENT)' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).Commit=$(GIT_COMMIT)' -X '$(GO_MODULE).OS=$(CURRENT_OS)' -X '$(GO_MODULE).Arch=$(CURRENT_ARCH)'" \
 	  -o $(TEST_OUT)/$1 ./test/$1
 endef

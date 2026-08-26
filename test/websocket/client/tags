@@ -1,0 +1,4 @@
+# Go 1.27's x/net HTTP/2 wrapper rejects the :protocol pseudo-header before
+# Extended CONNECT reaches the HTTP/2 transport. Use x/net's scoped compatibility
+# implementation until the net/http Extended CONNECT proposal is implemented.
+http2legacy
