@@ -68,6 +68,8 @@ jobs:
         run: ./test/release-private-repository-access.sh
       - name: Test draft release lookup
         run: ./test/release-draft-lookup.sh
+      - name: Test release candidate run validation
+        run: ./test/release-candidate-run-validation.sh
       - name: Test release candidate round trip
         run: ./test/release-candidate.sh
       - name: Validate release automation
