@@ -265,7 +265,7 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: >-
-          ./.github/scripts/publish-docker-image.sh
+          ./.promotion-policy/.github/scripts/publish-docker-image.sh
           "out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/${PACKAGE_NAME}-${VERSION}-docker.oci.tar"
           docker.io/rstream/rstream "$VERSION"
 
@@ -379,6 +379,9 @@ jobs:
     needs:
       - prepare
       - publish-package-api
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -407,7 +410,6 @@ jobs:
       - name: Publish and verify package
         shell: bash
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPMJS_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: |
           set -euo pipefail
@@ -432,7 +434,8 @@ jobs:
             echo "npm source package no longer matches the immutable release candidate" >&2
             exit 1
           fi
-          ./.github/scripts/publish-npm-package.sh "$package_name" "$VERSION" "$candidate" npm
+          ./.promotion-policy/.github/scripts/publish-npm-package.sh \
+            "$package_name" "$VERSION" "$candidate" npm
 
   publish-mcp:
     name: publish Official MCP Registry metadata

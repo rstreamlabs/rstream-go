@@ -10,7 +10,10 @@ fi
 archive=$1
 image=$2
 version=$3
-source_ref="oci-archive:${archive}"
+version_source_image="${image}:${version}"
+latest_source_image="${image}:latest"
+version_source_ref=$version
+latest_source_ref=latest
 version_ref="docker://${image}:${version}"
 latest_ref="docker://${image}:latest"
 
@@ -19,7 +22,50 @@ if [[ ! -f "$archive" ]]; then
   exit 1
 fi
 
+if ! archive_index=$(tar -xOf "$archive" index.json); then
+  echo "OCI archive does not contain a readable root index.json: ${archive}" >&2
+  exit 1
+fi
+if ! jq --exit-status '.schemaVersion == 2 and (.manifests | type == "array")' \
+  <<<"$archive_index" >/dev/null; then
+  echo "OCI archive contains an invalid root index.json: ${archive}" >&2
+  exit 1
+fi
+
+version_match=$(jq --arg image "$version_source_image" --arg ref "$version_source_ref" \
+  '[.manifests[] | select(
+    .annotations["io.containerd.image.name"] == $image and
+    .annotations["org.opencontainers.image.ref.name"] == $ref
+  )]' \
+  <<<"$archive_index")
+latest_match=$(jq --arg image "$latest_source_image" --arg ref "$latest_source_ref" \
+  '[.manifests[] | select(
+    .annotations["io.containerd.image.name"] == $image and
+    .annotations["org.opencontainers.image.ref.name"] == $ref
+  )]' \
+  <<<"$archive_index")
+if [[ $(jq 'length' <<<"$version_match") -ne 1 ]]; then
+  echo "OCI archive must contain exactly one ${version_source_image} reference" >&2
+  exit 1
+fi
+if [[ $(jq 'length' <<<"$latest_match") -ne 1 ]]; then
+  echo "OCI archive must contain exactly one ${latest_source_image} reference" >&2
+  exit 1
+fi
+version_archive_digest=$(jq -r '.[0].digest' <<<"$version_match")
+latest_archive_digest=$(jq -r '.[0].digest' <<<"$latest_match")
+if [[ ! "$version_archive_digest" =~ ^sha256:[0-9a-f]{64}$ ]] ||
+  [[ "$version_archive_digest" != "$latest_archive_digest" ]]; then
+  echo "OCI archive version and latest references do not identify one valid immutable image" >&2
+  exit 1
+fi
+
+source_ref="oci-archive:${archive}:${version_source_ref}"
 source_digest=$(skopeo inspect --raw "$source_ref" | shasum -a 256 | awk '{print $1}')
+if [[ "sha256:${source_digest}" != "$version_archive_digest" ]]; then
+  echo "selected OCI manifest does not match the archive index digest" >&2
+  exit 1
+fi
 
 if remote_manifest=$(skopeo inspect --raw "$version_ref" 2>/dev/null); then
   remote_digest=$(printf '%s' "$remote_manifest" | shasum -a 256 | awk '{print $1}')
