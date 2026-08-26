@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.29.2](https://github.com/rstreamlabs/rstream-go/compare/v1.29.1...v1.29.2) (2026-08-26)
+
+
+### Bug Fixes
+
+* **cli:** make doctor deep capability-aware ([#88](https://github.com/rstreamlabs/rstream-go/issues/88)) ([cd92a46](https://github.com/rstreamlabs/rstream-go/commit/cd92a46bfde6d7e509be22e90b9af90a057b475d))
+
 ## [1.29.1](https://github.com/rstreamlabs/rstream-go/compare/v1.29.0...v1.29.1) (2026-08-20)
 
 
