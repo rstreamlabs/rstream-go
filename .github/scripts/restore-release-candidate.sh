@@ -19,7 +19,25 @@ if [[ ! -f "$archive" || ! -f "${archive}.sha256" ]]; then
   exit 1
 fi
 
-shasum -a 256 --check "${archive}.sha256"
+checksum_line_count=$(awk 'END { print NR }' "${archive}.sha256")
+checksum_line=$(<"${archive}.sha256")
+if [[ "$checksum_line_count" -ne 1 || ! "$checksum_line" =~ ^([[:xdigit:]]{64})[[:space:]]+\*?(.+)$ ]]; then
+  echo "release candidate checksum has an invalid format" >&2
+  exit 1
+fi
+
+expected_checksum=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:upper:]' '[:lower:]')
+recorded_archive=${BASH_REMATCH[2]}
+if [[ "$(basename "$recorded_archive")" != "$(basename "$archive")" ]]; then
+  echo "release candidate checksum names a different archive" >&2
+  exit 1
+fi
+
+actual_checksum=$(shasum -a 256 "$archive" | awk '{ print $1 }')
+if [[ "$actual_checksum" != "$expected_checksum" ]]; then
+  echo "release candidate checksum mismatch" >&2
+  exit 1
+fi
 
 if tar -tzf "$archive" | awk -v prefix="${version}/" '
   $0 != prefix && index($0, prefix) != 1 { invalid = 1 }
