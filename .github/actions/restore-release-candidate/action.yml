@@ -15,5 +15,5 @@ runs:
       run: |
         set -euo pipefail
         archive="candidate/release-candidate-${{ inputs.version }}.tar.gz"
-        ./.github/scripts/restore-release-candidate.sh \
+        "${{ github.action_path }}/../../scripts/restore-release-candidate.sh" \
           rstream stable "${{ inputs.version }}" "$archive"

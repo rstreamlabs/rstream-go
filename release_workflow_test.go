@@ -19,6 +19,8 @@ type releaseWorkflowStep struct {
 	If   string `yaml:"if"`
 	With struct {
 		Repository         string `yaml:"repository"`
+		Ref                string `yaml:"ref"`
+		Path               string `yaml:"path"`
 		PersistCredentials bool   `yaml:"persist-credentials"`
 	} `yaml:"with"`
 }
@@ -166,6 +168,31 @@ func TestStableReleasePromotionIsApprovedAndOrdered(t *testing.T) {
 		}
 		if !slices.Contains(job.Needs, "prepare") {
 			t.Errorf("%s can run without approved candidate verification", name)
+		}
+	}
+	for _, name := range []string{
+		"publish-package-api",
+		"publish-debian",
+		"publish-nuget",
+		"publish-docker",
+		"publish-npm",
+	} {
+		job := workflow.Jobs[name]
+		trustedCheckout := false
+		trustedRestore := false
+		for _, step := range job.Steps {
+			if strings.HasPrefix(step.Uses, "actions/checkout@") &&
+				step.With.Ref == "${{ github.event.repository.default_branch }}" &&
+				step.With.Path == ".promotion-policy" &&
+				!step.With.PersistCredentials {
+				trustedCheckout = true
+			}
+			if step.Uses == "./.promotion-policy/.github/actions/restore-release-candidate" {
+				trustedRestore = true
+			}
+		}
+		if !trustedCheckout || !trustedRestore {
+			t.Errorf("%s does not restore the candidate with trusted promotion policy", name)
 		}
 	}
 	if workflow.Jobs["publish-mcp"].Permissions["id-token"] != "write" {

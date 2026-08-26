@@ -25,6 +25,10 @@ grep -F 'contents: write' <<<"$prepare_job" >/dev/null
 # candidate predating this helper cannot provide it itself.
 # shellcheck disable=SC2016
 grep -F 'ref: ${{ github.event.repository.default_branch }}' "$workflow" >/dev/null
+grep -F 'uses: ./.promotion-policy/.github/actions/restore-release-candidate' "$workflow" >/dev/null
+# shellcheck disable=SC2016
+grep -F '${{ github.action_path }}/../../scripts/restore-release-candidate.sh' \
+  "${repo_root}/.github/actions/restore-release-candidate/action.yml" >/dev/null
 # These are literal workflow expressions, not shell expansions in this test.
 # shellcheck disable=SC2016
 grep -F 'select-release-by-tag.sh "$RELEASE_TAG"' "$workflow" >/dev/null
