@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.29.3](https://github.com/rstreamlabs/rstream-go/compare/v1.29.2...v1.29.3) (2026-08-26)
+
+
+### Bug Fixes
+
+* **release:** authenticate private npm checkout ([f06f50f](https://github.com/rstreamlabs/rstream-go/commit/f06f50f4c88a8911eda1bb91ac03a8502f869522))
+* **release:** authenticate private npm checkout ([8486e28](https://github.com/rstreamlabs/rstream-go/commit/8486e28e18083c36863e1473461850f0719ff3a6))
+
 ## [1.29.2](https://github.com/rstreamlabs/rstream-go/compare/v1.29.1...v1.29.2) (2026-08-26)
 
 
