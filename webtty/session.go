@@ -599,7 +599,19 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 	}
 	shutdownReq := s.shutdownReq
 	startHeartbeat := s.heartbeatTicker != nil
-	if resources.allocateTTY {
+	allocateTTY := resources.allocateTTY
+	s.mu.Unlock()
+	// Publish process state before the ACK so client input is safe, but do not let output overtake the ACK on the wire.
+	if err := s.sendAck(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		resources.close()
+		return errors.New("session is closed")
+	}
+	if allocateTTY {
 		s.startLoopLocked(func() { s.waitProcessLoop(resources.cmd) })
 		s.startLoopLocked(func() { s.copyStdoutLoop(resources.ptyFile) })
 	} else {
@@ -616,7 +628,7 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 			s.logger.Debug("requested child process shutdown")
 		}
 	}
-	return s.sendAck()
+	return nil
 }
 
 func (s *session) prepareOpen(openCfg *pb.Open) (*sessionOpenResources, error) {

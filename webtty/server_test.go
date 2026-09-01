@@ -200,6 +200,30 @@ func TestWebTTYHandlerExecutesProcessAndStreamsOutput(t *testing.T) {
 	}
 }
 
+func TestWebTTYHandlerAcknowledgesOpenBeforeImmediateProcessOutput(t *testing.T) {
+	zero := time.Duration(0)
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	open := &pb.Message{Payload: &pb.Message_Open{Open: &pb.Open{Config: &pb.Config{
+		Options: &pb.Options{},
+		CmdArgs: testShellCommand("printf output", "[Console]::Out.Write('output')"),
+	}}}}
+	for i := 0; i < 64; i++ {
+		conn, _, err := websocket.DefaultDialer.Dial(testWebTTYURL(server.URL), nil)
+		if err != nil {
+			t.Fatalf("Dial() iteration %d error = %v", i, err)
+		}
+		writeWebTTYMessage(t, conn, open)
+		first := readWebTTYMessage(t, conn)
+		_ = conn.Close()
+		if first.GetAck() == nil {
+			t.Fatalf("first message iteration %d = %T, want *pb.Message_Ack", i, first.Payload)
+		}
+	}
+}
+
 func TestWebTTYHandlerDrainsNonTTYOutputBeforeWait(t *testing.T) {
 	zero := time.Duration(0)
 	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
