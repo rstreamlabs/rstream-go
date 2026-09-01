@@ -78,7 +78,7 @@ failure.
 
 ## Compatibility
 
-rstream is compatible with Linux, macOS and Windows. Additionally, rstream supports other UNIX systems such as FreeBSD, OpenBSD and NetBSD through manual installation.
+rstream is compatible with Linux, macOS 13 or newer, and Windows. Additionally, rstream supports other UNIX systems such as FreeBSD, OpenBSD and NetBSD through manual installation.
 
 ## Installation (rstream CLI)
 
