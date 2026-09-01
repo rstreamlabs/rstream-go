@@ -32,15 +32,19 @@ const (
 )
 
 type forwardStatus struct {
-	Version    *string `json:"version,omitempty"`
-	Update     *string `json:"update,omitempty"`
-	Plan       *string `json:"plan,omitempty"`
-	Provider   *string `json:"provider,omitempty"`
-	Region     *string `json:"region,omitempty"`
-	Status     *string `json:"status,omitempty"`
-	TunnelID   *string `json:"tunnel_id,omitempty"`
-	Forwarding *string `json:"forwarding,omitempty"`
-	Forwarded  *string `json:"forwarded,omitempty"`
+	Version             *string `json:"version,omitempty"`
+	ClientVersion       *string `json:"client_version,omitempty"`
+	ServerVersion       *string `json:"server_version,omitempty"`
+	TransportConfigured *string `json:"transport_configured,omitempty"`
+	TransportSelected   *string `json:"transport_selected,omitempty"`
+	Update              *string `json:"update,omitempty"`
+	Plan                *string `json:"plan,omitempty"`
+	Provider            *string `json:"provider,omitempty"`
+	Region              *string `json:"region,omitempty"`
+	Status              *string `json:"status,omitempty"`
+	TunnelID            *string `json:"tunnel_id,omitempty"`
+	Forwarding          *string `json:"forwarding,omitempty"`
+	Forwarded           *string `json:"forwarded,omitempty"`
 }
 
 type forwardConnInfo struct {
@@ -61,6 +65,7 @@ type forwardCtx struct {
 	OutputFormat     forwardOutputFormat
 	Out              io.Writer
 	UI               forwardUI
+	Transport        rstream.Dialer
 	clientCloser     *ownedRstreamClient
 }
 
@@ -277,6 +282,7 @@ func newForwardCtx(cmd *cobra.Command, host, port string) (result *forwardCtx, e
 		OutputFormat:     out,
 		Out:              os.Stdout,
 		UI:               ui,
+		Transport:        client.Transport,
 		clientCloser:     clientCloser,
 	}, nil
 }
@@ -292,15 +298,78 @@ func formatVersion(version, channel string) string {
 func newForwardStatus(details *rstream.ServerDetails) forwardStatus {
 	v := formatVersion(rstream.Version, rstream.Channel)
 	status := forwardStatus{
-		Version: &v,
+		Version:       &v,
+		ClientVersion: &v,
 	}
 	if details != nil {
+		if details.Version != nil && strings.TrimSpace(*details.Version) != "" {
+			serverVersion := *details.Version
+			serverChannel := ""
+			if details.Channel != nil {
+				serverChannel = *details.Channel
+			}
+			serverVersion = formatVersion(serverVersion, serverChannel)
+			status.ServerVersion = &serverVersion
+		}
 		status.Update = details.Update
 		status.Plan = details.Plan
 		status.Provider = details.Provider
 		status.Region = details.Region
 	}
 	return status
+}
+
+func (s *forwardCtx) newStatus(details *rstream.ServerDetails) forwardStatus {
+	status := newForwardStatus(details)
+	transport := s.Transport
+	if transport == nil && s.Client != nil {
+		transport = s.Client.Transport
+	}
+	status.TransportConfigured, status.TransportSelected = forwardTransportProvenance(transport)
+	return status
+}
+
+func forwardTransportProvenance(transport rstream.Dialer) (*string, *string) {
+	configured := string(rstream.TunnelTransportModeAuto)
+	var selected string
+	switch current := transport.(type) {
+	case nil:
+	case *rstream.AutoTransport:
+		if current != nil {
+			selected = forwardSelectedTransport(current.SelectedTransport())
+		}
+	case *rstream.Transport:
+		configured = string(rstream.TunnelTransportModeTLS)
+		if current != nil {
+			selected = configured
+		}
+	case *rstream.QUICTransport:
+		configured = string(rstream.TunnelTransportModeQUIC)
+		if current != nil {
+			selected = configured
+		}
+	default:
+		configured = "custom"
+		selected = configured
+	}
+	configuredPtr := rstream.StringPtr(configured)
+	if selected == "" {
+		return configuredPtr, nil
+	}
+	return configuredPtr, rstream.StringPtr(selected)
+}
+
+func forwardSelectedTransport(transport rstream.Dialer) string {
+	switch transport.(type) {
+	case *rstream.Transport:
+		return string(rstream.TunnelTransportModeTLS)
+	case *rstream.QUICTransport:
+		return string(rstream.TunnelTransportModeQUIC)
+	case nil:
+		return ""
+	default:
+		return "custom"
+	}
 }
 
 func (s *forwardCtx) run(ctx context.Context) error {
@@ -313,7 +382,7 @@ func (s *forwardCtx) run(ctx context.Context) error {
 		err := s.runOnce(ctx, sessions)
 		var reported statusReportedError
 		if err != nil && !errors.As(err, &reported) {
-			status := newForwardStatus(nil)
+			status := s.newStatus(nil)
 			status.Status = rstream.StringPtr("disconnected")
 			s.setStatus(status)
 		}
@@ -349,18 +418,18 @@ func forwardRetryableError(err error) bool {
 }
 
 func (s *forwardCtx) runOnce(ctx context.Context, sessions *forwardSessionGroup) error {
-	connectingStatus := newForwardStatus(nil)
+	connectingStatus := s.newStatus(nil)
 	connectingStatus.Status = rstream.StringPtr("connecting")
 	s.setStatus(connectingStatus)
 	ctrl, err := s.Client.Connect(ctx, nil)
 	if err != nil {
-		status := newForwardStatus(nil)
+		status := s.newStatus(nil)
 		status.Status = rstream.StringPtr(formatStatusError("connection failed", err))
 		s.setStatus(status)
 		return statusReportedError{err: fmt.Errorf("failed to connect to rstream engine server: %w", err)}
 	}
 	defer ctrl.Close()
-	baseStatus := newForwardStatus(ctrl.ServerDetails())
+	baseStatus := s.newStatus(ctrl.ServerDetails())
 	connectedStatus := baseStatus
 	connectedStatus.Status = rstream.StringPtr("connected")
 	s.setStatus(connectedStatus)
@@ -659,7 +728,10 @@ func (s *forwardCtx) renderStatusText(st forwardStatus) {
 		return *p
 	}
 	lines := []kv{
-		{"version", val(st.Version)},
+		{"client version", val(st.ClientVersion)},
+		{"server version", val(st.ServerVersion)},
+		{"transport configured", val(st.TransportConfigured)},
+		{"transport selected", val(st.TransportSelected)},
 		{"update", val(st.Update)},
 		{"plan", val(st.Plan)},
 		{"provider", val(st.Provider)},

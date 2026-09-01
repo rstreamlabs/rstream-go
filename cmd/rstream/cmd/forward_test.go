@@ -24,23 +24,25 @@ import (
 func TestForwardStatusTextAndConnectionOutput(t *testing.T) {
 	var out bytes.Buffer
 	details := &rstream.ServerDetails{
+		Version:  rstream.StringPtr("2.3.4"),
+		Channel:  rstream.StringPtr("preview"),
 		Update:   rstream.StringPtr("available"),
 		Plan:     rstream.StringPtr("pro"),
 		Provider: rstream.StringPtr("aws"),
 		Region:   rstream.StringPtr("eu-west-1"),
 	}
-	status := newForwardStatus(details)
+	ctx := &forwardCtx{OutputFormat: forwardOutputFormatText, Out: &out, Logger: slog.Default(), Transport: &rstream.QUICTransport{}}
+	status := ctx.newStatus(details)
 	status.Status = rstream.StringPtr("online")
 	status.TunnelID = rstream.StringPtr("tun-1")
 	status.Forwarding = rstream.StringPtr("https://demo.example.com")
 	status.Forwarded = rstream.StringPtr("localhost:8080")
-	ctx := &forwardCtx{OutputFormat: forwardOutputFormatText, Out: &out, Logger: slog.Default()}
 	ctx.setStatus(status)
 	ip := net.IPv4(192, 0, 2, 10)
 	ctx.addConn(forwardConnInfo{Active: true, Date: time.Date(2026, 5, 8, 1, 2, 3, 4*1e6, time.UTC), StreamID: rstream.StringPtr("stream-1"), SourceIP: &ip})
 	ctx.closeConn(3)
 	got := out.String()
-	for _, want := range []string{"tunnel status", "online", "tun-1", "incoming connection", "192.0.2.10", "connection closed: idx=3"} {
+	for _, want := range []string{"tunnel status", "client version", "server version", "2.3.4 (preview)", "transport configured", "transport selected", "quic", "online", "tun-1", "incoming connection", "192.0.2.10", "connection closed: idx=3"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("text output missing %q in:\n%s", want, got)
 		}
@@ -49,12 +51,14 @@ func TestForwardStatusTextAndConnectionOutput(t *testing.T) {
 
 func TestForwardJSONAndNoneOutput(t *testing.T) {
 	var out bytes.Buffer
-	ctx := &forwardCtx{OutputFormat: forwardOutputFormatJSON, Out: &out, Logger: slog.Default()}
-	ctx.setStatus(forwardStatus{Status: rstream.StringPtr("connected")})
+	ctx := &forwardCtx{OutputFormat: forwardOutputFormatJSON, Out: &out, Logger: slog.Default(), Transport: &rstream.Transport{}}
+	status := ctx.newStatus(&rstream.ServerDetails{Version: rstream.StringPtr("2.3.4")})
+	status.Status = rstream.StringPtr("connected")
+	ctx.setStatus(status)
 	ctx.addConn(forwardConnInfo{Active: false, Date: time.Unix(0, 0).UTC()})
 	ctx.closeConn(2)
 	got := out.String()
-	for _, want := range []string{`"status":"connected"`, `"active":false`, `"event":"connection_closed"`, `"idx":2`} {
+	for _, want := range []string{`"status":"connected"`, `"client_version":`, `"server_version":"2.3.4"`, `"transport_configured":"tls"`, `"transport_selected":"tls"`, `"active":false`, `"event":"connection_closed"`, `"idx":2`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("json output missing %q in:\n%s", want, got)
 		}
@@ -66,6 +70,37 @@ func TestForwardJSONAndNoneOutput(t *testing.T) {
 	ctx.closeConn(1)
 	if out.Len() != 0 {
 		t.Fatalf("none output wrote %q", out.String())
+	}
+}
+
+func TestForwardTransportProvenance(t *testing.T) {
+	tests := []struct {
+		name           string
+		transport      rstream.Dialer
+		wantConfigured string
+		wantSelected   string
+	}{
+		{name: "default", wantConfigured: "auto"},
+		{name: "auto before selection", transport: &rstream.AutoTransport{}, wantConfigured: "auto"},
+		{name: "TLS", transport: &rstream.Transport{}, wantConfigured: "tls", wantSelected: "tls"},
+		{name: "QUIC", transport: &rstream.QUICTransport{}, wantConfigured: "quic", wantSelected: "quic"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			configured, selected := forwardTransportProvenance(tc.transport)
+			if configured == nil || *configured != tc.wantConfigured {
+				t.Fatalf("configured transport = %v, want %q", configured, tc.wantConfigured)
+			}
+			if tc.wantSelected == "" {
+				if selected != nil {
+					t.Fatalf("selected transport = %q, want unset", *selected)
+				}
+				return
+			}
+			if selected == nil || *selected != tc.wantSelected {
+				t.Fatalf("selected transport = %v, want %q", selected, tc.wantSelected)
+			}
+		})
 	}
 }
 
