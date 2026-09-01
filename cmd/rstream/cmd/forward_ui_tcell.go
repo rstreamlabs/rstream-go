@@ -155,7 +155,10 @@ func (u *forwardUITCell) draw() {
 		return *p
 	}
 	rows := [][2]string{
-		{"version", val(status.Version)},
+		{"client version", val(status.ClientVersion)},
+		{"server version", val(status.ServerVersion)},
+		{"transport configured", val(status.TransportConfigured)},
+		{"transport selected", val(status.TransportSelected)},
 		{"update", val(status.Update)},
 		{"status", val(status.Status)},
 		{"plan", val(status.Plan)},
@@ -167,7 +170,7 @@ func (u *forwardUITCell) draw() {
 	}
 	lines := make([]string, 0, len(rows)+3)
 	for _, r := range rows {
-		lines = append(lines, fmt.Sprintf("%-12s: %s", r[0], r[1]))
+		lines = append(lines, fmt.Sprintf("%-20s: %s", r[0], r[1]))
 	}
 	lines = append(lines, "", "incoming connections:", "")
 	for _, t := range lines {
