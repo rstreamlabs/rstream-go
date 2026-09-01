@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/rstreamlabs/rstream-go/pb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -600,6 +601,10 @@ func TestControlChannelCreateTunnelCancellationWhileWriterBusy(t *testing.T) {
 	req := msg.GetOpenTunnelReq()
 	if req == nil {
 		t.Fatalf("received %T, want OpenTunnelReq", msg.Payload)
+	}
+	requestID, err := uuid.Parse(req.RequestId)
+	if err != nil || requestID.String() != req.RequestId {
+		t.Fatalf("OpenTunnelReq request ID = %q, want canonical UUID: %v", req.RequestId, err)
 	}
 	props := TunnelProperties{ID: StringPtr("tun-first"), Name: StringPtr("first"), Type: TunnelTypePtr(TunnelTypeBytestream)}
 	rsp := &pb.OpenTunnelRsp{RequestId: req.RequestId, Payload: &pb.OpenTunnelRsp_TunnelProperties{TunnelProperties: toTunnelPropertiesPb(props)}}

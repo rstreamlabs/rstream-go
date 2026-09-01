@@ -17,8 +17,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/rstreamlabs/rstream-go/pb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )

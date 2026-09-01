@@ -16,8 +16,7 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/google/uuid"
+	"uuid"
 )
 
 func TestRealEnginePrivateBytestreamLivenessAndConcurrency(t *testing.T) {
@@ -33,7 +32,7 @@ func TestRealEnginePrivateBytestreamLivenessAndConcurrency(t *testing.T) {
 		t.Fatalf("Connect() error = %v", err)
 	}
 	t.Cleanup(func() { assertRealEngineClose(t, "control channel", control.Close()) })
-	name := "go-e2e-" + uuid.NewString()[:12]
+	name := "go-e2e-" + uuid.New().String()[:12]
 	created, err := control.CreateTunnel(ctx, TunnelProperties{Name: &name, Type: TunnelTypePtr(TunnelTypeBytestream), Publish: BoolPtr(false)})
 	if err != nil {
 		t.Fatalf("CreateTunnel() error = %v", err)
@@ -114,7 +113,7 @@ func TestRealEngineControlChannelSurvivesTemporaryNetworkPartition(t *testing.T)
 		t.Fatalf("Connect() error = %v", err)
 	}
 	t.Cleanup(func() { assertRealEngineClose(t, "control channel", control.Close()) })
-	name := "go-partition-e2e-" + uuid.NewString()[:12]
+	name := "go-partition-e2e-" + uuid.New().String()[:12]
 	created, err := control.CreateTunnel(ctx, TunnelProperties{Name: &name, Type: TunnelTypePtr(TunnelTypeBytestream), Publish: BoolPtr(false)})
 	if err != nil {
 		t.Fatalf("CreateTunnel() before temporary partition error = %v", err)
