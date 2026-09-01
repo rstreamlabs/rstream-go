@@ -1,6 +1,6 @@
 module github.com/rstreamlabs/rstream-go
 
-go 1.26.5
+go 1.27.0
 
 require (
 	github.com/charmbracelet/ultraviolet v0.0.0-20260812204455-68fa937c71be
