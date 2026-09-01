@@ -9,7 +9,6 @@ require (
 	github.com/eclipse-keypont/crypto11 v1.6.8
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/gdamore/tcell/v2 v2.13.10
-	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/johnstarich/go/dns v0.2.5
 	github.com/lmittmann/tint v1.2.0
