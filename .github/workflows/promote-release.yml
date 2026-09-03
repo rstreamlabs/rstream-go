@@ -376,9 +376,10 @@ jobs:
 
   publish-npm:
     name: publish npm CLI package
-    needs:
-      - prepare
-      - publish-package-api
+    # The npm tarball is verified directly against the immutable release
+    # candidate. It must remain promotable when an unrelated package channel
+    # is already populated or temporarily unavailable.
+    needs: prepare
     permissions:
       contents: read
       id-token: write
