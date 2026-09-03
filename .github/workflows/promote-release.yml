@@ -12,6 +12,11 @@ on:
         description: Successful build release candidates workflow run ID
         required: true
         type: string
+      npm_only:
+        description: Recover only the npm promotion from the verified candidate
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   actions: read
@@ -133,6 +138,7 @@ jobs:
 
   publish-package-api:
     name: publish package API archives
+    if: github.event_name != 'workflow_dispatch' || !inputs.npm_only
     needs: prepare
     runs-on: ubuntu-latest
     steps:
@@ -180,6 +186,7 @@ jobs:
 
   publish-debian:
     name: publish Debian packages
+    if: github.event_name != 'workflow_dispatch' || !inputs.npm_only
     needs: prepare
     runs-on: ubuntu-latest
     steps:
@@ -204,6 +211,7 @@ jobs:
 
   publish-nuget:
     name: publish NuGet package
+    if: github.event_name != 'workflow_dispatch' || !inputs.npm_only
     needs: prepare
     runs-on: ubuntu-latest
     steps:
@@ -239,6 +247,7 @@ jobs:
 
   publish-docker:
     name: publish Docker image
+    if: github.event_name != 'workflow_dispatch' || !inputs.npm_only
     needs: prepare
     runs-on: ubuntu-latest
     steps:
