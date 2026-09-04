@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.30.0](https://github.com/rstreamlabs/rstream-go/compare/v1.29.3...v1.30.0) (2026-09-04)
+
+
+### Features
+
+* **release:** support verified promotion retries ([#97](https://github.com/rstreamlabs/rstream-go/issues/97)) ([ed48df0](https://github.com/rstreamlabs/rstream-go/commit/ed48df0a367cbe324513ece77d54354dc3c6e9f1))
+* report forward transport provenance ([3af96d3](https://github.com/rstreamlabs/rstream-go/commit/3af96d31a5125fa99194b82a8b14ab1f679258d5))
+
+
+### Bug Fixes
+
+* **release:** add npm-only recovery scope ([#102](https://github.com/rstreamlabs/rstream-go/issues/102)) ([9bc3c99](https://github.com/rstreamlabs/rstream-go/commit/9bc3c996bae4b9757b77378b6629242d4e81fa99))
+* **release:** allow gated draft verification ([#96](https://github.com/rstreamlabs/rstream-go/issues/96)) ([c93916e](https://github.com/rstreamlabs/rstream-go/commit/c93916e56792834ea58fb9a75517bdcadadea747))
+* **release:** decouple npm promotion channel ([#101](https://github.com/rstreamlabs/rstream-go/issues/101)) ([24664ad](https://github.com/rstreamlabs/rstream-go/commit/24664ad0398dba1503258e7c4f5af82557e41d45))
+* **release:** load promotion policy from main ([#95](https://github.com/rstreamlabs/rstream-go/issues/95)) ([649f947](https://github.com/rstreamlabs/rstream-go/commit/649f94725347a094a68feacab9a4df1c8663af60))
+* **release:** resolve draft candidates from release list ([#93](https://github.com/rstreamlabs/rstream-go/issues/93)) ([24cf9a3](https://github.com/rstreamlabs/rstream-go/commit/24cf9a31e1223b8825d9b82f5c52bd721d0cfc35))
+* **release:** select immutable OCI image reference ([13b7104](https://github.com/rstreamlabs/rstream-go/commit/13b710430aee91ccada9e9c123d1a2503655c924))
+* **release:** select immutable OCI image reference ([0793498](https://github.com/rstreamlabs/rstream-go/commit/07934980f023eeab80764e16b646cd5cbdcdd353))
+* **release:** trust promotion restore policy ([#99](https://github.com/rstreamlabs/rstream-go/issues/99)) ([cca385a](https://github.com/rstreamlabs/rstream-go/commit/cca385aca4ae50213b7ddc535616fe0eedfad9b2))
+* **release:** verify nested candidate archives ([#98](https://github.com/rstreamlabs/rstream-go/issues/98)) ([66f894c](https://github.com/rstreamlabs/rstream-go/commit/66f894c33485b6b70a27e61b0ace2fd8fbfefd03))
+* **webtty:** acknowledge sessions before streaming output ([ca4db0a](https://github.com/rstreamlabs/rstream-go/commit/ca4db0ab77a6a062ef8be7b9c1aa3cc920431491))
+
 ## [1.29.3](https://github.com/rstreamlabs/rstream-go/compare/v1.29.2...v1.29.3) (2026-08-26)
 
 
