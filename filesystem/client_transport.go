@@ -5,7 +5,6 @@ package filesystem
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -61,13 +60,14 @@ func (t *ClientTransport) RoundTrip(request *http.Request) (result *http.Respons
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusNotFound {
+		_ = response.Body.Close()
 		return t.httpTransport().RoundTrip(request)
 	}
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("discover filesystem backend: status %d", response.StatusCode)
 	}
 	var info rtc.Info
-	if err := rtc.Decode(io.LimitReader(response.Body, rtc.MaxSignal), &info); err != nil {
+	if err := rtc.Decode(response.Body, &info); err != nil {
 		return nil, fmt.Errorf("invalid filesystem backend metadata: %w", err)
 	}
 	if info.Version != 1 {
