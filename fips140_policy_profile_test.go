@@ -5,6 +5,7 @@
 package rstream
 
 import (
+	"bufio"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -117,7 +118,7 @@ func TestFIPSProfileRejectsExcludedTunnelFeatures(t *testing.T) {
 	}{
 		{name: "datagram", props: TunnelProperties{Type: TunnelTypePtr(TunnelTypeDatagram)}, want: "datagram tunnels"},
 		{name: "DTLS", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolDTLS)}, want: "DTLS tunnels"},
-		{name: "WebTTY", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolWebTTY)}, want: "WebTTY tunnels"},
+		{name: "WebTTY stream", props: TunnelProperties{Type: TunnelTypePtr(TunnelTypeBytestream), Protocol: ProtocolPtr(ProtocolWebTTY)}, want: "WebTTY transports other than WebTransport"},
 		{name: "HTTP3 without HTTP", props: TunnelProperties{HTTPVersion: HTTPVersionPtr(HTTP3)}, want: "published HTTP/3 tunnels"},
 	}
 	for _, test := range tests {
@@ -131,10 +132,67 @@ func TestFIPSProfileRejectsExcludedTunnelFeatures(t *testing.T) {
 	for _, props := range []TunnelProperties{
 		{Type: TunnelTypePtr(TunnelTypeDatagram), Protocol: ProtocolPtr(ProtocolQUIC)},
 		{Type: TunnelTypePtr(TunnelTypeDatagram), Protocol: ProtocolPtr(ProtocolHTTP), HTTPVersion: HTTPVersionPtr(HTTP3)},
+		{Type: TunnelTypePtr(TunnelTypeDatagram), Protocol: ProtocolPtr(ProtocolWebTTY)},
 	} {
 		if err := validateFIPSTunnelProperties(props); err != nil {
 			t.Fatalf("validated QUIC tunnel rejected: %v", err)
 		}
+	}
+}
+
+func TestFIPSCompatiblePacketDialRequiresApprovedProperties(t *testing.T) {
+	client := newTestClientWithDialer(newQueuedDialer(0))
+	if _, err := client.PacketDial(t.Context(), Addr{IdOrName: "datagrams"}); err == nil || !strings.Contains(err.Error(), "PacketDialWithProperties") {
+		t.Fatalf("PacketDial() error = %v, want explicit-property requirement", err)
+	}
+
+	for _, test := range []struct {
+		name  string
+		props TunnelProperties
+		want  string
+	}{
+		{name: "missing type", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolQUIC)}, want: "non-datagram packet dialing"},
+		{name: "generic datagram", props: TunnelProperties{Type: TunnelTypePtr(TunnelTypeDatagram)}, want: "datagram tunnels"},
+		{name: "DTLS", props: TunnelProperties{Type: TunnelTypePtr(TunnelTypeDatagram), Protocol: ProtocolPtr(ProtocolDTLS)}, want: "datagram tunnels"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := client.PacketDialWithProperties(t.Context(), Addr{IdOrName: "datagrams"}, test.props); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("PacketDialWithProperties() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestFIPSCompatiblePacketDialAcceptsReviewedProfiles(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		props TunnelProperties
+	}{
+		{name: "QUIC", props: TunnelProperties{Type: TunnelTypePtr(TunnelTypeDatagram), Protocol: ProtocolPtr(ProtocolQUIC)}},
+		{name: "HTTP3", props: TunnelProperties{Type: TunnelTypePtr(TunnelTypeDatagram), Protocol: ProtocolPtr(ProtocolHTTP), HTTPVersion: HTTPVersionPtr(HTTP3)}},
+		{name: "WebTTY WebTransport", props: TunnelProperties{Type: TunnelTypePtr(TunnelTypeDatagram), Protocol: ProtocolPtr(ProtocolWebTTY)}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dialer := newQueuedDialer(1)
+			dialer.enqueue(func(conn net.Conn) error {
+				reader := bufio.NewReader(conn)
+				writer := bufio.NewWriter(conn)
+				if _, err := expectStreamReq(reader, "datagrams", "token"); err != nil {
+					return err
+				}
+				return writeStreamRsp(writer, "stream-1")
+			})
+			client := newTestClientWithDialer(dialer)
+			client.Transport = &AutoTransport{selected: dialer, selectedMode: TunnelTransportModeTLS}
+			conn, err := client.PacketDialWithProperties(t.Context(), Addr{IdOrName: "datagrams"}, test.props)
+			if err != nil {
+				t.Fatalf("PacketDialWithProperties() error = %v", err)
+			}
+			if err := conn.Close(); err != nil {
+				t.Fatalf("Close() error = %v", err)
+			}
+			dialer.wait(t, 1)
+		})
 	}
 }
 

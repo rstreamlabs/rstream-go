@@ -4,10 +4,59 @@ package webtty
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"testing"
 )
+
+func TestE2EFIPSCompatibleCryptoDecryptsJavaScriptVector(t *testing.T) {
+	decode := func(value string) []byte {
+		t.Helper()
+		decoded, err := base64.RawURLEncoding.DecodeString(value)
+		if err != nil {
+			t.Fatalf("decode test vector: %v", err)
+		}
+		return decoded
+	}
+	identity := E2EIdentity{
+		KeyEnvelopeSuite: KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce,
+		KeyID:            decode("zC8ubI7Ur5Yd8uRFGU5zAA"),
+		PrivateKey:       decode("io2f_IxEA7hRc_clTaYRQ0khY2Som4J858xm5ZifnKs"),
+		PublicKey:        decode("BF2H5Q65x6yUhGVffmDtpzSF8-DhPCGiReVXq8rrlgpFrQdy_GKoyXNYQ65pJP1xW5TzhsHmdWGhQTjdBRlsnis"),
+	}
+	grant := &SessionKeyGrant{
+		PayloadSuite:     PayloadCipherSuiteAES256GCMRandomNonce,
+		PayloadKeyID:     decode("cGF5bG9hZC1rZXktanMwMg"),
+		KeyContext:       decode("eyJpbnRlcm9wIjoianMtdG8tZ28tZmlwcyJ9"),
+		KeyEnvelopeSuite: KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce,
+		KeyEnvelopes: []KeyEnvelope{{
+			EncapsulatedKey: decode("BGenXwhSFPRgiU42GL1nZjms1KBibz6rHADn7jvGiu52kb3QNs2Z04gCLzyk4-3VPRs8VxdByajrsdEHx52Fonk"),
+			RecipientKeyID:  decode("zC8ubI7Ur5Yd8uRFGU5zAA"),
+			WrappedKey:      decode("zWEbocEKhfZ2NRYjvZls1IYH7z6yg0pnoMZ-FqLhMS9u_eZFRb1Ke5DZ_H2uM004ia2tCTJSWq2hBoRj"),
+		}},
+	}
+	serverCrypto, err := NewE2EServerPayloadCrypto(grant, identity)
+	if err != nil {
+		t.Fatalf("NewE2EServerPayloadCrypto() error = %v", err)
+	}
+	payload := &EncryptedPayload{
+		Ciphertext:      decode("uIgPHhZPwRLo8TBFSPmE_oOjBj_8XWuTW-Cp1MobdCpalWokIMfGDdA"),
+		PlaintextLength: 13,
+		PayloadCrypto: &PayloadCryptoMetadata{
+			PayloadSuite: PayloadCipherSuiteAES256GCMRandomNonce,
+			PayloadKeyID: grant.PayloadKeyID,
+			AADContext:   grant.KeyContext,
+		},
+	}
+	plaintext, err := serverCrypto.DecryptStdin(t.Context(), payload)
+	if err != nil {
+		t.Fatalf("DecryptStdin() error = %v", err)
+	}
+	if string(plaintext) != "js-to-go-fips" {
+		t.Fatalf("DecryptStdin() = %q", plaintext)
+	}
+}
 
 func TestE2EPayloadCryptoRoundTrip(t *testing.T) {
 	serverIdentity, err := GenerateE2EIdentity()
@@ -35,7 +84,11 @@ func TestE2EPayloadCryptoRoundTrip(t *testing.T) {
 	if bytes.Contains(stdin.Ciphertext, []byte("typed")) {
 		t.Fatalf("ciphertext contains plaintext")
 	}
-	if stdin.PayloadCrypto == nil || len(stdin.PayloadCrypto.Nonce) != e2eAESGCMNonceSize {
+	wantNonceSize, err := e2ePayloadNonceSize(clientCrypto.SessionKeyGrant.PayloadSuite)
+	if err != nil {
+		t.Fatalf("e2ePayloadNonceSize() error = %v", err)
+	}
+	if stdin.PayloadCrypto == nil || len(stdin.PayloadCrypto.Nonce) != wantNonceSize {
 		t.Fatalf("missing E2E payload nonce: %#v", stdin.PayloadCrypto)
 	}
 	plaintext, err := serverCrypto.DecryptStdin(t.Context(), stdin)
@@ -242,7 +295,11 @@ func TestE2EPayloadCryptoPayloadMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncryptStdin() error = %v", err)
 	}
-	if defaultPayload.PayloadCrypto == nil || len(defaultPayload.PayloadCrypto.Nonce) != e2eAESGCMNonceSize {
+	wantNonceSize, err := e2ePayloadNonceSize(defaultCrypto.SessionKeyGrant.PayloadSuite)
+	if err != nil {
+		t.Fatalf("e2ePayloadNonceSize() error = %v", err)
+	}
+	if defaultPayload.PayloadCrypto == nil || len(defaultPayload.PayloadCrypto.Nonce) != wantNonceSize {
 		t.Fatalf("payload crypto metadata should include a nonce: %#v", defaultPayload.PayloadCrypto)
 	}
 	if len(defaultPayload.PayloadCrypto.AADContext) == 0 {

@@ -431,8 +431,28 @@ func (c *Client) Dial(ctx context.Context, raddr Addr) (net.Conn, error) {
 
 func (c *Client) PacketDial(ctx context.Context, raddr Addr) (net.PacketConn, error) {
 	if FIPSProfileEnabled() {
-		return nil, fipsprofile.Unavailable("datagram dialing")
+		return nil, fmt.Errorf("%w; use PacketDialWithProperties for an approved QUIC, HTTP/3, or WebTTY tunnel", fipsprofile.Unavailable("generic datagram dialing"))
 	}
+	return c.packetDial(ctx, raddr)
+}
+
+// PacketDialWithProperties dials a packet tunnel while declaring the expected
+// remote tunnel properties. FIPS builds require this explicit declaration and
+// accept only the reviewed QUIC, HTTP/3, and WebTTY-over-WebTransport profiles.
+// The Engine independently validates the registered tunnel metadata.
+func (c *Client) PacketDialWithProperties(ctx context.Context, raddr Addr, props TunnelProperties) (net.PacketConn, error) {
+	if FIPSProfileEnabled() {
+		if props.Type == nil || *props.Type != TunnelTypeDatagram {
+			return nil, fipsprofile.Unavailable("non-datagram packet dialing")
+		}
+		if err := validateFIPSTunnelProperties(props); err != nil {
+			return nil, err
+		}
+	}
+	return c.packetDial(ctx, raddr)
+}
+
+func (c *Client) packetDial(ctx context.Context, raddr Addr) (net.PacketConn, error) {
 	if conn, ok, err := c.packetDialDatagramChannel(ctx, raddr); ok || err != nil {
 		return conn, err
 	}

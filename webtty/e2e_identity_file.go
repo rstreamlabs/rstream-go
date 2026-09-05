@@ -4,7 +4,6 @@ package webtty
 
 import (
 	"bytes"
-	"crypto/ecdh"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -18,12 +17,15 @@ import (
 	"time"
 
 	"github.com/rstreamlabs/rstream-go/config"
-	"github.com/rstreamlabs/rstream-go/internal/fipsprofile"
 )
 
 const (
-	E2EIdentityFileVersion = 1
-	E2EKeyFileCryptoSuite  = "webtty-e2e-x25519-hpke-aes-256-gcm-v1"
+	E2EIdentityFileVersion     = 1
+	E2EKeyFileCryptoSuite      = "webtty-e2e-x25519-hpke-aes-256-gcm-v1"
+	E2EP256KeyFileCryptoSuite  = "webtty-e2e-p256-hkdf-sha256-aes-256-gcm-random-nonce-v1"
+	E2EMixedKeyFileCryptoSuite = "webtty-e2e-mixed-v1"
+	WebTTYKeyAlgorithmX25519   = "webtty-x25519-hpke-v1"                               // gitleaks:allow -- public algorithm identifier
+	WebTTYKeyAlgorithmP256     = "webtty-p256-hkdf-sha256-aes-256-gcm-random-nonce-v1" // gitleaks:allow -- public algorithm identifier
 )
 
 var knownServerKeysFileLocks sync.Map
@@ -73,6 +75,82 @@ func EncodeE2EKeyMaterial(value []byte) string {
 	return base64.RawURLEncoding.EncodeToString(value)
 }
 
+// CurrentWebTTYKeyAlgorithm returns the endpoint-key algorithm required by
+// this build profile. FIPS and standard identity files are intentionally not
+// interchangeable.
+func CurrentWebTTYKeyAlgorithm() string {
+	value, _ := WebTTYKeyAlgorithmForSuite(defaultE2EKeyEnvelopeSuite())
+	return value
+}
+
+// WebTTYKeyAlgorithmForSuite maps a protocol suite to control-plane metadata.
+func WebTTYKeyAlgorithmForSuite(suite KeyEnvelopeSuite) (string, error) {
+	if err := validateProfileKeyEnvelopeSuite(suite); err != nil {
+		return "", err
+	}
+	switch suite {
+	case KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM:
+		return WebTTYKeyAlgorithmX25519, nil
+	case KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce:
+		return WebTTYKeyAlgorithmP256, nil
+	default:
+		return "", fmt.Errorf("unsupported WebTTY key algorithm suite %d", suite)
+	}
+}
+
+// WebTTYKeyEnvelopeSuiteForAlgorithm parses control-plane key metadata.
+func WebTTYKeyEnvelopeSuiteForAlgorithm(algorithm string) (KeyEnvelopeSuite, error) {
+	var suite KeyEnvelopeSuite
+	switch strings.TrimSpace(algorithm) {
+	case WebTTYKeyAlgorithmX25519:
+		suite = KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM
+	case WebTTYKeyAlgorithmP256:
+		suite = KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce
+	default:
+		return 0, fmt.Errorf("unsupported WebTTY key algorithm %q", algorithm)
+	}
+	if err := validateProfileKeyEnvelopeSuite(suite); err != nil {
+		return 0, err
+	}
+	return suite, nil
+}
+
+func e2eKeyFileCryptoSuiteForSuite(suite KeyEnvelopeSuite) (string, error) {
+	if err := validateProfileKeyEnvelopeSuite(suite); err != nil {
+		return "", err
+	}
+	switch suite {
+	case KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM:
+		return E2EKeyFileCryptoSuite, nil
+	case KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce:
+		return E2EP256KeyFileCryptoSuite, nil
+	default:
+		return "", fmt.Errorf("unsupported WebTTY E2E identity suite %d", suite)
+	}
+}
+
+// E2EKeyFileCryptoSuiteForSuite maps a WebTTY key suite to its persisted
+// identity-store identifier.
+func E2EKeyFileCryptoSuiteForSuite(suite KeyEnvelopeSuite) (string, error) {
+	return e2eKeyFileCryptoSuiteForSuite(suite)
+}
+
+func e2eKeyEnvelopeSuiteForKeyFileCryptoSuite(cryptoSuite string) (KeyEnvelopeSuite, error) {
+	var suite KeyEnvelopeSuite
+	switch strings.TrimSpace(cryptoSuite) {
+	case E2EKeyFileCryptoSuite:
+		suite = KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM
+	case E2EP256KeyFileCryptoSuite:
+		suite = KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce
+	default:
+		return 0, fmt.Errorf("unsupported WebTTY E2E identity crypto suite %q", cryptoSuite)
+	}
+	if err := validateProfileKeyEnvelopeSuite(suite); err != nil {
+		return 0, err
+	}
+	return suite, nil
+}
+
 func DecodeE2EKeyMaterial(value string, expectedSize int, field string) ([]byte, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -92,21 +170,32 @@ func DecodeE2EKeyMaterial(value string, expectedSize int, field string) ([]byte,
 }
 
 func E2EIdentityFromPrivateKey(privateKey []byte) (*E2EIdentity, error) {
-	if err := fipsprofile.Unavailable("WebTTY E2E identity parsing"); err != nil {
+	return E2EIdentityFromPrivateKeyForSuite(privateKey, defaultE2EKeyEnvelopeSuite())
+}
+
+// E2EIdentityFromPrivateKeyForSuite restores an identity with an explicit
+// suite, avoiding ambiguous 32-byte private-key encodings.
+func E2EIdentityFromPrivateKeyForSuite(privateKey []byte, suite KeyEnvelopeSuite) (*E2EIdentity, error) {
+	if err := requireFIPSWebTTYRuntime(); err != nil {
 		return nil, err
 	}
-	if len(privateKey) != E2EX25519PrivateKeySize {
-		return nil, fmt.Errorf("E2E identity private key must be %d bytes", E2EX25519PrivateKeySize)
+	curve, _, privateKeySize, err := e2eCurveParameters(suite)
+	if err != nil {
+		return nil, err
 	}
-	key, err := ecdh.X25519().NewPrivateKey(privateKey)
+	if len(privateKey) != privateKeySize {
+		return nil, fmt.Errorf("E2E identity private key must be %d bytes", privateKeySize)
+	}
+	key, err := curve.NewPrivateKey(privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("parse E2E identity private key: %w", err)
 	}
 	publicKey := key.PublicKey().Bytes()
 	return &E2EIdentity{
-		KeyID:      E2EKeyID(publicKey),
-		PublicKey:  cloneBytes(publicKey),
-		PrivateKey: cloneBytes(privateKey),
+		KeyEnvelopeSuite: suite,
+		KeyID:            E2EKeyID(publicKey),
+		PublicKey:        cloneBytes(publicKey),
+		PrivateKey:       cloneBytes(privateKey),
 	}, nil
 }
 
@@ -118,7 +207,11 @@ func ParseE2EIdentityPrivateKey(value string) (*E2EIdentity, error) {
 	if strings.HasPrefix(value, "{") {
 		return DecodeE2EIdentityJSON([]byte(value))
 	}
-	privateKey, err := DecodeE2EKeyMaterial(value, E2EX25519PrivateKeySize, "E2E identity private key")
+	_, _, privateKeySize, err := e2eCurveParameters(defaultE2EKeyEnvelopeSuite())
+	if err != nil {
+		return nil, err
+	}
+	privateKey, err := DecodeE2EKeyMaterial(value, privateKeySize, "E2E identity private key")
 	if err != nil {
 		return nil, err
 	}
@@ -126,10 +219,11 @@ func ParseE2EIdentityPrivateKey(value string) (*E2EIdentity, error) {
 }
 
 func E2ERecipientFromPublicKey(publicKey []byte) (E2ERecipient, error) {
-	if len(publicKey) != E2EX25519PublicKeySize {
-		return E2ERecipient{}, fmt.Errorf("E2E public key must be %d bytes", E2EX25519PublicKeySize)
+	suite, err := inferE2EKeyEnvelopeSuite(publicKey)
+	if err != nil {
+		return E2ERecipient{}, err
 	}
-	return E2ERecipient{KeyID: E2EKeyID(publicKey), PublicKey: cloneBytes(publicKey)}, nil
+	return E2ERecipient{KeyEnvelopeSuite: suite, KeyID: E2EKeyID(publicKey), PublicKey: cloneBytes(publicKey)}, nil
 }
 
 func ParseKnownServerKey(value string) (E2ERecipient, error) {
@@ -142,7 +236,7 @@ func ParseKnownServerKey(value string) (E2ERecipient, error) {
 		return E2ERecipient{}, fmt.Errorf("known WebTTY server key must be public_key or key_id:public_key")
 	}
 	if len(parts) == 1 {
-		publicKey, err := DecodeE2EKeyMaterial(parts[0], E2EX25519PublicKeySize, "known WebTTY server public key")
+		publicKey, err := DecodeE2EKeyMaterial(parts[0], 0, "known WebTTY server public key")
 		if err != nil {
 			return E2ERecipient{}, err
 		}
@@ -152,7 +246,7 @@ func ParseKnownServerKey(value string) (E2ERecipient, error) {
 	if err != nil {
 		return E2ERecipient{}, err
 	}
-	publicKey, err := DecodeE2EKeyMaterial(parts[1], E2EX25519PublicKeySize, "known WebTTY server public key")
+	publicKey, err := DecodeE2EKeyMaterial(parts[1], 0, "known WebTTY server public key")
 	if err != nil {
 		return E2ERecipient{}, err
 	}
@@ -160,7 +254,12 @@ func ParseKnownServerKey(value string) (E2ERecipient, error) {
 	if !bytes.Equal(keyID, expectedKeyID) {
 		return E2ERecipient{}, fmt.Errorf("known WebTTY server key id does not match public key")
 	}
-	return E2ERecipient{KeyID: keyID, PublicKey: publicKey}, nil
+	recipient, err := E2ERecipientFromPublicKey(publicKey)
+	if err != nil {
+		return E2ERecipient{}, err
+	}
+	recipient.KeyID = keyID
+	return recipient, nil
 }
 
 func ParseKnownServerEndpointIdentity(value string) (WebTTYEndpointIdentityPublic, error) {
@@ -192,6 +291,7 @@ func ParseKnownServerEndpointIdentity(value string) (WebTTYEndpointIdentityPubli
 		return WebTTYEndpointIdentityPublic{}, fmt.Errorf("known WebTTY server signing key id does not match public key")
 	}
 	return WebTTYEndpointIdentityPublic{
+		KeyEnvelopeSuite:    encryption.KeyEnvelopeSuite,
 		EncryptionKeyID:     encryption.KeyID,
 		EncryptionPublicKey: encryption.PublicKey,
 		SigningKeyID:        signingKeyID,
@@ -212,10 +312,18 @@ func EncodeE2EIdentityJSON(identity E2EIdentity) ([]byte, error) {
 	if err := validateE2EIdentity(identity); err != nil {
 		return nil, err
 	}
+	suite := identity.KeyEnvelopeSuite
+	if suite == 0 {
+		suite = defaultE2EKeyEnvelopeSuite()
+	}
+	cryptoSuite, err := e2eKeyFileCryptoSuiteForSuite(suite)
+	if err != nil {
+		return nil, err
+	}
 	createdAt := time.Now().UTC().Truncate(time.Second)
 	doc := E2EIdentityFile{
 		Version:     E2EIdentityFileVersion,
-		CryptoSuite: E2EKeyFileCryptoSuite,
+		CryptoSuite: cryptoSuite,
 		KeyID:       EncodeE2EKeyMaterial(identity.KeyID),
 		PublicKey:   EncodeE2EKeyMaterial(identity.PublicKey),
 		PrivateKey:  EncodeE2EKeyMaterial(identity.PrivateKey),
@@ -241,22 +349,27 @@ func DecodeE2EIdentityJSON(data []byte) (*E2EIdentity, error) {
 	if doc.Version != E2EIdentityFileVersion {
 		return nil, fmt.Errorf("unsupported E2E identity version %d", doc.Version)
 	}
-	if doc.CryptoSuite != E2EKeyFileCryptoSuite {
-		return nil, fmt.Errorf("unsupported E2E identity crypto suite %q", doc.CryptoSuite)
+	suite, err := e2eKeyEnvelopeSuiteForKeyFileCryptoSuite(doc.CryptoSuite)
+	if err != nil {
+		return nil, err
+	}
+	_, publicKeySize, privateKeySize, err := e2eCurveParameters(suite)
+	if err != nil {
+		return nil, err
 	}
 	keyID, err := DecodeE2EKeyMaterial(doc.KeyID, E2EPayloadKeyIDSize, "E2E identity key id")
 	if err != nil {
 		return nil, err
 	}
-	publicKey, err := DecodeE2EKeyMaterial(doc.PublicKey, E2EX25519PublicKeySize, "E2E identity public key")
+	publicKey, err := DecodeE2EKeyMaterial(doc.PublicKey, publicKeySize, "E2E identity public key")
 	if err != nil {
 		return nil, err
 	}
-	privateKey, err := DecodeE2EKeyMaterial(doc.PrivateKey, E2EX25519PrivateKeySize, "E2E identity private key")
+	privateKey, err := DecodeE2EKeyMaterial(doc.PrivateKey, privateKeySize, "E2E identity private key")
 	if err != nil {
 		return nil, err
 	}
-	identity, err := E2EIdentityFromPrivateKey(privateKey)
+	identity, err := E2EIdentityFromPrivateKeyForSuite(privateKey, suite)
 	if err != nil {
 		return nil, err
 	}
@@ -493,7 +606,11 @@ func UpdateKnownServerKeysFile(path string, update func(*KnownServerKeysFile) er
 		if !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
-		doc = &KnownServerKeysFile{Version: E2EIdentityFileVersion, CryptoSuite: E2EKeyFileCryptoSuite}
+		cryptoSuite, suiteErr := e2eKeyFileCryptoSuiteForSuite(defaultE2EKeyEnvelopeSuite())
+		if suiteErr != nil {
+			return nil, suiteErr
+		}
+		doc = &KnownServerKeysFile{Version: E2EIdentityFileVersion, CryptoSuite: cryptoSuite}
 	}
 	if err := update(doc); err != nil {
 		return nil, err
@@ -506,7 +623,27 @@ func UpdateKnownServerKeysFile(path string, update func(*KnownServerKeysFile) er
 
 func writeKnownServerKeysFileUnlocked(path string, doc KnownServerKeysFile) error {
 	doc.Version = E2EIdentityFileVersion
-	doc.CryptoSuite = E2EKeyFileCryptoSuite
+	inferredSuite, mixed, hasEntries, err := inferKnownServerKeysCryptoSuite(doc.KnownServers)
+	if err != nil {
+		return err
+	}
+	if mixed {
+		doc.CryptoSuite = E2EMixedKeyFileCryptoSuite
+	} else if hasEntries {
+		doc.CryptoSuite, err = e2eKeyFileCryptoSuiteForSuite(inferredSuite)
+		if err != nil {
+			return err
+		}
+	} else if strings.TrimSpace(doc.CryptoSuite) == "" {
+		var err error
+		doc.CryptoSuite, err = e2eKeyFileCryptoSuiteForSuite(defaultE2EKeyEnvelopeSuite())
+		if err != nil {
+			return err
+		}
+	}
+	if err := validateKnownServerKeysCryptoSuite(doc); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode known WebTTY server keys: %w", err)
@@ -570,10 +707,50 @@ func DecodeKnownServerKeysFile(data []byte, path string) (*KnownServerKeysFile, 
 	if doc.Version != E2EIdentityFileVersion {
 		return nil, fmt.Errorf("unsupported known WebTTY server keys version %d", doc.Version)
 	}
-	if doc.CryptoSuite != E2EKeyFileCryptoSuite {
-		return nil, fmt.Errorf("unsupported known WebTTY server keys crypto suite %q", doc.CryptoSuite)
+	if err := validateKnownServerKeysCryptoSuite(doc); err != nil {
+		return nil, fmt.Errorf("unsupported known WebTTY server keys crypto suite %q: %w", doc.CryptoSuite, err)
 	}
 	return &doc, nil
+}
+
+func inferKnownServerKeysCryptoSuite(entries []KnownServerKeyEntry) (KeyEnvelopeSuite, bool, bool, error) {
+	var suite KeyEnvelopeSuite
+	for _, entry := range entries {
+		recipient, err := knownServerKeyFromEntry(entry)
+		if err != nil {
+			return 0, false, false, err
+		}
+		if suite == 0 {
+			suite = recipient.KeyEnvelopeSuite
+			continue
+		}
+		if recipient.KeyEnvelopeSuite != suite {
+			return 0, true, true, nil
+		}
+	}
+	return suite, false, suite != 0, nil
+}
+
+func validateKnownServerKeysCryptoSuite(doc KnownServerKeysFile) error {
+	declared := strings.TrimSpace(doc.CryptoSuite)
+	inferredSuite, mixed, hasEntries, err := inferKnownServerKeysCryptoSuite(doc.KnownServers)
+	if err != nil {
+		return err
+	}
+	if declared == E2EMixedKeyFileCryptoSuite {
+		return nil
+	}
+	declaredSuite, err := e2eKeyEnvelopeSuiteForKeyFileCryptoSuite(declared)
+	if err != nil {
+		return err
+	}
+	if mixed {
+		return errors.New("mixed known WebTTY server key suites require the mixed crypto suite marker")
+	}
+	if hasEntries && declaredSuite != inferredSuite {
+		return errors.New("known WebTTY server key suite does not match the file crypto suite")
+	}
+	return nil
 }
 
 func ensureSingleJSONValue(decoder *json.Decoder, prefix string) error {
@@ -635,15 +812,23 @@ func writeE2EIdentityFileUnlocked(path string, identity E2EIdentity) error {
 }
 
 func validateE2EIdentity(identity E2EIdentity) error {
-	if len(identity.PrivateKey) != E2EX25519PrivateKeySize {
-		return fmt.Errorf("E2E identity private key must be %d bytes", E2EX25519PrivateKeySize)
+	suite := identity.KeyEnvelopeSuite
+	if suite == 0 {
+		suite = defaultE2EKeyEnvelopeSuite()
 	}
-	derived, err := E2EIdentityFromPrivateKey(identity.PrivateKey)
+	_, publicKeySize, privateKeySize, err := e2eCurveParameters(suite)
 	if err != nil {
 		return err
 	}
-	if len(identity.PublicKey) != E2EX25519PublicKeySize {
-		return fmt.Errorf("E2E identity public key must be %d bytes", E2EX25519PublicKeySize)
+	if len(identity.PrivateKey) != privateKeySize {
+		return fmt.Errorf("E2E identity private key must be %d bytes", privateKeySize)
+	}
+	derived, err := E2EIdentityFromPrivateKeyForSuite(identity.PrivateKey, suite)
+	if err != nil {
+		return err
+	}
+	if len(identity.PublicKey) != publicKeySize {
+		return fmt.Errorf("E2E identity public key must be %d bytes", publicKeySize)
 	}
 	if !bytes.Equal(identity.PublicKey, derived.PublicKey) {
 		return fmt.Errorf("E2E identity public key does not match private key")
@@ -689,7 +874,7 @@ func knownServerKeyFromEntry(entry KnownServerKeyEntry) (E2ERecipient, error) {
 	if strings.TrimSpace(entry.Name) == "" {
 		return E2ERecipient{}, fmt.Errorf("known WebTTY server name is required")
 	}
-	publicKey, err := DecodeE2EKeyMaterial(entry.PublicKey, E2EX25519PublicKeySize, "known WebTTY server public key")
+	publicKey, err := DecodeE2EKeyMaterial(entry.PublicKey, 0, "known WebTTY server public key")
 	if err != nil {
 		return E2ERecipient{}, err
 	}
@@ -704,7 +889,12 @@ func knownServerKeyFromEntry(entry KnownServerKeyEntry) (E2ERecipient, error) {
 	if !bytes.Equal(decodedKeyID, keyID) {
 		return E2ERecipient{}, fmt.Errorf("known WebTTY server key id does not match public key")
 	}
-	return E2ERecipient{KeyID: decodedKeyID, PublicKey: publicKey}, nil
+	recipient, err := E2ERecipientFromPublicKey(publicKey)
+	if err != nil {
+		return E2ERecipient{}, err
+	}
+	recipient.KeyID = decodedKeyID
+	return recipient, nil
 }
 
 func knownServerEndpointIdentityFromEntry(entry KnownServerKeyEntry) (WebTTYEndpointIdentityPublic, bool, error) {
@@ -734,6 +924,7 @@ func knownServerEndpointIdentityFromEntry(entry KnownServerKeyEntry) (WebTTYEndp
 		return WebTTYEndpointIdentityPublic{}, false, fmt.Errorf("known WebTTY server signing key id does not match public key")
 	}
 	return WebTTYEndpointIdentityPublic{
+		KeyEnvelopeSuite:    encryption.KeyEnvelopeSuite,
 		EncryptionKeyID:     cloneBytes(encryption.KeyID),
 		EncryptionPublicKey: cloneBytes(encryption.PublicKey),
 		SigningKeyID:        signingKeyID,

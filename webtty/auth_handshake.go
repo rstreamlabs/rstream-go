@@ -56,13 +56,17 @@ func webTTYBytesValueBytes(value *wrapperspb.BytesValue) []byte {
 }
 
 func endpointIdentityPublicToProto(identity WebTTYEndpointIdentityPublic) *pb.EndpointIdentity {
+	suite := identity.KeyEnvelopeSuite
+	if suite == 0 {
+		suite, _ = inferE2EKeyEnvelopeSuite(identity.EncryptionPublicKey)
+	}
 	return &pb.EndpointIdentity{
 		SigningKeyId:        cloneBytes(identity.SigningKeyID),
 		SigningPublicKey:    cloneBytes(identity.SigningPublicKey),
 		SignatureSuite:      pb.SignatureSuite_SIGNATURE_SUITE_ECDSA_P256_SHA256,
 		EncryptionKeyId:     cloneBytes(identity.EncryptionKeyID),
 		EncryptionPublicKey: cloneBytes(identity.EncryptionPublicKey),
-		KeyEnvelopeSuite:    pb.KeyEnvelopeSuite_KEY_ENVELOPE_SUITE_HPKE_X25519_HKDF_SHA256_AES_256_GCM,
+		KeyEnvelopeSuite:    pb.KeyEnvelopeSuite(suite),
 	}
 }
 
@@ -93,6 +97,14 @@ func (s *session) sendServerHelloIfConfigured() error {
 		return fmt.Errorf("generate WebTTY server nonce: %w", err)
 	}
 	identity := s.cfg.EndpointIdentity.Public()
+	keyEnvelopeSuite, err := webTTYPublicIdentityKeyEnvelopeSuite(identity)
+	if err != nil {
+		return err
+	}
+	payloadSuite, err := e2ePayloadSuiteForKeyEnvelopeSuite(keyEnvelopeSuite)
+	if err != nil {
+		return err
+	}
 	serverKeyID := EncodeE2EKeyMaterial(identity.SigningKeyID)
 	s.mu.Lock()
 	if s.closed {
@@ -116,8 +128,8 @@ func (s *session) sendServerHelloIfConfigured() error {
 		ServerEncryptionKeyID: identity.EncryptionKeyID,
 		ServerNonce:           nonce,
 		AuthRequirement:       webTTYAuthRequirement(s.cfg),
-		PayloadSuites:         []PayloadCipherSuite{PayloadCipherSuiteAES256GCM},
-		KeyEnvelopeSuites:     []KeyEnvelopeSuite{KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM},
+		PayloadSuites:         []PayloadCipherSuite{payloadSuite},
+		KeyEnvelopeSuites:     []KeyEnvelopeSuite{keyEnvelopeSuite},
 		SignatureSuites:       []SignatureSuite{SignatureSuiteECDSAP256SHA256},
 	}
 	privateKey, err := ParseWebTTYSigningPrivateKey(s.cfg.EndpointIdentity.Signing.PrivateKey)
@@ -132,8 +144,8 @@ func (s *session) sendServerHelloIfConfigured() error {
 		ProtocolVersion:   pb.ProtocolVersion_PROTOCOL_VERSION_WEBTTY_1,
 		SessionNonce:      cloneBytes(nonce),
 		ServerIdentity:    endpointIdentityPublicToProto(identity),
-		PayloadSuites:     []pb.PayloadCipherSuite{pb.PayloadCipherSuite_PAYLOAD_CIPHER_SUITE_AES_256_GCM},
-		KeyEnvelopeSuites: []pb.KeyEnvelopeSuite{pb.KeyEnvelopeSuite_KEY_ENVELOPE_SUITE_HPKE_X25519_HKDF_SHA256_AES_256_GCM},
+		PayloadSuites:     []pb.PayloadCipherSuite{pb.PayloadCipherSuite(payloadSuite)},
+		KeyEnvelopeSuites: []pb.KeyEnvelopeSuite{pb.KeyEnvelopeSuite(keyEnvelopeSuite)},
 		SignatureSuites:   []pb.SignatureSuite{pb.SignatureSuite_SIGNATURE_SUITE_ECDSA_P256_SHA256},
 		AuthRequirement:   pb.AuthRequirement(webTTYAuthRequirement(s.cfg)),
 		WorkspaceId:       webTTYStringValue(workspaceID),
@@ -160,6 +172,18 @@ func (s *session) verifyClientProof(ctx context.Context, openCfg *pb.Open) error
 		return fmt.Errorf("WebTTY server endpoint identity is required when client proof is required")
 	}
 	proof := openCfg.ClientProof
+	if proof.SignatureSuite != pb.SignatureSuite_SIGNATURE_SUITE_ECDSA_P256_SHA256 {
+		return fmt.Errorf("%w: unsupported signature suite", errWebTTYClientProofInvalid)
+	}
+	serverIdentity := s.cfg.EndpointIdentity.Public()
+	serverSuite, err := webTTYPublicIdentityKeyEnvelopeSuite(serverIdentity)
+	if err != nil {
+		return fmt.Errorf("%w: %v", errWebTTYClientProofInvalid, err)
+	}
+	payloadSuite, keyEnvelopeSuite, err := webTTYProofSuites(openCfg.SessionKeyGrant, serverSuite)
+	if err != nil {
+		return fmt.Errorf("%w: %v", errWebTTYClientProofInvalid, err)
+	}
 	if len(proof.SigningKeyId) != WebTTYSigningKeyIDSize {
 		return fmt.Errorf("%w: invalid signing key id", errWebTTYClientProofInvalid)
 	}
@@ -192,7 +216,6 @@ func (s *session) verifyClientProof(ctx context.Context, openCfg *pb.Open) error
 	}
 	credential := webTTYBytesValueBytes(proof.GetCredential())
 	credentialHash := HashWebTTYClientCredential(credential)
-	serverIdentity := s.cfg.EndpointIdentity.Public()
 	transcript := ClientProofTranscript{
 		ProtocolVersion:       ProtocolVersionWebTTY1,
 		Transport:             string(s.transport),
@@ -204,8 +227,8 @@ func (s *session) verifyClientProof(ctx context.Context, openCfg *pb.Open) error
 		ServerEncryptionKeyID: serverIdentity.EncryptionKeyID,
 		ServerNonce:           s.serverNonce,
 		AuthRequirement:       AuthRequirementClientProof,
-		PayloadSuite:          PayloadCipherSuiteAES256GCM,
-		KeyEnvelopeSuite:      KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM,
+		PayloadSuite:          payloadSuite,
+		KeyEnvelopeSuite:      keyEnvelopeSuite,
 		SessionKeyGrantHash:   sessionKeyGrantHash,
 		CommandConfigHash:     configHash,
 		ClientPrincipalID:     webTTYStringValueText(proof.GetPrincipalId()),
@@ -320,11 +343,21 @@ func (c *clientRuntime) verifyServerHello(hello *pb.ServerHello, transport WebTT
 	if actual == nil {
 		return fmt.Errorf("WebTTY server hello is missing server identity")
 	}
+	if err := validateWebTTYServerHelloCrypto(hello); err != nil {
+		return err
+	}
+	expectedSuite, err := webTTYPublicIdentityKeyEnvelopeSuite(*expected)
+	if err != nil {
+		return err
+	}
 	if !bytes.Equal(actual.SigningKeyId, expected.SigningKeyID) ||
 		!bytes.Equal(actual.SigningPublicKey, expected.SigningPublicKey) ||
 		!bytes.Equal(actual.EncryptionKeyId, expected.EncryptionKeyID) ||
 		!bytes.Equal(actual.EncryptionPublicKey, expected.EncryptionPublicKey) {
 		return fmt.Errorf("WebTTY server identity does not match the expected identity")
+	}
+	if actual.KeyEnvelopeSuite != pb.KeyEnvelopeSuite(expectedSuite) {
+		return fmt.Errorf("WebTTY server key envelope suite does not match the expected identity")
 	}
 	if hello.ServerProof == nil {
 		return fmt.Errorf("WebTTY server proof is required")
@@ -353,6 +386,37 @@ func (c *clientRuntime) verifyServerHello(hello *pb.ServerHello, transport WebTT
 	return nil
 }
 
+func validateWebTTYServerHelloCrypto(hello *pb.ServerHello) error {
+	if hello.ProtocolVersion != pb.ProtocolVersion_PROTOCOL_VERSION_WEBTTY_1 {
+		return fmt.Errorf("unsupported WebTTY protocol version %d", hello.ProtocolVersion)
+	}
+	identity := hello.GetServerIdentity()
+	if identity == nil {
+		return fmt.Errorf("WebTTY server identity is missing")
+	}
+	keyEnvelopeSuite := KeyEnvelopeSuite(identity.KeyEnvelopeSuite)
+	if err := validateProfileKeyEnvelopeSuite(keyEnvelopeSuite); err != nil {
+		return fmt.Errorf("WebTTY server identity does not use the required key envelope suite")
+	}
+	payloadSuite, err := e2ePayloadSuiteForKeyEnvelopeSuite(keyEnvelopeSuite)
+	if err != nil {
+		return err
+	}
+	if len(hello.PayloadSuites) != 1 || hello.PayloadSuites[0] != pb.PayloadCipherSuite(payloadSuite) {
+		return fmt.Errorf("WebTTY server does not advertise the required AES-256-GCM payload suite")
+	}
+	if len(hello.KeyEnvelopeSuites) != 1 || hello.KeyEnvelopeSuites[0] != pb.KeyEnvelopeSuite(keyEnvelopeSuite) {
+		return fmt.Errorf("WebTTY server does not advertise the required key envelope suite")
+	}
+	if len(hello.SignatureSuites) != 1 || hello.SignatureSuites[0] != pb.SignatureSuite_SIGNATURE_SUITE_ECDSA_P256_SHA256 {
+		return fmt.Errorf("WebTTY server does not advertise the required ECDSA P-256 signature suite")
+	}
+	if hello.ServerProof == nil || hello.ServerProof.SignatureSuite != pb.SignatureSuite_SIGNATURE_SUITE_ECDSA_P256_SHA256 {
+		return fmt.Errorf("WebTTY server proof does not use ECDSA P-256")
+	}
+	return nil
+}
+
 func (c *clientRuntime) clientProofForOpen(openCfg *pb.Open, hello *pb.ServerHello, transport WebTTYTransport) (*pb.ClientProof, error) {
 	if hello == nil || hello.AuthRequirement != pb.AuthRequirement_AUTH_REQUIREMENT_CLIENT_PROOF {
 		return nil, nil
@@ -366,6 +430,10 @@ func (c *clientRuntime) clientProofForOpen(openCfg *pb.Open, hello *pb.ServerHel
 	serverIdentity := hello.GetServerIdentity()
 	if serverIdentity == nil {
 		return nil, fmt.Errorf("WebTTY server requires a client proof, but the server hello is missing server identity")
+	}
+	payloadSuite, keyEnvelopeSuite, err := webTTYProofSuites(openCfg.SessionKeyGrant, KeyEnvelopeSuite(serverIdentity.KeyEnvelopeSuite))
+	if err != nil {
+		return nil, err
 	}
 	sessionKeyGrantHash, err := HashWebTTYSessionKeyGrant(openCfg.SessionKeyGrant)
 	if err != nil {
@@ -390,8 +458,8 @@ func (c *clientRuntime) clientProofForOpen(openCfg *pb.Open, hello *pb.ServerHel
 		ServerEncryptionKeyID: serverIdentity.GetEncryptionKeyId(),
 		ServerNonce:           hello.SessionNonce,
 		AuthRequirement:       AuthRequirementClientProof,
-		PayloadSuite:          PayloadCipherSuiteAES256GCM,
-		KeyEnvelopeSuite:      KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM,
+		PayloadSuite:          payloadSuite,
+		KeyEnvelopeSuite:      keyEnvelopeSuite,
 		SessionKeyGrantHash:   sessionKeyGrantHash,
 		CommandConfigHash:     configHash,
 		ClientPrincipalID:     clientPrincipalID,
@@ -445,6 +513,14 @@ func (c *clientRuntime) clientProofForAttach(attachCfg *pb.Attach, transport Web
 	expiresAt := issuedAt.Add(webTTYProofTTL)
 	clientPrincipalID := strings.TrimSpace(c.cfg.ClientPrincipalID)
 	clientCredential := append([]byte(nil), c.cfg.ClientCredential...)
+	keyEnvelopeSuite := c.cfg.EndpointIdentity.Encryption.KeyEnvelopeSuite
+	if keyEnvelopeSuite == 0 {
+		keyEnvelopeSuite = defaultE2EKeyEnvelopeSuite()
+	}
+	payloadSuite, err := e2ePayloadSuiteForKeyEnvelopeSuite(keyEnvelopeSuite)
+	if err != nil {
+		return nil, err
+	}
 	transcript := ClientProofTranscript{
 		ProtocolVersion:      ProtocolVersionWebTTY1,
 		Transport:            string(transport),
@@ -453,8 +529,8 @@ func (c *clientRuntime) clientProofForAttach(attachCfg *pb.Attach, transport Web
 		ServerID:             strings.TrimSpace(c.cfg.Attach.ServerID),
 		SessionID:            strings.TrimSpace(attachCfg.SessionId),
 		AuthRequirement:      AuthRequirementClientProof,
-		PayloadSuite:         PayloadCipherSuiteAES256GCM,
-		KeyEnvelopeSuite:     KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM,
+		PayloadSuite:         payloadSuite,
+		KeyEnvelopeSuite:     keyEnvelopeSuite,
 		AttachGrantHash:      HashWebTTYAttachGrant(attachCfg.AttachGrant),
 		RequestedRole:        attachRoleTranscriptValue(attachCfg.RequestedRole),
 		ClientPrincipalID:    clientPrincipalID,
@@ -484,6 +560,37 @@ func (c *clientRuntime) clientProofForAttach(attachCfg *pb.Attach, transport Web
 		BrowserId:        webTTYStringValue(c.cfg.ClientBrowserID),
 		Credential:       webTTYBytesValue(clientCredential),
 	}, nil
+}
+
+func webTTYPublicIdentityKeyEnvelopeSuite(identity WebTTYEndpointIdentityPublic) (KeyEnvelopeSuite, error) {
+	suite := identity.KeyEnvelopeSuite
+	if suite == 0 {
+		var err error
+		suite, err = inferE2EKeyEnvelopeSuite(identity.EncryptionPublicKey)
+		if err != nil {
+			return 0, err
+		}
+	}
+	if err := validateProfileKeyEnvelopeSuite(suite); err != nil {
+		return 0, err
+	}
+	return suite, nil
+}
+
+func webTTYProofSuites(grant *pb.SessionKeyGrant, fallback KeyEnvelopeSuite) (PayloadCipherSuite, KeyEnvelopeSuite, error) {
+	keyEnvelopeSuite := fallback
+	payloadSuite, err := e2ePayloadSuiteForKeyEnvelopeSuite(keyEnvelopeSuite)
+	if err != nil {
+		return 0, 0, err
+	}
+	if grant != nil {
+		keyEnvelopeSuite = KeyEnvelopeSuite(grant.KeyEnvelopeSuite)
+		payloadSuite = PayloadCipherSuite(grant.PayloadSuite)
+		if err := validateE2ESuites(payloadSuite, keyEnvelopeSuite); err != nil {
+			return 0, 0, err
+		}
+	}
+	return payloadSuite, keyEnvelopeSuite, nil
 }
 
 func attachRoleTranscriptValue(role pb.AttachRole) string {

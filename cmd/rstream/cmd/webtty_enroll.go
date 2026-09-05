@@ -33,6 +33,31 @@ const (
 	webTTYServerEnrollmentStatusOK               = "enrolled"
 )
 
+func decodeWebTTYServerPublicKey(enrollment *webTTYServerEnrollmentFile) ([]byte, error) {
+	if enrollment == nil {
+		return nil, fmt.Errorf("WebTTY server enrollment is required")
+	}
+	if strings.TrimSpace(enrollment.ServerKeyAlgorithm) == "" {
+		publicKey, err := webtty.DecodeE2EKeyMaterial(enrollment.ServerPublicKey, 0, "WebTTY server public key")
+		if err != nil {
+			return nil, err
+		}
+		if _, err := webtty.E2ERecipientFromPublicKey(publicKey); err != nil {
+			return nil, err
+		}
+		return publicKey, nil
+	}
+	suite, err := webtty.WebTTYKeyEnvelopeSuiteForAlgorithm(enrollment.ServerKeyAlgorithm)
+	if err != nil {
+		return nil, err
+	}
+	expectedSize := webtty.E2EX25519PublicKeySize
+	if suite == webtty.KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce {
+		expectedSize = webtty.E2EP256PublicKeySize
+	}
+	return webtty.DecodeE2EKeyMaterial(enrollment.ServerPublicKey, expectedSize, "WebTTY server public key")
+}
+
 var webTTYServerIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 type webTTYServerEnrollmentFile struct {
@@ -175,6 +200,10 @@ func enrollWebTTYServer(ctx context.Context, runtime *resolvedRuntime, client *c
 	signingKeyID := webtty.EncodeE2EKeyMaterial(identity.Signing.KeyID)
 	signingPublicKey := webtty.EncodeE2EKeyMaterial(identity.Signing.PublicKey)
 	fingerprint := webTTYServerPublicKeyFingerprint(identity.Encryption.PublicKey)
+	keyAlgorithm, err := webtty.WebTTYKeyAlgorithmForSuite(identity.Encryption.KeyEnvelopeSuite)
+	if err != nil {
+		return webTTYServerEnrollmentFile{}, "", err
+	}
 	registeredServer, err := client.GetWebTTYServer(ctx, projectID, serverID)
 	if err != nil {
 		return webTTYServerEnrollmentFile{}, "", err
@@ -197,7 +226,7 @@ func enrollWebTTYServer(ctx context.Context, runtime *resolvedRuntime, client *c
 		ServerSigningKeyID:     signingKeyID,
 		ServerSigningPublicKey: signingPublicKey,
 		ServerFingerprint:      fingerprint,
-		ServerKeyAlgorithm:     webTTYServerKeyAlgorithmX25519,
+		ServerKeyAlgorithm:     keyAlgorithm,
 		Capabilities:           defaultWebTTYServerControlPlaneCapabilities(),
 	})
 	if err != nil {
@@ -225,7 +254,7 @@ func enrollWebTTYServer(ctx context.Context, runtime *resolvedRuntime, client *c
 		ServerSigningKeyID:     signingKeyID,
 		ServerSigningPublicKey: signingPublicKey,
 		ServerFingerprint:      fingerprint,
-		ServerKeyAlgorithm:     webTTYServerKeyAlgorithmX25519,
+		ServerKeyAlgorithm:     keyAlgorithm,
 		EncryptionPolicy:       server.EncryptionPolicy,
 		EnrollmentStatus:       enrollmentStatus,
 		EnrolledAt:             time.Now().UTC().Truncate(time.Second),
@@ -512,13 +541,13 @@ func loadWebTTYServerEnrollmentFile(path string) (*webTTYServerEnrollmentFile, e
 		strings.TrimSpace(enrollment.ServerFingerprint) == "" {
 		return nil, fmt.Errorf("WebTTY server enrollment endpoint identity and fingerprint are required")
 	}
-	if enrollment.ServerKeyAlgorithm != webTTYServerKeyAlgorithmX25519 {
+	if enrollment.ServerKeyAlgorithm != webtty.CurrentWebTTYKeyAlgorithm() {
 		return nil, fmt.Errorf("unsupported WebTTY server key algorithm %q", enrollment.ServerKeyAlgorithm)
 	}
 	if err := validateWebTTYServerEnrollmentEncryptionPolicy(enrollment.EncryptionPolicy); err != nil {
 		return nil, err
 	}
-	publicKey, err := webtty.DecodeE2EKeyMaterial(enrollment.ServerPublicKey, webtty.E2EX25519PublicKeySize, "WebTTY server public key")
+	publicKey, err := decodeWebTTYServerPublicKey(&enrollment)
 	if err != nil {
 		return nil, err
 	}
@@ -609,7 +638,7 @@ func webTTYServerHostKeyIDFromEnrollment(enrollment *webTTYServerEnrollmentFile)
 	if enrollment == nil {
 		return "", nil
 	}
-	publicKey, err := webtty.DecodeE2EKeyMaterial(enrollment.ServerPublicKey, webtty.E2EX25519PublicKeySize, "WebTTY server public key")
+	publicKey, err := decodeWebTTYServerPublicKey(enrollment)
 	if err != nil {
 		return "", err
 	}
@@ -620,7 +649,7 @@ func validateWebTTYServerIdentityMatchesEnrollment(enrollment *webTTYServerEnrol
 	if enrollment == nil || identity == nil {
 		return nil
 	}
-	publicKey, err := webtty.DecodeE2EKeyMaterial(enrollment.ServerPublicKey, webtty.E2EX25519PublicKeySize, "WebTTY server public key")
+	publicKey, err := decodeWebTTYServerPublicKey(enrollment)
 	if err != nil {
 		return err
 	}
