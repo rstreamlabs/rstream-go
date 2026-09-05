@@ -10,7 +10,51 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestFileSystemCloseDrainsRequestsAndRejectsNewOnes(t *testing.T) {
+	local, err := NewFileSystemHandler(&FileSystemConfig{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler := local.(*fileSystemHandler)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	handler.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release
+		w.WriteHeader(http.StatusOK)
+	})
+	requestDone := make(chan struct{})
+	go func() {
+		defer close(requestDone)
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/fs/", nil))
+	}()
+	<-started
+	closed := make(chan error, 1)
+	go func() { closed <- handler.Close() }()
+	select {
+	case err := <-closed:
+		t.Fatalf("closed during an active request: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(release)
+	<-requestDone
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("filesystem close blocked after requests finished")
+	}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest("GET", "/fs/", nil))
+	if response.Code != http.StatusServiceUnavailable || handler.Close() != nil {
+		t.Fatal("closed filesystem accepted a request or failed repeated cleanup")
+	}
+}
 
 func TestFileSystemHandlerServesWebDAVRoot(t *testing.T) {
 	root := t.TempDir()
@@ -21,6 +65,7 @@ func TestFileSystemHandlerServesWebDAVRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileSystemHandler returned error: %v", err)
 	}
+	t.Cleanup(func() { _ = handler.(io.Closer).Close() })
 	request := httptest.NewRequest(http.MethodGet, WebTTYDefaultFSPath+"/hello.txt", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -38,6 +83,7 @@ func TestFileSystemHandlerReadWriteModeAllowsPUT(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileSystemHandler returned error: %v", err)
 	}
+	t.Cleanup(func() { _ = handler.(io.Closer).Close() })
 	request := httptest.NewRequest(http.MethodPut, WebTTYDefaultFSPath+"/created.txt", strings.NewReader("created"))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -67,6 +113,7 @@ func TestFileSystemHandlerRejectsSymlinkOutsideRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileSystemHandler returned error: %v", err)
 	}
+	t.Cleanup(func() { _ = handler.(io.Closer).Close() })
 	request := httptest.NewRequest(http.MethodGet, WebTTYDefaultFSPath+"/link.txt", nil)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -101,6 +148,7 @@ func TestFileSystemHandlerUsesResolvedInternalSymlinkParent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileSystemHandler returned error: %v", err)
 	}
+	t.Cleanup(func() { _ = handler.(io.Closer).Close() })
 	request := httptest.NewRequest(http.MethodPut, WebTTYDefaultFSPath+"/linkdir/created.txt", strings.NewReader("created"))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -122,6 +170,7 @@ func TestFileSystemHandlerReadOnlyModeRejectsWrites(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileSystemHandler returned error: %v", err)
 	}
+	t.Cleanup(func() { _ = handler.(io.Closer).Close() })
 	request := httptest.NewRequest(http.MethodPut, WebTTYDefaultFSPath+"/created.txt", strings.NewReader("created"))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
@@ -137,6 +186,7 @@ func TestFileSystemHandlerMaxUploadSize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileSystemHandler returned error: %v", err)
 	}
+	t.Cleanup(func() { _ = handler.(io.Closer).Close() })
 	request := httptest.NewRequest(http.MethodPut, WebTTYDefaultFSPath+"/big.txt", strings.NewReader("large"))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)

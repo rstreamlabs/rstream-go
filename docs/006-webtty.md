@@ -1,5 +1,7 @@
 # WebTTY CLI and Runtime Reference
 
+For a standalone read-only share, use [`rstream files`](010-file-sharing.md). WebTTY and this command share the Go filesystem/WebDAV implementation. `NewFileSystemHandler` keeps its API and write options and now owns a root handle: SDK embedders should close the returned handler through `io.Closer` after stopping HTTP requests.
+
 WebTTY exposes remote terminal sessions through rstream. A WebTTY server can run
 as a Tunnel WebTTY server or as a registered server used by managed WebTTY
 features.

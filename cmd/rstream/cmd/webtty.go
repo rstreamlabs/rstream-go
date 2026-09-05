@@ -452,6 +452,12 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 	if err != nil {
 		return err
 	}
+	handlerHandedOff := false
+	defer func() {
+		if !handlerHandedOff {
+			closeWebTTYHTTPHandler(handler, logger)
+		}
+	}()
 	if !useRstream && transport == webtty.WebTTYTransportWebTransport {
 		addr, _ := cmd.Flags().GetString("listen")
 		certFile, _ := cmd.Flags().GetString("tls-cert-file")
@@ -564,6 +570,7 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 		return servePlainWebTTY(ctx, listener, terminalHandler, shutdownTimeout, logger, generations, releaseRstreamResources)
 	}
 	resourcesHandedOff = releaseRstreamResources != nil
+	handlerHandedOff = true
 	return serveWebSocketWebTTY(ctx, listener, server, terminalHandler, shutdownTimeout, logger, generations, releaseRstreamResources)
 }
 
@@ -582,6 +589,8 @@ func serveWebSocketWebTTY(ctx context.Context, listener net.Listener, server *ht
 	close(stopShutdownWatcher)
 	<-shutdownWatcherDone
 	cleanup := func(shutdownCtx context.Context) {
+		defer closeWebTTYHTTPHandler(server.Handler, logger)
+		defer server.Close()
 		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil && !errors.Is(shutdownErr, http.ErrServerClosed) && !errors.Is(shutdownErr, context.Canceled) && !errors.Is(shutdownErr, context.DeadlineExceeded) {
 			logger.Warn("http webtty server shutdown failed", "error", shutdownErr)
 		}
@@ -2155,7 +2164,7 @@ func newWebTTYServerHTTPHandler(cmd *cobra.Command, terminalHandler *webtty.Hand
 	mux.Handle(webtty.WebTTYDefaultFSPath, webtty.NewBearerAuthHandler(fsHandler, authToken, allowUnauthenticated))
 	mux.Handle(webtty.WebTTYDefaultFSPath+"/", webtty.NewBearerAuthHandler(fsHandler, authToken, allowUnauthenticated))
 	mux.Handle("/", terminalHandler)
-	return mux, nil
+	return &webTTYFilesystemMux{Handler: mux, filesystem: fsHandler}, nil
 }
 
 func newWebTTYServerTunnelProperties(cmd *cobra.Command, enrollment *webTTYServerEnrollmentFile) rstream.TunnelProperties {
@@ -2934,5 +2943,25 @@ func webTTYSessionConfigFromClientConfig(cfg *webtty.ClientConfig) *webtty.Sessi
 		CloseDeadline:          cfg.CloseDeadline,
 		HeartbeatInterval:      cfg.HeartbeatInterval,
 		Logger:                 cfg.Logger,
+	}
+}
+
+type webTTYFilesystemMux struct {
+	http.Handler
+	filesystem http.Handler
+}
+
+func (h *webTTYFilesystemMux) Close() error {
+	if closer, ok := h.filesystem.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+func closeWebTTYHTTPHandler(handler http.Handler, logger *slog.Logger) {
+	if closer, ok := handler.(io.Closer); ok {
+		if err := closer.Close(); err != nil {
+			logger.Warn("close WebTTY filesystem", "error", err)
+		}
 	}
 }

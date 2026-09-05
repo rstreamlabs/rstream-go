@@ -186,6 +186,8 @@ rstream forward 8080
 
 This command creates a public HTTP tunnel and displays the forwarding address (e.g., `https://abc123.rstream.io`). Any HTTP request sent to this URL will be redirected to `localhost:8080`. The tunnel remains active until you stop the command.
 
+To share files directly, run `rstream files ./exports` or `rstream files ./backup.tar.zst --password`. The command includes a read-only browser UI, WebDAV, resumable individual downloads and directory ZIP. See [File sharing](docs/010-file-sharing.md) for access policy, filtering and the complete CLI reference.
+
 ### TLS tunnel
 Use `--tls` when the exposed tunnel endpoint must terminate TLS.
 

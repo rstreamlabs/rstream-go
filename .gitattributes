@@ -1,0 +1,3 @@
+# Generated JavaScript contains upstream template literals with significant spacing.
+fileserver/ui/assets/index.html whitespace=-blank-at-eol linguist-generated=true
+fileserver/ui/assets/manifest.json linguist-generated=true
