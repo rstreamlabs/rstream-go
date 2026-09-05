@@ -31,7 +31,6 @@ func TestFIPSProfileAcceptsQUICTransport(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("NewClient() rejected QUIC transport: %v", err)
 	}
-
 	_, err := (&QUICTransport{}).Dial(t.Context(), "engine.example:443", &tls.Config{MaxVersion: tls.VersionTLS12})
 	if err == nil || !strings.Contains(err.Error(), "QUIC requires TLS 1.3") {
 		t.Fatalf("QUICTransport.Dial() error = %v, want TLS 1.3 requirement", err)
@@ -145,7 +144,6 @@ func TestFIPSCompatiblePacketDialRequiresApprovedProperties(t *testing.T) {
 	if _, err := client.PacketDial(t.Context(), Addr{IdOrName: "datagrams"}); err == nil || !strings.Contains(err.Error(), "PacketDialWithProperties") {
 		t.Fatalf("PacketDial() error = %v, want explicit-property requirement", err)
 	}
-
 	for _, test := range []struct {
 		name  string
 		props TunnelProperties
@@ -214,7 +212,6 @@ func TestFIPSProfileTLSRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-
 	serverErr := make(chan error, 1)
 	go func() {
 		conn, acceptErr := listener.Accept()
@@ -231,7 +228,6 @@ func TestFIPSProfileTLSRoundTrip(t *testing.T) {
 		_, writeErr := conn.Write(payload)
 		serverErr <- writeErr
 	}()
-
 	conn, err := (&Transport{}).Dial(t.Context(), listener.Addr().String(), &tls.Config{
 		RootCAs:          roots,
 		ServerName:       "localhost",
@@ -269,7 +265,6 @@ func TestFIPSProfileQUICRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
-
 	serverErr := make(chan error, 1)
 	go func() {
 		conn, acceptErr := listener.Accept(t.Context())
@@ -290,7 +285,6 @@ func TestFIPSProfileQUICRoundTrip(t *testing.T) {
 		_, writeErr := stream.Write(payload)
 		serverErr <- writeErr
 	}()
-
 	transport := &QUICTransport{}
 	t.Cleanup(func() { _ = transport.Close() })
 	conn, err := transport.Dial(t.Context(), listener.Addr().String(), &tls.Config{
