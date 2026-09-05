@@ -256,15 +256,22 @@ func TestResolveWebTransportWebTTYEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve https webtransport endpoint: %v", err)
 	}
-	if httpsEndpoint.Transport != WebTTYTransportWebTransport || httpsEndpoint.URL != "https://terminal.example/session" || httpsEndpoint.RequiresCustomDial {
+	if httpsEndpoint.Transport != WebTTYTransportWebTransport || httpsEndpoint.URL != "https://terminal.example:443/session" || httpsEndpoint.Address != "terminal.example:443" || httpsEndpoint.RequiresCustomDial {
 		t.Fatalf("unexpected https webtransport endpoint: %#v", httpsEndpoint)
 	}
 	defaultEndpoint, err := resolveWebTTYEndpointWithTransport("terminal.example", WebTTYTransportWebTransport)
 	if err != nil {
 		t.Fatalf("resolve default webtransport endpoint: %v", err)
 	}
-	if defaultEndpoint.URL != "https://terminal.example/" {
+	if defaultEndpoint.URL != "https://terminal.example:443/" || defaultEndpoint.Address != "terminal.example:443" {
 		t.Fatalf("unexpected default webtransport url: %#v", defaultEndpoint)
+	}
+	explicitPortEndpoint, err := resolveWebTTYEndpointWithTransport("https://terminal.example:8443/session", WebTTYTransportWebTransport)
+	if err != nil {
+		t.Fatalf("resolve explicit-port webtransport endpoint: %v", err)
+	}
+	if explicitPortEndpoint.URL != "https://terminal.example:8443/session" || explicitPortEndpoint.Address != "terminal.example:8443" {
+		t.Fatalf("unexpected explicit-port webtransport endpoint: %#v", explicitPortEndpoint)
 	}
 	rstrmEndpoint, err := resolveWebTTYEndpointWithTransport("rstrm://shell", WebTTYTransportWebTransport)
 	if err != nil {
