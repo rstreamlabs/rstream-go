@@ -333,7 +333,9 @@ jobs:
           grep -F "version \"${VERSION}\"" "$formula"
 
   publish-winget:
-    name: update WinGet source manifests
+    # Keep the rstream-hosted source synchronized as a fallback. Public
+    # installations use the official WinGet Community Repository.
+    name: update fallback WinGet source manifests
     needs:
       - prepare
       - publish-package-api
