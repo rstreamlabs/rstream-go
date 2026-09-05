@@ -8,6 +8,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
+	"crypto/hkdf"
 	"crypto/hpke"
 	"crypto/rand"
 	"crypto/sha256"
@@ -16,13 +17,13 @@ import (
 	"fmt"
 	"io"
 	"strings"
-
-	"github.com/rstreamlabs/rstream-go/internal/fipsprofile"
 )
 
 const (
 	E2EX25519PublicKeySize  = 32
 	E2EX25519PrivateKeySize = 32
+	E2EP256PublicKeySize    = 65
+	E2EP256PrivateKeySize   = 32
 	E2EPayloadKeySize       = 32
 	E2EPayloadKeyIDSize     = 16
 	e2eAESGCMNonceSize      = 12
@@ -32,16 +33,18 @@ const (
 )
 
 type E2EIdentity struct {
-	KeyID      []byte
-	PublicKey  []byte
-	PrivateKey []byte
+	KeyEnvelopeSuite KeyEnvelopeSuite
+	KeyID            []byte
+	PublicKey        []byte
+	PrivateKey       []byte
 }
 
 type E2ERecipient struct {
-	ID        string
-	Kind      string
-	KeyID     []byte
-	PublicKey []byte
+	ID               string
+	Kind             string
+	KeyEnvelopeSuite KeyEnvelopeSuite
+	KeyID            []byte
+	PublicKey        []byte
 }
 
 type E2EPayloadCryptoConfig struct {
@@ -76,18 +79,33 @@ const (
 )
 
 func GenerateE2EIdentity() (*E2EIdentity, error) {
-	if err := fipsprofile.Unavailable("WebTTY E2E identity generation"); err != nil {
+	return GenerateE2EIdentityForSuite(defaultE2EKeyEnvelopeSuite())
+}
+
+// GenerateE2EIdentityForSuite creates an identity for an explicit WebTTY key
+// envelope suite. Standard builds support both suites; FIPS builds accept only
+// the P-256 suite.
+func GenerateE2EIdentityForSuite(suite KeyEnvelopeSuite) (*E2EIdentity, error) {
+	if err := requireFIPSWebTTYRuntime(); err != nil {
 		return nil, err
 	}
-	privateKey, err := ecdh.X25519().GenerateKey(rand.Reader)
+	if err := validateProfileKeyEnvelopeSuite(suite); err != nil {
+		return nil, err
+	}
+	curve, _, _, err := e2eCurveParameters(suite)
 	if err != nil {
-		return nil, fmt.Errorf("generate X25519 key: %w", err)
+		return nil, err
+	}
+	privateKey, err := curve.GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, fmt.Errorf("generate E2E key: %w", err)
 	}
 	publicKey := privateKey.PublicKey().Bytes()
 	return &E2EIdentity{
-		KeyID:      E2EKeyID(publicKey),
-		PublicKey:  cloneBytes(publicKey),
-		PrivateKey: cloneBytes(privateKey.Bytes()),
+		KeyEnvelopeSuite: suite,
+		KeyID:            E2EKeyID(publicKey),
+		PublicKey:        cloneBytes(publicKey),
+		PrivateKey:       cloneBytes(privateKey.Bytes()),
 	}, nil
 }
 
@@ -97,7 +115,7 @@ func E2EKeyID(publicKey []byte) []byte {
 }
 
 func NewE2EClientPayloadCrypto(cfg E2EPayloadCryptoConfig) (*PayloadCrypto, error) {
-	if err := fipsprofile.Unavailable("WebTTY E2E payload encryption"); err != nil {
+	if err := requireFIPSWebTTYRuntime(); err != nil {
 		return nil, err
 	}
 	cipher, err := newE2EClientPayloadCipher(cfg)
@@ -108,7 +126,7 @@ func NewE2EClientPayloadCrypto(cfg E2EPayloadCryptoConfig) (*PayloadCrypto, erro
 }
 
 func NewE2EServerPayloadCrypto(sessionKeyGrant *SessionKeyGrant, identity E2EIdentity) (*PayloadCrypto, error) {
-	if err := fipsprofile.Unavailable("WebTTY E2E payload decryption"); err != nil {
+	if err := requireFIPSWebTTYRuntime(); err != nil {
 		return nil, err
 	}
 	cipher, err := newE2EServerPayloadCipher(sessionKeyGrant, identity)
@@ -125,13 +143,24 @@ func NewE2EServerPayloadCryptoResolver(identity E2EIdentity) PayloadCryptoResolv
 }
 
 func newE2EClientPayloadCipher(cfg E2EPayloadCryptoConfig) (*e2ePayloadCipher, error) {
-	payloadSuite := cfg.PayloadSuite
-	if payloadSuite == 0 {
-		payloadSuite = PayloadCipherSuiteAES256GCM
-	}
 	keyEnvelopeSuite := cfg.KeyEnvelopeSuite
 	if keyEnvelopeSuite == 0 {
-		keyEnvelopeSuite = KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM
+		var err error
+		keyEnvelopeSuite, err = inferE2ERecipientSuite(cfg.Recipients)
+		if err != nil {
+			return nil, err
+		}
+		if keyEnvelopeSuite == 0 {
+			keyEnvelopeSuite = defaultE2EKeyEnvelopeSuite()
+		}
+	}
+	payloadSuite := cfg.PayloadSuite
+	if payloadSuite == 0 {
+		var err error
+		payloadSuite, err = e2ePayloadSuiteForKeyEnvelopeSuite(keyEnvelopeSuite)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := validateE2ESuites(payloadSuite, keyEnvelopeSuite); err != nil {
 		return nil, err
@@ -268,7 +297,7 @@ func newE2EServerPayloadCipher(sessionKeyGrant *SessionKeyGrant, identity E2EIde
 	if len(sessionKeyGrant.PayloadKeyID) != E2EPayloadKeyIDSize {
 		return nil, fmt.Errorf("E2E payload key id must be %d bytes", E2EPayloadKeyIDSize)
 	}
-	recipientKeyID, privateKey, err := e2eIdentityPrivateKey(identity)
+	recipientKeyID, privateKey, err := e2eIdentityPrivateKey(identity, sessionKeyGrant.KeyEnvelopeSuite)
 	if err != nil {
 		return nil, err
 	}
@@ -328,20 +357,24 @@ func (c *e2ePayloadCipher) encryptFunc(stream string) PayloadEncryptFunc {
 		if err != nil {
 			return nil, err
 		}
-		nonce := make([]byte, e2eAESGCMNonceSize)
-		if _, err := io.ReadFull(c.random, nonce); err != nil {
-			return nil, fmt.Errorf("generate E2E nonce: %w", err)
-		}
 		plainLen := uint32(len(payload))
 		metadata := &PayloadCryptoMetadata{
 			PayloadSuite: c.payloadSuite,
 			PayloadKeyID: cloneBytes(c.payloadKeyID),
-			Nonce:        nonce,
 			AADContext:   cloneBytes(c.keyContext),
 		}
+		nonce, err := newE2EPayloadNonce(c.payloadSuite, c.random)
+		if err != nil {
+			return nil, err
+		}
+		metadata.Nonce = nonce
 		aad := e2ePayloadAAD(stream, metadata.PayloadSuite, metadata.PayloadKeyID, metadata.AADContext, metadata.Nonce, plainLen)
+		ciphertext, err := sealE2EPayload(aead, c.payloadSuite, metadata.Nonce, payload, aad)
+		if err != nil {
+			return nil, err
+		}
 		return &EncryptedPayload{
-			Ciphertext:      aead.Seal(nil, metadata.Nonce, payload, aad),
+			Ciphertext:      ciphertext,
 			PlaintextLength: plainLen,
 			PayloadCrypto:   metadata,
 		}, nil
@@ -364,7 +397,7 @@ func (c *e2ePayloadCipher) decryptFunc(stream string) PayloadDecryptFunc {
 			return nil, err
 		}
 		aad := e2ePayloadAAD(stream, payload.PayloadCrypto.PayloadSuite, payload.PayloadCrypto.PayloadKeyID, payload.PayloadCrypto.AADContext, payload.PayloadCrypto.Nonce, payload.PlaintextLength)
-		plaintext, err := aead.Open(nil, payload.PayloadCrypto.Nonce, payload.Ciphertext, aad)
+		plaintext, err := openE2EPayload(aead, c.payloadSuite, payload.PayloadCrypto.Nonce, payload.Ciphertext, aad)
 		if err != nil {
 			return nil, fmt.Errorf("decrypt E2E %s payload: %w", stream, err)
 		}
@@ -385,36 +418,62 @@ func (c *e2ePayloadCipher) validatePayloadEnvelope(envelope *PayloadCryptoMetada
 	if !bytes.Equal(envelope.AADContext, c.keyContext) {
 		return fmt.Errorf("unexpected E2E key context")
 	}
-	if len(envelope.Nonce) != e2eAESGCMNonceSize {
-		return fmt.Errorf("E2E AES-GCM nonce must be %d bytes", e2eAESGCMNonceSize)
+	expectedNonceSize, err := e2ePayloadNonceSize(c.payloadSuite)
+	if err != nil {
+		return err
+	}
+	if len(envelope.Nonce) != expectedNonceSize {
+		return fmt.Errorf("E2E AES-GCM nonce must be %d bytes", expectedNonceSize)
 	}
 	return nil
 }
 
 func (c *e2ePayloadCipher) payloadAEAD() (cipher.AEAD, error) {
-	if c.payloadSuite != PayloadCipherSuiteAES256GCM {
-		return nil, fmt.Errorf("unsupported E2E payload suite %d", c.payloadSuite)
-	}
 	block, err := aes.NewCipher(c.payloadKey)
 	if err != nil {
 		return nil, fmt.Errorf("create E2E AES cipher: %w", err)
 	}
-	return cipher.NewGCM(block)
+	switch c.payloadSuite {
+	case PayloadCipherSuiteAES256GCM:
+		return cipher.NewGCM(block)
+	case PayloadCipherSuiteAES256GCMRandomNonce:
+		return cipher.NewGCMWithRandomNonce(block)
+	default:
+		return nil, fmt.Errorf("unsupported E2E payload suite %d", c.payloadSuite)
+	}
 }
 
 func validateE2ESuites(payloadSuite PayloadCipherSuite, keyEnvelopeSuite KeyEnvelopeSuite) error {
-	if payloadSuite != PayloadCipherSuiteAES256GCM {
-		return fmt.Errorf("unsupported E2E payload suite %d", payloadSuite)
+	if err := validateProfileKeyEnvelopeSuite(keyEnvelopeSuite); err != nil {
+		return err
 	}
-	if keyEnvelopeSuite != KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM {
-		return fmt.Errorf("unsupported E2E key envelope suite %d", keyEnvelopeSuite)
+	expectedPayloadSuite, err := e2ePayloadSuiteForKeyEnvelopeSuite(keyEnvelopeSuite)
+	if err != nil {
+		return err
+	}
+	if payloadSuite != expectedPayloadSuite {
+		return fmt.Errorf("E2E payload suite %d does not match key envelope suite %d", payloadSuite, keyEnvelopeSuite)
 	}
 	return nil
 }
 
 func wrapE2EPayloadKey(payloadKey []byte, payloadSuite PayloadCipherSuite, payloadKeyID []byte, keyContext []byte, suite KeyEnvelopeSuite, recipient E2ERecipient) (KeyEnvelope, error) {
-	if len(recipient.PublicKey) != E2EX25519PublicKeySize {
-		return KeyEnvelope{}, fmt.Errorf("E2E recipient public key must be %d bytes", E2EX25519PublicKeySize)
+	curve, publicKeySize, _, err := e2eCurveParameters(suite)
+	if err != nil {
+		return KeyEnvelope{}, err
+	}
+	recipientSuite := recipient.KeyEnvelopeSuite
+	if recipientSuite == 0 {
+		recipientSuite, err = inferE2EKeyEnvelopeSuite(recipient.PublicKey)
+		if err != nil {
+			return KeyEnvelope{}, err
+		}
+	}
+	if recipientSuite != suite {
+		return KeyEnvelope{}, fmt.Errorf("E2E recipient suite %d does not match key envelope suite %d", recipientSuite, suite)
+	}
+	if len(recipient.PublicKey) != publicKeySize {
+		return KeyEnvelope{}, fmt.Errorf("E2E recipient public key must be %d bytes", publicKeySize)
 	}
 	keyID := cloneBytes(recipient.KeyID)
 	if len(keyID) == 0 {
@@ -423,19 +482,11 @@ func wrapE2EPayloadKey(payloadKey []byte, payloadSuite PayloadCipherSuite, paylo
 	if len(keyID) != E2EPayloadKeyIDSize {
 		return KeyEnvelope{}, fmt.Errorf("E2E recipient key id must be %d bytes", E2EPayloadKeyIDSize)
 	}
-	publicKey, err := ecdh.X25519().NewPublicKey(recipient.PublicKey)
+	publicKey, err := curve.NewPublicKey(recipient.PublicKey)
 	if err != nil {
 		return KeyEnvelope{}, fmt.Errorf("parse E2E recipient public key: %w", err)
 	}
-	hpkePublicKey, err := hpke.NewDHKEMPublicKey(publicKey)
-	if err != nil {
-		return KeyEnvelope{}, fmt.Errorf("create E2E HPKE public key: %w", err)
-	}
-	enc, sender, err := hpke.NewSender(hpkePublicKey, hpke.HKDFSHA256(), hpke.AES256GCM(), e2eHPKEInfo(payloadSuite, payloadKeyID, keyContext, suite))
-	if err != nil {
-		return KeyEnvelope{}, fmt.Errorf("create E2E HPKE sender: %w", err)
-	}
-	wrappedKey, err := sender.Seal(e2eHPKEAAD(keyID, payloadSuite, payloadKeyID, keyContext, suite), payloadKey)
+	enc, wrappedKey, err := sealE2EKeyEnvelope(publicKey, suite, e2eHPKEInfo(payloadSuite, payloadKeyID, keyContext, suite), e2eHPKEAAD(keyID, payloadSuite, payloadKeyID, keyContext, suite), payloadKey)
 	if err != nil {
 		return KeyEnvelope{}, fmt.Errorf("wrap E2E payload key: %w", err)
 	}
@@ -447,15 +498,7 @@ func wrapE2EPayloadKey(payloadKey []byte, payloadSuite PayloadCipherSuite, paylo
 }
 
 func unwrapE2EPayloadKey(envelope KeyEnvelope, payloadSuite PayloadCipherSuite, payloadKeyID []byte, keyContext []byte, suite KeyEnvelopeSuite, privateKey *ecdh.PrivateKey) ([]byte, error) {
-	hpkePrivateKey, err := hpke.NewDHKEMPrivateKey(privateKey)
-	if err != nil {
-		return nil, fmt.Errorf("create E2E HPKE private key: %w", err)
-	}
-	recipient, err := hpke.NewRecipient(envelope.EncapsulatedKey, hpkePrivateKey, hpke.HKDFSHA256(), hpke.AES256GCM(), e2eHPKEInfo(payloadSuite, payloadKeyID, keyContext, suite))
-	if err != nil {
-		return nil, fmt.Errorf("create E2E HPKE recipient: %w", err)
-	}
-	payloadKey, err := recipient.Open(e2eHPKEAAD(envelope.RecipientKeyID, payloadSuite, payloadKeyID, keyContext, suite), envelope.WrappedKey)
+	payloadKey, err := openE2EKeyEnvelope(privateKey, suite, envelope.EncapsulatedKey, envelope.WrappedKey, e2eHPKEInfo(payloadSuite, payloadKeyID, keyContext, suite), e2eHPKEAAD(envelope.RecipientKeyID, payloadSuite, payloadKeyID, keyContext, suite))
 	if err != nil {
 		return nil, fmt.Errorf("unwrap E2E payload key: %w", err)
 	}
@@ -465,11 +508,22 @@ func unwrapE2EPayloadKey(envelope KeyEnvelope, payloadSuite PayloadCipherSuite, 
 	return payloadKey, nil
 }
 
-func e2eIdentityPrivateKey(identity E2EIdentity) ([]byte, *ecdh.PrivateKey, error) {
-	if len(identity.PrivateKey) != E2EX25519PrivateKeySize {
-		return nil, nil, fmt.Errorf("E2E identity private key must be %d bytes", E2EX25519PrivateKeySize)
+func e2eIdentityPrivateKey(identity E2EIdentity, suite KeyEnvelopeSuite) ([]byte, *ecdh.PrivateKey, error) {
+	identitySuite := identity.KeyEnvelopeSuite
+	if identitySuite == 0 {
+		identitySuite = defaultE2EKeyEnvelopeSuite()
 	}
-	privateKey, err := ecdh.X25519().NewPrivateKey(identity.PrivateKey)
+	if identitySuite != suite {
+		return nil, nil, fmt.Errorf("E2E identity suite %d does not match key envelope suite %d", identitySuite, suite)
+	}
+	curve, publicKeySize, privateKeySize, err := e2eCurveParameters(suite)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(identity.PrivateKey) != privateKeySize {
+		return nil, nil, fmt.Errorf("E2E identity private key must be %d bytes", privateKeySize)
+	}
+	privateKey, err := curve.NewPrivateKey(identity.PrivateKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse E2E identity private key: %w", err)
 	}
@@ -479,8 +533,8 @@ func e2eIdentityPrivateKey(identity E2EIdentity) ([]byte, *ecdh.PrivateKey, erro
 		if len(publicKey) == 0 {
 			publicKey = privateKey.PublicKey().Bytes()
 		}
-		if len(publicKey) != E2EX25519PublicKeySize {
-			return nil, nil, fmt.Errorf("E2E identity public key must be %d bytes", E2EX25519PublicKeySize)
+		if len(publicKey) != publicKeySize {
+			return nil, nil, fmt.Errorf("E2E identity public key must be %d bytes", publicKeySize)
 		}
 		keyID = E2EKeyID(publicKey)
 	}
@@ -488,6 +542,218 @@ func e2eIdentityPrivateKey(identity E2EIdentity) ([]byte, *ecdh.PrivateKey, erro
 		return nil, nil, fmt.Errorf("E2E identity key id must be %d bytes", E2EPayloadKeyIDSize)
 	}
 	return keyID, privateKey, nil
+}
+
+func validateSupportedKeyEnvelopeSuite(suite KeyEnvelopeSuite) error {
+	switch suite {
+	case KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM,
+		KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce:
+		return nil
+	default:
+		return fmt.Errorf("unsupported E2E key envelope suite %d", suite)
+	}
+}
+
+func e2eCurveParameters(suite KeyEnvelopeSuite) (ecdh.Curve, int, int, error) {
+	if err := validateProfileKeyEnvelopeSuite(suite); err != nil {
+		return nil, 0, 0, err
+	}
+	switch suite {
+	case KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM:
+		return ecdh.X25519(), E2EX25519PublicKeySize, E2EX25519PrivateKeySize, nil
+	case KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce:
+		return ecdh.P256(), E2EP256PublicKeySize, E2EP256PrivateKeySize, nil
+	default:
+		return nil, 0, 0, fmt.Errorf("unsupported E2E key envelope suite %d", suite)
+	}
+}
+
+func e2ePayloadSuiteForKeyEnvelopeSuite(suite KeyEnvelopeSuite) (PayloadCipherSuite, error) {
+	if err := validateProfileKeyEnvelopeSuite(suite); err != nil {
+		return 0, err
+	}
+	switch suite {
+	case KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM:
+		return PayloadCipherSuiteAES256GCM, nil
+	case KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce:
+		return PayloadCipherSuiteAES256GCMRandomNonce, nil
+	default:
+		return 0, fmt.Errorf("unsupported E2E key envelope suite %d", suite)
+	}
+}
+
+func inferE2ERecipientSuite(recipients []E2ERecipient) (KeyEnvelopeSuite, error) {
+	var selected KeyEnvelopeSuite
+	for _, recipient := range recipients {
+		suite := recipient.KeyEnvelopeSuite
+		var err error
+		if suite == 0 {
+			suite, err = inferE2EKeyEnvelopeSuite(recipient.PublicKey)
+			if err != nil {
+				return 0, err
+			}
+		}
+		if err := validateProfileKeyEnvelopeSuite(suite); err != nil {
+			return 0, err
+		}
+		if selected == 0 {
+			selected = suite
+			continue
+		}
+		if selected != suite {
+			return 0, fmt.Errorf("E2E recipients use multiple key envelope suites")
+		}
+	}
+	return selected, nil
+}
+
+func inferE2EKeyEnvelopeSuite(publicKey []byte) (KeyEnvelopeSuite, error) {
+	var suite KeyEnvelopeSuite
+	switch len(publicKey) {
+	case E2EX25519PublicKeySize:
+		suite = KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM
+	case E2EP256PublicKeySize:
+		suite = KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce
+	default:
+		return 0, fmt.Errorf("unsupported E2E public key length %d", len(publicKey))
+	}
+	if err := validateProfileKeyEnvelopeSuite(suite); err != nil {
+		return 0, err
+	}
+	return suite, nil
+}
+
+func e2ePayloadNonceSize(suite PayloadCipherSuite) (int, error) {
+	switch suite {
+	case PayloadCipherSuiteAES256GCM:
+		return e2eAESGCMNonceSize, nil
+	case PayloadCipherSuiteAES256GCMRandomNonce:
+		return 0, nil
+	default:
+		return 0, fmt.Errorf("unsupported E2E payload suite %d", suite)
+	}
+}
+
+func newE2EPayloadNonce(suite PayloadCipherSuite, random io.Reader) ([]byte, error) {
+	switch suite {
+	case PayloadCipherSuiteAES256GCM:
+		nonce := make([]byte, e2eAESGCMNonceSize)
+		if _, err := io.ReadFull(random, nonce); err != nil {
+			return nil, fmt.Errorf("generate E2E nonce: %w", err)
+		}
+		return nonce, nil
+	case PayloadCipherSuiteAES256GCMRandomNonce:
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("unsupported E2E payload suite %d", suite)
+	}
+}
+
+func sealE2EPayload(aead cipher.AEAD, suite PayloadCipherSuite, nonce, plaintext, aad []byte) ([]byte, error) {
+	switch suite {
+	case PayloadCipherSuiteAES256GCM:
+		return aead.Seal(nil, nonce, plaintext, aad), nil
+	case PayloadCipherSuiteAES256GCMRandomNonce:
+		return aead.Seal(nil, nil, plaintext, aad), nil
+	default:
+		return nil, fmt.Errorf("unsupported E2E payload suite %d", suite)
+	}
+}
+
+func openE2EPayload(aead cipher.AEAD, suite PayloadCipherSuite, nonce, ciphertext, aad []byte) ([]byte, error) {
+	switch suite {
+	case PayloadCipherSuiteAES256GCM:
+		return aead.Open(nil, nonce, ciphertext, aad)
+	case PayloadCipherSuiteAES256GCMRandomNonce:
+		if len(nonce) != 0 {
+			return nil, fmt.Errorf("FIPS WebTTY AES-GCM nonce must be carried inside the ciphertext")
+		}
+		return aead.Open(nil, nil, ciphertext, aad)
+	default:
+		return nil, fmt.Errorf("unsupported E2E payload suite %d", suite)
+	}
+}
+
+func sealE2EKeyEnvelope(publicKey *ecdh.PublicKey, suite KeyEnvelopeSuite, info, aad, payloadKey []byte) ([]byte, []byte, error) {
+	switch suite {
+	case KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM:
+		hpkePublicKey, err := hpke.NewDHKEMPublicKey(publicKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("create E2E HPKE public key: %w", err)
+		}
+		enc, sender, err := hpke.NewSender(hpkePublicKey, hpke.HKDFSHA256(), hpke.AES256GCM(), info)
+		if err != nil {
+			return nil, nil, fmt.Errorf("create E2E HPKE sender: %w", err)
+		}
+		wrappedKey, err := sender.Seal(aad, payloadKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("wrap E2E payload key: %w", err)
+		}
+		return enc, wrappedKey, nil
+	case KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce:
+		ephemeral, err := ecdh.P256().GenerateKey(rand.Reader)
+		if err != nil {
+			return nil, nil, fmt.Errorf("generate E2E P-256 ephemeral key: %w", err)
+		}
+		sharedSecret, err := ephemeral.ECDH(publicKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("derive E2E P-256 shared secret: %w", err)
+		}
+		wrappingKey, err := hkdf.Key(sha256.New, sharedSecret, nil, string(info), E2EPayloadKeySize)
+		if err != nil {
+			return nil, nil, fmt.Errorf("derive E2E wrapping key: %w", err)
+		}
+		block, err := aes.NewCipher(wrappingKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("create E2E wrapping cipher: %w", err)
+		}
+		aead, err := cipher.NewGCMWithRandomNonce(block)
+		if err != nil {
+			return nil, nil, fmt.Errorf("create E2E wrapping AEAD: %w", err)
+		}
+		return ephemeral.PublicKey().Bytes(), aead.Seal(nil, nil, payloadKey, aad), nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported E2E key envelope suite %d", suite)
+	}
+}
+
+func openE2EKeyEnvelope(privateKey *ecdh.PrivateKey, suite KeyEnvelopeSuite, encapsulatedKey, wrappedKey, info, aad []byte) ([]byte, error) {
+	switch suite {
+	case KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM:
+		hpkePrivateKey, err := hpke.NewDHKEMPrivateKey(privateKey)
+		if err != nil {
+			return nil, fmt.Errorf("create E2E HPKE private key: %w", err)
+		}
+		recipient, err := hpke.NewRecipient(encapsulatedKey, hpkePrivateKey, hpke.HKDFSHA256(), hpke.AES256GCM(), info)
+		if err != nil {
+			return nil, fmt.Errorf("create E2E HPKE recipient: %w", err)
+		}
+		return recipient.Open(aad, wrappedKey)
+	case KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce:
+		ephemeral, err := ecdh.P256().NewPublicKey(encapsulatedKey)
+		if err != nil {
+			return nil, fmt.Errorf("parse E2E P-256 ephemeral key: %w", err)
+		}
+		sharedSecret, err := privateKey.ECDH(ephemeral)
+		if err != nil {
+			return nil, fmt.Errorf("derive E2E P-256 shared secret: %w", err)
+		}
+		wrappingKey, err := hkdf.Key(sha256.New, sharedSecret, nil, string(info), E2EPayloadKeySize)
+		if err != nil {
+			return nil, fmt.Errorf("derive E2E wrapping key: %w", err)
+		}
+		block, err := aes.NewCipher(wrappingKey)
+		if err != nil {
+			return nil, fmt.Errorf("create E2E wrapping cipher: %w", err)
+		}
+		aead, err := cipher.NewGCMWithRandomNonce(block)
+		if err != nil {
+			return nil, fmt.Errorf("create E2E wrapping AEAD: %w", err)
+		}
+		return aead.Open(nil, nil, wrappedKey, aad)
+	default:
+		return nil, fmt.Errorf("unsupported E2E key envelope suite %d", suite)
+	}
 }
 
 func e2eHPKEInfo(payloadSuite PayloadCipherSuite, payloadKeyID []byte, keyContext []byte, suite KeyEnvelopeSuite) []byte {

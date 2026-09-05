@@ -84,9 +84,13 @@ rstream is compatible with Linux, macOS 13 or newer, and Windows. Additionally, 
 
 `rstream-go` provides a restricted FIPS 140-3 build profile for reviewed Linux
 client deployments. It uses a pinned Go Cryptographic Module and reviewed
-`quic-go` version, supports TLS/mTLS plus direct QUIC and ordinary HTTP/3, and
-fails closed when an excluded transport or protocol is requested. This is a
-separate build from the standard multi-protocol distribution.
+`quic-go` and `webtransport-go` versions, supports TLS/mTLS, direct QUIC,
+ordinary HTTP/3, and authenticated E2E WebTTY over WebTransport. WebTTY uses a
+P-256/HKDF-SHA256/AES-256-GCM random-nonce protocol profile; the standard build
+can use either this profile or the legacy X25519 profile, while the FIPS build
+accepts only the former. The binary fails closed when an excluded transport or
+protocol is requested. This is a separate build from the standard
+multi-protocol distribution.
 
 See [docs/010-fips-140-3-profile.md](docs/010-fips-140-3-profile.md) for the supported boundary, exclusions, build procedure, runtime evidence, and module upgrade process.
 

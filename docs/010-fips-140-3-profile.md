@@ -8,7 +8,7 @@ The upstream Go behavior and limitations are defined in [Go FIPS 140-3 complianc
 
 ## Supported Scope
 
-The implemented phase-one and phase-two profile covers:
+The implemented phase-one through phase-three profile covers:
 
 - Go 1.27;
 - Linux x86-64 and arm64;
@@ -21,7 +21,11 @@ The implemented phase-one and phase-two profile covers:
 - token admission and mTLS client admission;
 - private and published bytestream tunnels that do not select an excluded
   protocol;
-- published QUIC tunnels and ordinary HTTP/3 tunnels.
+- published QUIC tunnels and ordinary HTTP/3 tunnels;
+- authenticated E2E WebTTY over HTTP/3/WebTransport;
+- explicit-key and EE standalone workspace-managed WebTTY clients and servers;
+- P-256 ECDH, HKDF-SHA256, and AES-256-GCM with internally generated random
+  nonces for WebTTY session-key envelopes and terminal payloads.
 
 The current phase excludes:
 
@@ -29,14 +33,21 @@ The current phase excludes:
 - generic datagram tunnels, DTLS, and TURN; datagram tunnel metadata is accepted
   only for published QUIC and HTTP/3;
 - ECH;
-- WebTTY and its current X25519/HPKE payload suite;
+- WebTTY over plain streams or WebSocket, including managed participant
+  `sessions join` streams, which do not yet expose WebTransport;
+- the WebTTY filesystem sidecar;
+- the legacy WebTTY X25519/HPKE suite;
 - CLI WebSocket event streaming;
-- WebSocket, WebTransport, CONNECT-UDP, CONNECT-IP, and other Extended CONNECT
-  paths, including their HTTP/3 variants;
+- WebSocket, CONNECT-UDP, CONNECT-IP, and other non-WebTransport Extended
+  CONNECT paths;
 - custom SDK transports whose cryptographic behavior cannot be established by the profile.
 
-WebTTY requires a versioned FIPS-compatible payload and key-envelope suite
-before it can enter the profile.
+The standard build accepts both the legacy and FIPS-compatible WebTTY suites.
+The FIPS build accepts only
+`p256-hkdf-sha256-aes-256-gcm-random-nonce` paired with
+`aes-256-gcm-random-nonce`, and only on WebTransport. Suite negotiation,
+endpoint identities, client/server proof transcripts, workspace-device keys,
+recording metadata, and replay material all carry the selected suite.
 
 ## Build
 
@@ -64,7 +75,8 @@ CGO_ENABLED=0
 
 `GOFIPS140` selects a frozen Go Cryptographic Module and enables FIPS mode by default. The `rstream_fips` build tag enables the rstream feature policy and fail-closed runtime checks. Both are required.
 
-The phase-two profile also freezes `github.com/quic-go/quic-go` at `v0.60.0`.
+The phase-three profile freezes `github.com/quic-go/quic-go` at `v0.60.0` and
+`github.com/quic-go/webtransport-go` at `v0.11.1`.
 The FIPS build fails its metadata check, and the executable fails closed at
 startup, if that reviewed dependency identity changes.
 
@@ -73,7 +85,7 @@ startup, if that reviewed dependency identity changes.
 A FIPS-profile CLI identifies itself and the exact linked module build:
 
 ```text
-rstream version <version> (FIPS 140-3 profile, Go module v1.0.0-c2097c7c, quic-go v0.60.0)
+rstream version <version> (FIPS 140-3 profile, Go module v1.0.0-c2097c7c, quic-go v0.60.0, webtransport-go v0.11.1)
 ```
 
 At process startup, the CLI verifies that:
@@ -81,7 +93,8 @@ At process startup, the CLI verifies that:
 - the rstream FIPS profile was compiled in;
 - Go reports FIPS 140-3 mode as enabled;
 - the linked Go module is the exact frozen build;
-- the linked `quic-go` module is the reviewed phase-two version.
+- the linked `quic-go` module is the reviewed phase-two version;
+- the linked `webtransport-go` module is the reviewed phase-three version.
 
 The process exits before command execution when any condition is false. In particular, a caller cannot silently downgrade a FIPS-profile binary with `GODEBUG=fips140=off`.
 
@@ -103,7 +116,54 @@ status := rstream.CurrentFIPSStatus()
 ```
 
 `CurrentFIPSStatus` reports the rstream profile flag, Go FIPS runtime state,
-module semantic version, exact module build, and reviewed `quic-go` version.
+module semantic version, exact module build, and reviewed `quic-go` and
+`webtransport-go` versions.
+
+## WebTTY Profile
+
+The FIPS CLI defaults `webtty server`, `webtty client`, and `webtty exec` to
+WebTransport. Direct commands may still pass `--transport=webtransport`
+explicitly; any other live transport is rejected before network I/O.
+For a published registered server, an `rstrm://` target is resolved to its
+verified public HTTPS/WebTransport endpoint so EE standalone can apply managed
+session policy and retain encrypted audit events. The FIPS CLI rejects an
+unpublished WebTransport target instead of tunnelling an opaque inner HTTP/3
+session that the engine cannot inspect.
+
+FIPS builds create P-256 WebTTY endpoint identities and workspace-device
+identities by default. A standard CLI can prepare compatible material
+explicitly:
+
+```bash
+rstream webtty identity create --name secure-shell --crypto-profile=fips-compatible
+rstream workspace device rotate --crypto-profile=fips-compatible
+```
+
+An existing identity is never silently converted. When a standard-profile
+workspace device already exists, rotate it and approve the replacement before
+using it with a FIPS WebTTY server. Registered-server enrollment records the
+actual key algorithm and validates its public-key size.
+
+The browser `@rstreamlabs/webtty` implementation is protocol-compatible with
+this suite and uses WebTransport for the FIPS-compatible product path. Browser
+WebCrypto is outside the Go Cryptographic Module boundary; the browser itself
+must not be represented as a CMVP-validated Go FIPS module.
+
+SDK code that opens a QUIC, HTTP/3, or WebTTY packet tunnel must declare
+the reviewed profile explicitly. Generic `PacketDial` remains unavailable in a
+FIPS build because it carries no protocol metadata:
+
+```go
+packetConn, err := client.PacketDialWithProperties(ctx, rstream.Addr{IdOrName: "terminal"}, rstream.TunnelProperties{
+    Type:     rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
+    Protocol: rstream.ProtocolPtr(rstream.ProtocolWebTTY),
+})
+```
+
+Use `ProtocolQUIC` for a QUIC application or `ProtocolHTTP` together
+with `HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP3)` for HTTP/3. The engine
+independently checks the registered tunnel metadata; the declaration is not an
+authorization bypass.
 
 ## TLS Policy
 
@@ -142,13 +202,13 @@ Both test modes are required because the standard build retains the complete pro
 
 ## Module Upgrade Procedure
 
-Changing `FIPS_GO_MODULE`, Go itself, or `quic-go` is a security-relevant
+Changing `FIPS_GO_MODULE`, Go itself, `quic-go`, or `webtransport-go` is a security-relevant
 release change. The Makefile values are intentionally not caller-overridable.
 An upgrade requires:
 
 1. confirming the module's CMVP certificate status and applicable operating environments;
 2. reviewing the module Security Policy, Go release notes, and the `quic-go`
-   FIPS integration;
+   and `webtransport-go` FIPS integration;
 3. running the standard and FIPS-specific test suites;
 4. rebuilding both Linux architectures and checking their build metadata;
 5. updating this document, release evidence, and product documentation with the exact module version.

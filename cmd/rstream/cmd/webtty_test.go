@@ -3348,6 +3348,8 @@ func TestResolveWebTTYClientRstreamUsesEngineInventoryForDisabledRegisteredServe
 
 func TestResolveWebTTYClientRstreamUsesEngineInventoryProjectForWorkspaceManagedServer(t *testing.T) {
 	serverID := "server-workspace"
+	hostname := "workspace-shell.example.com"
+	port := uint32(8443)
 	engineServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.EscapedPath() != "/api/tunnels" {
 			http.Error(w, "unexpected engine request", http.StatusBadRequest)
@@ -3359,7 +3361,10 @@ func TestResolveWebTTYClientRstreamUsesEngineInventoryProjectForWorkspaceManaged
 				ID:       rstream.StringPtr("tunnel-workspace"),
 				Name:     rstream.StringPtr(serverID),
 				Protocol: rstream.ProtocolPtr(rstream.ProtocolWebTTY),
-				Type:     rstream.TunnelTypePtr(rstream.TunnelTypeBytestream),
+				Type:     rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
+				Publish:  rstream.BoolPtr(true),
+				Hostname: &hostname,
+				Port:     &port,
 				Labels: map[string]string{
 					webtty.WebTTYServerIDLabelKey:         serverID,
 					webtty.WebTTYServerNameLabelKey:       "workspace-shell",
@@ -3410,8 +3415,24 @@ func TestResolveWebTTYClientRstreamUsesEngineInventoryProjectForWorkspaceManaged
 	if resolution.URL != "rstrm://"+serverID {
 		t.Fatalf("resolved URL = %q, want rstrm://%s", resolution.URL, serverID)
 	}
+	if resolution.PublishedHost != "workspace-shell.example.com:8443" {
+		t.Fatalf("published host = %q, want workspace-shell.example.com:8443", resolution.PublishedHost)
+	}
 	if !resolution.Scope.E2ERequired || !resolution.Scope.ClientProofRequired || resolution.Scope.HostKeyID != "workspace-host-key" {
 		t.Fatalf("unexpected workspace-managed security scope: %#v", resolution.Scope)
+	}
+}
+
+func TestWebTTYURLWithPublishedHostPreservesPathAndQuery(t *testing.T) {
+	got, err := webTTYURLWithPublishedHost("rstrm://server-1/exec?session_mode=non-interactive", "shell.example.com:8443")
+	if err != nil {
+		t.Fatalf("webTTYURLWithPublishedHost() error = %v", err)
+	}
+	if got != "https://shell.example.com:8443/exec?session_mode=non-interactive" {
+		t.Fatalf("webTTYURLWithPublishedHost() = %q", got)
+	}
+	if got := webTTYPublishedServerName("[2001:db8::1]:443"); got != "2001:db8::1" {
+		t.Fatalf("webTTYPublishedServerName() = %q, want IPv6 address", got)
 	}
 }
 

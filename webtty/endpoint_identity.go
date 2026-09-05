@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	WebTTYEndpointIdentityFileVersion = 1
-	WebTTYEndpointIdentityCryptoSuite = "webtty-endpoint-x25519-ecdsa-p256-v1"
+	WebTTYEndpointIdentityFileVersion     = 1
+	WebTTYEndpointIdentityCryptoSuite     = "webtty-endpoint-x25519-ecdsa-p256-v1"
+	WebTTYEndpointIdentityP256CryptoSuite = "webtty-endpoint-p256-hkdf-sha256-aes-256-gcm-random-nonce-ecdsa-p256-v1"
 )
 
 type WebTTYSigningIdentity struct {
@@ -33,6 +34,7 @@ type WebTTYEndpointIdentity struct {
 }
 
 type WebTTYEndpointIdentityPublic struct {
+	KeyEnvelopeSuite    KeyEnvelopeSuite
 	EncryptionKeyID     []byte
 	EncryptionPublicKey []byte
 	SigningKeyID        []byte
@@ -52,7 +54,13 @@ type WebTTYEndpointIdentityFile struct {
 }
 
 func GenerateWebTTYEndpointIdentity() (*WebTTYEndpointIdentity, error) {
-	encryption, err := GenerateE2EIdentity()
+	return GenerateWebTTYEndpointIdentityForSuite(defaultE2EKeyEnvelopeSuite())
+}
+
+// GenerateWebTTYEndpointIdentityForSuite creates an endpoint identity for an
+// explicit E2E suite. It lets standard builds interoperate with FIPS peers.
+func GenerateWebTTYEndpointIdentityForSuite(suite KeyEnvelopeSuite) (*WebTTYEndpointIdentity, error) {
+	encryption, err := GenerateE2EIdentityForSuite(suite)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +79,12 @@ func GenerateWebTTYEndpointIdentity() (*WebTTYEndpointIdentity, error) {
 }
 
 func (identity WebTTYEndpointIdentity) Public() WebTTYEndpointIdentityPublic {
+	suite := identity.Encryption.KeyEnvelopeSuite
+	if suite == 0 {
+		suite = defaultE2EKeyEnvelopeSuite()
+	}
 	return WebTTYEndpointIdentityPublic{
+		KeyEnvelopeSuite:    suite,
 		EncryptionKeyID:     cloneBytes(identity.Encryption.KeyID),
 		EncryptionPublicKey: cloneBytes(identity.Encryption.PublicKey),
 		SigningKeyID:        cloneBytes(identity.Signing.KeyID),
@@ -83,9 +96,13 @@ func EncodeWebTTYEndpointIdentityJSON(identity WebTTYEndpointIdentity) ([]byte, 
 	if err := validateWebTTYEndpointIdentity(identity); err != nil {
 		return nil, err
 	}
+	cryptoSuite, err := webTTYEndpointIdentityCryptoSuiteForKeyEnvelopeSuite(identity.Encryption.KeyEnvelopeSuite)
+	if err != nil {
+		return nil, err
+	}
 	doc := WebTTYEndpointIdentityFile{
 		Version:              WebTTYEndpointIdentityFileVersion,
-		CryptoSuite:          WebTTYEndpointIdentityCryptoSuite,
+		CryptoSuite:          cryptoSuite,
 		EncryptionKeyID:      EncodeE2EKeyMaterial(identity.Encryption.KeyID),
 		EncryptionPublicKey:  EncodeE2EKeyMaterial(identity.Encryption.PublicKey),
 		EncryptionPrivateKey: EncodeE2EKeyMaterial(identity.Encryption.PrivateKey),
@@ -114,14 +131,19 @@ func DecodeWebTTYEndpointIdentityJSON(data []byte) (*WebTTYEndpointIdentity, err
 	if doc.Version != WebTTYEndpointIdentityFileVersion {
 		return nil, fmt.Errorf("unsupported WebTTY endpoint identity version %d", doc.Version)
 	}
-	if doc.CryptoSuite != WebTTYEndpointIdentityCryptoSuite {
-		return nil, fmt.Errorf("unsupported WebTTY endpoint identity crypto suite %q", doc.CryptoSuite)
-	}
-	encryptionPrivateKey, err := DecodeE2EKeyMaterial(doc.EncryptionPrivateKey, E2EX25519PrivateKeySize, "WebTTY endpoint encryption private key")
+	suite, err := webTTYEndpointIdentityKeyEnvelopeSuite(doc.CryptoSuite)
 	if err != nil {
 		return nil, err
 	}
-	encryption, err := E2EIdentityFromPrivateKey(encryptionPrivateKey)
+	_, _, privateKeySize, err := e2eCurveParameters(suite)
+	if err != nil {
+		return nil, err
+	}
+	encryptionPrivateKey, err := DecodeE2EKeyMaterial(doc.EncryptionPrivateKey, privateKeySize, "WebTTY endpoint encryption private key")
+	if err != nil {
+		return nil, err
+	}
+	encryption, err := E2EIdentityFromPrivateKeyForSuite(encryptionPrivateKey, suite)
 	if err != nil {
 		return nil, err
 	}
@@ -168,6 +190,15 @@ func LoadWebTTYEndpointIdentityFile(path string) (*WebTTYEndpointIdentity, error
 }
 
 func LoadOrCreateWebTTYEndpointIdentityFile(path string) (*WebTTYEndpointIdentity, error) {
+	return LoadOrCreateWebTTYEndpointIdentityFileForSuite(path, defaultE2EKeyEnvelopeSuite())
+}
+
+// LoadOrCreateWebTTYEndpointIdentityFileForSuite creates an identity for the
+// requested suite or verifies that an existing identity uses it.
+func LoadOrCreateWebTTYEndpointIdentityFileForSuite(path string, suite KeyEnvelopeSuite) (*WebTTYEndpointIdentity, error) {
+	if err := validateProfileKeyEnvelopeSuite(suite); err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(path) == "" {
 		var err error
 		path, err = DefaultE2EIdentityPath()
@@ -187,12 +218,15 @@ func LoadOrCreateWebTTYEndpointIdentityFile(path string) (*WebTTYEndpointIdentit
 	defer lock.Unlock()
 	identity, err := loadWebTTYEndpointIdentityFileUnlocked(path)
 	if err == nil {
+		if identity.Encryption.KeyEnvelopeSuite != suite {
+			return nil, fmt.Errorf("WebTTY endpoint identity %s uses key envelope suite %d, requested %d", path, identity.Encryption.KeyEnvelopeSuite, suite)
+		}
 		return identity, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	identity, err = GenerateWebTTYEndpointIdentity()
+	identity, err = GenerateWebTTYEndpointIdentityForSuite(suite)
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +340,11 @@ func validateEncodedE2EPublicMaterial(identity E2EIdentity, encodedKeyID string,
 	if err != nil {
 		return err
 	}
-	publicKey, err := DecodeE2EKeyMaterial(encodedPublicKey, E2EX25519PublicKeySize, "WebTTY endpoint encryption public key")
+	_, publicKeySize, _, err := e2eCurveParameters(identity.KeyEnvelopeSuite)
+	if err != nil {
+		return err
+	}
+	publicKey, err := DecodeE2EKeyMaterial(encodedPublicKey, publicKeySize, "WebTTY endpoint encryption public key")
 	if err != nil {
 		return err
 	}
@@ -317,6 +355,39 @@ func validateEncodedE2EPublicMaterial(identity E2EIdentity, encodedKeyID string,
 		return fmt.Errorf("WebTTY endpoint encryption public key does not match private key")
 	}
 	return nil
+}
+
+func webTTYEndpointIdentityCryptoSuiteForKeyEnvelopeSuite(suite KeyEnvelopeSuite) (string, error) {
+	if suite == 0 {
+		suite = defaultE2EKeyEnvelopeSuite()
+	}
+	if err := validateProfileKeyEnvelopeSuite(suite); err != nil {
+		return "", err
+	}
+	switch suite {
+	case KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM:
+		return WebTTYEndpointIdentityCryptoSuite, nil
+	case KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce:
+		return WebTTYEndpointIdentityP256CryptoSuite, nil
+	default:
+		return "", fmt.Errorf("unsupported WebTTY endpoint identity key envelope suite %d", suite)
+	}
+}
+
+func webTTYEndpointIdentityKeyEnvelopeSuite(cryptoSuite string) (KeyEnvelopeSuite, error) {
+	var suite KeyEnvelopeSuite
+	switch strings.TrimSpace(cryptoSuite) {
+	case WebTTYEndpointIdentityCryptoSuite:
+		suite = KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM
+	case WebTTYEndpointIdentityP256CryptoSuite:
+		suite = KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce
+	default:
+		return 0, fmt.Errorf("unsupported WebTTY endpoint identity crypto suite %q", cryptoSuite)
+	}
+	if err := validateProfileKeyEnvelopeSuite(suite); err != nil {
+		return 0, err
+	}
+	return suite, nil
 }
 
 func validateEncodedWebTTYSigningPublicMaterial(identity WebTTYSigningIdentity, encodedKeyID string, encodedPublicKey string) error {

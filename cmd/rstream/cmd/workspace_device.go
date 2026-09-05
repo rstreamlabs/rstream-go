@@ -42,7 +42,7 @@ const (
 	workspaceDeviceStatusLost           = "lost"
 	workspaceDeviceCryptoSuite          = "p256-hkdf-sha256-aes-256-gcm"
 	workspaceDeviceEnvelopeInfo         = "rstream.workspace_key_envelope.v1"
-	workspaceDeviceWebTTYCryptoSuite    = "webtty-x25519-hpke-v1"
+	workspaceDeviceWebTTYCryptoSuite    = webtty.WebTTYKeyAlgorithmX25519
 	workspaceDeviceVerificationAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 )
 
@@ -150,6 +150,7 @@ func init() {
 	workspaceDeviceEnrollCmd.Flags().String("workspace", "", "workspace ID (defaults to the active project workspace)")
 	workspaceDeviceEnrollCmd.Flags().String("label", "", "device label")
 	workspaceDeviceEnrollCmd.Flags().String("kind", workspaceDeviceKindCLI, "device kind (cli, agent, service)")
+	workspaceDeviceEnrollCmd.Flags().String("crypto-profile", "default", "WebTTY crypto profile (default, fips-compatible)")
 	workspaceDeviceEnrollCmd.Flags().StringP("output", "o", "text", "output mode (text, json, yaml)")
 	workspaceDeviceStatusCmd.Flags().String("workspace", "", "workspace ID (defaults to the active project workspace)")
 	workspaceDeviceStatusCmd.Flags().Bool("all", false, "include revoked and lost local devices")
@@ -157,6 +158,7 @@ func init() {
 	workspaceDeviceRotateCmd.Flags().String("workspace", "", "workspace ID (defaults to the active project workspace)")
 	workspaceDeviceRotateCmd.Flags().String("label", "", "device label")
 	workspaceDeviceRotateCmd.Flags().String("kind", workspaceDeviceKindCLI, "device kind (cli, agent, service)")
+	workspaceDeviceRotateCmd.Flags().String("crypto-profile", "default", "WebTTY crypto profile (default, fips-compatible)")
 	workspaceDeviceRotateCmd.Flags().StringP("output", "o", "text", "output mode (text, json, yaml)")
 	workspaceDeviceCmd.AddCommand(workspaceDeviceEnrollCmd)
 	workspaceDeviceCmd.AddCommand(workspaceDeviceStatusCmd)
@@ -174,6 +176,14 @@ func runWorkspaceDeviceEnroll(cmd *cobra.Command) error {
 	if label == "" {
 		label = defaultWorkspaceDeviceLabel(kind)
 	}
+	webTTYSuite, err := webTTYIdentitySuiteFromProfile(cmd)
+	if err != nil {
+		return err
+	}
+	webTTYAlgorithm, err := webtty.WebTTYKeyAlgorithmForSuite(webTTYSuite)
+	if err != nil {
+		return err
+	}
 	runtime, err := resolveWorkspaceDeviceRuntime(cmd)
 	if err != nil {
 		return err
@@ -188,9 +198,12 @@ func runWorkspaceDeviceEnroll(cmd *cobra.Command) error {
 		return err
 	}
 	if found {
+		if existing.device.WebTTYKeyAlgorithm != webTTYAlgorithm {
+			return fmt.Errorf("existing %s workspace device uses WebTTY crypto profile %q; run rstream workspace device rotate --crypto-profile=fips-compatible", kind, existing.device.WebTTYKeyAlgorithm)
+		}
 		return printWorkspaceDeviceAlreadyEnrolled(cmd, workspace, existing, code)
 	}
-	createdDevice, err := createWorkspaceDevice(cmd.Context(), client, workspace, kind, label)
+	createdDevice, err := createWorkspaceDevice(cmd.Context(), client, workspace, kind, label, webTTYSuite)
 	if err != nil {
 		return err
 	}
@@ -224,6 +237,10 @@ func runWorkspaceDeviceRotate(cmd *cobra.Command) error {
 	if label == "" {
 		label = defaultWorkspaceDeviceLabel(kind)
 	}
+	webTTYSuite, err := webTTYIdentitySuiteFromProfile(cmd)
+	if err != nil {
+		return err
+	}
 	runtime, err := resolveWorkspaceDeviceRuntime(cmd)
 	if err != nil {
 		return err
@@ -240,7 +257,7 @@ func runWorkspaceDeviceRotate(cmd *cobra.Command) error {
 	if !found {
 		return fmt.Errorf("no active or pending local %s workspace device found for %s; run rstream workspace device enroll", kind, workspaceDescription(workspace))
 	}
-	created, err := createWorkspaceDevice(cmd.Context(), client, workspace, kind, label, existing.device.DeviceKeyID)
+	created, err := createWorkspaceDevice(cmd.Context(), client, workspace, kind, label, webTTYSuite, existing.device.DeviceKeyID)
 	if err != nil {
 		return err
 	}
@@ -340,8 +357,8 @@ type workspaceDeviceCreation struct {
 	code   string
 }
 
-func createWorkspaceDevice(ctx context.Context, client *controlplane.Client, workspace workspaceDeviceWorkspaceResolution, kind string, label string, rotatesDeviceKeyID ...string) (workspaceDeviceCreation, error) {
-	material, err := generateWorkspaceDeviceMaterial(workspace.WorkspaceID, kind, label)
+func createWorkspaceDevice(ctx context.Context, client *controlplane.Client, workspace workspaceDeviceWorkspaceResolution, kind string, label string, webTTYSuite webtty.KeyEnvelopeSuite, rotatesDeviceKeyID ...string) (workspaceDeviceCreation, error) {
+	material, err := generateWorkspaceDeviceMaterial(workspace.WorkspaceID, kind, label, webTTYSuite)
 	if err != nil {
 		return workspaceDeviceCreation{}, err
 	}
@@ -710,7 +727,7 @@ func normalizeWorkspaceDeviceKind(kind string) (string, error) {
 	}
 }
 
-func generateWorkspaceDeviceMaterial(workspaceID string, kind string, label string) (*workspaceDeviceMaterial, error) {
+func generateWorkspaceDeviceMaterial(workspaceID string, kind string, label string, requestedWebTTYSuite ...webtty.KeyEnvelopeSuite) (*workspaceDeviceMaterial, error) {
 	kind, err := normalizeWorkspaceDeviceKind(kind)
 	if err != nil {
 		return nil, err
@@ -731,9 +748,23 @@ func generateWorkspaceDeviceMaterial(workspaceID string, kind string, label stri
 	if err != nil {
 		return nil, err
 	}
-	webttyIdentity, err := webtty.GenerateE2EIdentity()
+	webTTYSuite := webtty.KeyEnvelopeSuite(0)
+	if len(requestedWebTTYSuite) > 0 {
+		webTTYSuite = requestedWebTTYSuite[0]
+	}
+	if webTTYSuite == 0 {
+		webTTYSuite, err = webtty.WebTTYKeyEnvelopeSuiteForAlgorithm(webtty.CurrentWebTTYKeyAlgorithm())
+		if err != nil {
+			return nil, err
+		}
+	}
+	webttyIdentity, err := webtty.GenerateE2EIdentityForSuite(webTTYSuite)
 	if err != nil {
 		return nil, fmt.Errorf("generate WebTTY device identity: %w", err)
+	}
+	webTTYAlgorithm, err := webtty.WebTTYKeyAlgorithmForSuite(webTTYSuite)
+	if err != nil {
+		return nil, err
 	}
 	webttyPublicKey := webtty.EncodeE2EKeyMaterial(webttyIdentity.PublicKey)
 	webttyKeyID := webtty.EncodeE2EKeyMaterial(webttyIdentity.KeyID)
@@ -741,7 +772,7 @@ func generateWorkspaceDeviceMaterial(workspaceID string, kind string, label stri
 	if err != nil {
 		return nil, err
 	}
-	payload := workspaceDeviceProofPayload(workspaceID, kind, label, publicEncryptionKey, publicSigningKey, webttyPublicKey, webttyKeyID, workspaceDeviceWebTTYCryptoSuite, fingerprint)
+	payload := workspaceDeviceProofPayload(workspaceID, kind, label, publicEncryptionKey, publicSigningKey, webttyPublicKey, webttyKeyID, webTTYAlgorithm, fingerprint)
 	signature, err := signWorkspacePayload(signingPrivate, payload)
 	if err != nil {
 		return nil, err
@@ -758,7 +789,7 @@ func generateWorkspaceDeviceMaterial(workspaceID string, kind string, label stri
 			PrivateSigningKey:    privateSigningKey,
 			WebTTYPublicKey:      webttyPublicKey,
 			WebTTYKeyID:          webttyKeyID,
-			WebTTYKeyAlgorithm:   workspaceDeviceWebTTYCryptoSuite,
+			WebTTYKeyAlgorithm:   webTTYAlgorithm,
 			Fingerprint:          fingerprint,
 		},
 		signingPrivate: signingPrivate,
@@ -1322,8 +1353,9 @@ func loadWorkspaceDeviceWebTTYIdentity(device workspaceDeviceFile) (*webtty.E2EI
 	if strings.TrimSpace(device.WebTTYPublicKey) == "" || strings.TrimSpace(device.WebTTYKeyID) == "" {
 		return nil, fmt.Errorf("workspace device %s has no WebTTY E2E identity; re-enroll this device", device.DeviceKeyID)
 	}
-	if device.WebTTYKeyAlgorithm != workspaceDeviceWebTTYCryptoSuite {
-		return nil, fmt.Errorf("workspace device %s uses unsupported WebTTY key algorithm %q", device.DeviceKeyID, device.WebTTYKeyAlgorithm)
+	suite, err := webtty.WebTTYKeyEnvelopeSuiteForAlgorithm(device.WebTTYKeyAlgorithm)
+	if err != nil {
+		return nil, fmt.Errorf("workspace device %s uses unsupported WebTTY key algorithm %q: %w", device.DeviceKeyID, device.WebTTYKeyAlgorithm, err)
 	}
 	path := strings.TrimSpace(device.WebTTYIdentityPath)
 	if path == "" {
@@ -1341,6 +1373,9 @@ func loadWorkspaceDeviceWebTTYIdentity(device workspaceDeviceFile) (*webtty.E2EI
 	keyID := webtty.EncodeE2EKeyMaterial(identity.KeyID)
 	if publicKey != device.WebTTYPublicKey || keyID != device.WebTTYKeyID {
 		return nil, fmt.Errorf("workspace device %s WebTTY identity does not match device metadata", device.DeviceKeyID)
+	}
+	if identity.KeyEnvelopeSuite != suite {
+		return nil, fmt.Errorf("workspace device %s WebTTY identity crypto profile does not match device metadata", device.DeviceKeyID)
 	}
 	return identity, nil
 }

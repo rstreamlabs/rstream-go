@@ -17,28 +17,36 @@ const (
 	// RequiredQUICModuleVersion is the reviewed quic-go implementation used by
 	// the phase-two profile. A dependency change requires a new FIPS review.
 	RequiredQUICModuleVersion = "v0.60.0"
+	// RequiredWebTransportModuleVersion is the reviewed WebTransport framing
+	// implementation used by the phase-three profile.
+	RequiredWebTransportModuleVersion = "v0.11.1"
 )
 
-const quicModulePath = "github.com/quic-go/quic-go"
+const (
+	quicModulePath         = "github.com/quic-go/quic-go"
+	webTransportModulePath = "github.com/quic-go/webtransport-go"
+)
 
 // Status describes the compile-time rstream profile and the Go cryptographic
 // module selected for the current executable.
 type Status struct {
-	Profile       bool   `json:"profile"`
-	Enabled       bool   `json:"enabled"`
-	ModuleVersion string `json:"module_version"`
-	ModuleBuild   string `json:"module_build"`
-	QUICVersion   string `json:"quic_version"`
+	Profile             bool   `json:"profile"`
+	Enabled             bool   `json:"enabled"`
+	ModuleVersion       string `json:"module_version"`
+	ModuleBuild         string `json:"module_build"`
+	QUICVersion         string `json:"quic_version"`
+	WebTransportVersion string `json:"webtransport_version"`
 }
 
 // Current returns the FIPS 140-3 status of the current executable.
 func Current() Status {
 	return Status{
-		Profile:       buildEnabled,
-		Enabled:       fips140.Enabled(),
-		ModuleVersion: fips140.Version(),
-		ModuleBuild:   moduleBuildVersion(),
-		QUICVersion:   dependencyVersion(quicModulePath),
+		Profile:             buildEnabled,
+		Enabled:             fips140.Enabled(),
+		ModuleVersion:       fips140.Version(),
+		ModuleBuild:         moduleBuildVersion(),
+		QUICVersion:         dependencyVersion(quicModulePath),
+		WebTransportVersion: dependencyVersion(webTransportModulePath),
 	}
 }
 
@@ -66,6 +74,9 @@ func Require() error {
 	}
 	if status.QUICVersion != RequiredQUICModuleVersion {
 		return fmt.Errorf("quic-go module version is %q, require %q", status.QUICVersion, RequiredQUICModuleVersion)
+	}
+	if status.WebTransportVersion != RequiredWebTransportModuleVersion {
+		return fmt.Errorf("webtransport-go module version is %q, require %q", status.WebTransportVersion, RequiredWebTransportModuleVersion)
 	}
 	return nil
 }

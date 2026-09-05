@@ -114,7 +114,8 @@ func validateFIPSTunnelProperties(props TunnelProperties) error {
 	}
 	isPublishedQUIC := props.Protocol != nil && *props.Protocol == ProtocolQUIC
 	isPublishedHTTP3 := props.Protocol != nil && *props.Protocol == ProtocolHTTP && props.HTTPVersion != nil && *props.HTTPVersion == HTTP3
-	if props.Type != nil && *props.Type == TunnelTypeDatagram && !isPublishedQUIC && !isPublishedHTTP3 {
+	isWebTTYWebTransport := props.Protocol != nil && *props.Protocol == ProtocolWebTTY && props.Type != nil && *props.Type == TunnelTypeDatagram
+	if props.Type != nil && *props.Type == TunnelTypeDatagram && !isPublishedQUIC && !isPublishedHTTP3 && !isWebTTYWebTransport {
 		return fipsprofile.Unavailable("datagram tunnels")
 	}
 	if props.Protocol != nil {
@@ -122,7 +123,9 @@ func validateFIPSTunnelProperties(props TunnelProperties) error {
 		case ProtocolDTLS:
 			return fipsprofile.Unavailable("DTLS tunnels")
 		case ProtocolWebTTY:
-			return fipsprofile.Unavailable("WebTTY tunnels")
+			if !isWebTTYWebTransport {
+				return fipsprofile.Unavailable("WebTTY transports other than WebTransport")
+			}
 		}
 	}
 	if props.HTTPVersion != nil && *props.HTTPVersion == HTTP3 && !isPublishedHTTP3 {

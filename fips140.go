@@ -16,6 +16,10 @@ const FIPSModuleBuild = fipsprofile.RequiredModuleBuild
 // current rstream FIPS profile.
 const FIPSQUICModuleVersion = fipsprofile.RequiredQUICModuleVersion
 
+// FIPSWebTransportModuleVersion is the reviewed webtransport-go version
+// required by the current rstream FIPS profile.
+const FIPSWebTransportModuleVersion = fipsprofile.RequiredWebTransportModuleVersion
+
 // CurrentFIPSStatus returns the FIPS 140-3 status of the current executable.
 func CurrentFIPSStatus() FIPSStatus {
 	return fipsprofile.Current()

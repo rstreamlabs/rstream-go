@@ -183,6 +183,12 @@ func (s *session) startLoopLocked(loop func()) {
 }
 
 func (s *session) validateE2EConfig() error {
+	if err := validateFIPSWebTTYTransport(s.transport); err != nil {
+		return err
+	}
+	if err := validateFIPSWebTTYServerConfig(s.cfg); err != nil {
+		return err
+	}
 	if s.cfg == nil || s.cfg.PayloadCryptoResolver == nil {
 		return nil
 	}
