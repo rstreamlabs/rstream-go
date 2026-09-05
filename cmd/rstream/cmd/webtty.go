@@ -30,6 +30,7 @@ import (
 	"github.com/quic-go/webtransport-go"
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/controlplane"
+	"github.com/rstreamlabs/rstream-go/filesystem"
 	"github.com/rstreamlabs/rstream-go/webtty"
 	"github.com/spf13/cobra"
 )
@@ -452,6 +453,12 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 	if err != nil {
 		return err
 	}
+	handlerHandedOff := false
+	defer func() {
+		if !handlerHandedOff {
+			closeWebTTYHTTPHandler(handler, logger)
+		}
+	}()
 	if !useRstream && transport == webtty.WebTTYTransportWebTransport {
 		addr, _ := cmd.Flags().GetString("listen")
 		certFile, _ := cmd.Flags().GetString("tls-cert-file")
@@ -564,6 +571,7 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 		return servePlainWebTTY(ctx, listener, terminalHandler, shutdownTimeout, logger, generations, releaseRstreamResources)
 	}
 	resourcesHandedOff = releaseRstreamResources != nil
+	handlerHandedOff = true
 	return serveWebSocketWebTTY(ctx, listener, server, terminalHandler, shutdownTimeout, logger, generations, releaseRstreamResources)
 }
 
@@ -582,6 +590,8 @@ func serveWebSocketWebTTY(ctx context.Context, listener net.Listener, server *ht
 	close(stopShutdownWatcher)
 	<-shutdownWatcherDone
 	cleanup := func(shutdownCtx context.Context) {
+		defer closeWebTTYHTTPHandler(server.Handler, logger)
+		defer server.Close()
 		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil && !errors.Is(shutdownErr, http.ErrServerClosed) && !errors.Is(shutdownErr, context.Canceled) && !errors.Is(shutdownErr, context.DeadlineExceeded) {
 			logger.Warn("http webtty server shutdown failed", "error", shutdownErr)
 		}
@@ -860,7 +870,8 @@ func init() {
 	webttyServerCmd.Flags().StringArray("authorized-client-key", nil, "authorized WebTTY client signing key, as signing_key_id:signing_public_key")
 	webttyServerCmd.Flags().String("authorized-clients-file", "", "authorized WebTTY client keys file")
 	webttyServerCmd.Flags().StringArray("label", nil, "set WebTTY inventory labels (key=value, may be specified multiple times)")
-	webttyServerCmd.Flags().String("fs-root", "", "serve a WebDAV filesystem sidecar rooted at this directory")
+	webttyServerCmd.Flags().String("fs-root", "", "serve a filesystem sidecar rooted at this directory")
+	webttyServerCmd.Flags().String("fs-backend", filesystem.BackendWebDAV, "filesystem backend (webdav, webrtc; WebRTC is read-only)")
 	webttyServerCmd.Flags().Bool("fs-read-only", false, "serve the WebDAV filesystem sidecar in read-only mode")
 	webttyServerCmd.Flags().Int64("fs-max-upload-size", defaultWebTTYFSMaxUploadSize, "maximum WebDAV upload size in bytes")
 	webttyCmd.AddCommand(webttyServerCmd)
@@ -949,8 +960,15 @@ func validateWebTTYServerFlags(cmd *cobra.Command) error {
 		return fmt.Errorf("--name, --publish and --no-publish require --rstream")
 	}
 	fsRoot, _ := cmd.Flags().GetString("fs-root")
-	if strings.TrimSpace(fsRoot) == "" && (cmd.Flags().Changed("fs-read-only") || cmd.Flags().Changed("fs-max-upload-size")) {
-		return fmt.Errorf("--fs-read-only and --fs-max-upload-size require --fs-root")
+	fsBackend, _ := cmd.Flags().GetString("fs-backend")
+	if _, err := filesystem.ResolveBackend(fsBackend); err != nil {
+		return err
+	}
+	if strings.TrimSpace(fsRoot) == "" && (cmd.Flags().Changed("fs-backend") || cmd.Flags().Changed("fs-read-only") || cmd.Flags().Changed("fs-max-upload-size")) {
+		return fmt.Errorf("--fs-backend, --fs-read-only and --fs-max-upload-size require --fs-root")
+	}
+	if fsBackend == filesystem.BackendWebRTC && cmd.Flags().Changed("fs-max-upload-size") {
+		return fmt.Errorf("--fs-max-upload-size requires --fs-backend=webdav; WebRTC is read-only")
 	}
 	fsMaxUploadSize, _ := cmd.Flags().GetInt64("fs-max-upload-size")
 	if strings.TrimSpace(fsRoot) != "" && fsMaxUploadSize <= 0 {
@@ -2147,7 +2165,12 @@ func newWebTTYServerHTTPHandler(cmd *cobra.Command, terminalHandler *webtty.Hand
 	}
 	fsReadOnly, _ := cmd.Flags().GetBool("fs-read-only")
 	fsMaxUploadSize, _ := cmd.Flags().GetInt64("fs-max-upload-size")
-	fsHandler, err := webtty.NewFileSystemHandler(&webtty.FileSystemConfig{Root: fsRoot, ReadOnly: fsReadOnly, MaxUploadSize: &fsMaxUploadSize, Logger: logger})
+	backend, _ := cmd.Flags().GetString("fs-backend")
+	rtcConfig, err := filesystemRTCConfig(cmd, backend)
+	if err != nil {
+		return nil, err
+	}
+	fsHandler, err := webtty.NewFileSystemHandler(&webtty.FileSystemConfig{Root: fsRoot, Backend: backend, RTC: rtcConfig, ReadOnly: fsReadOnly, MaxUploadSize: &fsMaxUploadSize, Logger: logger})
 	if err != nil {
 		return nil, err
 	}
@@ -2155,7 +2178,7 @@ func newWebTTYServerHTTPHandler(cmd *cobra.Command, terminalHandler *webtty.Hand
 	mux.Handle(webtty.WebTTYDefaultFSPath, webtty.NewBearerAuthHandler(fsHandler, authToken, allowUnauthenticated))
 	mux.Handle(webtty.WebTTYDefaultFSPath+"/", webtty.NewBearerAuthHandler(fsHandler, authToken, allowUnauthenticated))
 	mux.Handle("/", terminalHandler)
-	return mux, nil
+	return &webTTYFilesystemMux{Handler: mux, filesystem: fsHandler}, nil
 }
 
 func newWebTTYServerTunnelProperties(cmd *cobra.Command, enrollment *webTTYServerEnrollmentFile) rstream.TunnelProperties {
@@ -2211,8 +2234,10 @@ func applyWebTTYServerLabels(cmd *cobra.Command, labels map[string]string) {
 		return
 	}
 	fsReadOnly, _ := cmd.Flags().GetBool("fs-read-only")
+	fsBackend, _ := cmd.Flags().GetString("fs-backend")
+	labels[webtty.WebTTYFSBackendLabelKey] = fsBackend
 	fsMode := webtty.WebTTYFSModeReadWrite
-	if fsReadOnly {
+	if fsReadOnly || fsBackend == filesystem.BackendWebRTC {
 		fsMode = webtty.WebTTYFSModeReadOnly
 	}
 	labels[webtty.WebTTYCapabilitiesLabelKey] = webtty.WebTTYCapabilityExec + "," + webtty.WebTTYCapabilityFS
@@ -2934,5 +2959,25 @@ func webTTYSessionConfigFromClientConfig(cfg *webtty.ClientConfig) *webtty.Sessi
 		CloseDeadline:          cfg.CloseDeadline,
 		HeartbeatInterval:      cfg.HeartbeatInterval,
 		Logger:                 cfg.Logger,
+	}
+}
+
+type webTTYFilesystemMux struct {
+	http.Handler
+	filesystem http.Handler
+}
+
+func (h *webTTYFilesystemMux) Close() error {
+	if closer, ok := h.filesystem.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+func closeWebTTYHTTPHandler(handler http.Handler, logger *slog.Logger) {
+	if closer, ok := handler.(io.Closer); ok {
+		if err := closer.Close(); err != nil {
+			logger.Warn("close WebTTY filesystem", "error", err)
+		}
 	}
 }

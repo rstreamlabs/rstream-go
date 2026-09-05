@@ -19,6 +19,7 @@ import (
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/netretry"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/sessiongroup"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/streamrelay"
+	"github.com/rstreamlabs/rstream-go/fileserver"
 	"github.com/spf13/cobra"
 )
 
@@ -32,19 +33,20 @@ const (
 )
 
 type forwardStatus struct {
-	Version             *string `json:"version,omitempty"`
-	ClientVersion       *string `json:"client_version,omitempty"`
-	ServerVersion       *string `json:"server_version,omitempty"`
-	TransportConfigured *string `json:"transport_configured,omitempty"`
-	TransportSelected   *string `json:"transport_selected,omitempty"`
-	Update              *string `json:"update,omitempty"`
-	Plan                *string `json:"plan,omitempty"`
-	Provider            *string `json:"provider,omitempty"`
-	Region              *string `json:"region,omitempty"`
-	Status              *string `json:"status,omitempty"`
-	TunnelID            *string `json:"tunnel_id,omitempty"`
-	Forwarding          *string `json:"forwarding,omitempty"`
-	Forwarded           *string `json:"forwarded,omitempty"`
+	Files               *fileserver.Info `json:"files,omitempty"`
+	Version             *string          `json:"version,omitempty"`
+	ClientVersion       *string          `json:"client_version,omitempty"`
+	ServerVersion       *string          `json:"server_version,omitempty"`
+	TransportConfigured *string          `json:"transport_configured,omitempty"`
+	TransportSelected   *string          `json:"transport_selected,omitempty"`
+	Update              *string          `json:"update,omitempty"`
+	Plan                *string          `json:"plan,omitempty"`
+	Provider            *string          `json:"provider,omitempty"`
+	Region              *string          `json:"region,omitempty"`
+	Status              *string          `json:"status,omitempty"`
+	TunnelID            *string          `json:"tunnel_id,omitempty"`
+	Forwarding          *string          `json:"forwarding,omitempty"`
+	Forwarded           *string          `json:"forwarded,omitempty"`
 }
 
 type forwardConnInfo struct {
@@ -55,6 +57,7 @@ type forwardConnInfo struct {
 }
 
 type forwardCtx struct {
+	LocalHTTP        *localHTTPService
 	Client           *rstream.Client
 	Props            *rstream.TunnelProperties
 	Host             string
@@ -194,7 +197,15 @@ func init() {
 	rootCmd.AddCommand(forwardCmd)
 }
 
-func newForwardCtx(cmd *cobra.Command, host, port string) (result *forwardCtx, err error) {
+func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {
+	props, err := newTunnelPropertiesFromFlags(cmd)
+	if err != nil {
+		return nil, err
+	}
+	return newForwardCtxWithProperties(cmd, host, port, props)
+}
+
+func newForwardCtxWithProperties(cmd *cobra.Command, host, port string, props *rstream.TunnelProperties) (result *forwardCtx, err error) {
 	runtime, err := resolveRuntime(cmd, true, true)
 	if err != nil {
 		return nil, err
@@ -209,10 +220,6 @@ func newForwardCtx(cmd *cobra.Command, host, port string) (result *forwardCtx, e
 			err = errors.Join(err, clientCloser.Close())
 		}
 	}()
-	props, err := newTunnelPropertiesFromFlags(cmd)
-	if err != nil {
-		return nil, err
-	}
 	if err := rstream.MaybeSetGeneratedStableDomain(props, runtime.Resolved.StableDomainEndpoint()); err != nil {
 		return nil, fmt.Errorf("failed to generate stable domain: %w", err)
 	}
@@ -454,6 +461,9 @@ func (s *forwardCtx) runOnce(ctx context.Context, sessions *forwardSessionGroup)
 		status.Status = rstream.StringPtr(formatStatusError("tunnel creation failed", err))
 		s.setStatus(status)
 		return statusReportedError{err: fmt.Errorf("failed to get forwarding address: %w", err)}
+	}
+	if s.LocalHTTP != nil {
+		return s.serveLocalHTTP(ctx, tunnel, props, forwarding, baseStatus)
 	}
 	forwarded, err := rstream.FormatForwardedHostPort(s.Host, s.Port, props)
 	if err != nil {
@@ -740,6 +750,9 @@ func (s *forwardCtx) renderStatusText(st forwardStatus) {
 		{"tunnel ID", val(st.TunnelID)},
 		{"forwarding", val(st.Forwarding)},
 		{"forwarded", val(st.Forwarded)},
+	}
+	if st.Files != nil {
+		lines = append(lines, kv{"file access", st.Files.Access}, kv{"file mode", "read-only"})
 	}
 	maxw := 0
 	for _, kv := range lines {

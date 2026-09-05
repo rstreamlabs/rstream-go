@@ -3,247 +3,86 @@
 package webtty
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
-	"path"
-	"path/filepath"
-	"strings"
+	"sync"
 
-	"golang.org/x/net/webdav"
+	"github.com/rstreamlabs/rstream-go/filesystem"
+	"github.com/rstreamlabs/rstream-go/filesystem/rtc"
 )
 
 type FileSystemConfig struct {
+	Backend       string
+	RTC           rtc.ServerConfig
 	Root          string
 	ReadOnly      bool
 	MaxUploadSize *int64
 	Logger        *slog.Logger
 }
 
+// NewFileSystemHandler preserves the WebTTY /fs endpoint and write defaults.
+// The returned handler implements io.Closer; close it after serving has stopped.
 func NewFileSystemHandler(cfg *FileSystemConfig) (http.Handler, error) {
-	resolved, err := resolveFileSystemConfig(cfg)
-	if err != nil {
-		return nil, err
-	}
-	logger := resolved.Logger.With("component", "webtty.filesystem")
-	fs, err := newSafeWebDAVFileSystem(resolved.Root)
-	if err != nil {
-		return nil, err
-	}
-	handler := http.Handler(&webdav.Handler{
-		Prefix:     WebTTYDefaultFSPath,
-		FileSystem: fs,
-		LockSystem: webdav.NewMemLS(),
-		Logger: func(r *http.Request, err error) {
-			if err != nil {
-				logger.Warn("webdav request failed", "method", r.Method, "path", r.URL.Path, "error", err)
-			}
-		},
-	})
-	if resolved.MaxUploadSize != nil && *resolved.MaxUploadSize > 0 {
-		handler = maxUploadSizeHandler(handler, *resolved.MaxUploadSize)
-	}
-	if resolved.ReadOnly {
-		handler = readOnlyFileSystemHandler(handler)
-	}
-	return handler, nil
-}
-
-type safeWebDAVFileSystem struct {
-	root string
-}
-
-func newSafeWebDAVFileSystem(root string) (*safeWebDAVFileSystem, error) {
-	resolved, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return nil, fmt.Errorf("failed to resolve filesystem root symlinks: %w", err)
-	}
-	return &safeWebDAVFileSystem{root: filepath.Clean(resolved)}, nil
-}
-
-func (fs *safeWebDAVFileSystem) Mkdir(_ context.Context, name string, perm os.FileMode) error {
-	target, err := fs.safeCreatePath(name)
-	if err != nil {
-		return err
-	}
-	return os.Mkdir(target, perm)
-}
-
-func (fs *safeWebDAVFileSystem) OpenFile(_ context.Context, name string, flag int, perm os.FileMode) (webdav.File, error) {
-	target, err := fs.safeExistingPath(name)
-	if err != nil {
-		if flag&os.O_CREATE == 0 || !errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
-		target, err = fs.safeCreatePath(name)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return os.OpenFile(target, flag, perm)
-}
-
-func (fs *safeWebDAVFileSystem) RemoveAll(_ context.Context, name string) error {
-	target, err := fs.safeChildPath(name)
-	if err != nil {
-		return err
-	}
-	if target == fs.root {
-		return os.ErrInvalid
-	}
-	return os.RemoveAll(target)
-}
-
-func (fs *safeWebDAVFileSystem) Rename(_ context.Context, oldName string, newName string) error {
-	oldPath, err := fs.safeChildPath(oldName)
-	if err != nil {
-		return err
-	}
-	newPath, err := fs.safeChildPath(newName)
-	if err != nil {
-		return err
-	}
-	if oldPath == fs.root || newPath == fs.root {
-		return os.ErrInvalid
-	}
-	return os.Rename(oldPath, newPath)
-}
-
-func (fs *safeWebDAVFileSystem) Stat(_ context.Context, name string) (os.FileInfo, error) {
-	target, err := fs.safeExistingPath(name)
-	if err != nil {
-		return nil, err
-	}
-	return os.Stat(target)
-}
-
-func (fs *safeWebDAVFileSystem) safeExistingPath(name string) (string, error) {
-	target, err := fs.lexicalPath(name)
-	if err != nil {
-		return "", err
-	}
-	if _, err := os.Lstat(target); err != nil {
-		return "", err
-	}
-	resolved, err := filepath.EvalSymlinks(target)
-	if err != nil {
-		return "", err
-	}
-	if !pathInsideRoot(fs.root, resolved) {
-		return "", os.ErrPermission
-	}
-	return resolved, nil
-}
-
-func (fs *safeWebDAVFileSystem) safeCreatePath(name string) (string, error) {
-	target, err := fs.lexicalPath(name)
-	if err != nil {
-		return "", err
-	}
-	if _, err := os.Lstat(target); err == nil {
-		return "", os.ErrExist
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	parent, err := filepath.EvalSymlinks(filepath.Dir(target))
-	if err != nil {
-		return "", err
-	}
-	if !pathInsideRoot(fs.root, parent) {
-		return "", os.ErrPermission
-	}
-	return filepath.Join(parent, filepath.Base(target)), nil
-}
-
-func (fs *safeWebDAVFileSystem) safeChildPath(name string) (string, error) {
-	target, err := fs.lexicalPath(name)
-	if err != nil {
-		return "", err
-	}
-	parent, err := filepath.EvalSymlinks(filepath.Dir(target))
-	if err != nil {
-		return "", err
-	}
-	if !pathInsideRoot(fs.root, parent) {
-		return "", os.ErrPermission
-	}
-	return filepath.Join(parent, filepath.Base(target)), nil
-}
-
-func (fs *safeWebDAVFileSystem) lexicalPath(name string) (string, error) {
-	if filepath.Separator != '/' && strings.ContainsRune(name, filepath.Separator) || strings.Contains(name, "\x00") {
-		return "", os.ErrNotExist
-	}
-	cleaned := path.Clean("/" + name)
-	relative := strings.TrimPrefix(cleaned, "/")
-	return filepath.Join(fs.root, filepath.FromSlash(relative)), nil
-}
-
-func pathInsideRoot(root string, target string) bool {
-	relative, err := filepath.Rel(root, filepath.Clean(target))
-	if err != nil {
-		return false
-	}
-	return relative == "." || relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) && !filepath.IsAbs(relative)
-}
-
-func resolveFileSystemConfig(cfg *FileSystemConfig) (*FileSystemConfig, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("filesystem config is required")
 	}
-	root := cfg.Root
-	if root == "" {
-		return nil, fmt.Errorf("filesystem root is required")
-	}
-	abs, err := filepath.Abs(root)
+	backend, err := filesystem.ResolveBackend(cfg.Backend)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve filesystem root: %w", err)
+		return nil, err
 	}
-	info, err := os.Stat(abs)
+	policy := filesystem.Policy{ReadOnly: cfg.ReadOnly || backend == filesystem.BackendWebRTC}
+	if backend == filesystem.BackendWebRTC {
+		policy.MaxEntries = 10000
+	}
+	local, err := filesystem.Open(cfg.Root, policy)
 	if err != nil {
-		return nil, fmt.Errorf("failed to inspect filesystem root: %w", err)
+		return nil, err
 	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("filesystem root must be a directory")
+	maxUpload := int64(0)
+	if cfg.MaxUploadSize != nil {
+		maxUpload = *cfg.MaxUploadSize
 	}
-	if cfg.Logger == nil {
-		cfg.Logger = slog.Default()
+	handler, err := filesystem.NewBackend(local, filesystem.BackendConfig{Backend: backend, RTC: cfg.RTC, WebDAV: filesystem.WebDAVConfig{Prefix: WebTTYDefaultFSPath, ReadOnly: policy.ReadOnly, MaxUploadSize: maxUpload, Logger: cfg.Logger}})
+	if err != nil {
+		_ = local.Close()
+		return nil, err
 	}
-	cfg.Root = abs
-	return cfg, nil
+	return &fileSystemHandler{handler: handler, backend: handler, local: local}, nil
 }
 
-func maxUploadSizeHandler(next http.Handler, maxBytes int64) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.ContentLength > maxBytes {
-			http.Error(w, http.StatusText(http.StatusRequestEntityTooLarge), http.StatusRequestEntityTooLarge)
-			return
-		}
-		if r.Body != nil {
-			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
-		}
-		next.ServeHTTP(w, r)
+type fileSystemHandler struct {
+	backend   *filesystem.BackendHandler
+	handler   http.Handler
+	local     *filesystem.Local
+	gate      sync.Mutex
+	active    sync.WaitGroup
+	closing   bool
+	closeOnce sync.Once
+	closeErr  error
+}
+
+func (h *fileSystemHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.gate.Lock()
+	if h.closing {
+		h.gate.Unlock()
+		http.Error(w, "Filesystem is stopping", http.StatusServiceUnavailable)
+		return
+	}
+	h.active.Add(1)
+	h.gate.Unlock()
+	defer h.active.Done()
+	h.handler.ServeHTTP(w, r)
+}
+
+func (h *fileSystemHandler) Close() error {
+	h.closeOnce.Do(func() {
+		h.gate.Lock()
+		h.closing = true
+		h.gate.Unlock()
+		_ = h.backend.Close()
+		h.active.Wait()
+		h.closeErr = h.local.Close()
 	})
-}
-
-func readOnlyFileSystemHandler(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if webDAVMethodWrites(r.Method) {
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func webDAVMethodWrites(method string) bool {
-	switch method {
-	case http.MethodDelete, http.MethodPatch, http.MethodPost, http.MethodPut, "COPY", "LOCK", "MKCOL", "MOVE", "PROPPATCH", "UNLOCK":
-		return true
-	default:
-		return false
-	}
+	return h.closeErr
 }

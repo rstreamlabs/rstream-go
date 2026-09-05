@@ -22,6 +22,7 @@ import (
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/filesystem"
 	"github.com/rstreamlabs/rstream-go/webtty"
 	"github.com/spf13/cobra"
 )
@@ -1630,7 +1631,7 @@ func newWebTTYFSMCPClient(ctx context.Context, args map[string]json.RawMessage) 
 		rstreamClient = ownRstreamClient(client)
 		httpClient = &http.Client{Transport: &http.Transport{DialContext: newWebTTYFSDialContext(client, target)}}
 	}
-	return &webTTYFSClient{client: httpClient, baseURL: baseURL, rstreamClient: rstreamClient}, nil
+	return &webTTYFSClient{client: filesystem.NewHTTPClient(baseURL, httpClient), baseURL: baseURL, rstreamClient: rstreamClient}, nil
 }
 func resolveMCPRuntime(ctx context.Context, requireEngine bool, requireToken bool) (*resolvedRuntime, error) {
 	env := config.ReadEnv()

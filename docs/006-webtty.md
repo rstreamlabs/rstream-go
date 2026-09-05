@@ -1,5 +1,7 @@
 # WebTTY CLI and Runtime Reference
 
+For a standalone read-only share, use [`rstream files`](010-file-sharing.md). WebTTY and this command share the Go filesystem/WebDAV implementation. `NewFileSystemHandler` keeps its API and write options and now owns a root handle: SDK embedders should close the returned handler through `io.Closer` after stopping HTTP requests.
+
 WebTTY exposes remote terminal sessions through rstream. A WebTTY server can run
 as a Tunnel WebTTY server or as a registered server used by managed WebTTY
 features.
@@ -548,7 +550,7 @@ browser and CLI device grants so they remain compatible with WebCrypto. That
 workspace envelope suite is distinct from the WebTTY terminal payload HPKE suite
 above.
 
-The WebDAV filesystem sidecar is rejected when WebTTY E2E payload encryption is
+The filesystem sidecar (WebDAV or WebRTC) is rejected when WebTTY E2E payload encryption is
 active, because it is a separate data surface.
 
 Registered servers use local WebTTY enrollment and identity files under
@@ -633,3 +635,10 @@ The managed engine runtime is validated from the engine repository:
 ```bash
 bash test/e2e/webtty-managed-engine-runtime.sh
 ```
+
+
+## Filesystem transport
+
+`webtty server --fs-root ./exports --fs-backend webdav` retains the existing writable sidecar (unless `--fs-read-only` is set). Select `--fs-backend webrtc` for read-only Pion DataChannel transfers with rstream STUN/TURN. Upload, write, mkdir, rename, copy and delete fail explicitly in that mode; there is no write fallback. `--fs-max-upload-size` cannot be configured for WebRTC. Terminal `--execution-mode` is independent.
+
+CLI `webtty fs` and MCP filesystem tools discover the backend automatically. SDK `WebTTYFileSystem` uses the same `RemoteFileSystem` transport as the standalone file browser. `webtty list -o json` advertises `fs_backend`, `fs_mode` and `fs_path`; missing backend labels on older servers default to WebDAV. Filesystem E2E remains unsupported. See [protocol and qualification](011-filesystem-webrtc.md).

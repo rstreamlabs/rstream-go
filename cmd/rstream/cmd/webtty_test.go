@@ -86,6 +86,7 @@ func newTestWebTTYServerCommand() *cobra.Command {
 	cmd.Flags().String("authorized-clients-file", "", "")
 	cmd.Flags().StringArray("label", nil, "")
 	cmd.Flags().String("fs-root", "", "")
+	cmd.Flags().String("fs-backend", "webdav", "")
 	cmd.Flags().Bool("fs-read-only", false, "")
 	cmd.Flags().Int64("fs-max-upload-size", defaultWebTTYFSMaxUploadSize, "")
 	return cmd
@@ -1430,6 +1431,16 @@ func TestValidateWebTTYServerFlags(t *testing.T) {
 				}
 				return cmd.Flags().Set("rstream", "true")
 			},
+			wantErr: true,
+		},
+		{
+			name:    "fs backend requires fs root",
+			config:  func(cmd *cobra.Command) error { return cmd.Flags().Set("fs-backend", "webrtc") },
+			wantErr: true,
+		},
+		{
+			name:    "invalid fs backend",
+			config:  func(cmd *cobra.Command) error { return cmd.Flags().Set("fs-backend", "unknown") },
 			wantErr: true,
 		},
 		{
