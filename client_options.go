@@ -21,6 +21,9 @@ func NewClient(options ClientOptions) (*Client, error) {
 	if options.Engine == "" {
 		return nil, errors.New("engine is required")
 	}
+	if err := validateFIPSClient(options.Transport, options.TLSClientConfig); err != nil {
+		return nil, err
+	}
 	if options.Token != "" && tlsConfigHasClientCertificate(options.TLSClientConfig) {
 		return nil, errors.New("token and mTLS authentication cannot be used together")
 	}

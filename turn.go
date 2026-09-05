@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/rstreamlabs/rstream-go/controlplane"
+	"github.com/rstreamlabs/rstream-go/internal/fipsprofile"
 )
 
 const defaultTURNPort = 3478
@@ -56,6 +57,9 @@ type turnTokenClaims struct {
 }
 
 func CreateTURNCredentials(ctx context.Context, opts CreateTURNCredentialsOptions) (*TURNCredentials, error) {
+	if err := fipsprofile.Unavailable("TURN support"); err != nil {
+		return nil, err
+	}
 	token := strings.TrimSpace(opts.Token)
 	if token == "" {
 		return nil, errors.New("token is required")

@@ -34,6 +34,9 @@ type Transport struct {
 }
 
 func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (net.Conn, error) {
+	if err := validateFIPSClient(d, tlsCfg); err != nil {
+		return nil, err
+	}
 	var localAddr net.Addr = nil
 	if d.LocalAddr != nil {
 		ip := net.ParseIP(*d.LocalAddr)

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/internal/fipsprofile"
 )
 
 const (
@@ -91,6 +92,9 @@ func DecodeE2EKeyMaterial(value string, expectedSize int, field string) ([]byte,
 }
 
 func E2EIdentityFromPrivateKey(privateKey []byte) (*E2EIdentity, error) {
+	if err := fipsprofile.Unavailable("WebTTY E2E identity parsing"); err != nil {
+		return nil, err
+	}
 	if len(privateKey) != E2EX25519PrivateKeySize {
 		return nil, fmt.Errorf("E2E identity private key must be %d bytes", E2EX25519PrivateKeySize)
 	}
