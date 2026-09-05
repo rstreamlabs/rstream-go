@@ -82,7 +82,11 @@ rstream is compatible with Linux, macOS 13 or newer, and Windows. Additionally, 
 
 ## FIPS 140-3 profile
 
-`rstream-go` provides a restricted FIPS 140-3 build profile for reviewed Linux client deployments. It uses a pinned Go Cryptographic Module, verifies approved mode at startup, and fails closed when an excluded transport or protocol is requested. This is a separate build from the standard multi-protocol distribution.
+`rstream-go` provides a restricted FIPS 140-3 build profile for reviewed Linux
+client deployments. It uses a pinned Go Cryptographic Module and reviewed
+`quic-go` version, supports TLS/mTLS plus direct QUIC and ordinary HTTP/3, and
+fails closed when an excluded transport or protocol is requested. This is a
+separate build from the standard multi-protocol distribution.
 
 See [docs/010-fips-140-3-profile.md](docs/010-fips-140-3-profile.md) for the supported boundary, exclusions, build procedure, runtime evidence, and module upgrade process.
 

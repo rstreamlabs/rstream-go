@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
-	"github.com/rstreamlabs/rstream-go/internal/fipsprofile"
 )
 
 // ErrDatagramTooLarge is returned by datagram channel writes when the payload
@@ -125,7 +124,10 @@ func cloneQUICTransport(transport *QUICTransport) *QUICTransport {
 // Dial establishes or reuses a QUIC connection to addr, then opens and returns
 // a new QUIC stream wrapped as a net.Conn.
 func (t *QUICTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (net.Conn, error) {
-	if err := fipsprofile.Unavailable("QUIC transport"); err != nil {
+	if err := validateFIPSClient(t, tlsCfg); err != nil {
+		return nil, err
+	}
+	if err := validateFIPSQUICConfig(tlsCfg); err != nil {
 		return nil, err
 	}
 	origin, err := quicTransportOrigin(addr, tlsCfg)

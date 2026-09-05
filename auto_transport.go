@@ -203,13 +203,6 @@ type autoTransportResult struct {
 
 func (t *AutoTransport) selectTransport(ctx context.Context, addr string, tlsCfg *tls.Config) (net.Conn, Dialer, TunnelTransportMode, <-chan struct{}, error) {
 	tlsTransport := t.tlsTransportOrDefault()
-	if FIPSProfileEnabled() {
-		conn, err := tlsTransport.Dial(ctx, addr, tlsCfg)
-		if err != nil {
-			return nil, nil, "", nil, fmt.Errorf("TLS tunnel transport failed: %w", err)
-		}
-		return conn, tlsTransport, TunnelTransportModeTLS, nil, nil
-	}
 	quicTransport := t.quicTransportOrDefault()
 	delay := defaultAutoTransportFallbackDelay
 	if t.FallbackDelay != nil {

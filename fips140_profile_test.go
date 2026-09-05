@@ -17,4 +17,7 @@ func TestFIPSProfileRequiresFrozenEnabledModule(t *testing.T) {
 	if status.ModuleBuild != FIPSModuleBuild {
 		t.Fatalf("Go FIPS module build = %q, want %q", status.ModuleBuild, FIPSModuleBuild)
 	}
+	if status.QUICVersion != FIPSQUICModuleVersion {
+		t.Fatalf("quic-go module version = %q, want %q", status.QUICVersion, FIPSQUICModuleVersion)
+	}
 }
