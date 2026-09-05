@@ -11,3 +11,4 @@ Read these documents in order:
 7. [Webhooks](007-webhooks.md) documents webhook helpers.
 8. [Command runner](008-cmd-run.md) documents embedded command execution.
 9. [MCP](009-mcp.md) defines the local and hosted agent-connectivity contract.
+10. [FIPS 140-3 profile](010-fips-140-3-profile.md) defines the restricted build, runtime checks, and supported feature boundary.

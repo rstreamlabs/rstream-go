@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/rstreamlabs/rstream-go/internal/fipsprofile"
 )
 
 const (
@@ -74,6 +76,9 @@ const (
 )
 
 func GenerateE2EIdentity() (*E2EIdentity, error) {
+	if err := fipsprofile.Unavailable("WebTTY E2E identity generation"); err != nil {
+		return nil, err
+	}
 	privateKey, err := ecdh.X25519().GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("generate X25519 key: %w", err)
@@ -92,6 +97,9 @@ func E2EKeyID(publicKey []byte) []byte {
 }
 
 func NewE2EClientPayloadCrypto(cfg E2EPayloadCryptoConfig) (*PayloadCrypto, error) {
+	if err := fipsprofile.Unavailable("WebTTY E2E payload encryption"); err != nil {
+		return nil, err
+	}
 	cipher, err := newE2EClientPayloadCipher(cfg)
 	if err != nil {
 		return nil, err
@@ -100,6 +108,9 @@ func NewE2EClientPayloadCrypto(cfg E2EPayloadCryptoConfig) (*PayloadCrypto, erro
 }
 
 func NewE2EServerPayloadCrypto(sessionKeyGrant *SessionKeyGrant, identity E2EIdentity) (*PayloadCrypto, error) {
+	if err := fipsprofile.Unavailable("WebTTY E2E payload decryption"); err != nil {
+		return nil, err
+	}
 	cipher, err := newE2EServerPayloadCipher(sessionKeyGrant, identity)
 	if err != nil {
 		return nil, err

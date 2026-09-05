@@ -19,6 +19,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/rstreamlabs/rstream-go/internal/fipsprofile"
 	"github.com/rstreamlabs/rstream-go/pb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
@@ -184,6 +185,9 @@ func (c *Client) dialEngineWithTransportConfig(ctx context.Context, engine *stri
 	transport := override
 	if isNilDialer(transport) {
 		transport = c.defaultTunnelTransport()
+	}
+	if err := validateFIPSClient(transport, clientTLSConfig); err != nil {
+		return nil, err
 	}
 	tlsCfg := clientTLSConfig
 	if tlsCfg == nil {
@@ -426,6 +430,9 @@ func (c *Client) Dial(ctx context.Context, raddr Addr) (net.Conn, error) {
 }
 
 func (c *Client) PacketDial(ctx context.Context, raddr Addr) (net.PacketConn, error) {
+	if FIPSProfileEnabled() {
+		return nil, fipsprofile.Unavailable("datagram dialing")
+	}
 	if conn, ok, err := c.packetDialDatagramChannel(ctx, raddr); ok || err != nil {
 		return conn, err
 	}
@@ -913,6 +920,9 @@ func (c *controlChannelImpl) runLifecycleLoop(loop func()) {
 }
 
 func (c *controlChannelImpl) CreateTunnel(ctx context.Context, props TunnelProperties) (Tunnel, error) {
+	if err := validateFIPSTunnelProperties(props); err != nil {
+		return nil, err
+	}
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()

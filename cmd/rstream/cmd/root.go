@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/cmd/logging"
 	"github.com/spf13/cobra"
 )
@@ -25,8 +24,11 @@ func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "rstream",
 		Short:   "CLI for rstream - serverless networking",
-		Version: rstream.Version,
+		Version: rootVersion(),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if err := validateFIPSCommand(cmd); err != nil {
+				return err
+			}
 			return initLogger(cmd)
 		},
 	}
@@ -70,6 +72,10 @@ func initLogger(cmd *cobra.Command) error {
 }
 
 func ExecuteContext(ctx context.Context) {
+	if err := validateFIPSRuntime(); err != nil {
+		rootCmd.PrintErrln(err)
+		os.Exit(1)
+	}
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		if ex, ok := err.(interface{ ExitCode() int }); ok {
 			os.Exit(ex.ExitCode())

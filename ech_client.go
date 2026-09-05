@@ -10,6 +10,7 @@ import (
 	"net"
 
 	enginetls "github.com/rstreamlabs/rstream-go/internal/ech"
+	"github.com/rstreamlabs/rstream-go/internal/fipsprofile"
 )
 
 var defaultECHResolver = enginetls.NewResolver()
@@ -19,6 +20,12 @@ var lookupECHConfigList = func(ctx context.Context, target enginetls.Target, opt
 }
 
 func dialWithECH(ctx context.Context, transport Dialer, addr string, baseCfg *tls.Config) (net.Conn, error) {
+	if fipsprofile.BuildEnabled() {
+		if baseCfg != nil && len(baseCfg.EncryptedClientHelloConfigList) > 0 {
+			return nil, fipsprofile.Unavailable("ECH")
+		}
+		return transport.Dial(ctx, addr, baseCfg)
+	}
 	if baseCfg == nil || len(baseCfg.EncryptedClientHelloConfigList) > 0 {
 		return transport.Dial(ctx, addr, baseCfg)
 	}
