@@ -581,6 +581,9 @@ func resolveWebTransportWebTTYEndpoint(u *url.URL, scheme string) (*clientEndpoi
 	if u.Path == "" {
 		u.Path = "/"
 	}
+	if !requiresCustomDial {
+		u.Host = defaultPortAddress(u.Host, "443")
+	}
 	return &clientEndpoint{URL: u.String(), Address: u.Host, RequiresCustomDial: requiresCustomDial, Transport: WebTTYTransportWebTransport}, nil
 }
 
