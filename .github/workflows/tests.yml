@@ -30,8 +30,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
-      - name: Rooted filesystem, streaming, HTTP and embedded UI
-        run: go test -count=1 ./filesystem ./fileserver/...
+      - name: Rooted filesystem, WebRTC, streaming, HTTP and embedded UI
+        run: go test -count=1 ./filesystem/... ./fileserver/...
   fast:
     name: format, generate, vet, build, and unit tests
     runs-on: ubuntu-latest
