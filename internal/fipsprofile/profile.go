@@ -14,7 +14,12 @@ const (
 	RequiredModuleVersion = "v1.0.0"
 	// RequiredModuleBuild is the exact source revision recorded in Go build metadata.
 	RequiredModuleBuild = "v1.0.0-c2097c7c"
+	// RequiredQUICModuleVersion is the reviewed quic-go implementation used by
+	// the phase-two profile. A dependency change requires a new FIPS review.
+	RequiredQUICModuleVersion = "v0.60.0"
 )
+
+const quicModulePath = "github.com/quic-go/quic-go"
 
 // Status describes the compile-time rstream profile and the Go cryptographic
 // module selected for the current executable.
@@ -23,6 +28,7 @@ type Status struct {
 	Enabled       bool   `json:"enabled"`
 	ModuleVersion string `json:"module_version"`
 	ModuleBuild   string `json:"module_build"`
+	QUICVersion   string `json:"quic_version"`
 }
 
 // Current returns the FIPS 140-3 status of the current executable.
@@ -32,6 +38,7 @@ func Current() Status {
 		Enabled:       fips140.Enabled(),
 		ModuleVersion: fips140.Version(),
 		ModuleBuild:   moduleBuildVersion(),
+		QUICVersion:   dependencyVersion(quicModulePath),
 	}
 }
 
@@ -57,6 +64,9 @@ func Require() error {
 	if status.ModuleBuild != RequiredModuleBuild {
 		return fmt.Errorf("Go FIPS 140-3 module build is %q, require %q", status.ModuleBuild, RequiredModuleBuild)
 	}
+	if status.QUICVersion != RequiredQUICModuleVersion {
+		return fmt.Errorf("quic-go module version is %q, require %q", status.QUICVersion, RequiredQUICModuleVersion)
+	}
 	return nil
 }
 
@@ -78,6 +88,23 @@ func moduleBuildVersion() string {
 		if setting.Key == "GOFIPS140" {
 			return setting.Value
 		}
+	}
+	return ""
+}
+
+func dependencyVersion(path string) string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	for _, dependency := range info.Deps {
+		if dependency.Path != path {
+			continue
+		}
+		if dependency.Replace != nil {
+			return dependency.Replace.Version
+		}
+		return dependency.Version
 	}
 	return ""
 }

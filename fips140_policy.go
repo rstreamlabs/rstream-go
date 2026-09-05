@@ -30,15 +30,46 @@ func validateFIPSDialer(transport Dialer) error {
 	case *Transport:
 		return validateFIPSTLSConfig(transport.TLSProxyConfig, "proxy TLS")
 	case *AutoTransport:
-		if transport == nil || transport.TLS == nil {
+		if transport == nil {
 			return nil
 		}
-		return validateFIPSTLSConfig(transport.TLS.TLSProxyConfig, "proxy TLS")
+		if transport.TLS != nil {
+			if err := validateFIPSTLSConfig(transport.TLS.TLSProxyConfig, "TLS transport proxy TLS"); err != nil {
+				return err
+			}
+		}
+		if transport.QUIC != nil {
+			return validateFIPSQUICTransport(transport.QUIC)
+		}
+		return nil
 	case *QUICTransport:
-		return fipsprofile.Unavailable("QUIC transport")
+		return validateFIPSQUICTransport(transport)
 	default:
 		return fmt.Errorf("custom transport %T is not approved for the rstream FIPS profile", transport)
 	}
+}
+
+func validateFIPSQUICTransport(transport *QUICTransport) error {
+	if !fipsprofile.BuildEnabled() || transport == nil {
+		return nil
+	}
+	if proxyValue(transport.ProxyHTTP) != "" || proxyValue(transport.ProxySOCKS5) != "" || boolValue(transport.ProxyFromEnvironment) {
+		return fipsprofile.Unavailable("proxied QUIC transport")
+	}
+	return validateFIPSTLSConfig(transport.TLSProxyConfig, "QUIC transport proxy TLS")
+}
+
+func validateFIPSQUICConfig(config *tls.Config) error {
+	if !fipsprofile.BuildEnabled() || config == nil {
+		return nil
+	}
+	if config.MinVersion != 0 && config.MinVersion != tls.VersionTLS13 {
+		return fmt.Errorf("QUIC requires TLS 1.3 in the rstream FIPS profile")
+	}
+	if config.MaxVersion != 0 && config.MaxVersion != tls.VersionTLS13 {
+		return fmt.Errorf("QUIC requires TLS 1.3 in the rstream FIPS profile")
+	}
+	return nil
 }
 
 func validateFIPSTLSConfig(config *tls.Config, label string) error {
@@ -81,20 +112,20 @@ func validateFIPSTunnelProperties(props TunnelProperties) error {
 	if !fipsprofile.BuildEnabled() {
 		return nil
 	}
-	if props.Type != nil && *props.Type == TunnelTypeDatagram {
+	isPublishedQUIC := props.Protocol != nil && *props.Protocol == ProtocolQUIC
+	isPublishedHTTP3 := props.Protocol != nil && *props.Protocol == ProtocolHTTP && props.HTTPVersion != nil && *props.HTTPVersion == HTTP3
+	if props.Type != nil && *props.Type == TunnelTypeDatagram && !isPublishedQUIC && !isPublishedHTTP3 {
 		return fipsprofile.Unavailable("datagram tunnels")
 	}
 	if props.Protocol != nil {
 		switch *props.Protocol {
 		case ProtocolDTLS:
 			return fipsprofile.Unavailable("DTLS tunnels")
-		case ProtocolQUIC:
-			return fipsprofile.Unavailable("published QUIC tunnels")
 		case ProtocolWebTTY:
 			return fipsprofile.Unavailable("WebTTY tunnels")
 		}
 	}
-	if props.HTTPVersion != nil && *props.HTTPVersion == HTTP3 {
+	if props.HTTPVersion != nil && *props.HTTPVersion == HTTP3 && !isPublishedHTTP3 {
 		return fipsprofile.Unavailable("published HTTP/3 tunnels")
 	}
 	return nil

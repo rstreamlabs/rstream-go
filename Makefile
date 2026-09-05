@@ -25,6 +25,7 @@ OUT_DIR := out
 
 # FIPS 140-3 profile
 override FIPS_GO_MODULE := v1.0.0-c2097c7c
+override FIPS_QUIC_MODULE := v0.60.0
 FIPS_BUILD_TAG := rstream_fips
 FIPS_OUT_DIR := $(OUT_DIR)/fips
 FIPS_AMD64_BINARY := $(FIPS_OUT_DIR)/linux/x86_64/rstream
@@ -511,6 +512,7 @@ $(FIPS_AMD64_BINARY): $(call sources,cmd,rstream)
 		-ldflags="$(FIPS_LDFLAGS) -X '$(GO_MODULE).OS=linux' -X '$(GO_MODULE).Arch=x86_64'" \
 		-o $@ ./cmd/rstream
 	@go version -m $@ | grep -F 'GOFIPS140=$(FIPS_GO_MODULE)' >/dev/null
+	@go version -m $@ | awk '$$1 == "dep" && $$2 == "github.com/quic-go/quic-go" && $$3 == "$(FIPS_QUIC_MODULE)" { found=1 } END { exit !found }'
 
 $(FIPS_ARM64_BINARY): $(call sources,cmd,rstream)
 	@echo "==> Building FIPS profile for linux/arm64..."
@@ -520,6 +522,7 @@ $(FIPS_ARM64_BINARY): $(call sources,cmd,rstream)
 		-ldflags="$(FIPS_LDFLAGS) -X '$(GO_MODULE).OS=linux' -X '$(GO_MODULE).Arch=arm64'" \
 		-o $@ ./cmd/rstream
 	@go version -m $@ | grep -F 'GOFIPS140=$(FIPS_GO_MODULE)' >/dev/null
+	@go version -m $@ | awk '$$1 == "dep" && $$2 == "github.com/quic-go/quic-go" && $$3 == "$(FIPS_QUIC_MODULE)" { found=1 } END { exit !found }'
 
 $(GOIMPORTS):
 	@go install golang.org/x/tools/cmd/goimports@latest

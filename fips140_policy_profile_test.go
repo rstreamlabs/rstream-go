@@ -12,7 +12,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
-	"errors"
 	"io"
 	"math/big"
 	"net"
@@ -20,20 +19,32 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/quic-go/quic-go"
 )
 
-func TestFIPSProfileRejectsQUICTransport(t *testing.T) {
-	_, err := NewClient(ClientOptions{
+func TestFIPSProfileAcceptsQUICTransport(t *testing.T) {
+	if _, err := NewClient(ClientOptions{
 		Engine:    "engine.example:443",
 		Transport: &QUICTransport{},
-	})
-	if err == nil || !strings.Contains(err.Error(), "QUIC transport is not available") {
-		t.Fatalf("NewClient() error = %v, want unavailable QUIC transport", err)
+	}); err != nil {
+		t.Fatalf("NewClient() rejected QUIC transport: %v", err)
 	}
 
-	_, err = (&QUICTransport{}).Dial(t.Context(), "engine.example:443", &tls.Config{})
-	if err == nil || !strings.Contains(err.Error(), "QUIC transport is not available") {
-		t.Fatalf("QUICTransport.Dial() error = %v, want unavailable QUIC transport", err)
+	_, err := (&QUICTransport{}).Dial(t.Context(), "engine.example:443", &tls.Config{MaxVersion: tls.VersionTLS12})
+	if err == nil || !strings.Contains(err.Error(), "QUIC requires TLS 1.3") {
+		t.Fatalf("QUICTransport.Dial() error = %v, want TLS 1.3 requirement", err)
+	}
+}
+
+func TestFIPSProfileRejectsProxiedQUICTransport(t *testing.T) {
+	proxy := "http://proxy.example:8080"
+	_, err := NewClient(ClientOptions{
+		Engine:    "engine.example:443",
+		Transport: &QUICTransport{ProxyHTTP: &proxy},
+	})
+	if err == nil || !strings.Contains(err.Error(), "proxied QUIC transport") {
+		t.Fatalf("NewClient() error = %v, want proxied QUIC rejection", err)
 	}
 }
 
@@ -63,7 +74,7 @@ func TestFIPSProfileRejectsUnsafeTLSConfig(t *testing.T) {
 	}
 }
 
-func TestFIPSProfileAutoTransportUsesTLSOnly(t *testing.T) {
+func TestFIPSProfileAutoTransportPrefersQUIC(t *testing.T) {
 	client, server := net.Pipe()
 	t.Cleanup(func() {
 		_ = client.Close()
@@ -71,6 +82,7 @@ func TestFIPSProfileAutoTransportUsesTLSOnly(t *testing.T) {
 	})
 	var tlsCalls atomic.Int32
 	var quicCalls atomic.Int32
+	fallbackDelay := time.Hour
 	transport := &AutoTransport{
 		tlsDialer: fipsTestDialer{dial: func(context.Context, string, *tls.Config) (net.Conn, error) {
 			tlsCalls.Add(1)
@@ -78,21 +90,22 @@ func TestFIPSProfileAutoTransportUsesTLSOnly(t *testing.T) {
 		}},
 		quicDialer: fipsTestDialer{dial: func(context.Context, string, *tls.Config) (net.Conn, error) {
 			quicCalls.Add(1)
-			return nil, errors.New("QUIC must not be called")
+			return client, nil
 		}},
+		FallbackDelay: &fallbackDelay,
 	}
 	conn, err := transport.Dial(t.Context(), "engine.example:443", &tls.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if conn != client {
-		t.Fatalf("AutoTransport.Dial() connection = %T, want TLS test connection", conn)
+		t.Fatalf("AutoTransport.Dial() connection = %T, want QUIC test connection", conn)
 	}
-	if tlsCalls.Load() != 1 || quicCalls.Load() != 0 {
+	if tlsCalls.Load() != 0 || quicCalls.Load() != 1 {
 		t.Fatalf("transport calls: TLS=%d QUIC=%d", tlsCalls.Load(), quicCalls.Load())
 	}
-	if mode := transport.SelectedMode(); mode != TunnelTransportModeTLS {
-		t.Fatalf("AutoTransport.SelectedMode() = %q, want %q", mode, TunnelTransportModeTLS)
+	if mode := transport.SelectedMode(); mode != TunnelTransportModeQUIC {
+		t.Fatalf("AutoTransport.SelectedMode() = %q, want %q", mode, TunnelTransportModeQUIC)
 	}
 }
 
@@ -104,9 +117,8 @@ func TestFIPSProfileRejectsExcludedTunnelFeatures(t *testing.T) {
 	}{
 		{name: "datagram", props: TunnelProperties{Type: TunnelTypePtr(TunnelTypeDatagram)}, want: "datagram tunnels"},
 		{name: "DTLS", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolDTLS)}, want: "DTLS tunnels"},
-		{name: "QUIC", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolQUIC)}, want: "published QUIC tunnels"},
 		{name: "WebTTY", props: TunnelProperties{Protocol: ProtocolPtr(ProtocolWebTTY)}, want: "WebTTY tunnels"},
-		{name: "HTTP3", props: TunnelProperties{HTTPVersion: HTTPVersionPtr(HTTP3)}, want: "published HTTP/3 tunnels"},
+		{name: "HTTP3 without HTTP", props: TunnelProperties{HTTPVersion: HTTPVersionPtr(HTTP3)}, want: "published HTTP/3 tunnels"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -115,6 +127,14 @@ func TestFIPSProfileRejectsExcludedTunnelFeatures(t *testing.T) {
 				t.Fatalf("validateFIPSTunnelProperties() error = %v, want %q", err, test.want)
 			}
 		})
+	}
+	for _, props := range []TunnelProperties{
+		{Type: TunnelTypePtr(TunnelTypeDatagram), Protocol: ProtocolPtr(ProtocolQUIC)},
+		{Type: TunnelTypePtr(TunnelTypeDatagram), Protocol: ProtocolPtr(ProtocolHTTP), HTTPVersion: HTTPVersionPtr(HTTP3)},
+	} {
+		if err := validateFIPSTunnelProperties(props); err != nil {
+			t.Fatalf("validated QUIC tunnel rejected: %v", err)
+		}
 	}
 }
 
@@ -173,6 +193,69 @@ func TestFIPSProfileTLSRoundTrip(t *testing.T) {
 	}
 	if string(reply) != "ping" {
 		t.Fatalf("TLS reply = %q, want ping", reply)
+	}
+	if err := <-serverErr; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFIPSProfileQUICRoundTrip(t *testing.T) {
+	certificate, roots := fipsTestCertificate(t)
+	listener, err := quic.ListenAddr("127.0.0.1:0", &tls.Config{
+		Certificates:     []tls.Certificate{certificate},
+		MinVersion:       tls.VersionTLS13,
+		CurvePreferences: []tls.CurveID{tls.CurveP256},
+		NextProtos:       []string{"rstrm/1"},
+	}, &quic.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+
+	serverErr := make(chan error, 1)
+	go func() {
+		conn, acceptErr := listener.Accept(t.Context())
+		if acceptErr != nil {
+			serverErr <- acceptErr
+			return
+		}
+		stream, acceptErr := conn.AcceptStream(t.Context())
+		if acceptErr != nil {
+			serverErr <- acceptErr
+			return
+		}
+		payload := make([]byte, 4)
+		if _, readErr := io.ReadFull(stream, payload); readErr != nil {
+			serverErr <- readErr
+			return
+		}
+		_, writeErr := stream.Write(payload)
+		serverErr <- writeErr
+	}()
+
+	transport := &QUICTransport{}
+	t.Cleanup(func() { _ = transport.Close() })
+	conn, err := transport.Dial(t.Context(), listener.Addr().String(), &tls.Config{
+		RootCAs:          roots,
+		ServerName:       "localhost",
+		MinVersion:       tls.VersionTLS13,
+		MaxVersion:       tls.VersionTLS13,
+		CurvePreferences: []tls.CurveID{tls.CurveP256},
+		NextProtos:       []string{"rstrm/1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("ping")); err != nil {
+		t.Fatal(err)
+	}
+	reply := make([]byte, 4)
+	if _, err := io.ReadFull(conn, reply); err != nil {
+		t.Fatal(err)
+	}
+	if string(reply) != "ping" {
+		t.Fatalf("QUIC reply = %q, want ping", reply)
 	}
 	if err := <-serverErr; err != nil {
 		t.Fatal(err)

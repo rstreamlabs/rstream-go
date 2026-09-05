@@ -15,7 +15,7 @@ func rootVersion() string {
 		return rstream.Version
 	}
 	status := rstream.CurrentFIPSStatus()
-	return fmt.Sprintf("%s (FIPS 140-3 profile, Go module %s)", rstream.Version, status.ModuleBuild)
+	return fmt.Sprintf("%s (FIPS 140-3 profile, Go module %s, quic-go %s)", rstream.Version, status.ModuleBuild, status.QUICVersion)
 }
 
 func validateFIPSRuntime() error {

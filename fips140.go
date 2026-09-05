@@ -12,6 +12,10 @@ type FIPSStatus = fipsprofile.Status
 // rstream FIPS profile.
 const FIPSModuleBuild = fipsprofile.RequiredModuleBuild
 
+// FIPSQUICModuleVersion is the reviewed quic-go version required by the
+// current rstream FIPS profile.
+const FIPSQUICModuleVersion = fipsprofile.RequiredQUICModuleVersion
+
 // CurrentFIPSStatus returns the FIPS 140-3 status of the current executable.
 func CurrentFIPSStatus() FIPSStatus {
 	return fipsprofile.Current()
