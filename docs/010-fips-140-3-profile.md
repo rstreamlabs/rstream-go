@@ -1,10 +1,43 @@
 # FIPS 140-3 Profile
 
-The rstream FIPS 140-3 profile is a distinct, restricted build of the Go SDK and `rstream` CLI. It links the Go Cryptographic Module selected at build time, enables its FIPS 140-3 mode by default, and rejects features outside the reviewed profile.
+The rstream FIPS 140-3 profile is a distinct, restricted build of the Go SDK
+and `rstream` CLI. Its artifacts embed and use the
+[NIST CMVP-validated Go Cryptographic Module, certificate 5247](https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/5247),
+which has Overall Security Level 1. The build selects the exact module revision,
+enables its approved FIPS 140-3 mode by default, and rejects features outside
+the reviewed profile.
 
-This profile does not state that the complete rstream product is itself a CMVP-validated cryptographic module. It uses the [Go Cryptographic Module](https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/5247), validated under certificate 5247, within the module's documented boundary and approved mode. Deployment, configuration, key management, operating environment, and protocols remain part of the complete system assessment.
+The accurate artifact description is **FIPS 140-3 Inside — Go Cryptographic
+Module, Certificate #5247 (Overall Security Level 1)**. The certificate and
+level apply to the embedded module. The complete rstream product has not
+undergone a separate CMVP module validation. Deployment, configuration, key
+management, operating environment, and protocols remain part of the complete
+system assessment.
 
 The upstream Go behavior and limitations are defined in [Go FIPS 140-3 compliance](https://go.dev/doc/security/fips140).
+
+## Product Claim and Delivery Evidence
+
+FIPS 140-3 levels 1 through 4 describe the assurance level of a validated
+cryptographic module. They are not graduated self-attestation levels for the
+application that embeds it. NIST permits a product that incorporates an
+unaltered validated module to identify that module with the
+[`FIPS 140-3 Inside` phrase](https://csrc.nist.gov/Projects/Cryptographic-Module-Validation-Program/Use-of-FIPS-140-2-Logo-and-Phrases)
+and its certificate number. It remains inaccurate to say that the complete
+rstream product is itself "FIPS 140-3 validated" or "FIPS 140-3 Level 1".
+
+A delivered FIPS client release should include or reference:
+
+- the rstream FIPS SDK or CLI artifact and its digest;
+- the source commit, Go release, build tags, and frozen `GOFIPS140` identity;
+- [CMVP certificate 5247](https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/5247)
+  and the associated
+  [module Security Policy](https://csrc.nist.gov/CSRC/media/projects/cryptographic-module-validation-program/documents/security-policies/140sp5247.pdf);
+- the supported operating environment and rstream feature boundary;
+- standard and strict-profile test evidence for the delivered release.
+
+Use of the official NIST FIPS logo is separate from this factual product
+description and must follow the NIST logo requirements.
 
 ## Supported Scope
 
@@ -41,6 +74,21 @@ The current phase excludes:
 - WebSocket, CONNECT-UDP, CONNECT-IP, and other non-WebTransport Extended
   CONNECT paths;
 - custom SDK transports whose cryptographic behavior cannot be established by the profile.
+
+## Mixed-Profile Interoperability
+
+A FIPS-profile client can connect to a standard rstream Engine for the features
+allowed by the client profile. This compatibility includes direct TLS and QUIC
+control transports, private and published bytestream forwarding, published
+QUIC, ordinary HTTP/3, token admission, SSE events, and E2E WebTTY over
+WebTransport.
+
+That mixed topology does not turn the standard Engine or the complete
+connection into a FIPS-profile deployment. The `FIPS 140-3 Inside` statement
+applies to the client artifact and its embedded module. A supported
+client-and-server FIPS deployment requires both a FIPS client artifact and the
+FIPS Enterprise Edition standalone Engine, each operated inside its documented
+profile and environment.
 
 The standard build accepts both the legacy and FIPS-compatible WebTTY suites.
 The FIPS build accepts only
