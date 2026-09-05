@@ -549,6 +549,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          WINGET_GUIDE_URL: https://github.com/rstreamlabs/winget/blob/main/README.md#official-community-repository
         run: |
           set -euo pipefail
           gh release edit "$RELEASE_TAG" \
@@ -559,4 +561,11 @@ jobs:
             echo "GitHub release is still a draft: ${RELEASE_TAG}" >&2
             exit 1
           fi
-          printf 'Published %s after all stable channels passed verification.\n' "$RELEASE_TAG" >>"$GITHUB_STEP_SUMMARY"
+          {
+            printf 'Published %s after all stable channels passed verification.\n' "$RELEASE_TAG"
+            printf '\n### Follow-up: official WinGet Community Repository\n\n'
+            printf "The fallback WinGet manifests for \`%s\` are published. " "$VERSION"
+            printf 'Review whether this version should also be submitted to the official Microsoft repository.\n\n'
+            printf '[Open the manual submission procedure](%s).\n' "$WINGET_GUIDE_URL"
+          } >>"$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Official WinGet follow-up::Review whether rstream ${VERSION} should be submitted to Microsoft: ${WINGET_GUIDE_URL}"
