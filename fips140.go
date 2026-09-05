@@ -8,6 +8,10 @@ import "github.com/rstreamlabs/rstream-go/internal/fipsprofile"
 // module selected for the current executable.
 type FIPSStatus = fipsprofile.Status
 
+// FIPSModuleBuild is the exact Go cryptographic module required by the current
+// rstream FIPS profile.
+const FIPSModuleBuild = fipsprofile.RequiredModuleBuild
+
 // CurrentFIPSStatus returns the FIPS 140-3 status of the current executable.
 func CurrentFIPSStatus() FIPSStatus {
 	return fipsprofile.Current()
@@ -20,7 +24,7 @@ func FIPSProfileEnabled() bool {
 }
 
 // RequireFIPS verifies that the executable uses the rstream FIPS profile and
-// a frozen Go cryptographic module with FIPS mode enabled.
+// the exact frozen Go cryptographic module with FIPS mode enabled.
 func RequireFIPS() error {
 	return fipsprofile.Require()
 }
