@@ -2,10 +2,10 @@
   "version": 1,
   "contractVersion": 1,
   "source": "rstream-nextjs/tools/build/generate-files-browser.tsx",
-  "sourceSHA256": "005c404a22584950d5d5ed81000fd91e59cd2da02392b248a3d3499b90869e16",
-  "htmlSHA256": "a2925389856eb6e603bcdbed3e0d4c2bb19c3b38b16b485cbe7452796bb907ec",
-  "htmlBytes": 407626,
-  "gzipBytes": 103550,
-  "scriptSHA256": "zmw3HuWKj3UAdWvBocQS6UdMJawFUQm6P63W39ovC70=",
-  "styleSHA256": "RXs+go67nrUqA/0GPizXW7gAIDzV3wbTB2iHRiap5FI="
+  "sourceSHA256": "06f6d8ab86e42192c4677dc574e9a95bccca73fb490f5cc3e58b751956e251a2",
+  "htmlSHA256": "dfabf2fc10a35b31178672a9706516eaa29113c996c5ddc93f87f0f9955457ca",
+  "htmlBytes": 427588,
+  "gzipBytes": 107570,
+  "scriptSHA256": "K4OenL2vKer51GgN7Lrey3wJ3Kf/chdBicoiqETvkWU=",
+  "styleSHA256": "aCRuC283m8IEo/0xYNUF+qfezDmNEEp+NZ/W5aGxM+k="
 }
