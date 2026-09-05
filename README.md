@@ -108,7 +108,8 @@ On Windows, install rstream from the official WinGet Community Repository:
 winget install --id rstream.rstream --exact --source winget
 ```
 
-If `winget` is not available, use the PowerShell installer:
+If `winget` is not available, or a new stable release has not reached the
+Community Repository yet, use the PowerShell installer:
 ```powershell
 & { Invoke-Expression ([System.Text.Encoding]::UTF8.GetString((Invoke-WebRequest -Uri 'https://rstream.io/scripts/install.ps1' -UseBasicParsing).Content)) }
 ```
