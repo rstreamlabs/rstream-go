@@ -103,10 +103,9 @@ brew tap rstreamlabs/rstream && brew install rstream
 ```
 
 ### Windows
-On Windows, add the `rstream` source once from an elevated terminal and install with `winget`:
+On Windows, install rstream from the official WinGet Community Repository:
 ```powershell
-winget source add -n rstream -a https://winget.rstream.io/api -t Microsoft.Rest
-winget install rstream
+winget install --id rstream.rstream --exact --source winget
 ```
 
 If `winget` is not available, use the PowerShell installer:
