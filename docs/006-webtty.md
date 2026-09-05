@@ -550,7 +550,7 @@ browser and CLI device grants so they remain compatible with WebCrypto. That
 workspace envelope suite is distinct from the WebTTY terminal payload HPKE suite
 above.
 
-The WebDAV filesystem sidecar is rejected when WebTTY E2E payload encryption is
+The filesystem sidecar (WebDAV or WebRTC) is rejected when WebTTY E2E payload encryption is
 active, because it is a separate data surface.
 
 Registered servers use local WebTTY enrollment and identity files under
@@ -635,3 +635,10 @@ The managed engine runtime is validated from the engine repository:
 ```bash
 bash test/e2e/webtty-managed-engine-runtime.sh
 ```
+
+
+## Filesystem transport
+
+`webtty server --fs-root ./exports --fs-backend webdav` retains the existing writable sidecar (unless `--fs-read-only` is set). Select `--fs-backend webrtc` for read-only Pion DataChannel transfers with rstream STUN/TURN. Upload, write, mkdir, rename, copy and delete fail explicitly in that mode; there is no write fallback. `--fs-max-upload-size` cannot be configured for WebRTC. Terminal `--execution-mode` is independent.
+
+CLI `webtty fs` and MCP filesystem tools discover the backend automatically. SDK `WebTTYFileSystem` uses the same `RemoteFileSystem` transport as the standalone file browser. `webtty list -o json` advertises `fs_backend`, `fs_mode` and `fs_path`; missing backend labels on older servers default to WebDAV. Filesystem E2E remains unsupported. See [protocol and qualification](011-filesystem-webrtc.md).

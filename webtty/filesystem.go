@@ -9,9 +9,12 @@ import (
 	"sync"
 
 	"github.com/rstreamlabs/rstream-go/filesystem"
+	"github.com/rstreamlabs/rstream-go/filesystem/rtc"
 )
 
 type FileSystemConfig struct {
+	Backend       string
+	RTC           rtc.ServerConfig
 	Root          string
 	ReadOnly      bool
 	MaxUploadSize *int64
@@ -24,7 +27,15 @@ func NewFileSystemHandler(cfg *FileSystemConfig) (http.Handler, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("filesystem config is required")
 	}
-	local, err := filesystem.Open(cfg.Root, filesystem.Policy{ReadOnly: cfg.ReadOnly})
+	backend, err := filesystem.ResolveBackend(cfg.Backend)
+	if err != nil {
+		return nil, err
+	}
+	policy := filesystem.Policy{ReadOnly: cfg.ReadOnly || backend == filesystem.BackendWebRTC}
+	if backend == filesystem.BackendWebRTC {
+		policy.MaxEntries = 10000
+	}
+	local, err := filesystem.Open(cfg.Root, policy)
 	if err != nil {
 		return nil, err
 	}
@@ -32,15 +43,16 @@ func NewFileSystemHandler(cfg *FileSystemConfig) (http.Handler, error) {
 	if cfg.MaxUploadSize != nil {
 		maxUpload = *cfg.MaxUploadSize
 	}
-	handler, err := filesystem.NewWebDAV(local, filesystem.WebDAVConfig{Prefix: WebTTYDefaultFSPath, ReadOnly: cfg.ReadOnly, MaxUploadSize: maxUpload, Logger: cfg.Logger})
+	handler, err := filesystem.NewBackend(local, filesystem.BackendConfig{Backend: backend, RTC: cfg.RTC, WebDAV: filesystem.WebDAVConfig{Prefix: WebTTYDefaultFSPath, ReadOnly: policy.ReadOnly, MaxUploadSize: maxUpload, Logger: cfg.Logger}})
 	if err != nil {
 		_ = local.Close()
 		return nil, err
 	}
-	return &fileSystemHandler{handler: handler, local: local}, nil
+	return &fileSystemHandler{handler: handler, backend: handler, local: local}, nil
 }
 
 type fileSystemHandler struct {
+	backend   *filesystem.BackendHandler
 	handler   http.Handler
 	local     *filesystem.Local
 	gate      sync.Mutex
@@ -68,6 +80,7 @@ func (h *fileSystemHandler) Close() error {
 		h.gate.Lock()
 		h.closing = true
 		h.gate.Unlock()
+		_ = h.backend.Close()
 		h.active.Wait()
 		h.closeErr = h.local.Close()
 	})

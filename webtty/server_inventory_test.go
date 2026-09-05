@@ -82,6 +82,9 @@ func TestParseServers(t *testing.T) {
 		if server.FSPath == nil || *server.FSPath != WebTTYDefaultFSPath {
 			t.Fatalf("unexpected fs path: %#v", server.FSPath)
 		}
+		if server.FSBackend == nil || *server.FSBackend != "webdav" {
+			t.Fatalf("unexpected backend: %#v", server.FSBackend)
+		}
 		if server.FSMode == nil || *server.FSMode != WebTTYFSModeReadWrite {
 			t.Fatalf("unexpected fs mode: %#v", server.FSMode)
 		}

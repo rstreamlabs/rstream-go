@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 
 	"github.com/rstreamlabs/rstream-go/filesystem"
+	"github.com/rstreamlabs/rstream-go/filesystem/rtc"
 )
 
 const InfoPath = "/_rstream/files/v1/info"
@@ -23,6 +24,8 @@ const ArchivePath = "/_rstream/files/v1/archive"
 const FSPath = "/fs"
 
 type Config struct {
+	Backend       string
+	RTC           rtc.ServerConfig
 	Root          string
 	IncludeHidden bool
 	Exclude       []string
@@ -53,6 +56,7 @@ type Info struct {
 }
 
 type Server struct {
+	backend  *filesystem.BackendHandler
 	local    *filesystem.Local
 	handler  http.Handler
 	logger   *slog.Logger
@@ -62,6 +66,10 @@ type Server struct {
 }
 
 func New(cfg Config) (*Server, error) {
+	backend, err := filesystem.ResolveBackend(cfg.Backend)
+	if err != nil {
+		return nil, err
+	}
 	local, err := filesystem.Open(cfg.Root, filesystem.Policy{ReadOnly: true, HideHidden: !cfg.IncludeHidden, Exclude: cfg.Exclude, MaxEntries: 10000, AllowFile: true})
 	if err != nil {
 		return nil, err
@@ -69,13 +77,14 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	dav, err := filesystem.NewWebDAV(local, filesystem.WebDAVConfig{Prefix: FSPath, ReadOnly: true, Download: true, BoundedDepth: true, Logger: cfg.Logger})
+	s := &Server{local: local, logger: cfg.Logger, archives: make(chan struct{}, 2)}
+	dav, err := filesystem.NewBackend(local, filesystem.BackendConfig{Backend: backend, RTC: cfg.RTC, ArchivePath: ArchivePath, Archive: http.HandlerFunc(s.serveArchive), WebDAV: filesystem.WebDAVConfig{Prefix: FSPath, ReadOnly: true, Download: true, BoundedDepth: true, Logger: cfg.Logger}})
 	if err != nil {
 		_ = local.Close()
 		return nil, err
 	}
-	s := &Server{local: local, logger: cfg.Logger, archives: make(chan struct{}, 2)}
-	s.info = Info{Version: 1, Name: local.Name(), Kind: "directory", Backend: "webdav", FSPath: FSPath, ArchivePath: ArchivePath, Capabilities: Capabilities{List: true, Read: true, Resume: true, Archive: !local.IsFile()}}
+	s.backend = dav
+	s.info = Info{Version: 1, Name: local.Name(), Kind: "directory", Backend: backend, FSPath: FSPath, ArchivePath: ArchivePath, Capabilities: Capabilities{List: true, Read: true, Resume: true, Archive: !local.IsFile()}}
 	if local.IsFile() {
 		s.info.Kind = "file"
 		s.info.ArchivePath = ""
@@ -100,7 +109,9 @@ func New(cfg Config) (*Server, error) {
 	return s, nil
 }
 
-func (s *Server) Close() error { return s.local.Close() }
+func (s *Server) Close() error {
+	return errors.Join(s.backend.Close(), s.local.Close())
+}
 
 func (s *Server) SetAccess(access string) { s.access.Store(access) }
 

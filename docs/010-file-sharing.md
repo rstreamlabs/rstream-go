@@ -15,6 +15,7 @@ Stop the foreground process to close the share. Automatic reconnection follows `
 
 | Option | Behavior |
 | --- | --- |
+| `--backend webdav\|webrtc` | Select WebDAV (default) or read-only WebRTC using the current rstream project’s STUN/TURN. |
 | `--include-hidden` | Include dotfiles and dot-directories; excluded by default for directory shares. |
 | `--exclude <glob>` | Repeatable, case-insensitive Go `path.Match` glob. Without `/`, matches basenames at any depth; with `/`, matches root-relative paths. Matching directories exclude descendants. `**` has no special recursive meaning. |
 | `--password` | Prompt without echo for a local HTTP Basic password. |
@@ -34,7 +35,7 @@ With no auth flag, inherit project policy. When it permits public access, CLI an
 
 Local Basic and edge auth both use `Authorization` and cannot be combined in this version. Conflicting explicit flags are rejected locally; a conflicting effective project policy produces a nonretryable error. There is no fallback to public access. Account auth uses browser cookies. Token clients must send the token on every request; the browser UI does not collect or persist tokens.
 
-HTTPS protects transport to the edge, and the tunnel protects the edge-to-agent hop. WebDAV is **not end-to-end encrypted** and uses normal project traffic quota. WebRTC, E2E, uploads, mutations and resumable ZIP are outside V1.
+HTTPS protects transport to the edge, and the tunnel protects the edge-to-agent hop. WebDAV is **not end-to-end encrypted** and uses normal project traffic quota. Application-level E2E encryption, uploads, mutations and resumable ZIP are outside this version. The optional WebRTC backend carries file bytes directly between peers when possible; TURN relays when necessary. See the [WebRTC protocol](011-filesystem-webrtc.md) for authentication, resource limits and browser compatibility.
 
 ## HTTP and backend contract
 
@@ -51,9 +52,9 @@ Paths passed to the JS backend are decoded logical paths; encode each URL segmen
 
 Listing rejects directories with more than 10,000 raw entries, including filtered entries (HTTP 507). Missing/infinite PROPFIND depth is forbidden, request XML is capped at 64 KiB, UI renders 100 entries per page. ZIP allows two concurrent streams, at most 100,000 entries and depth 64; cycles fail. ZIP uses store mode and ZIP64, with a 64 KiB content buffer and bounded directory/central-directory metadata. File contents never become a browser Blob or accumulate in server memory. ZIP is not resumable; an error after headers aborts the connection instead of finalizing an incomplete archive.
 
-The shared Go WebDAV adapter also backs `webtty.NewFileSystemHandler`; existing config, paths, writes and upload limit remain supported. That returned handler implements `io.Closer`; embedders must close it after serving. WebTTY's filesystem remains incompatible with WebTTY E2E payload encryption.
+The shared Go filesystem and selected transport also back `webtty.NewFileSystemHandler`; existing config, paths, writes and upload limit remain supported with WebDAV. `webtty server --fs-root ./exports --fs-backend webrtc` selects read-only WebRTC; all writes fail with 403, without WebDAV fallback. That returned handler implements `io.Closer`; embedders must close it after serving. WebTTY's filesystem remains incompatible with WebTTY E2E payload encryption.
 
-The JS package `@rstreamlabs/filesystem` defines `FileSystemBackend` (list/stat/readStream/downloadURL) independently from `WebDAVFileSystem`. `WebTTYFileSystem` preserves its existing exports through a compatibility wrapper. Capabilities describe transport functionality and encryption separately, leaving room for later WebRTC and E2E implementations.
+The JS package `@rstreamlabs/filesystem` defines `FileSystemBackend` (list/stat/readStream/archiveStream/downloadURL) independently from `WebDAVFileSystem`. `WebTTYFileSystem` preserves its existing exports through a compatibility wrapper. Capabilities describe transport functionality and encryption separately, while `RemoteFileSystem` discovers WebDAV or WebRTC and `WebRTCFileSystem` explicitly requires WebRTC. Both reuse the same operations; application-level E2E remains a future backend.
 
 ## UI regeneration
 

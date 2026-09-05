@@ -18,6 +18,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/filesystem"
 	"github.com/rstreamlabs/rstream-go/webtty"
 	"github.com/spf13/cobra"
 )
@@ -30,10 +31,13 @@ type webTTYFSClient struct {
 }
 
 func (c *webTTYFSClient) Close() error {
-	if c == nil || c.rstreamClient == nil {
+	if c == nil {
 		return nil
 	}
 	c.client.CloseIdleConnections()
+	if c.rstreamClient == nil {
+		return nil
+	}
 	return c.rstreamClient.Close()
 }
 
@@ -290,7 +294,7 @@ func newWebTTYFSClient(cmd *cobra.Command) (result *webTTYFSClient, err error) {
 		}
 		httpClient = &http.Client{Transport: &http.Transport{DialContext: newWebTTYFSDialContext(client, target)}}
 	}
-	return &webTTYFSClient{client: httpClient, baseURL: baseURL, authToken: authToken, rstreamClient: rstreamClient}, nil
+	return &webTTYFSClient{client: filesystem.NewHTTPClient(baseURL, httpClient), baseURL: baseURL, authToken: authToken, rstreamClient: rstreamClient}, nil
 }
 
 func validateWebTTYFilesystemCapability(target string, serverInfo *webtty.ServerInfo) error {

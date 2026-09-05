@@ -19,6 +19,7 @@ import (
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/fileserver"
 	filesui "github.com/rstreamlabs/rstream-go/fileserver/ui"
+	"github.com/rstreamlabs/rstream-go/filesystem"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -35,6 +36,7 @@ func newFilesCmd() *cobra.Command {
 	cmd.Flags().String("name", "", "tunnel name")
 	cmd.Flags().String("host", "", "Stable domain for publishing")
 	cmd.Flags().StringArray("label", nil, "set tunnel labels (key=value)")
+	cmd.Flags().String("backend", filesystem.BackendWebDAV, "file transfer backend (webdav, webrtc; both read-only)")
 	cmd.Flags().Bool("include-hidden", false, "include hidden files and directories")
 	cmd.Flags().StringArray("exclude", nil, "exclude a basename or root-relative glob (repeatable)")
 	cmd.Flags().Bool("password", false, "prompt for an HTTP Basic password")
@@ -74,7 +76,15 @@ func runFiles(cmd *cobra.Command, args []string) error {
 	}
 	hidden, _ := cmd.Flags().GetBool("include-hidden")
 	exclude, _ := cmd.Flags().GetStringArray("exclude")
-	service, err := fileserver.New(fileserver.Config{Root: root, IncludeHidden: hidden, Exclude: exclude, Username: username, Password: password, UI: filesui.Handler(), Logger: slog.With("cmd", "files")})
+	backend, _ := cmd.Flags().GetString("backend")
+	if _, err := filesystem.ResolveBackend(backend); err != nil {
+		return err
+	}
+	rtcConfig, err := filesystemRTCConfig(cmd, backend)
+	if err != nil {
+		return err
+	}
+	service, err := fileserver.New(fileserver.Config{Root: root, Backend: backend, RTC: rtcConfig, IncludeHidden: hidden, Exclude: exclude, Username: username, Password: password, UI: filesui.Handler(), Logger: slog.With("cmd", "files")})
 	if err != nil {
 		return err
 	}
