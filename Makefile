@@ -24,7 +24,7 @@ VERSION ?= $(if $(GIT_TAG),$(GIT_TAG),$(GIT_BRANCH))
 OUT_DIR := out
 
 # FIPS 140-3 profile
-FIPS_GO_MODULE ?= v1.0.0-c2097c7c
+override FIPS_GO_MODULE := v1.0.0-c2097c7c
 FIPS_BUILD_TAG := rstream_fips
 FIPS_OUT_DIR := $(OUT_DIR)/fips
 FIPS_AMD64_BINARY := $(FIPS_OUT_DIR)/linux/x86_64/rstream

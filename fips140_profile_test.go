@@ -14,7 +14,7 @@ func TestFIPSProfileRequiresFrozenEnabledModule(t *testing.T) {
 	if !status.Profile || !status.Enabled {
 		t.Fatalf("unexpected FIPS status: %#v", status)
 	}
-	if status.ModuleBuild == "" || status.ModuleBuild == "latest" || status.ModuleBuild == "off" {
-		t.Fatalf("unexpected Go FIPS module build: %q", status.ModuleBuild)
+	if status.ModuleBuild != FIPSModuleBuild {
+		t.Fatalf("Go FIPS module build = %q, want %q", status.ModuleBuild, FIPSModuleBuild)
 	}
 }

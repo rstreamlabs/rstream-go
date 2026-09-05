@@ -7,7 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"runtime/debug"
-	"strings"
+)
+
+const (
+	// RequiredModuleVersion is the semantic version reported by crypto/fips140.
+	RequiredModuleVersion = "v1.0.0"
+	// RequiredModuleBuild is the exact source revision recorded in Go build metadata.
+	RequiredModuleBuild = "v1.0.0-c2097c7c"
 )
 
 // Status describes the compile-time rstream profile and the Go cryptographic
@@ -35,8 +41,8 @@ func BuildEnabled() bool {
 	return buildEnabled
 }
 
-// Require verifies that the executable uses the rstream FIPS profile and a
-// frozen Go cryptographic module with FIPS mode enabled.
+// Require verifies that the executable uses the rstream FIPS profile and the
+// exact frozen Go cryptographic module with FIPS mode enabled.
 func Require() error {
 	status := Current()
 	if !status.Profile {
@@ -45,11 +51,11 @@ func Require() error {
 	if !status.Enabled {
 		return errors.New("Go FIPS 140-3 mode is not enabled")
 	}
-	if status.ModuleVersion == "" || status.ModuleVersion == "latest" {
-		return fmt.Errorf("Go FIPS 140-3 module is not frozen: %q", status.ModuleVersion)
+	if status.ModuleVersion != RequiredModuleVersion {
+		return fmt.Errorf("Go FIPS 140-3 module version is %q, require %q", status.ModuleVersion, RequiredModuleVersion)
 	}
-	if !strings.HasPrefix(status.ModuleBuild, "v") {
-		return fmt.Errorf("Go FIPS 140-3 module build is not frozen: %q", status.ModuleBuild)
+	if status.ModuleBuild != RequiredModuleBuild {
+		return fmt.Errorf("Go FIPS 140-3 module build is %q, require %q", status.ModuleBuild, RequiredModuleBuild)
 	}
 	return nil
 }
