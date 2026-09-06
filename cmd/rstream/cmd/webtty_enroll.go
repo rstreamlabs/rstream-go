@@ -418,11 +418,7 @@ func validateWebTTYServerID(serverID string) error {
 }
 
 func defaultRstreamHomeDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".rstream"), nil
+	return webtty.DefaultRstreamDataDir()
 }
 
 func defaultWebTTYServerEnrollmentPath(serverID string) (string, error) {

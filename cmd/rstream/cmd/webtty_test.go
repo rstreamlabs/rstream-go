@@ -1676,23 +1676,23 @@ func TestNewWebTTYServerTunnelProperties(t *testing.T) {
 			t.Fatalf("unexpected execution mode label: got %q want %q", got, webtty.WebTTYExecutionModeLogin)
 		}
 	})
-	t.Run("plain tunnel server remains an HTTP-labelled WebTTY tunnel", func(t *testing.T) {
+	t.Run("plain lightweight server exposes a private byte stream", func(t *testing.T) {
 		cmd := newTestWebTTYServerCommand()
 		if err := cmd.Flags().Set("transport", "plain"); err != nil {
 			t.Fatalf("failed to set --transport: %v", err)
 		}
 		props := newWebTTYServerTunnelProperties(cmd, nil)
-		if props.Publish == nil || !*props.Publish {
-			t.Fatalf("expected published tunnel by default")
+		if props.Publish == nil || *props.Publish {
+			t.Fatalf("plain lightweight server must use private dialing")
 		}
-		if props.Protocol == nil || *props.Protocol != "http" {
-			t.Fatalf("expected HTTP protocol for tunnel server, got %#v", props.Protocol)
+		if props.Protocol != nil {
+			t.Fatalf("plain byte stream must not advertise HTTP, got %#v", props.Protocol)
 		}
 		if props.Type != nil {
 			t.Fatalf("tunnel WebTTY server should not force type, got %#v", props.Type)
 		}
-		if props.HTTPVersion == nil || *props.HTTPVersion != "http/1.1" {
-			t.Fatalf("tunnel WebTTY server should use HTTP/1.1, got %#v", props.HTTPVersion)
+		if props.HTTPVersion != nil {
+			t.Fatalf("plain byte stream must not advertise HTTP version, got %#v", props.HTTPVersion)
 		}
 	})
 	t.Run("webtransport tunnel server uses HTTP3 datagram tunnel", func(t *testing.T) {

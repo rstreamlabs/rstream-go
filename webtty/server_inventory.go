@@ -11,37 +11,40 @@ import (
 )
 
 type ServerInfo struct {
-	Status            string            `json:"status"`
-	TunnelID          string            `json:"tunnel_id"`
-	TunnelProtocol    string            `json:"tunnel_protocol,omitempty"`
-	Managed           bool              `json:"managed"`
-	TunnelName        *string           `json:"tunnel_name,omitempty"`
-	Target            string            `json:"target"`
-	RstreamURL        string            `json:"rstream_url"`
-	Publish           bool              `json:"publish"`
-	Host              *string           `json:"host,omitempty"`
-	TokenAuth         bool              `json:"token_auth"`
-	ServerID          *string           `json:"server_id,omitempty"`
-	ServerName        *string           `json:"server_name,omitempty"`
-	WorkspaceID       *string           `json:"workspace_id,omitempty"`
-	ProjectID         *string           `json:"project_id,omitempty"`
-	HostKeyID         *string           `json:"host_key_id,omitempty"`
-	E2E               *string           `json:"e2e,omitempty"`
-	ClientProof       *string           `json:"client_proof,omitempty"`
-	EncryptionPolicy  *string           `json:"encryption_policy,omitempty"`
-	Capabilities      []string          `json:"capabilities,omitempty"`
-	ExecPath          *string           `json:"exec_path,omitempty"`
-	FSPath            *string           `json:"fs_path,omitempty"`
-	FSMode            *string           `json:"fs_mode,omitempty"`
-	OSFamily          *string           `json:"os_family,omitempty"`
-	Arch              *string           `json:"arch,omitempty"`
-	OSID              *string           `json:"os_id,omitempty"`
-	OSVersionID       *string           `json:"os_version_id,omitempty"`
-	OSVersionCodename *string           `json:"os_version_codename,omitempty"`
-	OSPrettyName      *string           `json:"os_pretty_name,omitempty"`
-	KernelRelease     *string           `json:"kernel_release,omitempty"`
-	Hostname          *string           `json:"hostname,omitempty"`
-	Labels            map[string]string `json:"labels,omitempty"`
+	Status            string               `json:"status"`
+	TunnelID          string               `json:"tunnel_id"`
+	TunnelProtocol    string               `json:"tunnel_protocol,omitempty"`
+	TunnelType        *rstream.TunnelType  `json:"tunnel_type,omitempty"`
+	HTTPVersion       *rstream.HTTPVersion `json:"http_version,omitempty"`
+	Transport         *WebTTYTransport     `json:"transport,omitempty"`
+	Managed           bool                 `json:"managed"`
+	TunnelName        *string              `json:"tunnel_name,omitempty"`
+	Target            string               `json:"target"`
+	RstreamURL        string               `json:"rstream_url"`
+	Publish           bool                 `json:"publish"`
+	Host              *string              `json:"host,omitempty"`
+	TokenAuth         bool                 `json:"token_auth"`
+	ServerID          *string              `json:"server_id,omitempty"`
+	ServerName        *string              `json:"server_name,omitempty"`
+	WorkspaceID       *string              `json:"workspace_id,omitempty"`
+	ProjectID         *string              `json:"project_id,omitempty"`
+	HostKeyID         *string              `json:"host_key_id,omitempty"`
+	E2E               *string              `json:"e2e,omitempty"`
+	ClientProof       *string              `json:"client_proof,omitempty"`
+	EncryptionPolicy  *string              `json:"encryption_policy,omitempty"`
+	Capabilities      []string             `json:"capabilities,omitempty"`
+	ExecPath          *string              `json:"exec_path,omitempty"`
+	FSPath            *string              `json:"fs_path,omitempty"`
+	FSMode            *string              `json:"fs_mode,omitempty"`
+	OSFamily          *string              `json:"os_family,omitempty"`
+	Arch              *string              `json:"arch,omitempty"`
+	OSID              *string              `json:"os_id,omitempty"`
+	OSVersionID       *string              `json:"os_version_id,omitempty"`
+	OSVersionCodename *string              `json:"os_version_codename,omitempty"`
+	OSPrettyName      *string              `json:"os_pretty_name,omitempty"`
+	KernelRelease     *string              `json:"kernel_release,omitempty"`
+	Hostname          *string              `json:"hostname,omitempty"`
+	Labels            map[string]string    `json:"labels,omitempty"`
 }
 
 func ParseServers(tunnels []rstream.TunnelInventory) []ServerInfo {
@@ -87,6 +90,8 @@ func parseServer(tunnel rstream.TunnelInventory) (ServerInfo, bool) {
 		Status:            strings.TrimSpace(tunnel.Status),
 		TunnelID:          id,
 		TunnelProtocol:    tunnelProtocolString(tunnel.Protocol),
+		TunnelType:        tunnel.Type,
+		HTTPVersion:       tunnel.HTTPVersion,
 		Managed:           managedProtocol,
 		TunnelName:        cloneStringPtr(name),
 		Target:            target,
@@ -111,6 +116,10 @@ func parseServer(tunnel rstream.TunnelInventory) (ServerInfo, bool) {
 		OSPrettyName:      cloneStringPtr(labels[webTTYOSPrettyNameLabel]),
 		KernelRelease:     cloneStringPtr(labels[webTTYKernelReleaseLabel]),
 		Hostname:          cloneStringPtr(labels[webTTYHostnameLabel]),
+	}
+	if raw, present := labels[WebTTYTransportLabelKey]; present {
+		transport := WebTTYTransport(raw)
+		info.Transport = &transport
 	}
 	if len(info.Capabilities) == 0 {
 		info.Capabilities = []string{WebTTYCapabilityExec}

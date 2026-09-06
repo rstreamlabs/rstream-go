@@ -114,7 +114,7 @@ jobs:
           set -euo pipefail
           go test -race -shuffle=on -count="${REPEAT}" ./...
   webtty-runtime:
-    name: WebTTY CLI and Go runtime workflows
+    name: WebTTY Go direct profile (partial coverage)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -129,9 +129,12 @@ jobs:
         env:
           RSTREAM_KEEP_RUNTIME: "1"
         run: ./test/e2e/webtty-cli-workflows.sh
-      - name: Run WebTTY Go runtime matrix
+      - name: Validate WebTTY runtime coverage and deadline guards
+        run: python3 -m unittest discover -s test/e2e -p 'test_*.py'
+      - name: Run WebTTY Go direct profile
         env:
           RSTREAM_KEEP_RUNTIME: "1"
+          RSTREAM_WEBTTY_RUNTIME_PROFILE: go-direct
         run: ./test/e2e/webtty-runtime-matrix.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()

@@ -5,6 +5,7 @@ package webtty
 const (
 	WebTTYApplicationProtocol      = "rstream.webtty"
 	WebTTYApplicationProtocolKey   = webTTYApplicationProtocolKey
+	WebTTYTransportLabelKey        = "rstream.webtty.transport"
 	WebTTYCapabilitiesLabelKey     = webTTYCapabilitiesLabel
 	WebTTYCapabilityExec           = "exec"
 	WebTTYCapabilityFS             = "fs"

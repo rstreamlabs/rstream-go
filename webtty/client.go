@@ -57,9 +57,11 @@ type ClientConfig struct {
 	HeartbeatInterval      *time.Duration
 	Stdin                  io.Reader
 	StdinReadContext       func(context.Context, []byte) (int, error)
-	Stdout                 io.Writer
-	Stderr                 io.Writer
-	Logger                 *slog.Logger
+	// StdinReady delays input until a control grant without replacing the cancellable reader.
+	StdinReady <-chan struct{}
+	Stdout     io.Writer
+	Stderr     io.Writer
+	Logger     *slog.Logger
 }
 
 type AttachRole string
@@ -225,6 +227,11 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 				return -1, err
 			}
 		case result := <-waitCh:
+			for event := range session.Events() {
+				if err := runtime.writeSessionEvent(event); err != nil {
+					return -1, err
+				}
+			}
 			if result.err != nil {
 				if pendingErr != nil {
 					return -1, pendingErr
@@ -279,6 +286,13 @@ func (c *clientRuntime) writeSessionEvent(event ClientSessionEvent) error {
 }
 
 func (c *clientRuntime) stdinSessionLoop(ctx context.Context, session *ClientSession, errCh chan<- error, readStdin func(context.Context, []byte) (int, error)) {
+	if c.cfg != nil && c.cfg.StdinReady != nil {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.cfg.StdinReady:
+		}
+	}
 	buffer := make([]byte, 32*1024)
 	for {
 		select {
@@ -969,7 +983,7 @@ func (c *clientRuntime) readLoop(done <-chan struct{}, eventCh chan<- clientEven
 				}
 			} else {
 				select {
-				case eventCh <- clientEvent{err: fmt.Errorf("failed to read websocket message: %w", err)}:
+				case eventCh <- clientEvent{err: fmt.Errorf("failed to read WebTTY message: %w", err)}:
 				case <-done:
 				}
 			}
@@ -977,7 +991,7 @@ func (c *clientRuntime) readLoop(done <-chan struct{}, eventCh chan<- clientEven
 		}
 		if messageType != websocket.BinaryMessage {
 			select {
-			case eventCh <- clientEvent{err: fmt.Errorf("%w: websocket message type %d", errClientUnexpected, messageType)}:
+			case eventCh <- clientEvent{err: fmt.Errorf("%w: WebTTY message type %d", errClientUnexpected, messageType)}:
 			case <-done:
 			}
 			return

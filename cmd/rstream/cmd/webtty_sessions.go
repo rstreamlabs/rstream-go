@@ -16,7 +16,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"text/tabwriter"
 	"time"
 	"unicode/utf8"
@@ -1005,7 +1004,7 @@ func runWebTTYSessionAttachWithControl(ctx context.Context, client *rstream.Clie
 	runCtx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
 	cfgCopy := *cfg
-	cfgCopy.Stdin = &webTTYReadyFileReader{ctx: runCtx, file: os.Stdin, ready: stdinReady}
+	cfgCopy.StdinReady = stdinReady
 	resultCh := make(chan webTTYSessionAttachRunResult, 1)
 	go func() {
 		exitCode, err := webtty.RunClient(runCtx, &cfgCopy)
@@ -1121,32 +1120,6 @@ func webTTYSessionAttachRunResultError(result webTTYSessionAttachRunResult) erro
 		return &commandExitError{code: result.exitCode}
 	}
 	return nil
-}
-
-type webTTYReadyFileReader struct {
-	ctx   context.Context
-	file  *os.File
-	ready <-chan struct{}
-	once  sync.Once
-	err   error
-}
-
-func (r *webTTYReadyFileReader) Read(p []byte) (int, error) {
-	r.once.Do(func() {
-		select {
-		case <-r.ctx.Done():
-			r.err = r.ctx.Err()
-		case <-r.ready:
-		}
-	})
-	if r.err != nil {
-		return 0, r.err
-	}
-	return r.file.Read(p)
-}
-
-func (r *webTTYReadyFileReader) Fd() uintptr {
-	return r.file.Fd()
 }
 
 func webTTYDetachContext(parent context.Context) (context.Context, context.CancelFunc) {

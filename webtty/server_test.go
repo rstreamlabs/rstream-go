@@ -11,6 +11,7 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -1957,5 +1958,32 @@ func waitForClientStdout(t *testing.T, session *ClientSession, want string) {
 		case <-timer.C:
 			t.Fatalf("timed out waiting for stdout %q; got %q", want, stdout.String())
 		}
+	}
+}
+
+func TestRunClientCancelsInputWaitingForControlGrant(t *testing.T) {
+	zero := time.Duration(0)
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	ready := make(chan struct{})
+	read := make(chan struct{}, 1)
+	exitCode, err := RunClient(t.Context(), &ClientConfig{
+		URL:              testWebTTYURL(server.URL),
+		Stdin:            strings.NewReader(""),
+		StdinReady:       ready,
+		StdinReadContext: func(ctx context.Context, _ []byte) (int, error) { read <- struct{}{}; return 0, io.EOF },
+		CmdArgs:          testShellCommand("exit 0", "exit 0"),
+		OpenDeadline:     durationPtr(time.Second),
+		CloseDeadline:    durationPtr(time.Second),
+	})
+	if err != nil || exitCode != 0 {
+		t.Fatalf("RunClient() = %d, %v", exitCode, err)
+	}
+	select {
+	case <-read:
+		t.Fatal("input was read before the control grant")
+	default:
 	}
 }

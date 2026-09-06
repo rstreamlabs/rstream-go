@@ -52,20 +52,35 @@ type KnownServerKeyEntry struct {
 	CreatedAt        string `json:"created_at,omitempty"`
 }
 
-func DefaultE2EIdentityPath() (string, error) {
+// DefaultRstreamDataDir resolves the local identity, trust and workspace state root.
+func DefaultRstreamDataDir() (string, error) {
+	if root := strings.TrimSpace(os.Getenv("RSTREAM_DATA_DIR")); root != "" {
+		if !filepath.IsAbs(root) {
+			return "", fmt.Errorf("RSTREAM_DATA_DIR must be an absolute path")
+		}
+		return filepath.Clean(root), nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".rstream", "webtty", "identities", "default.identity.json"), nil
+	return filepath.Join(home, ".rstream"), nil
+}
+
+func DefaultE2EIdentityPath() (string, error) {
+	root, err := DefaultRstreamDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "webtty", "identities", "default.identity.json"), nil
 }
 
 func DefaultKnownServerKeysPath() (string, error) {
-	home, err := os.UserHomeDir()
+	root, err := DefaultRstreamDataDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".rstream", "webtty", "known_servers.json"), nil
+	return filepath.Join(root, "webtty", "known_servers.json"), nil
 }
 
 func EncodeE2EKeyMaterial(value []byte) string {

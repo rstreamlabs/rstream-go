@@ -21,6 +21,38 @@ import (
 
 type stdinEOFWriteFailureConn struct{}
 
+func TestRunClientDrainsReceivedOutputBeforeReturningExit(t *testing.T) {
+	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		readWebTTYMessage(t, conn)
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}})
+		for range 32 {
+			writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{Type: pb.Data_TYPE_STDOUT, Payload: &pb.Data_Data{Data: []byte("out")}}}})
+			writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{Type: pb.Data_TYPE_STDERR, Payload: &pb.Data_Data{Data: []byte("err")}}}})
+		}
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Close{Close: &pb.Close{ReturnCode: 7}}})
+	})
+	defer server.Close()
+	for attempt := range 32 {
+		var stdout, stderr bytes.Buffer
+		code, err := RunClient(t.Context(), &ClientConfig{
+			URL: testWebTTYURL(server.URL),
+			StdinReadContext: func(ctx context.Context, _ []byte) (int, error) {
+				<-ctx.Done()
+				return 0, ctx.Err()
+			},
+			Stdout: &stdout,
+			Stderr: &stderr,
+		})
+		if err != nil || code != 7 {
+			t.Fatalf("attempt %d: exit = %d, error = %v", attempt, code, err)
+		}
+		if stdout.String() != strings.Repeat("out", 32) || stderr.String() != strings.Repeat("err", 32) {
+			t.Fatalf("attempt %d: received %d stdout / %d stderr bytes, want 96 each", attempt, stdout.Len(), stderr.Len())
+		}
+	}
+}
+
 func (stdinEOFWriteFailureConn) Close() error { return nil }
 
 func (stdinEOFWriteFailureConn) ReadMessage() (int, []byte, error) { return 0, nil, io.EOF }

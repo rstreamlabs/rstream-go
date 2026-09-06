@@ -56,6 +56,10 @@ func resolveAPIURL(cmd *cobra.Command, cfg config.Config) (string, error) {
 }
 
 func resolveRuntime(cmd *cobra.Command, requireEngine, requireToken bool) (*resolvedRuntime, error) {
+	return resolveRuntimeWithRegionDiscovery(cmd, requireEngine, requireToken, true)
+}
+
+func resolveRuntimeWithRegionDiscovery(cmd *cobra.Command, requireEngine, requireToken, discoverRegion bool) (*resolvedRuntime, error) {
 	path, cfg, err := loadConfig(cmd)
 	if err != nil {
 		return nil, err
@@ -90,6 +94,9 @@ func resolveRuntime(cmd *cobra.Command, requireEngine, requireToken bool) (*reso
 		return nil, err
 	}
 	if requireEngine && resolved.Region != "" {
+		if !discoverRegion {
+			return nil, fmt.Errorf("--no-discovery requires an explicit engine context without a region selector")
+		}
 		if err := resolveRuntimeRegion(cmd, cfg, &resolved); err != nil {
 			return nil, err
 		}
