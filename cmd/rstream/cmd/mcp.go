@@ -1360,7 +1360,7 @@ func mcpWebTTYExecClientConfig(ctx context.Context, args map[string]json.RawMess
 	if err != nil {
 		return nil, err
 	}
-	result = &mcpWebTTYClientConfig{ClientConfig: &webtty.ClientConfig{URL: urlValue, Transport: transport, Interactive: false, AllocateTTY: false, SendHeartbeat: true, EnvVars: envVars, Workdir: workdir, Username: username, CmdArgs: command}}
+	result = &mcpWebTTYClientConfig{ClientConfig: &webtty.ClientConfig{URL: urlValue, Transport: transport, Interactive: false, AllocateTTY: false, SendHeartbeat: true, Stdin: strings.NewReader(""), EnvVars: envVars, Workdir: workdir, Username: username, CmdArgs: command}}
 	ownedResult := result
 	defer func() {
 		if err != nil {

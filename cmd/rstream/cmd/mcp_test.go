@@ -1303,6 +1303,57 @@ func TestMCPWebTTYFilterArgs(t *testing.T) {
 	}
 }
 
+func TestMCPWebTTYExecDoesNotReadProtocolInput(t *testing.T) {
+	clearRstreamTestEnv(t)
+	zero := time.Duration(0)
+	allowUnauthenticated := true
+	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{HeartbeatInterval: &zero, AllowUnauthenticated: &allowUnauthenticated})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	stdin, input, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stdin.Close()
+	defer input.Close()
+	if _, err := input.WriteString("mcp-protocol-input\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := input.Close(); err != nil {
+		t.Fatal(err)
+	}
+	previousStdin := os.Stdin
+	os.Stdin = stdin
+	defer func() { os.Stdin = previousStdin }()
+	url, err := json.Marshal("ws" + strings.TrimPrefix(server.URL, "http"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := json.Marshal([]string{os.Args[0], "-test.run=^TestCmdWebTTYEchoStdinHelperProcess$"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment, err := json.Marshal([]string{"RSTREAM_CMD_WEBTTY_TEST_STDIN_HELPER=1", "GOCOVERDIR=" + t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	result, err := mcpWebTTYExec(ctx, map[string]json.RawMessage{"url": url, "command": command, "env": environment})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := result["structuredContent"].(map[string]any)
+	if result["isError"] == true || content["exit_code"] != float64(0) || content["stdout"] != "" || content["stderr"] != "" {
+		t.Fatalf("MCP command consumed protocol input or failed: %#v", content)
+	}
+	remaining, err := io.ReadAll(stdin)
+	if err != nil || string(remaining) != "mcp-protocol-input\n" {
+		t.Fatalf("protocol input = %q, error = %v", remaining, err)
+	}
+}
+
 func TestMCPWebTTYExecClientConfigKeepsPlainWhenNoE2ESignal(t *testing.T) {
 	clearRstreamTestEnv(t)
 	args := map[string]json.RawMessage{
