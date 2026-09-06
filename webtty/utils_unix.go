@@ -48,3 +48,7 @@ func isStreamEOS(err error, usingPTY bool) bool {
 	}
 	return usingPTY && runtime.GOOS == "linux" && errors.Is(err, syscall.EIO)
 }
+
+func isBrokenPipeError(err error) bool {
+	return errors.Is(err, syscall.EPIPE)
+}

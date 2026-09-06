@@ -767,7 +767,7 @@ func (s *session) handleData(d *pb.Data) error {
 		if stdinClosed {
 			return nil
 		}
-		return writeStdinPayload(ptyFile, stdinPipe, payload.Data)
+		return s.writeStdinPayload(ptyFile, stdinPipe, payload.Data)
 	case *pb.Data_EncryptedData:
 		if stdinClosed {
 			return nil
@@ -779,21 +779,31 @@ func (s *session) handleData(d *pb.Data) error {
 		if err != nil {
 			return fmt.Errorf("failed to decrypt stdin payload: %w", err)
 		}
-		return writeStdinPayload(ptyFile, stdinPipe, decrypted)
+		return s.writeStdinPayload(ptyFile, stdinPipe, decrypted)
 	default:
 		return fmt.Errorf("unexpected data payload type: %T", payload)
 	}
 	return errors.New("no PTY and no stdin pipe")
 }
 
-func writeStdinPayload(ptyFile *os.File, stdinPipe io.Writer, payload []byte) error {
+func (s *session) writeStdinPayload(ptyFile *os.File, stdinPipe io.WriteCloser, payload []byte) error {
 	if ptyFile != nil {
 		_, err := ptyFile.Write(payload)
 		return err
 	}
 	if stdinPipe != nil {
 		_, err := stdinPipe.Write(payload)
-		return err
+		if err == nil || !isPipeWriteClosed(err) {
+			return err
+		}
+		s.mu.Lock()
+		s.stdinClosed = true
+		s.stdinPipe = nil
+		s.mu.Unlock()
+		if err := stdinPipe.Close(); err != nil && !isPipeWriteClosed(err) {
+			return err
+		}
+		return nil
 	}
 	return errors.New("no PTY and no stdin pipe")
 }

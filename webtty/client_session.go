@@ -621,7 +621,7 @@ func (s *ClientSession) SendInputContext(ctx context.Context, data []byte) error
 	if err != nil {
 		return err
 	}
-	return s.runtime.writeMessage(msg)
+	return s.runtime.writeStdinMessage(msg)
 }
 
 func (s *ClientSession) SendText(text string) error {
@@ -632,7 +632,7 @@ func (s *ClientSession) SendText(text string) error {
 }
 
 func (s *ClientSession) SendEOF() error {
-	return s.runtime.writeMessage(&pb.Message{
+	return s.runtime.writeStdinMessage(&pb.Message{
 		Payload: &pb.Message_Data{
 			Data: &pb.Data{Type: pb.Data_TYPE_STDIN, Payload: &pb.Data_Eos{Eos: &pb.EndOfStream{}}},
 		},

@@ -14,12 +14,14 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/webtransport-go"
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
-type stdinEOFWriteFailureConn struct{}
+type stdinEOFWriteFailureConn struct{ err error }
 
 func TestRunClientDrainsReceivedOutputBeforeReturningExit(t *testing.T) {
 	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
@@ -63,7 +65,50 @@ func (stdinEOFWriteFailureConn) SetWriteDeadline(time.Time) error { return nil }
 
 func (stdinEOFWriteFailureConn) WriteControl(int, []byte, time.Time) error { return nil }
 
-func (stdinEOFWriteFailureConn) WriteMessage(int, []byte) error { return websocket.ErrCloseSent }
+func (c stdinEOFWriteFailureConn) WriteMessage(int, []byte) error {
+	if c.err != nil {
+		return c.err
+	}
+	return websocket.ErrCloseSent
+}
+
+func TestStdinSessionLoopPreservesTransportAndEncryptionFailures(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		err       error
+		crypto    bool
+		wantError bool
+	}{
+		{name: "closed pipe", err: io.ErrClosedPipe},
+		{name: "remote QUIC input closed", err: &quic.StreamError{Remote: true}},
+		{name: "local QUIC cancellation", err: &quic.StreamError{}, wantError: true},
+		{name: "remote QUIC failure", err: &quic.StreamError{Remote: true, ErrorCode: 7}, wantError: true},
+		{name: "remote WebTransport input closed", err: &webtransport.StreamError{Remote: true}},
+		{name: "remote WebTransport failure", err: &webtransport.StreamError{Remote: true, ErrorCode: 7}, wantError: true},
+		{name: "write timeout", err: context.DeadlineExceeded, wantError: true},
+		{name: "encryption closed pipe", err: io.ErrClosedPipe, crypto: true, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &ClientConfig{}
+			if test.crypto {
+				cfg.PayloadCrypto = &PayloadCrypto{EncryptStdin: func(context.Context, []byte) (*EncryptedPayload, error) { return nil, test.err }}
+			}
+			session := &ClientSession{runtime: &clientRuntime{cfg: cfg, conn: stdinEOFWriteFailureConn{err: test.err}}}
+			errorsCh := make(chan error, 1)
+			(&clientRuntime{}).stdinSessionLoop(t.Context(), session, errorsCh, func(_ context.Context, buffer []byte) (int, error) { return copy(buffer, "input"), io.EOF })
+			select {
+			case err := <-errorsCh:
+				if !test.wantError || !errors.Is(err, test.err) {
+					t.Fatalf("error = %v, want error = %v", err, test.wantError)
+				}
+			default:
+				if test.wantError {
+					t.Fatal("failure was discarded as input closure")
+				}
+			}
+		})
+	}
+}
 
 type remoteTerminalReadConn struct {
 	payload []byte

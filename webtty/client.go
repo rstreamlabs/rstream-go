@@ -303,6 +303,9 @@ func (c *clientRuntime) stdinSessionLoop(ctx context.Context, session *ClientSes
 		n, err := readStdin(ctx, buffer)
 		if n > 0 {
 			if werr := session.SendInputContext(ctx, buffer[:n]); werr != nil {
+				if errors.Is(werr, errClientStdinClosed) {
+					return
+				}
 				select {
 				case errCh <- fmt.Errorf("failed to send stdin payload: %w", werr):
 				default:
@@ -316,7 +319,7 @@ func (c *clientRuntime) stdinSessionLoop(ctx context.Context, session *ClientSes
 			}
 			if errors.Is(err, io.EOF) {
 				if werr := session.SendEOF(); werr != nil {
-					if session.runtime.closing.Load() {
+					if session.runtime.closing.Load() || errors.Is(werr, errClientStdinClosed) {
 						return
 					}
 					select {

@@ -48,3 +48,7 @@ func isStreamEOS(err error, _ bool) bool {
 	}
 	return errors.Is(err, windows.ERROR_BROKEN_PIPE)
 }
+
+func isBrokenPipeError(err error) bool {
+	return errors.Is(err, windows.ERROR_BROKEN_PIPE) || errors.Is(err, windows.ERROR_NO_DATA) || errors.Is(err, windows.WSAESHUTDOWN)
+}
