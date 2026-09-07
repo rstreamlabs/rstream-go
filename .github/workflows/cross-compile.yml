@@ -235,6 +235,7 @@ jobs:
             "${PACKAGE_NAME}-pkg-cross" \
             "${PACKAGE_NAME}-deb-cross" \
             "${PACKAGE_NAME}-nupkg"
+          make -j "$(getconf _NPROCESSORS_ONLN)" fips-release-assets
           docker_archive="${PWD}/out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/${PACKAGE_NAME}-${VERSION}-docker.oci.tar"
           make -j "$(getconf _NPROCESSORS_ONLN)" \
             DOCKER_REPO="docker.io/rstream" \

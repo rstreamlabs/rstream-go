@@ -505,6 +505,11 @@ fips-test:
 
 fips-build: $(FIPS_AMD64_BINARY) $(FIPS_ARM64_BINARY)
 
+.PHONY: fips-release-assets
+
+fips-release-assets: fips-build
+	./.github/scripts/create-fips-release-assets.sh "$(VERSION)"
+
 $(FIPS_AMD64_BINARY): $(call sources,cmd,rstream)
 	@echo "==> Building FIPS profile for linux/x86_64..."
 	@mkdir -p $(dir $@)
