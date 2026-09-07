@@ -15,6 +15,13 @@ trap cleanup EXIT HUP INT TERM
 mkdir -p "${release_root}/linux/arm64/release/bin"
 mkdir -p "$candidate_root"
 printf 'test binary\n' >"${release_root}/linux/arm64/release/bin/rstream"
+mkdir -p "${release_root}/fips"
+printf 'test FIPS artifact\n' >"${release_root}/fips/rstream-fips-${version}-linux-arm64.tar.gz"
+(
+  cd "${release_root}/fips"
+  shasum -a 256 "rstream-fips-${version}-linux-arm64.tar.gz" \
+    >"rstream-fips-${version}-linux-arm64.tar.gz.sha256"
+)
 
 ./.github/scripts/create-release-candidate.sh rstream stable "$version" "$archive"
 candidate_checksum=$(<"${archive}.sha256")
@@ -25,6 +32,10 @@ if [[ "$(<"${release_root}/linux/arm64/release/bin/rstream")" != "test binary" ]
   echo "restored release candidate content differs" >&2
   exit 1
 fi
+(
+  cd "${release_root}/fips"
+  shasum -a 256 --check "rstream-fips-${version}-linux-arm64.tar.gz.sha256"
+)
 
 candidate_digest=${candidate_checksum%% *}
 printf '%s  %s\n' "$candidate_digest" different-archive.tar.gz >"${archive}.sha256"

@@ -113,6 +113,15 @@ out/fips/linux/x86_64/rstream
 out/fips/linux/arm64/rstream
 ```
 
+Stable releases expose distinct, checksummed GitHub assets named
+`rstream-fips-<version>-linux-x86_64.tar.gz` and
+`rstream-fips-<version>-linux-arm64.tar.gz`. They are carried through the same
+immutable release candidate as the standard distribution, but are not selected
+by the standard installer, package repositories, or `latest` container tag.
+Each archive contains the binary, its `go version -m` output, the source commit,
+the profile documentation, and an internal checksum manifest. Verify the
+adjacent `.sha256` file before extracting an archive.
+
 The build combines:
 
 ```text

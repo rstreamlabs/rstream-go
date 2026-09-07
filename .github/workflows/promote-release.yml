@@ -449,6 +449,55 @@ jobs:
           ./.promotion-policy/.github/scripts/publish-npm-package.sh \
             "$package_name" "$VERSION" "$candidate" npm
 
+  publish-fips-assets:
+    name: publish FIPS client artifacts
+    if: github.event_name != 'workflow_dispatch' || !inputs.npm_only
+    needs: prepare
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+          persist-credentials: false
+      - name: Checkout trusted promotion policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .promotion-policy
+          persist-credentials: false
+      - uses: ./.promotion-policy/.github/actions/restore-release-candidate
+        with:
+          version: ${{ needs.prepare.outputs.version }}
+      - name: Publish and verify FIPS release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          asset_directory="out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/fips"
+          mapfile -t assets < <(find "$asset_directory" -maxdepth 1 -type f -print | LC_ALL=C sort)
+          if ((${#assets[@]} != 4)); then
+            echo "expected two FIPS archives and two checksums, found ${#assets[@]}" >&2
+            exit 1
+          fi
+          for checksum in "$asset_directory"/*.sha256; do
+            (cd "$asset_directory" && shasum -a 256 --check "$(basename "$checksum")")
+          done
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
+          verification_directory=$(mktemp -d)
+          for asset in "${assets[@]}"; do
+            gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern "$(basename "$asset")" --dir "$verification_directory"
+          done
+          for checksum in "$verification_directory"/*.sha256; do
+            (cd "$verification_directory" && shasum -a 256 --check "$(basename "$checksum")")
+          done
+
   publish-mcp:
     name: publish Official MCP Registry metadata
     needs:
@@ -540,6 +589,7 @@ jobs:
       - publish-homebrew
       - publish-winget
       - publish-npm
+      - publish-fips-assets
       - publish-mcp
     permissions:
       contents: write
