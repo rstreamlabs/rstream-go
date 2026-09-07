@@ -1,6 +1,6 @@
 # Filesystem WebRTC transport
 
-The shared `filesystem` package composes the same rooted filesystem policy with either WebDAV or WebRTC. `rstream files --backend webrtc` and `webtty server --fs-root ./exports --fs-backend webrtc` select Pion WebRTC v4. Both are opt-in; WebDAV remains the default. Engine and Operator are unchanged. WebTTY terminal execution and terminal E2E are separate.
+The shared `filesystem` package composes the same rooted filesystem policy with either WebDAV or WebRTC. `rstream files --backend webrtc` and `webtty server --fs-root ./exports --fs-backend webrtc` select Pion WebRTC v4. Both are opt-in; WebDAV is the default. WebTTY terminal execution and terminal E2E are separate.
 
 ## Operations and clients
 
@@ -20,12 +20,12 @@ Signaling has the same local password/edge access policy as file reads. A sessio
 
 ## Browser downloads and security
 
-The shared `@rstreamlabs/utils/download` helper opens the browser’s file picker synchronously from the click, then streams to its WritableStream with backpressure, progress and cancellation. Files and the existing encrypted-transfer demo reuse this destination/progress code; the demo keeps its own decryption pipeline. Supported browsers use the same disk flow for WebDAV and WebRTC. Other browsers and native link actions use streaming HTTP attachment URLs, without whole-file Blob buffering. This compatibility path uses normal Engine traffic. A Service Worker bridge for native WebRTC downloads is outside this version.
+The shared `@rstreamlabs/utils/download` helper opens the browser’s file picker synchronously from the click, then streams to its WritableStream with backpressure, progress and cancellation. Files and the existing encrypted-transfer demo reuse this destination/progress code; the demo keeps its own decryption pipeline. Supported browsers use the same disk flow for WebDAV and WebRTC. Other browsers and native link actions use streaming HTTP attachment URLs, without whole-file Blob buffering. This compatibility path uses normal Engine traffic.
 
-Direct WebRTC file data bypasses Engine; rstream TURN relays when a direct route is unavailable. This is not a promise of quota-free relay traffic. WebRTC encrypts the peer transport with DTLS but does not implement the planned application-level E2E key distribution or independently authenticated file encryption. Filesystem access is independent of WebTTY terminal encryption; the existing restriction on exposing a filesystem with terminal E2E remains.
+Direct WebRTC file data bypasses Engine; rstream TURN relays when a direct route is unavailable. Relay traffic uses the project's separate TURN quota. WebRTC encrypts the peer transport with DTLS; files are not separately encrypted with a recipient-held key. The filesystem sidecar is rejected when WebTTY terminal E2E is active.
 
 ## Qualification
 
 Run the Go suite and race detector, build `filesystem/rtc/testdata/server`, then run the JS filesystem `test:e2e` script with `RSTREAM_FILES_E2E_SERVER` pointing to that binary. The fixture provides real Pion peers and optional local TURN and rejects direct HTTP data in RTC-only mode. Tests cover Go/Node interop, files/WebTTY, CLI/MCP reads and write errors, range hashes, malformed lengths, bounded slow consumers, cancellation, session limits, authorization revocation and ICE restart during transfer. The browser destination test streams more than 4 GiB with a bounded queue; it does not claim to write 4 GiB to disk in that unit test.
 
-Release requires native qualification for supported Go targets and Node native-provider platforms, plus browser review. Cross-compilation only establishes build compatibility. Publish the JS changesets, replace Next’s temporary vendored packages with actual published versions, regenerate the embedded artifact, and release Go/product documentation together. No push or deployment is part of local implementation.
+Run native qualification for supported Go targets and Node native-provider platforms, plus browser review. Cross-compilation only establishes build compatibility.
