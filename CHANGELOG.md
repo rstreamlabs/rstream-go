@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.31.0](https://github.com/rstreamlabs/rstream-go/compare/v1.30.0...v1.31.0) (2026-09-07)
+
+
+### Features
+
+* add FIPS QUIC client profile ([3d1ae7c](https://github.com/rstreamlabs/rstream-go/commit/3d1ae7c65219658e56ad207c6088e60d863fe7e6))
+* add FIPS-compatible WebTTY profile ([e9d1a78](https://github.com/rstreamlabs/rstream-go/commit/e9d1a78657c6b229ceba76e11f0c1c58ac1a355f))
+* add phase-one FIPS client profile ([1ac8820](https://github.com/rstreamlabs/rstream-go/commit/1ac88207bdd0a631384619af784a28913c467343))
+
+
+### Bug Fixes
+
+* enforce exact FIPS module identity ([f0dc4b0](https://github.com/rstreamlabs/rstream-go/commit/f0dc4b02e52fcce5299af9f7ca7fafeca9f2dd17))
+* **fips:** satisfy strict profile static analysis ([51beac2](https://github.com/rstreamlabs/rstream-go/commit/51beac2241d7655e7c5f36bb0a1e3a637f8b6b41))
+* **webtty:** apply default HTTPS port ([f0361d2](https://github.com/rstreamlabs/rstream-go/commit/f0361d2842e504aab5c2b7438a16bd01be0af92c))
+
 ## [1.30.0](https://github.com/rstreamlabs/rstream-go/compare/v1.29.3...v1.30.0) (2026-09-04)
 
 
