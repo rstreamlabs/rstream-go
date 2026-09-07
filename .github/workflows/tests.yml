@@ -94,6 +94,30 @@ jobs:
             printf 'Coverage %s%% is below the 54.0%% floor.\n' "${total}" >&2
             exit 1
           fi
+  fips:
+    name: FIPS profile tests and Linux artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Run strict profile tests and build supported artifacts
+        run: make fips-test fips-build
+      - name: Verify executable profile cannot be disabled
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary=out/fips/linux/x86_64/rstream
+          "$binary" --version | grep -F 'v1.0.0-c2097c7c'
+          if GODEBUG=fips140=off "$binary" --version; then
+            echo 'FIPS artifact accepted an explicit runtime downgrade' >&2
+            exit 1
+          fi
   race:
     name: race and lifecycle tests
     runs-on: ubuntu-latest
