@@ -480,11 +480,15 @@ jobs:
         run: |
           set -euo pipefail
           asset_directory="out/cmd/${PACKAGE_NAME}/${CHANNEL}/${VERSION}/fips"
-          mapfile -t assets < <(find "$asset_directory" -maxdepth 1 -type f -print | LC_ALL=C sort)
-          if ((${#assets[@]} != 4)); then
-            echo "expected two FIPS archives and two checksums, found ${#assets[@]}" >&2
-            exit 1
-          fi
+          assets=(
+            "${asset_directory}/rstream-fips-${VERSION}-linux-arm64.tar.gz"
+            "${asset_directory}/rstream-fips-${VERSION}-linux-arm64.tar.gz.sha256"
+            "${asset_directory}/rstream-fips-${VERSION}-linux-x86_64.tar.gz"
+            "${asset_directory}/rstream-fips-${VERSION}-linux-x86_64.tar.gz.sha256"
+          )
+          for asset in "${assets[@]}"; do
+            test -s "$asset"
+          done
           for checksum in "$asset_directory"/*.sha256; do
             (cd "$asset_directory" && shasum -a 256 --check "$(basename "$checksum")")
           done
