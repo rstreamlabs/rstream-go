@@ -158,11 +158,19 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 		}
 	}
 	forwardStdin := resolved.Interactive || !runtime.hasStdinFD || !term.IsTerminal(runtime.stdinFD)
-	var readStdin func(context.Context, []byte) (int, error)
+	var readStdin clientStdinReadFunc
 	if forwardStdin {
-		readStdin, err = resolveClientStdinRead(resolved)
+		var closeStdin func() error
+		readStdin, closeStdin, err = resolveClientStdinRead(resolved)
 		if err != nil {
 			return -1, err
+		}
+		if closeStdin != nil {
+			defer func() {
+				if err := closeStdin(); err != nil {
+					resolved.Logger.Error("failed to close stdin reader", "error", err)
+				}
+			}()
 		}
 	}
 	session, err := OpenClientSession(ctx, resolved.sessionConfig())
@@ -347,23 +355,25 @@ type clientStdinDeadlineReader interface {
 	SetReadDeadline(time.Time) error
 }
 
-func resolveClientStdinRead(cfg *ClientConfig) (func(context.Context, []byte) (int, error), error) {
+type clientStdinReadFunc func(context.Context, []byte) (int, error)
+
+func resolveClientStdinRead(cfg *ClientConfig) (clientStdinReadFunc, func() error, error) {
 	if cfg.StdinReadContext != nil {
-		return cfg.StdinReadContext, nil
+		return cfg.StdinReadContext, nil, nil
 	}
 	if reader, ok := cfg.Stdin.(clientStdinContextReader); ok {
-		return reader.ReadContext, nil
+		return reader.ReadContext, nil, nil
 	}
 	if file, ok := cfg.Stdin.(*os.File); ok {
-		if readStdin := clientFileStdinRead(file); readStdin != nil {
-			return readStdin, nil
+		if readStdin, closeStdin, err := clientFileStdinRead(file); readStdin != nil || err != nil {
+			return readStdin, closeStdin, err
 		}
 	}
 	if reader, ok := cfg.Stdin.(clientStdinDeadlineReader); ok {
 		if err := reader.SetReadDeadline(time.Time{}); err == nil {
 			return func(ctx context.Context, buffer []byte) (int, error) {
 				return readClientStdinWithDeadline(ctx, reader, buffer)
-			}, nil
+			}, nil, nil
 		}
 	}
 	switch cfg.Stdin.(type) {
@@ -373,9 +383,9 @@ func resolveClientStdinRead(cfg *ClientConfig) (func(context.Context, []byte) (i
 				return 0, err
 			}
 			return cfg.Stdin.Read(buffer)
-		}, nil
+		}, nil, nil
 	}
-	return nil, fmt.Errorf("stdin reader must support cancellation through StdinReadContext, ReadContext, or SetReadDeadline")
+	return nil, nil, fmt.Errorf("stdin reader must support cancellation through StdinReadContext, ReadContext, or SetReadDeadline")
 }
 
 func readClientStdinWithDeadline(ctx context.Context, reader clientStdinDeadlineReader, buffer []byte) (int, error) {
