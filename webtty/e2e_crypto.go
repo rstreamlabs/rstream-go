@@ -544,16 +544,6 @@ func e2eIdentityPrivateKey(identity E2EIdentity, suite KeyEnvelopeSuite) ([]byte
 	return keyID, privateKey, nil
 }
 
-func validateSupportedKeyEnvelopeSuite(suite KeyEnvelopeSuite) error {
-	switch suite {
-	case KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM,
-		KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce:
-		return nil
-	default:
-		return fmt.Errorf("unsupported E2E key envelope suite %d", suite)
-	}
-}
-
 func e2eCurveParameters(suite KeyEnvelopeSuite) (ecdh.Curve, int, int, error) {
 	if err := validateProfileKeyEnvelopeSuite(suite); err != nil {
 		return nil, 0, 0, err

@@ -64,13 +64,13 @@ func Require() error {
 		return errors.New("rstream FIPS profile is not compiled into this executable")
 	}
 	if !status.Enabled {
-		return errors.New("Go FIPS 140-3 mode is not enabled")
+		return errors.New("go FIPS 140-3 mode is not enabled")
 	}
 	if status.ModuleVersion != RequiredModuleVersion {
-		return fmt.Errorf("Go FIPS 140-3 module version is %q, require %q", status.ModuleVersion, RequiredModuleVersion)
+		return fmt.Errorf("go FIPS 140-3 module version is %q, require %q", status.ModuleVersion, RequiredModuleVersion)
 	}
 	if status.ModuleBuild != RequiredModuleBuild {
-		return fmt.Errorf("Go FIPS 140-3 module build is %q, require %q", status.ModuleBuild, RequiredModuleBuild)
+		return fmt.Errorf("go FIPS 140-3 module build is %q, require %q", status.ModuleBuild, RequiredModuleBuild)
 	}
 	if status.QUICVersion != RequiredQUICModuleVersion {
 		return fmt.Errorf("quic-go module version is %q, require %q", status.QUICVersion, RequiredQUICModuleVersion)
