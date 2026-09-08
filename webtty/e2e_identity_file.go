@@ -90,9 +90,8 @@ func EncodeE2EKeyMaterial(value []byte) string {
 	return base64.RawURLEncoding.EncodeToString(value)
 }
 
-// CurrentWebTTYKeyAlgorithm returns the endpoint-key algorithm required by
-// this build profile. FIPS and standard identity files are intentionally not
-// interchangeable.
+// CurrentWebTTYKeyAlgorithm returns this build profile's default endpoint-key
+// algorithm. Use WebTTYKeyEnvelopeSuiteForAlgorithm to validate an existing key.
 func CurrentWebTTYKeyAlgorithm() string {
 	value, _ := WebTTYKeyAlgorithmForSuite(defaultE2EKeyEnvelopeSuite())
 	return value

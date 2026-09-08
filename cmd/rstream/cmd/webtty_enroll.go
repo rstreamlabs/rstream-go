@@ -537,8 +537,8 @@ func loadWebTTYServerEnrollmentFile(path string) (*webTTYServerEnrollmentFile, e
 		strings.TrimSpace(enrollment.ServerFingerprint) == "" {
 		return nil, fmt.Errorf("WebTTY server enrollment endpoint identity and fingerprint are required")
 	}
-	if enrollment.ServerKeyAlgorithm != webtty.CurrentWebTTYKeyAlgorithm() {
-		return nil, fmt.Errorf("unsupported WebTTY server key algorithm %q", enrollment.ServerKeyAlgorithm)
+	if _, err := webtty.WebTTYKeyEnvelopeSuiteForAlgorithm(enrollment.ServerKeyAlgorithm); err != nil {
+		return nil, fmt.Errorf("unsupported WebTTY server key algorithm %q: %w", enrollment.ServerKeyAlgorithm, err)
 	}
 	if err := validateWebTTYServerEnrollmentEncryptionPolicy(enrollment.EncryptionPolicy); err != nil {
 		return nil, err

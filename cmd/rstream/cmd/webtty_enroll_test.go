@@ -644,3 +644,45 @@ func testEncryptWorkspaceKeyEnvelope(t *testing.T, device workspaceDeviceFile, k
 		CreatedAt: "2026-06-06T12:00:00.000Z",
 	}
 }
+
+func TestFIPSCompatibleWebTTYServerEnrollmentFilePreservesP256Suite(t *testing.T) {
+	identity, err := webtty.GenerateWebTTYEndpointIdentityForSuite(webtty.KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce)
+	if err != nil {
+		t.Fatalf("GenerateWebTTYEndpointIdentity() error = %v", err)
+	}
+	publicKey := webtty.EncodeE2EKeyMaterial(identity.Encryption.PublicKey)
+	enrollmentPath := filepath.Join(t.TempDir(), "server.yaml")
+	enrollment := webTTYServerEnrollmentFile{
+		Version:                webTTYServerEnrollmentVersion,
+		ServerID:               "server-1",
+		ProjectID:              "project-1",
+		IdentityFile:           filepath.Join(t.TempDir(), "identity.json"),
+		ServerPublicKey:        publicKey,
+		ServerSigningKeyID:     webtty.EncodeE2EKeyMaterial(identity.Signing.KeyID),
+		ServerSigningPublicKey: webtty.EncodeE2EKeyMaterial(identity.Signing.PublicKey),
+		ServerFingerprint:      webTTYServerPublicKeyFingerprint(identity.Encryption.PublicKey),
+		ServerKeyAlgorithm:     webtty.WebTTYKeyAlgorithmP256,
+		EncryptionPolicy:       webTTYServerEncryptionPolicyExplicitKey,
+		EnrollmentStatus:       webTTYServerEnrollmentStatusOK,
+		EnrolledAt:             time.Now().UTC(),
+	}
+	if err := writeWebTTYServerEnrollmentFile(enrollmentPath, enrollment); err != nil {
+		t.Fatalf("writeWebTTYServerEnrollmentFile() error = %v", err)
+	}
+	loaded, err := loadWebTTYServerEnrollmentFile(enrollmentPath)
+	if err != nil {
+		t.Fatalf("load P-256 enrollment: %v", err)
+	}
+	if err := validateWebTTYEndpointIdentityMatchesEnrollment(loaded, identity); err != nil {
+		t.Fatal(err)
+	}
+	for _, algorithm := range []string{"unknown", ""} {
+		enrollment.ServerKeyAlgorithm = algorithm
+		if err := writeWebTTYServerEnrollmentFile(enrollmentPath, enrollment); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := loadWebTTYServerEnrollmentFile(enrollmentPath); err == nil {
+			t.Fatalf("invalid algorithm %q was accepted", algorithm)
+		}
+	}
+}
