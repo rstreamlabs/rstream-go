@@ -435,10 +435,25 @@ func (c *clientRuntime) resizeSessionLoop(ctx context.Context, session *ClientSe
 	if !c.hasTerminal {
 		return
 	}
+	fd, closeOutput, err := terminalOutputDescriptor(c.stdinFD)
+	if err != nil {
+		select {
+		case errCh <- err:
+		default:
+		}
+		return
+	}
+	if closeOutput != nil {
+		defer func() {
+			if err := closeOutput(); err != nil {
+				c.logger.Error("failed to close terminal output handle", "error", err)
+			}
+		}()
+	}
 	lastRows := -1
 	lastCols := -1
 	sendSize := func() error {
-		cols, rows, err := term.GetSize(c.stdinFD)
+		cols, rows, err := term.GetSize(fd)
 		if err != nil {
 			return fmt.Errorf("failed to read terminal size: %w", err)
 		}

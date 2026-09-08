@@ -193,7 +193,7 @@ jobs:
           $env:CGO_ENABLED = '1'
           gcc --version
           if ($LASTEXITCODE -ne 0) { throw 'MinGW is required for the Windows race detector' }
-          go test -race -count=1 -run '^(TestWindowsStdinReader.*|TestRunClientWindowsStdinLifecycle|TestRunWebTTYClientCaptureForwardsPipedStdin)$' ./webtty ./cmd/rstream/cmd
+          go test -race -count=1 -run '^(TestWindowsStdinReader.*|TestRunClientWindows(StdinLifecycle|TerminalGeometry)|TestRunWebTTYClientCaptureForwardsPipedStdin)$' ./webtty ./cmd/rstream/cmd
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   webtty-runtime:
     name: WebTTY Go direct profile (partial coverage)
