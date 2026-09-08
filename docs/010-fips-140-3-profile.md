@@ -189,6 +189,12 @@ module semantic version, exact module build, and reviewed `quic-go` and
 
 ## WebTTY Profile
 
+Authenticated application E2E is a restriction of the current rstream profile,
+not an inherent FIPS 140-3 requirement to add encryption above QUIC/TLS. Transport
+encryption protects the connection between its TLS endpoints; application E2E
+also protects terminal content from an Engine that terminates that connection.
+This profile currently qualifies only the authenticated E2E WebTTY path.
+
 The FIPS CLI defaults `webtty server`, `webtty client`, and `webtty exec` to
 WebTransport. Direct commands may still pass `--transport=webtransport`
 explicitly; any other live transport is rejected before network I/O.
