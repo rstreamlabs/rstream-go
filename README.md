@@ -82,27 +82,17 @@ rstream is compatible with Linux, macOS 13 or newer, and Windows. Additionally, 
 
 ## FIPS 140-3 profile
 
-`rstream-go` provides a restricted FIPS 140-3 build profile for reviewed Linux
-client deployments. The FIPS SDK and CLI artifacts embed and use the
+`rstream-go` provides a separate FIPS 140-3 build profile for reviewed Linux
+client deployments. The SDK and CLI artifacts embed the
 [NIST CMVP-validated Go Cryptographic Module, certificate 5247](https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/5247),
-which has Overall Security Level 1. They pin that module and the reviewed
-`quic-go` and `webtransport-go` versions, run the module in its approved mode,
-and fail closed when an excluded transport, protocol, or runtime configuration
-is requested.
+which has Overall Security Level 1, and fail closed outside the supported
+profile. The certificate applies to the embedded module rather than the
+complete rstream product.
 
-The applicable artifact claim is **FIPS 140-3 Inside — Go Cryptographic Module,
-Certificate #5247 (Overall Security Level 1)**. The level and certificate apply
-to the embedded Go cryptographic module; the complete rstream product has not
-undergone a separate CMVP module validation. This is a distinct build from the
-standard multi-protocol distribution.
-
-The profile supports TLS/mTLS, direct QUIC, ordinary HTTP/3, and authenticated
-E2E WebTTY over WebTransport. WebTTY uses a
-P-256/HKDF-SHA256/AES-256-GCM random-nonce protocol profile; the standard build
-can use either this profile or the legacy X25519 profile, while the FIPS build
-accepts only the former.
-
-See [docs/010-fips-140-3-profile.md](docs/010-fips-140-3-profile.md) for the supported boundary, exclusions, build procedure, runtime evidence, and module upgrade process.
+The profile supports TLS and mTLS, direct QUIC, ordinary HTTP/3, and
+authenticated E2E WebTTY over WebTransport. Its precise boundary, build
+targets, module identity, and release evidence are documented in the
+[FIPS 140-3 profile](docs/010-fips-140-3-profile.md).
 
 ## Installation (rstream CLI)
 

@@ -16,15 +16,15 @@ system assessment.
 
 The upstream Go behavior and limitations are defined in [Go FIPS 140-3 compliance](https://go.dev/doc/security/fips140).
 
-## Product Claim and Delivery Evidence
+## Compliance Scope and Delivery Evidence
 
 FIPS 140-3 levels 1 through 4 describe the assurance level of a validated
 cryptographic module. They are not graduated self-attestation levels for the
 application that embeds it. NIST permits a product that incorporates an
 unaltered validated module to identify that module with the
 [`FIPS 140-3 Inside` phrase](https://csrc.nist.gov/Projects/Cryptographic-Module-Validation-Program/Use-of-FIPS-140-2-Logo-and-Phrases)
-and its certificate number. It remains inaccurate to say that the complete
-rstream product is itself "FIPS 140-3 validated" or "FIPS 140-3 Level 1".
+and its certificate number. The certificate does not cover the complete
+rstream product or deployment.
 
 A delivered FIPS client release should include or reference:
 
@@ -41,7 +41,7 @@ description and must follow the NIST logo requirements.
 
 ## Supported Scope
 
-The implemented phase-one through phase-three profile covers:
+The current profile covers:
 
 - Go 1.27;
 - Linux x86-64 and arm64;
@@ -60,7 +60,7 @@ The implemented phase-one through phase-three profile covers:
 - P-256 ECDH, HKDF-SHA256, and AES-256-GCM with internally generated random
   nonces for WebTTY session-key envelopes and terminal payloads.
 
-The current phase excludes:
+The profile excludes:
 
 - proxied QUIC transport;
 - generic datagram tunnels, DTLS, and TURN; datagram tunnel metadata is accepted
@@ -123,7 +123,7 @@ CGO_ENABLED=0
 
 `GOFIPS140` selects a frozen Go Cryptographic Module and enables FIPS mode by default. The `rstream_fips` build tag enables the rstream feature policy and fail-closed runtime checks. Both are required.
 
-The phase-three profile freezes `github.com/quic-go/quic-go` at `v0.60.0` and
+The profile freezes `github.com/quic-go/quic-go` at `v0.60.0` and
 `github.com/quic-go/webtransport-go` at `v0.11.1`.
 The FIPS build fails its metadata check, and the executable fails closed at
 startup, if that reviewed dependency identity changes.
@@ -141,8 +141,8 @@ At process startup, the CLI verifies that:
 - the rstream FIPS profile was compiled in;
 - Go reports FIPS 140-3 mode as enabled;
 - the linked Go module is the exact frozen build;
-- the linked `quic-go` module is the reviewed phase-two version;
-- the linked `webtransport-go` module is the reviewed phase-three version.
+- the linked `quic-go` module is the reviewed version;
+- the linked `webtransport-go` module is the reviewed version.
 
 The process exits before command execution when any condition is false. In particular, a caller cannot silently downgrade a FIPS-profile binary with `GODEBUG=fips140=off`.
 

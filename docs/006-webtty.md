@@ -82,9 +82,8 @@ client proof before starting any process. Passing only
 clients, but authenticated E2E requires the full endpoint value.
 
 The standard CLI trust store can contain legacy X25519 and FIPS-compatible
-P-256 server entries at the same time; mixed stores are migrated transparently
-to the `webtty-e2e-mixed-v1` file marker. A FIPS build still rejects every
-legacy entry while loading the store.
+P-256 server entries at the same time. A FIPS build rejects legacy entries
+while loading the store.
 
 Remove a local server identity when the server key has been retired:
 
