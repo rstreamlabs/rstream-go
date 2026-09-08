@@ -16,6 +16,8 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -82,6 +84,24 @@ func TestFIPSProfileRejectsLegacyWebTTYCryptoAndTransports(t *testing.T) {
 	}
 	if err := validateFIPSWebTTYTransport(WebTTYTransportWebTransport); err != nil {
 		t.Fatalf("validateFIPSWebTTYTransport(webtransport) error = %v", err)
+	}
+}
+
+func TestFIPSProfileRejectsLoadingLegacyEndpointIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.identity.json")
+	document := []byte(`{"version":1,"crypto_suite":"` + WebTTYEndpointIdentityCryptoSuite + `"}`)
+	if err := os.WriteFile(path, document, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadOrCreateWebTTYEndpointIdentityFile(path); err == nil || !strings.Contains(err.Error(), "not available") {
+		t.Fatalf("loading a legacy identity must reject its suite: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, document) {
+		t.Fatal("rejecting the legacy identity rewrote its file")
 	}
 }
 

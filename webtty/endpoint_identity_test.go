@@ -4,6 +4,7 @@ package webtty
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -84,5 +85,34 @@ func TestLoadOrCreateWebTTYEndpointIdentityFileCreatesAndReloads(t *testing.T) {
 	}
 	if !bytes.Equal(reloaded.Signing.KeyID, created.Signing.KeyID) {
 		t.Fatal("reloaded signing key id does not match created identity")
+	}
+}
+
+func TestLoadOrCreateWebTTYEndpointIdentityFilePreservesP256Suite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "p256.identity.json")
+	created, err := LoadOrCreateWebTTYEndpointIdentityFileForSuite(path, KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := LoadOrCreateWebTTYEndpointIdentityFile(path)
+	if err != nil {
+		t.Fatalf("load existing P-256 identity: %v", err)
+	}
+	if reloaded.Encryption.KeyEnvelopeSuite != created.Encryption.KeyEnvelopeSuite || !bytes.Equal(reloaded.Encryption.PrivateKey, created.Encryption.PrivateKey) || !bytes.Equal(reloaded.Signing.PrivateKey, created.Signing.PrivateKey) {
+		t.Fatal("reloading changed the identity or encryption suite")
+	}
+	if _, err := LoadOrCreateWebTTYEndpointIdentityFileForSuite(path, KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM); err == nil {
+		t.Fatal("an explicit incompatible suite must fail")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("loading or rejecting an identity rewrote its file")
 	}
 }
