@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -163,6 +164,9 @@ func TestFilesystemCLIAndMCPBackendMatrix(t *testing.T) {
 				root := t.TempDir()
 				payload := bytes.Repeat([]byte("file-transfer\x00\xff"), 120000)
 				name := "résumé #?% &.bin"
+				if runtime.GOOS == "windows" {
+					name = "résumé #% &.bin"
+				}
 				if err := os.WriteFile(filepath.Join(root, name), payload, 0o600); err != nil {
 					t.Fatal(err)
 				}
