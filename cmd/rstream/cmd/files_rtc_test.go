@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -30,6 +31,9 @@ func TestFilesystemWebRTCThroughCLIAndMCP(t *testing.T) {
 			root := t.TempDir()
 			payload := bytes.Repeat([]byte("shared transport\x00"), 100000)
 			name := "résumé #?% &.bin"
+			if runtime.GOOS == "windows" {
+				name = "résumé #% &.bin"
+			}
 			if err := os.WriteFile(filepath.Join(root, name), payload, 0o600); err != nil {
 				t.Fatal(err)
 			}

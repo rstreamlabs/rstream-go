@@ -235,19 +235,19 @@ func testFIPSWebTransportRoundTrip(t *testing.T, serverE2E, clientE2E bool) {
 func TestFIPSProfileWebTTYTransportOnlyRejectsUnsafeTLSBeforeDial(t *testing.T) {
 	for _, test := range []struct {
 		name string
-		tls  tls.Config
+		tls  *tls.Config
 		want string
 	}{
-		{name: "unverified", tls: tls.Config{InsecureSkipVerify: true}, want: "certificate verification"},
-		{name: "ech", tls: tls.Config{EncryptedClientHelloConfigList: []byte{1}}, want: "ECH"},
-		{name: "minimum", tls: tls.Config{MinVersion: tls.VersionTLS12}, want: "TLS 1.3"},
-		{name: "maximum", tls: tls.Config{MaxVersion: tls.VersionTLS12}, want: "TLS 1.3"},
-		{name: "curve", tls: tls.Config{CurvePreferences: []tls.CurveID{tls.X25519}}, want: "not approved"},
+		{name: "unverified", tls: &tls.Config{InsecureSkipVerify: true}, want: "certificate verification"},
+		{name: "ech", tls: &tls.Config{EncryptedClientHelloConfigList: []byte{1}}, want: "ECH"},
+		{name: "minimum", tls: &tls.Config{MinVersion: tls.VersionTLS12}, want: "TLS 1.3"},
+		{name: "maximum", tls: &tls.Config{MaxVersion: tls.VersionTLS12}, want: "TLS 1.3"},
+		{name: "curve", tls: &tls.Config{CurvePreferences: []tls.CurveID{tls.X25519}}, want: "not approved"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0
 			_, err := OpenClientSession(t.Context(), &SessionConfig{
-				URL: "rstrm://fips-fixture", Transport: WebTTYTransportWebTransport, TLSConfig: &test.tls,
+				URL: "rstrm://fips-fixture", Transport: WebTTYTransportWebTransport, TLSConfig: test.tls,
 				DialPacketContext: func(context.Context, string) (net.PacketConn, net.Addr, error) {
 					calls++
 					return nil, nil, net.ErrClosed
