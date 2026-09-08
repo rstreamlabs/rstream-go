@@ -39,6 +39,19 @@ Local Basic and edge auth both use `Authorization` and cannot be combined. Confl
 
 HTTPS protects transport to the edge, and the tunnel protects the edge-to-agent hop. WebDAV is **not end-to-end encrypted** and uses normal project traffic quota. The optional WebRTC backend encrypts the peer connection and carries file bytes directly between peers when possible; TURN relays when necessary and uses the project's separate TURN quota. Files are not separately encrypted with a recipient-held key. See the [WebRTC protocol](011-filesystem-webrtc.md) for authentication, resource limits and browser compatibility.
 
+## CLI and MCP downloads
+
+The existing filesystem client commands also read standalone shares:
+
+```sh
+rstream files ./exports --name exports
+rstream webtty fs --url rstrm://exports download /report.csv ./report.csv
+```
+
+The CLI resolves a WebTTY or HTTP tunnel through Engine inventory, then dials it privately even when it has a published URL. It discovers WebDAV or WebRTC over that connection. For a token restricted to stream access, add `--no-discovery` and supply the exact tunnel id or name; `--fs-path` selects a path other than `/fs`. This explicit path does not require inventory or control-plane access. Server authentication and read-only policy still apply.
+
+Local MCP filesystem tools accept the same `rstrm://` target and use private dialing without inventory discovery. Supply the advertised `fs_path` when it differs from `/fs`. Both surfaces retain the standalone share's read-only policy.
+
 ## HTTP and backend contract
 
 | Path | Contract |
