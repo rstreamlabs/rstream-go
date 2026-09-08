@@ -622,6 +622,7 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           VERSION: ${{ needs.prepare.outputs.version }}
           WINGET_GUIDE_URL: https://github.com/rstreamlabs/winget/blob/main/README.md#official-community-repository
+          NEXTJS_REPOSITORY_URL: https://github.com/rstreamlabs/rstream-nextjs
         run: |
           set -euo pipefail
           gh release edit "$RELEASE_TAG" \
@@ -638,5 +639,9 @@ jobs:
             printf "The fallback WinGet manifests for \`%s\` are published. " "$VERSION"
             printf 'Submit this stable version to the official Microsoft repository.\n\n'
             printf '[Open the manual submission procedure](%s).\n' "$WINGET_GUIDE_URL"
+            printf '\n### Follow-up: rebuild the Next.js site\n\n'
+            printf 'After publication, trigger a fresh build and deployment of [rstream-nextjs](%s). ' "$NEXTJS_REPOSITORY_URL"
+            printf 'The site resolves the latest CLI release at build time; rebuilding refreshes the displayed version and manual download links for %s.\n' "$VERSION"
           } >>"$GITHUB_STEP_SUMMARY"
           echo "::notice title=Official WinGet follow-up::Submit rstream ${VERSION} to Microsoft: ${WINGET_GUIDE_URL}"
+          echo "::notice title=Next.js build follow-up::Rebuild and deploy rstream-nextjs after publishing ${VERSION} to refresh the CLI version and manual download links: ${NEXTJS_REPOSITORY_URL}"

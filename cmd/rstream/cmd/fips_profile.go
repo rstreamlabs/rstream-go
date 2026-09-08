@@ -36,6 +36,7 @@ func validateFIPSCommand(cmd *cobra.Command) error {
 	for _, prefix := range []string{
 		"rstream ui",
 		"rstream mcp",
+		"rstream files",
 	} {
 		if path == prefix || strings.HasPrefix(path, prefix+" ") {
 			return fmt.Errorf("%s is not available in the current rstream FIPS profile", strings.TrimPrefix(prefix, "rstream "))

@@ -12,6 +12,7 @@ const (
 	WebTTYDefaultExecPath          = "/"
 	WebTTYDefaultFSMode            = WebTTYFSModeReadWrite
 	WebTTYDefaultFSPath            = "/fs"
+	WebTTYFSBackendLabelKey        = "rstream.webtty.fs.backend"
 	WebTTYExecPathLabelKey         = webTTYExecPathLabel
 	WebTTYCustomLabelPrefix        = webTTYLabelPrefix
 	WebTTYE2ELabelKey              = webTTYE2ELabel

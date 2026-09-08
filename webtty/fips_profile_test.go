@@ -221,3 +221,17 @@ func fipsCompatibleWebTransportTLSConfigs(t *testing.T) (*tls.Config, *tls.Confi
 		MaxVersion: tls.VersionTLS13,
 	}
 }
+
+func TestFIPSProfileRejectsFilesystemBackends(t *testing.T) {
+	for _, backend := range []string{"webdav", "webrtc"} {
+		t.Run(backend, func(t *testing.T) {
+			handler, err := NewFileSystemHandler(&FileSystemConfig{Root: t.TempDir(), Backend: backend})
+			if handler != nil {
+				defer handler.(interface{ Close() error }).Close()
+			}
+			if err == nil || !strings.Contains(err.Error(), "FIPS profile") {
+				t.Fatalf("NewFileSystemHandler() error = %v", err)
+			}
+		})
+	}
+}

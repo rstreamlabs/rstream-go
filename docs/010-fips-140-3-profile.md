@@ -68,12 +68,23 @@ The current phase excludes:
 - ECH;
 - WebTTY over plain streams or WebSocket, including managed participant
   `sessions join` streams, which do not yet expose WebTransport;
-- the WebTTY filesystem sidecar;
+- the WebTTY filesystem sidecar and the `rstream files` command;
 - the legacy WebTTY X25519/HPKE suite;
 - CLI WebSocket event streaming;
 - WebSocket, CONNECT-UDP, CONNECT-IP, and other non-WebTransport Extended
   CONNECT paths;
 - custom SDK transports whose cryptographic behavior cannot be established by the profile.
+
+## File-sharing compatibility
+
+| Operation | Standard build | FIPS build |
+| --- | --- | --- |
+| `rstream files --backend webdav` (default) | Read-only sharing with UI, downloads and ZIP | Rejected |
+| `rstream files --backend webrtc` | Read-only transfers with rstream STUN/TURN | Rejected; DTLS and TURN are outside the profile |
+| WebTTY filesystem, WebDAV | Supported when terminal E2E is disabled | Rejected |
+| WebTTY filesystem, WebRTC | Read-only when terminal E2E is disabled | Rejected |
+
+Neither filesystem backend adds recipient-key file encryption or shares the terminal E2E envelope. Selecting WebDAV does not enable file sharing in the restricted profile. Use the standard build for these features; there is no automatic profile downgrade.
 
 ## Mixed-Profile Interoperability
 

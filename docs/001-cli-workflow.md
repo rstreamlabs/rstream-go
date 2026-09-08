@@ -2,6 +2,8 @@
 
 This document explains the operational path from authentication to the first forwarded port.
 
+For files, use `rstream files ./exports` after selecting a context. This creates the read-only service and its HTTPS tunnel in one command. See [File sharing](010-file-sharing.md) for passwords, exclusions, WebDAV, resumable downloads and ZIP.
+
 Tunnel creation is documented separately.
 
 ## Concepts

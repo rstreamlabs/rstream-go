@@ -45,6 +45,7 @@ type ServerInfo struct {
 	KernelRelease     *string              `json:"kernel_release,omitempty"`
 	Hostname          *string              `json:"hostname,omitempty"`
 	Labels            map[string]string    `json:"labels,omitempty"`
+	FSBackend         *string              `json:"fs_backend,omitempty"`
 }
 
 func ParseServers(tunnels []rstream.TunnelInventory) []ServerInfo {
@@ -129,6 +130,7 @@ func parseServer(tunnel rstream.TunnelInventory) (ServerInfo, bool) {
 	}
 	if serverHasCapability(info.Capabilities, WebTTYCapabilityFS) {
 		info.FSPath = cloneStringPtr(firstNonEmpty(labels[webTTYFSPathLabel], WebTTYDefaultFSPath))
+		info.FSBackend = cloneStringPtr(firstNonEmpty(labels[WebTTYFSBackendLabelKey], "webdav"))
 		info.FSMode = cloneStringPtr(firstNonEmpty(labels[webTTYFSModeLabel], WebTTYDefaultFSMode))
 	}
 	customLabels := make(map[string]string)
