@@ -88,7 +88,7 @@ func TestLoadOrCreateWebTTYEndpointIdentityFileCreatesAndReloads(t *testing.T) {
 	}
 }
 
-func TestLoadOrCreateWebTTYEndpointIdentityFilePreservesP256Suite(t *testing.T) {
+func TestFIPSCompatibleEndpointIdentityFilePreservesP256Suite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "p256.identity.json")
 	created, err := LoadOrCreateWebTTYEndpointIdentityFileForSuite(path, KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce)
 	if err != nil {
