@@ -217,6 +217,12 @@ func OpenClientSession(ctx context.Context, cfg *SessionConfig) (*ClientSession,
 	if err != nil {
 		return nil, err
 	}
+	if err := validateFIPSWebTTYTransport(endpoint.Transport); err != nil {
+		return nil, err
+	}
+	if err := validateFIPSWebTTYClientConfig(resolved, resolved.TLSConfig); err != nil {
+		return nil, err
+	}
 	conn, err := dialWebTTYMessageConn(ctx, resolved, endpoint)
 	if err != nil {
 		return nil, err
@@ -503,7 +509,7 @@ func cloneWebTTYEndpointIdentity(value *WebTTYEndpointIdentity) *WebTTYEndpointI
 		return nil
 	}
 	return &WebTTYEndpointIdentity{
-		Encryption: E2EIdentity{KeyID: cloneBytes(value.Encryption.KeyID), PublicKey: cloneBytes(value.Encryption.PublicKey), PrivateKey: cloneBytes(value.Encryption.PrivateKey)},
+		Encryption: E2EIdentity{KeyEnvelopeSuite: value.Encryption.KeyEnvelopeSuite, KeyID: cloneBytes(value.Encryption.KeyID), PublicKey: cloneBytes(value.Encryption.PublicKey), PrivateKey: cloneBytes(value.Encryption.PrivateKey)},
 		Signing:    WebTTYSigningIdentity{KeyID: cloneBytes(value.Signing.KeyID), PublicKey: cloneBytes(value.Signing.PublicKey), PrivateKey: cloneBytes(value.Signing.PrivateKey)},
 	}
 }
@@ -513,6 +519,7 @@ func cloneWebTTYEndpointIdentityPublic(value *WebTTYEndpointIdentityPublic) *Web
 		return nil
 	}
 	return &WebTTYEndpointIdentityPublic{
+		KeyEnvelopeSuite:    value.KeyEnvelopeSuite,
 		EncryptionKeyID:     cloneBytes(value.EncryptionKeyID),
 		EncryptionPublicKey: cloneBytes(value.EncryptionPublicKey),
 		SigningKeyID:        cloneBytes(value.SigningKeyID),

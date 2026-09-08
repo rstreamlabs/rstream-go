@@ -1572,6 +1572,8 @@ func webTTYPayloadCipherSuiteFromAPI(value string) (webtty.PayloadCipherSuite, e
 	switch strings.TrimSpace(value) {
 	case "aes-256-gcm":
 		return webtty.PayloadCipherSuiteAES256GCM, nil
+	case "aes-256-gcm-random-nonce":
+		return webtty.PayloadCipherSuiteAES256GCMRandomNonce, nil
 	default:
 		return 0, fmt.Errorf("unsupported WebTTY payload cipher suite %q", value)
 	}
@@ -1581,6 +1583,8 @@ func webTTYKeyEnvelopeSuiteFromAPI(value string) (webtty.KeyEnvelopeSuite, error
 	switch strings.TrimSpace(value) {
 	case "hpke-x25519-hkdf-sha256-aes-256-gcm":
 		return webtty.KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM, nil
+	case "p256-hkdf-sha256-aes-256-gcm-random-nonce":
+		return webtty.KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce, nil
 	default:
 		return 0, fmt.Errorf("unsupported WebTTY key envelope suite %q", value)
 	}

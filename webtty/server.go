@@ -187,6 +187,10 @@ func cloneServerConfig(value *ServerConfig) *ServerConfig {
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if err := rejectFIPSWebSocketServer(); err != nil {
+		http.Error(w, err.Error(), http.StatusNotImplemented)
+		return
+	}
 	if h.draining.Load() {
 		http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		return
@@ -215,6 +219,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ServeConn(conn net.Conn) {
+	if err := validateFIPSWebTTYTransport(WebTTYTransportPlain); err != nil {
+		_ = conn.Close()
+		return
+	}
 	if h.draining.Load() {
 		_ = conn.Close()
 		return

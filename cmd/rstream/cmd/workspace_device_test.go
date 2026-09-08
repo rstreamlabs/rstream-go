@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/rstreamlabs/rstream-go/controlplane"
+	"github.com/rstreamlabs/rstream-go/webtty"
 	"github.com/spf13/cobra"
 )
 
@@ -84,6 +85,31 @@ func TestWorkspaceDeviceMaterialSignsKind(t *testing.T) {
 	)
 	if verifyWorkspaceDeviceSignature(t, signingKey, wrongKindPayload, material.proofSignature) {
 		t.Fatalf("proof signature must bind the device kind")
+	}
+}
+
+func TestWorkspaceDeviceMaterialSupportsFIPSCompatibleWebTTYProfile(t *testing.T) {
+	material, err := generateWorkspaceDeviceMaterial(
+		"workspace-1",
+		workspaceDeviceKindCLI,
+		"FIPS-compatible CLI",
+		webtty.KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce,
+	)
+	if err != nil {
+		t.Fatalf("generateWorkspaceDeviceMaterial() error = %v", err)
+	}
+	if material.file.WebTTYKeyAlgorithm != webtty.WebTTYKeyAlgorithmP256 {
+		t.Fatalf("WebTTY key algorithm = %q, want %q", material.file.WebTTYKeyAlgorithm, webtty.WebTTYKeyAlgorithmP256)
+	}
+	if material.webttyIdentity.KeyEnvelopeSuite != webtty.KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce {
+		t.Fatalf("WebTTY key envelope suite = %d", material.webttyIdentity.KeyEnvelopeSuite)
+	}
+	publicKey, err := webtty.DecodeE2EKeyMaterial(material.file.WebTTYPublicKey, webtty.E2EP256PublicKeySize, "WebTTY public key")
+	if err != nil {
+		t.Fatalf("decode P-256 WebTTY public key: %v", err)
+	}
+	if publicKey[0] != 4 {
+		t.Fatalf("P-256 WebTTY public key is not uncompressed SEC1")
 	}
 }
 

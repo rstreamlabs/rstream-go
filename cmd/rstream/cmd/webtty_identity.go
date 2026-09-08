@@ -120,6 +120,7 @@ var webttyKnownServerRemoveCmd = &cobra.Command{
 func init() {
 	webttyIdentityCreateCmd.Flags().String("name", "", "identity name")
 	webttyIdentityCreateCmd.Flags().String("identity-file", "", "local WebTTY endpoint identity file")
+	webttyIdentityCreateCmd.Flags().String("crypto-profile", "default", "WebTTY crypto profile (default, fips-compatible)")
 	webttyIdentityCreateCmd.Flags().Bool("endpoint-identity", false, "print only the public endpoint identity")
 	webttyIdentityCreateCmd.Flags().StringP("output", "o", "text", "output mode (text, json, yaml)")
 	webttyIdentityShowCmd.Flags().String("name", "", "identity name")
@@ -156,11 +157,28 @@ func runWebTTYIdentityCreate(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	identity, err := webtty.LoadOrCreateWebTTYEndpointIdentityFile(identityPath)
+	suite, err := webTTYIdentitySuiteFromProfile(cmd)
+	if err != nil {
+		return err
+	}
+	identity, err := webtty.LoadOrCreateWebTTYEndpointIdentityFileForSuite(identityPath, suite)
 	if err != nil {
 		return fmt.Errorf("failed to create WebTTY identity: %w", err)
 	}
 	return writeWebTTYIdentityOutput(cmd, "created", name, identityPath, identity)
+}
+
+func webTTYIdentitySuiteFromProfile(cmd *cobra.Command) (webtty.KeyEnvelopeSuite, error) {
+	profile, _ := cmd.Flags().GetString("crypto-profile")
+	switch strings.ToLower(strings.TrimSpace(profile)) {
+	case "", "default":
+		algorithm := webtty.CurrentWebTTYKeyAlgorithm()
+		return webtty.WebTTYKeyEnvelopeSuiteForAlgorithm(algorithm)
+	case "fips", "fips-compatible":
+		return webtty.KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce, nil
+	default:
+		return 0, fmt.Errorf("invalid --crypto-profile %q (valid: default, fips-compatible)", profile)
+	}
 }
 
 func runWebTTYIdentityShow(cmd *cobra.Command) error {
@@ -375,6 +393,13 @@ func runWebTTYKnownServerAdd(cmd *cobra.Command, name string) error {
 		entry.SigningPublicKey = webtty.EncodeE2EKeyMaterial(source.EndpointIdentity.SigningPublicKey)
 	}
 	_, err = webtty.UpdateKnownServerKeysFile(path, func(doc *webtty.KnownServerKeysFile) error {
+		if len(doc.KnownServers) == 0 {
+			cryptoSuite, err := webtty.E2EKeyFileCryptoSuiteForSuite(source.Recipient.KeyEnvelopeSuite)
+			if err != nil {
+				return err
+			}
+			doc.CryptoSuite = cryptoSuite
+		}
 		replaced := false
 		for i := range doc.KnownServers {
 			if doc.KnownServers[i].Name != name {

@@ -23,6 +23,16 @@ VERSION ?= $(if $(GIT_TAG),$(GIT_TAG),$(GIT_BRANCH))
 # Output directory
 OUT_DIR := out
 
+# FIPS 140-3 profile
+override FIPS_GO_MODULE := v1.0.0-c2097c7c
+override FIPS_QUIC_MODULE := v0.60.0
+override FIPS_WEBTRANSPORT_MODULE := v0.11.1
+FIPS_BUILD_TAG := rstream_fips
+FIPS_OUT_DIR := $(OUT_DIR)/fips
+FIPS_AMD64_BINARY := $(FIPS_OUT_DIR)/linux/x86_64/rstream
+FIPS_ARM64_BINARY := $(FIPS_OUT_DIR)/linux/arm64/rstream
+FIPS_LDFLAGS = -X '$(GO_MODULE).Agent=$(AGENT)' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).Commit=$(GIT_COMMIT)'
+
 # ARM 32 bits architectures
 ARM_ARCHS := v6 v7
 
@@ -483,6 +493,44 @@ tests:
 	@echo "==> Running tests..."
 	go test -v ./...
 	@echo "==> All tests passed"
+
+.PHONY: fips-test
+
+fips-test:
+	@echo "==> Running FIPS profile tests with $(FIPS_GO_MODULE)..."
+	GOFIPS140=$(FIPS_GO_MODULE) GODEBUG=fips140=only go test -tags=$(FIPS_BUILD_TAG) -run 'Test(CurrentFIPS|FIPSProfile|.*FIPSCompatible)' ./...
+	@echo "==> FIPS profile tests passed"
+
+.PHONY: fips-build
+
+fips-build: $(FIPS_AMD64_BINARY) $(FIPS_ARM64_BINARY)
+
+.PHONY: fips-release-assets
+
+fips-release-assets: fips-build
+	./.github/scripts/create-fips-release-assets.sh "$(VERSION)"
+
+$(FIPS_AMD64_BINARY): $(call sources,cmd,rstream)
+	@echo "==> Building FIPS profile for linux/x86_64..."
+	@mkdir -p $(dir $@)
+	GOFIPS140=$(FIPS_GO_MODULE) CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=v1 \
+		go build -buildvcs=false -trimpath -tags=$(FIPS_BUILD_TAG) \
+		-ldflags="$(FIPS_LDFLAGS) -X '$(GO_MODULE).OS=linux' -X '$(GO_MODULE).Arch=x86_64'" \
+		-o $@ ./cmd/rstream
+	@go version -m $@ | grep -F 'GOFIPS140=$(FIPS_GO_MODULE)' >/dev/null
+	@go version -m $@ | awk '$$1 == "dep" && $$2 == "github.com/quic-go/quic-go" && $$3 == "$(FIPS_QUIC_MODULE)" { found=1 } END { exit !found }'
+	@go version -m $@ | awk '$$1 == "dep" && $$2 == "github.com/quic-go/webtransport-go" && $$3 == "$(FIPS_WEBTRANSPORT_MODULE)" { found=1 } END { exit !found }'
+
+$(FIPS_ARM64_BINARY): $(call sources,cmd,rstream)
+	@echo "==> Building FIPS profile for linux/arm64..."
+	@mkdir -p $(dir $@)
+	GOFIPS140=$(FIPS_GO_MODULE) CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+		go build -buildvcs=false -trimpath -tags=$(FIPS_BUILD_TAG) \
+		-ldflags="$(FIPS_LDFLAGS) -X '$(GO_MODULE).OS=linux' -X '$(GO_MODULE).Arch=arm64'" \
+		-o $@ ./cmd/rstream
+	@go version -m $@ | grep -F 'GOFIPS140=$(FIPS_GO_MODULE)' >/dev/null
+	@go version -m $@ | awk '$$1 == "dep" && $$2 == "github.com/quic-go/quic-go" && $$3 == "$(FIPS_QUIC_MODULE)" { found=1 } END { exit !found }'
+	@go version -m $@ | awk '$$1 == "dep" && $$2 == "github.com/quic-go/webtransport-go" && $$3 == "$(FIPS_WEBTRANSPORT_MODULE)" { found=1 } END { exit !found }'
 
 $(GOIMPORTS):
 	@go install golang.org/x/tools/cmd/goimports@latest

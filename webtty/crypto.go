@@ -22,8 +22,9 @@ const (
 type PayloadCipherSuite pb.PayloadCipherSuite
 
 const (
-	PayloadCipherSuiteAES256GCM        PayloadCipherSuite = PayloadCipherSuite(pb.PayloadCipherSuite_PAYLOAD_CIPHER_SUITE_AES_256_GCM)
-	PayloadCipherSuiteChaCha20Poly1305 PayloadCipherSuite = PayloadCipherSuite(pb.PayloadCipherSuite_PAYLOAD_CIPHER_SUITE_CHACHA20_POLY1305)
+	PayloadCipherSuiteAES256GCM            PayloadCipherSuite = PayloadCipherSuite(pb.PayloadCipherSuite_PAYLOAD_CIPHER_SUITE_AES_256_GCM)
+	PayloadCipherSuiteChaCha20Poly1305     PayloadCipherSuite = PayloadCipherSuite(pb.PayloadCipherSuite_PAYLOAD_CIPHER_SUITE_CHACHA20_POLY1305)
+	PayloadCipherSuiteAES256GCMRandomNonce PayloadCipherSuite = PayloadCipherSuite(pb.PayloadCipherSuite_PAYLOAD_CIPHER_SUITE_AES_256_GCM_RANDOM_NONCE)
 )
 
 type KeyEnvelopeSuite pb.KeyEnvelopeSuite
@@ -31,6 +32,7 @@ type KeyEnvelopeSuite pb.KeyEnvelopeSuite
 const (
 	KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM        KeyEnvelopeSuite = KeyEnvelopeSuite(pb.KeyEnvelopeSuite_KEY_ENVELOPE_SUITE_HPKE_X25519_HKDF_SHA256_AES_256_GCM)
 	KeyEnvelopeSuiteHPKEX25519HKDFSHA256ChaCha20Poly1305 KeyEnvelopeSuite = KeyEnvelopeSuite(pb.KeyEnvelopeSuite_KEY_ENVELOPE_SUITE_HPKE_X25519_HKDF_SHA256_CHACHA20_POLY1305)
+	KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce   KeyEnvelopeSuite = KeyEnvelopeSuite(pb.KeyEnvelopeSuite_KEY_ENVELOPE_SUITE_P256_HKDF_SHA256_AES_256_GCM_RANDOM_NONCE)
 )
 
 type KeyEnvelope struct {
