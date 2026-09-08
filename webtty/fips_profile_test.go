@@ -6,11 +6,13 @@ package webtty
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"math/big"
 	"net"
 	"net/http"
@@ -84,6 +86,19 @@ func TestFIPSProfileRejectsLegacyWebTTYCryptoAndTransports(t *testing.T) {
 }
 
 func TestFIPSCompatibleWebTTYMutualAuthWebTransportRoundTrip(t *testing.T) {
+	testFIPSWebTransportRoundTrip(t, true, true)
+}
+
+func TestFIPSCompatibleWebTTYTransportOnlyRoundTrip(t *testing.T) {
+	testFIPSWebTransportRoundTrip(t, false, false)
+}
+
+func TestFIPSCompatibleWebTTYTransportOnlyCannotBypassServerPolicy(t *testing.T) {
+	testFIPSWebTransportRoundTrip(t, true, false)
+}
+
+func testFIPSWebTransportRoundTrip(t *testing.T, serverE2E, clientE2E bool) {
+	t.Helper()
 	required := true
 	zero := time.Duration(0)
 	serverIdentity, err := GenerateWebTTYEndpointIdentity()
@@ -105,7 +120,7 @@ func TestFIPSCompatibleWebTTYMutualAuthWebTransportRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewE2EClientPayloadCrypto() error = %v", err)
 	}
-	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+	serverConfig := testServerConfig(ServerConfig{
 		HeartbeatInterval:      &zero,
 		PayloadCryptoResolver:  NewE2EServerPayloadCryptoResolver(serverIdentity.Encryption),
 		RequireSessionKeyGrant: &required,
@@ -115,7 +130,15 @@ func TestFIPSCompatibleWebTTYMutualAuthWebTransportRoundTrip(t *testing.T) {
 			string(clientIdentity.Signing.KeyID): clientIdentity.Signing.PublicKey,
 		},
 		ServerID: "fips-shell",
-	}))
+	})
+	if !serverE2E {
+		serverConfig.PayloadCryptoResolver = nil
+		serverConfig.RequireSessionKeyGrant = nil
+		serverConfig.EndpointIdentity = nil
+		serverConfig.RequireClientProof = nil
+		serverConfig.AuthorizedClientSigningKeys = nil
+	}
+	handler := NewWebTTYHandler(serverConfig)
 	packetConn, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("ListenPacket() error = %v", err)
@@ -132,7 +155,9 @@ func TestFIPSCompatibleWebTTYMutualAuthWebTransportRoundTrip(t *testing.T) {
 		CheckOrigin: func(*http.Request) bool { return true },
 	}
 	webtransport.ConfigureHTTP3Server(server.H3)
+	tlsStates := make(chan tls.ConnectionState, 1)
 	mux.HandleFunc("/webtty", func(w http.ResponseWriter, r *http.Request) {
+		tlsStates <- *r.TLS
 		session, err := server.Upgrade(w, r)
 		if err != nil {
 			http.Error(w, "upgrade failed", http.StatusBadRequest)
@@ -142,10 +167,22 @@ func TestFIPSCompatibleWebTTYMutualAuthWebTransportRoundTrip(t *testing.T) {
 	})
 	errCh := make(chan error, 1)
 	go func() { errCh <- server.Serve(packetConn) }()
-	defer server.Close()
-	defer handler.Shutdown(t.Context())
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = handler.Shutdown(shutdown)
+		_ = server.Close()
+		select {
+		case err := <-errCh:
+			if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, net.ErrClosed) && !errors.Is(err, http.ErrServerClosed) {
+				t.Errorf("WebTransport server error = %v", err)
+			}
+		case <-shutdown.Done():
+			t.Error("WebTransport server did not stop within the shutdown deadline")
+		}
+	}()
 	serverPublic := serverIdentity.Public()
-	session, err := OpenClientSession(t.Context(), &SessionConfig{
+	clientConfig := &SessionConfig{
 		URL:                    "https://" + packetConn.LocalAddr().String() + "/webtty",
 		Transport:              WebTTYTransportWebTransport,
 		TLSConfig:              clientTLS,
@@ -156,9 +193,29 @@ func TestFIPSCompatibleWebTTYMutualAuthWebTransportRoundTrip(t *testing.T) {
 		EndpointIdentity:       clientIdentity,
 		ExpectedServerIdentity: &serverPublic,
 		ClientPrincipalID:      "fips-user",
-	})
+	}
+	if !clientE2E {
+		clientConfig.PayloadCrypto = nil
+		clientConfig.EndpointIdentity = nil
+		clientConfig.ExpectedServerIdentity = nil
+	}
+	session, err := OpenClientSession(t.Context(), clientConfig)
+	if serverE2E && !clientE2E {
+		if err == nil {
+			_ = session.Close()
+			t.Fatal("server accepted a client without its required E2E and identity proof")
+		}
+		if !strings.Contains(err.Error(), "requires authenticated E2E") {
+			t.Fatalf("server policy refusal = %v", err)
+		}
+		return
+	}
 	if err != nil {
 		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	state := <-tlsStates
+	if state.Version != tls.VersionTLS13 || (state.CipherSuite != tls.TLS_AES_128_GCM_SHA256 && state.CipherSuite != tls.TLS_AES_256_GCM_SHA384) {
+		t.Fatalf("WebTransport negotiated version=%x cipher=%x", state.Version, state.CipherSuite)
 	}
 	if err := session.SendText("fips-webtransport\n"); err != nil {
 		t.Fatalf("SendText() error = %v", err)
@@ -173,12 +230,65 @@ func TestFIPSCompatibleWebTTYMutualAuthWebTransportRoundTrip(t *testing.T) {
 	if stdout != "fips-webtransport" || stderr != "" {
 		t.Fatalf("stdout=%q stderr=%q", stdout, stderr)
 	}
-	select {
-	case err := <-errCh:
-		if err != nil && !strings.Contains(err.Error(), "server closed") {
-			t.Fatalf("WebTransport server error = %v", err)
-		}
-	default:
+}
+
+func TestFIPSProfileWebTTYTransportOnlyRejectsUnsafeTLSBeforeDial(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		tls  tls.Config
+		want string
+	}{
+		{name: "unverified", tls: tls.Config{InsecureSkipVerify: true}, want: "certificate verification"},
+		{name: "ech", tls: tls.Config{EncryptedClientHelloConfigList: []byte{1}}, want: "ECH"},
+		{name: "minimum", tls: tls.Config{MinVersion: tls.VersionTLS12}, want: "TLS 1.3"},
+		{name: "maximum", tls: tls.Config{MaxVersion: tls.VersionTLS12}, want: "TLS 1.3"},
+		{name: "curve", tls: tls.Config{CurvePreferences: []tls.CurveID{tls.X25519}}, want: "not approved"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			_, err := OpenClientSession(t.Context(), &SessionConfig{
+				URL: "rstrm://fips-fixture", Transport: WebTTYTransportWebTransport, TLSConfig: &test.tls,
+				DialPacketContext: func(context.Context, string) (net.PacketConn, net.Addr, error) {
+					calls++
+					return nil, nil, net.ErrClosed
+				},
+			})
+			if err == nil || !strings.Contains(err.Error(), test.want) || calls != 0 {
+				t.Fatalf("unsafe TLS: error=%v network calls=%d", err, calls)
+			}
+		})
+	}
+}
+
+func TestFIPSProfileWebTTYRejectsEitherLegacyEncryptionSuiteBeforeDial(t *testing.T) {
+	identity, err := GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := identity.Public()
+	for _, test := range []struct {
+		name     string
+		payload  PayloadCipherSuite
+		envelope KeyEnvelopeSuite
+	}{
+		{name: "payload", payload: PayloadCipherSuiteAES256GCM, envelope: KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce},
+		{name: "envelope", payload: PayloadCipherSuiteAES256GCMRandomNonce, envelope: KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			_, err := OpenClientSession(t.Context(), &SessionConfig{
+				URL: "rstrm://fips-fixture", Transport: WebTTYTransportWebTransport,
+				EndpointIdentity: identity, ExpectedServerIdentity: &public,
+				PayloadCrypto: &PayloadCrypto{SessionKeyGrant: &SessionKeyGrant{PayloadSuite: test.payload, KeyEnvelopeSuite: test.envelope}},
+				DialPacketContext: func(context.Context, string) (net.PacketConn, net.Addr, error) {
+					calls++
+					return nil, nil, net.ErrClosed
+				},
+			})
+			if err == nil || !strings.Contains(err.Error(), "FIPS encryption suites") || calls != 0 {
+				t.Fatalf("legacy suite: error=%v network calls=%d", err, calls)
+			}
+		})
 	}
 }
 

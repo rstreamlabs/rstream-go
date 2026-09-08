@@ -55,7 +55,7 @@ The implemented phase-one through phase-three profile covers:
 - private and published bytestream tunnels that do not select an excluded
   protocol;
 - published QUIC tunnels and ordinary HTTP/3 tunnels;
-- authenticated E2E WebTTY over HTTP/3/WebTransport;
+- WebTTY over HTTP/3/WebTransport, with transport encryption alone or authenticated application E2E;
 - explicit-key and EE standalone workspace-managed WebTTY clients and servers;
 - P-256 ECDH, HKDF-SHA256, and AES-256-GCM with internally generated random
   nonces for WebTTY session-key envelopes and terminal payloads.
@@ -81,8 +81,10 @@ The current phase excludes:
 | --- | --- | --- |
 | `rstream files --backend webdav` (default) | Read-only sharing with UI, downloads and ZIP | Rejected |
 | `rstream files --backend webrtc` | Read-only transfers with rstream STUN/TURN | Rejected; DTLS and TURN are outside the profile |
-| WebTTY filesystem, WebDAV | Supported when terminal E2E is disabled | Rejected |
-| WebTTY filesystem, WebRTC | Read-only when terminal E2E is disabled | Rejected |
+| WebTTY filesystem, WebDAV | Supported with WebSocket terminal transport and terminal E2E disabled | Rejected |
+| WebTTY filesystem, WebRTC | Read-only with WebSocket terminal transport and terminal E2E disabled | Rejected |
+
+The terminal transport and filesystem backend are independent choices. The current CLI only mounts filesystem HTTP and WebRTC signaling routes on its WebSocket server; a WebTransport terminal cannot yet expose either backend. WebDAV itself does not require a non-approved cryptographic algorithm, but the complete files CLI and filesystem client paths remain outside the qualified profile.
 
 Neither filesystem backend adds recipient-key file encryption or shares the terminal E2E envelope. Selecting WebDAV does not enable file sharing in the restricted profile. Use the standard build for these features; there is no automatic profile downgrade.
 
@@ -189,11 +191,20 @@ module semantic version, exact module build, and reviewed `quic-go` and
 
 ## WebTTY Profile
 
-Authenticated application E2E is a restriction of the current rstream profile,
-not an inherent FIPS 140-3 requirement to add encryption above QUIC/TLS. Transport
-encryption protects the connection between its TLS endpoints; application E2E
-also protects terminal content from an Engine that terminates that connection.
-This profile currently qualifies only the authenticated E2E WebTTY path.
+Application E2E is optional in the FIPS WebTTY profile. A transport-only session
+uses verified TLS 1.3/WebTransport and the approved cryptography of each FIPS
+artifact on its path. A protocol name or tunnel label does not attest that a
+remote endpoint runs a FIPS artifact: the deployment must establish that each
+TLS endpoint, including an Engine that terminates the connection, is inside its
+supported FIPS operating boundary.
+
+Server and workspace policies can still require authenticated E2E. The client
+cannot bypass that policy by omitting its E2E options. When application E2E is
+selected, only the P-256 key-envelope and random-nonce AES-GCM payload suites
+are accepted. Application E2E protects terminal content from an Engine that
+terminates transport encryption; transport-only sessions do not provide that
+additional protection. Managed recording remains encrypted at rest in both
+modes.
 
 The FIPS CLI defaults `webtty server`, `webtty client`, and `webtty exec` to
 WebTransport. Direct commands may still pass `--transport=webtransport`
@@ -201,8 +212,11 @@ explicitly; any other live transport is rejected before network I/O.
 For a published registered server, an `rstrm://` target is resolved to its
 verified public HTTPS/WebTransport endpoint so EE standalone can apply managed
 session policy and retain encrypted audit events. The FIPS CLI rejects an
-unpublished WebTransport target instead of tunnelling an opaque inner HTTP/3
-session that the engine cannot inspect.
+unpublished WebTransport target instead of using an unqualified private
+WebTransport path. An already known published HTTPS endpoint can be used with
+`--no-discovery --transport=webtransport`, a local `--auth-token-file` and,
+if needed, `--tls-ca-file`, without client control-plane discovery. These explicit
+options do not waive server admission or a workspace E2E requirement.
 
 FIPS builds create P-256 WebTTY endpoint identities and workspace-device
 identities by default. A standard CLI can prepare compatible material
