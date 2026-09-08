@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pion/transport/v4/stdnet"
 	"github.com/pion/webrtc/v4"
 	"github.com/rstreamlabs/rstream-go/internal/fipsprofile"
 )
@@ -68,7 +69,12 @@ func NewPeer(servers []webrtc.ICEServer, relay bool) (*webrtc.PeerConnection, er
 	if err := fipsprofile.Unavailable("Filesystem sharing"); err != nil {
 		return nil, err
 	}
+	network, err := stdnet.NewNet()
+	if err != nil {
+		return nil, err
+	}
 	settings := webrtc.SettingEngine{}
+	settings.SetNet(&peerNetwork{Net: network})
 	settings.SetSCTPMaxReceiveBufferSize(2 * ChunkSize * Window)
 	settings.SetIncludeLoopbackCandidate(true)
 	configuration := webrtc.Configuration{ICEServers: servers}

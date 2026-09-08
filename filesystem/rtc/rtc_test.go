@@ -59,6 +59,7 @@ func awaitClosed(t *testing.T, server *Server) {
 func TestTransferDirectAndTURN(t *testing.T) {
 	for _, relay := range []bool{false, true} {
 		t.Run(fmt.Sprintf("relay=%v", relay), func(t *testing.T) {
+			t.Parallel()
 			var servers []webrtc.ICEServer
 			if relay {
 				servers = testRelay(t)
