@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.32.0](https://github.com/rstreamlabs/rstream-go/compare/v1.31.0...v1.32.0) (2026-09-09)
+
+
+### Features
+
+* **files:** integrate file sharing with transport-aware WebTTY and FIPS policy ([9ed4aa7](https://github.com/rstreamlabs/rstream-go/commit/9ed4aa7adf9655f69638fad59f4a6f88cf7b8e26))
+
+
+### Bug Fixes
+
+* **files:** bound UDP writes during WebRTC negotiation ([b03110e](https://github.com/rstreamlabs/rstream-go/commit/b03110e25f4a4af9a0c5a980541afc06e3fbd5aa))
+* **webtty:** accept approved enrollment key algorithms ([c12b152](https://github.com/rstreamlabs/rstream-go/commit/c12b1528b55356361d7da3fd069311ba5876ddd5))
+* **webtty:** cancel Windows stdin reads without closing borrowed handles ([9e7d9d6](https://github.com/rstreamlabs/rstream-go/commit/9e7d9d6ba41eacda4d36c8f6502534b947de3c81))
+* **webtty:** preserve approved suites when loading endpoint identities ([acee9ee](https://github.com/rstreamlabs/rstream-go/commit/acee9ee76e961feb92160853b0773143cc5e6d35))
+* **webtty:** read Windows terminal geometry from its screen buffer ([22a9c9b](https://github.com/rstreamlabs/rstream-go/commit/22a9c9b593122fd4bf23b45532c763cf92d6a6d9))
+
 ## [1.31.0](https://github.com/rstreamlabs/rstream-go/compare/v1.30.0...v1.31.0) (2026-09-07)
 
 
