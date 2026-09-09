@@ -42,11 +42,11 @@ func DefaultAuthorizedClientKeysPath(identityName string) (string, error) {
 	if name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
 		return "", fmt.Errorf("authorized WebTTY client store name contains unsupported path characters")
 	}
-	home, err := os.UserHomeDir()
+	root, err := DefaultRstreamDataDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".rstream", "webtty", "authorized_clients", name+".json"), nil
+	return filepath.Join(root, "webtty", "authorized_clients", name+".json"), nil
 }
 
 func AuthorizedClientSigningKeyString(identity WebTTYEndpointIdentityPublic) string {

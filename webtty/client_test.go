@@ -14,12 +14,46 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/webtransport-go"
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
-type stdinEOFWriteFailureConn struct{}
+type stdinEOFWriteFailureConn struct{ err error }
+
+func TestRunClientDrainsReceivedOutputBeforeReturningExit(t *testing.T) {
+	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
+		defer conn.Close()
+		readWebTTYMessage(t, conn)
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}})
+		for range 32 {
+			writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{Type: pb.Data_TYPE_STDOUT, Payload: &pb.Data_Data{Data: []byte("out")}}}})
+			writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{Type: pb.Data_TYPE_STDERR, Payload: &pb.Data_Data{Data: []byte("err")}}}})
+		}
+		writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Close{Close: &pb.Close{ReturnCode: 7}}})
+	})
+	defer server.Close()
+	for attempt := range 32 {
+		var stdout, stderr bytes.Buffer
+		code, err := RunClient(t.Context(), &ClientConfig{
+			URL: testWebTTYURL(server.URL),
+			StdinReadContext: func(ctx context.Context, _ []byte) (int, error) {
+				<-ctx.Done()
+				return 0, ctx.Err()
+			},
+			Stdout: &stdout,
+			Stderr: &stderr,
+		})
+		if err != nil || code != 7 {
+			t.Fatalf("attempt %d: exit = %d, error = %v", attempt, code, err)
+		}
+		if stdout.String() != strings.Repeat("out", 32) || stderr.String() != strings.Repeat("err", 32) {
+			t.Fatalf("attempt %d: received %d stdout / %d stderr bytes, want 96 each", attempt, stdout.Len(), stderr.Len())
+		}
+	}
+}
 
 func (stdinEOFWriteFailureConn) Close() error { return nil }
 
@@ -31,7 +65,50 @@ func (stdinEOFWriteFailureConn) SetWriteDeadline(time.Time) error { return nil }
 
 func (stdinEOFWriteFailureConn) WriteControl(int, []byte, time.Time) error { return nil }
 
-func (stdinEOFWriteFailureConn) WriteMessage(int, []byte) error { return websocket.ErrCloseSent }
+func (c stdinEOFWriteFailureConn) WriteMessage(int, []byte) error {
+	if c.err != nil {
+		return c.err
+	}
+	return websocket.ErrCloseSent
+}
+
+func TestStdinSessionLoopPreservesTransportAndEncryptionFailures(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		err       error
+		crypto    bool
+		wantError bool
+	}{
+		{name: "closed pipe", err: io.ErrClosedPipe},
+		{name: "remote QUIC input closed", err: &quic.StreamError{Remote: true}},
+		{name: "local QUIC cancellation", err: &quic.StreamError{}, wantError: true},
+		{name: "remote QUIC failure", err: &quic.StreamError{Remote: true, ErrorCode: 7}, wantError: true},
+		{name: "remote WebTransport input closed", err: &webtransport.StreamError{Remote: true}},
+		{name: "remote WebTransport failure", err: &webtransport.StreamError{Remote: true, ErrorCode: 7}, wantError: true},
+		{name: "write timeout", err: context.DeadlineExceeded, wantError: true},
+		{name: "encryption closed pipe", err: io.ErrClosedPipe, crypto: true, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := &ClientConfig{}
+			if test.crypto {
+				cfg.PayloadCrypto = &PayloadCrypto{EncryptStdin: func(context.Context, []byte) (*EncryptedPayload, error) { return nil, test.err }}
+			}
+			session := &ClientSession{runtime: &clientRuntime{cfg: cfg, conn: stdinEOFWriteFailureConn{err: test.err}}}
+			errorsCh := make(chan error, 1)
+			(&clientRuntime{}).stdinSessionLoop(t.Context(), session, errorsCh, func(_ context.Context, buffer []byte) (int, error) { return copy(buffer, "input"), io.EOF })
+			select {
+			case err := <-errorsCh:
+				if !test.wantError || !errors.Is(err, test.err) {
+					t.Fatalf("error = %v, want error = %v", err, test.wantError)
+				}
+			default:
+				if test.wantError {
+					t.Fatal("failure was discarded as input closure")
+				}
+			}
+		})
+	}
+}
 
 type remoteTerminalReadConn struct {
 	payload []byte

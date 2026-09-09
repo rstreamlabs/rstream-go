@@ -57,9 +57,11 @@ type ClientConfig struct {
 	HeartbeatInterval      *time.Duration
 	Stdin                  io.Reader
 	StdinReadContext       func(context.Context, []byte) (int, error)
-	Stdout                 io.Writer
-	Stderr                 io.Writer
-	Logger                 *slog.Logger
+	// StdinReady delays input until a control grant without replacing the cancellable reader.
+	StdinReady <-chan struct{}
+	Stdout     io.Writer
+	Stderr     io.Writer
+	Logger     *slog.Logger
 }
 
 type AttachRole string
@@ -156,11 +158,19 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 		}
 	}
 	forwardStdin := resolved.Interactive || !runtime.hasStdinFD || !term.IsTerminal(runtime.stdinFD)
-	var readStdin func(context.Context, []byte) (int, error)
+	var readStdin clientStdinReadFunc
 	if forwardStdin {
-		readStdin, err = resolveClientStdinRead(resolved)
+		var closeStdin func() error
+		readStdin, closeStdin, err = resolveClientStdinRead(resolved)
 		if err != nil {
 			return -1, err
+		}
+		if closeStdin != nil {
+			defer func() {
+				if err := closeStdin(); err != nil {
+					resolved.Logger.Error("failed to close stdin reader", "error", err)
+				}
+			}()
 		}
 	}
 	session, err := OpenClientSession(ctx, resolved.sessionConfig())
@@ -225,6 +235,11 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 				return -1, err
 			}
 		case result := <-waitCh:
+			for event := range session.Events() {
+				if err := runtime.writeSessionEvent(event); err != nil {
+					return -1, err
+				}
+			}
 			if result.err != nil {
 				if pendingErr != nil {
 					return -1, pendingErr
@@ -279,6 +294,13 @@ func (c *clientRuntime) writeSessionEvent(event ClientSessionEvent) error {
 }
 
 func (c *clientRuntime) stdinSessionLoop(ctx context.Context, session *ClientSession, errCh chan<- error, readStdin func(context.Context, []byte) (int, error)) {
+	if c.cfg != nil && c.cfg.StdinReady != nil {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.cfg.StdinReady:
+		}
+	}
 	buffer := make([]byte, 32*1024)
 	for {
 		select {
@@ -289,6 +311,9 @@ func (c *clientRuntime) stdinSessionLoop(ctx context.Context, session *ClientSes
 		n, err := readStdin(ctx, buffer)
 		if n > 0 {
 			if werr := session.SendInputContext(ctx, buffer[:n]); werr != nil {
+				if errors.Is(werr, errClientStdinClosed) {
+					return
+				}
 				select {
 				case errCh <- fmt.Errorf("failed to send stdin payload: %w", werr):
 				default:
@@ -302,7 +327,7 @@ func (c *clientRuntime) stdinSessionLoop(ctx context.Context, session *ClientSes
 			}
 			if errors.Is(err, io.EOF) {
 				if werr := session.SendEOF(); werr != nil {
-					if session.runtime.closing.Load() {
+					if session.runtime.closing.Load() || errors.Is(werr, errClientStdinClosed) {
 						return
 					}
 					select {
@@ -330,23 +355,25 @@ type clientStdinDeadlineReader interface {
 	SetReadDeadline(time.Time) error
 }
 
-func resolveClientStdinRead(cfg *ClientConfig) (func(context.Context, []byte) (int, error), error) {
+type clientStdinReadFunc func(context.Context, []byte) (int, error)
+
+func resolveClientStdinRead(cfg *ClientConfig) (clientStdinReadFunc, func() error, error) {
 	if cfg.StdinReadContext != nil {
-		return cfg.StdinReadContext, nil
+		return cfg.StdinReadContext, nil, nil
 	}
 	if reader, ok := cfg.Stdin.(clientStdinContextReader); ok {
-		return reader.ReadContext, nil
+		return reader.ReadContext, nil, nil
 	}
 	if file, ok := cfg.Stdin.(*os.File); ok {
-		if readStdin := clientFileStdinRead(file); readStdin != nil {
-			return readStdin, nil
+		if readStdin, closeStdin, err := clientFileStdinRead(file); readStdin != nil || err != nil {
+			return readStdin, closeStdin, err
 		}
 	}
 	if reader, ok := cfg.Stdin.(clientStdinDeadlineReader); ok {
 		if err := reader.SetReadDeadline(time.Time{}); err == nil {
 			return func(ctx context.Context, buffer []byte) (int, error) {
 				return readClientStdinWithDeadline(ctx, reader, buffer)
-			}, nil
+			}, nil, nil
 		}
 	}
 	switch cfg.Stdin.(type) {
@@ -356,9 +383,9 @@ func resolveClientStdinRead(cfg *ClientConfig) (func(context.Context, []byte) (i
 				return 0, err
 			}
 			return cfg.Stdin.Read(buffer)
-		}, nil
+		}, nil, nil
 	}
-	return nil, fmt.Errorf("stdin reader must support cancellation through StdinReadContext, ReadContext, or SetReadDeadline")
+	return nil, nil, fmt.Errorf("stdin reader must support cancellation through StdinReadContext, ReadContext, or SetReadDeadline")
 }
 
 func readClientStdinWithDeadline(ctx context.Context, reader clientStdinDeadlineReader, buffer []byte) (int, error) {
@@ -408,10 +435,25 @@ func (c *clientRuntime) resizeSessionLoop(ctx context.Context, session *ClientSe
 	if !c.hasTerminal {
 		return
 	}
+	fd, closeOutput, err := terminalOutputDescriptor(c.stdinFD)
+	if err != nil {
+		select {
+		case errCh <- err:
+		default:
+		}
+		return
+	}
+	if closeOutput != nil {
+		defer func() {
+			if err := closeOutput(); err != nil {
+				c.logger.Error("failed to close terminal output handle", "error", err)
+			}
+		}()
+	}
 	lastRows := -1
 	lastCols := -1
 	sendSize := func() error {
-		cols, rows, err := term.GetSize(c.stdinFD)
+		cols, rows, err := term.GetSize(fd)
 		if err != nil {
 			return fmt.Errorf("failed to read terminal size: %w", err)
 		}
@@ -972,7 +1014,7 @@ func (c *clientRuntime) readLoop(done <-chan struct{}, eventCh chan<- clientEven
 				}
 			} else {
 				select {
-				case eventCh <- clientEvent{err: fmt.Errorf("failed to read websocket message: %w", err)}:
+				case eventCh <- clientEvent{err: fmt.Errorf("failed to read WebTTY message: %w", err)}:
 				case <-done:
 				}
 			}
@@ -980,7 +1022,7 @@ func (c *clientRuntime) readLoop(done <-chan struct{}, eventCh chan<- clientEven
 		}
 		if messageType != websocket.BinaryMessage {
 			select {
-			case eventCh <- clientEvent{err: fmt.Errorf("%w: websocket message type %d", errClientUnexpected, messageType)}:
+			case eventCh <- clientEvent{err: fmt.Errorf("%w: WebTTY message type %d", errClientUnexpected, messageType)}:
 			case <-done:
 			}
 			return

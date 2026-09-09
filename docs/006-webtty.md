@@ -1,5 +1,7 @@
 # WebTTY CLI and Runtime Reference
 
+For a standalone read-only share, use [`rstream files`](010-file-sharing.md). WebTTY and this command share the Go filesystem/WebDAV implementation. `NewFileSystemHandler` keeps its API and write options and now owns a root handle: SDK embedders should close the returned handler through `io.Closer` after stopping HTTP requests.
+
 WebTTY exposes remote terminal sessions through rstream. A WebTTY server can run
 as a Tunnel WebTTY server or as a registered server used by managed WebTTY
 features.
@@ -570,7 +572,7 @@ browser and CLI device grants so they remain compatible with WebCrypto. That
 workspace envelope suite is distinct from the WebTTY terminal payload HPKE suite
 above.
 
-The WebDAV filesystem sidecar is rejected when WebTTY E2E payload encryption is
+The filesystem sidecar (WebDAV or WebRTC) is rejected when WebTTY E2E payload encryption is
 active, because it is a separate data surface.
 
 Registered servers use local WebTTY enrollment and identity files under
@@ -655,3 +657,106 @@ The managed engine runtime is validated from the engine repository:
 ```bash
 bash test/e2e/webtty-managed-engine-runtime.sh
 ```
+
+## Transport discovery and engine-only access
+
+`rstream.webtty.transport=plain|websocket|webtransport` describes the single
+WebTTY transport actually served by this tunnel. It is independent of the
+TLS/QUIC transport used to reach the rstream engine and of the E2E policy.
+Both lightweight and registered servers publish it before signing admission.
+The inventory exposes it as `transport`, alongside `tunnel_type` and
+`http_version`.
+
+CLI `client`/`exec`, UI and local MCP resolve this information before opening a
+session or producing E2E proofs. An explicit `--transport` must agree with an
+advertised transport. Unknown labels and contradictory tunnel properties fail
+without a fallback. For older servers without the label, a WebTTY datagram
+tunnel implies WebTransport; other tunnels retain the historical WebSocket
+default and accept an explicit override for ambiguous legacy `plain` servers.
+
+```bash
+rstream webtty server --rstream --name shell --transport webtransport
+rstream webtty exec --url rstrm://shell -- whoami
+```
+
+`rstrm://` always uses a private dial, including when the tunnel is published.
+Lightweight `plain` servers create private raw bytestream tunnels; explicitly
+publishing one is rejected. A browser cannot open this raw transport. Registered
+WebTransport servers currently require publication, but their `rstrm://` address
+also supports a private dial over TLS or QUIC with managed session recording.
+
+Transport discovery uses the engine inventory. Workspace enrollment and online
+credential resolution may use the control plane. An installed device with a
+stream-only token can bypass both inventories and control-plane resolution:
+
+```bash
+rstream webtty exec --url rstrm://shell \
+  --no-discovery --transport webtransport \
+  --known-server-key "$SERVER_ENDPOINT_IDENTITY" \
+  --identity-file /etc/rstream/client.identity.json \
+  --client-credential-file /etc/rstream/client.credential.json \
+  -- whoami
+```
+
+Use an explicit engine context without a region selector for this path. Supply
+`--exec-path` if the server uses a non-default HTTP endpoint. Manual E2E does not
+need a workspace client credential. Workspace E2E needs a valid signed local
+credential; this option does not enroll or approve a device, change server
+trust, or bypass engine/server authorization. The local MCP accepts `transport`
+and `no_discovery`, with local trust, identity and credential environment
+variables. `RSTREAM_WEBTTY_CLIENT_CREDENTIAL_FILE` selects a credential file
+for CLI, UI and local MCP.
+
+`RSTREAM_DATA_DIR` selects an absolute directory for local WebTTY identities,
+known servers, enrollments and workspace device state. Its default is
+`~/.rstream`. The main connection configuration still uses `--config` or
+`RSTREAM_CONFIG`. This permits isolated device/test state without changing the
+user's home directory.
+## Preparing workspace access for an engine-only device
+
+Workspace enrollment and approval can use the control plane during setup. Runtime
+connections do not require it when the device has its engine configuration, a
+token permitting private dial, and local endpoint identities and credentials.
+
+On the enrolled and approved device, prepare a registered workspace-managed server:
+
+```sh
+rstream webtty client prepare <server-id> --directory ./webtty-access
+```
+
+This command uses the control plane to resolve the server and the approved local
+device. It creates a new private directory containing `identity.json`,
+`known-servers.json` and `client-credential.json`. It refuses to overwrite an
+existing directory. The identity contains private keys: keep these files on the
+approved device and protect them like its other credentials. No account or engine
+token is exported.
+
+After preparation, configure the engine address, TLS trust and restricted token
+locally, then connect without discovery:
+
+```sh
+rstream webtty exec --url rstrm://<tunnel-name-or-id> \
+  --no-discovery --transport webtransport \
+  --identity-file ./webtty-access/identity.json \
+  --known-servers-file ./webtty-access/known-servers.json \
+  --client-credential-file ./webtty-access/client-credential.json \
+  -- printf 'engine-only access\n'
+```
+
+Use the tunnel name or tunnel ID advertised by the running server. The default
+tunnel name of a registered server is its server ID; its display name requires
+inventory resolution and is not an alias for engine-only dialing. Choose the
+server's actual transport. `--no-discovery` requires an explicit engine address
+instead of a region selector. The prepared files also work with the C++ client
+for its supported transports (`plain` and `websocket`), using `--uri` instead of
+`--url`. Preparation does not grant access beyond the workspace device and token
+policies enforced by the server and engine.
+
+
+## Filesystem transport
+
+`webtty server --fs-root ./exports --fs-backend webdav` retains the existing writable sidecar (unless `--fs-read-only` is set). Select `--fs-backend webrtc` for read-only Pion DataChannel transfers with rstream STUN/TURN. Upload, write, mkdir, rename, copy and delete fail explicitly in that mode; there is no write fallback. `--fs-max-upload-size` cannot be configured for WebRTC. Terminal `--execution-mode` is independent.
+
+CLI `webtty fs` and MCP filesystem tools discover the backend automatically. SDK `WebTTYFileSystem` uses the same `RemoteFileSystem` transport as the standalone file browser. `webtty list -o json` advertises `fs_backend`, `fs_mode` and `fs_path`; missing backend labels on older servers default to WebDAV. Filesystem E2E remains unsupported. See [protocol and qualification](011-filesystem-webrtc.md).
+
+The filesystem sidecar currently requires WebSocket terminal transport. The WebTransport server does not yet mount the WebDAV or WebRTC signaling endpoints; selecting WebRTC does not remove this limitation. With `webtty fs --no-discovery`, a restricted stream token can use an explicit tunnel id/name and `--fs-path` without inventory access. The default discovery path also accepts standalone `rstream files` HTTP tunnels.

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # See LICENSE file in the project root for license information.
 set -euo pipefail
+umask 077
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 REPO_PARENT="$(cd "${ROOT}/.." && pwd)"
@@ -12,29 +13,39 @@ KEEP_RUNTIME="${RSTREAM_KEEP_RUNTIME:-0}"
 PIDS=()
 PASS=0
 FAIL=0
+COMPLETED=0
+PROFILE="${RSTREAM_WEBTTY_RUNTIME_PROFILE:-full-direct}"
+export RSTREAM_DATA_DIR="$TMP_DIR/state"
 
 cleanup() {
+  local status=$?
   local pid
   for pid in "${PIDS[@]:-}"; do
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
   done
+  if ! python3 "$ROOT/test/e2e/webtty_runtime_report.py" "$TMP_DIR" "$PROFILE" "$COMPLETED" "$status"; then
+    if [ "$status" -eq 0 ]; then status=1; fi
+  fi
   if [ "$KEEP_RUNTIME" = "1" ]; then
     printf "kept runtime directory: %s\n" "$TMP_DIR" >&2
   else
     rm -rf "$TMP_DIR"
   fi
+  exit "$status"
 }
 trap cleanup EXIT
 
 log_pass() {
   printf "PASS %-48s\n" "$1"
   PASS=$((PASS + 1))
+  printf 'PASS\t%s\n' "$1" >>"$TMP_DIR/cases.tsv"
 }
 
 log_fail() {
   printf "FAIL %-48s %s\n" "$1" "$2" >&2
   FAIL=$((FAIL + 1))
+  printf 'FAIL\t%s\n' "$1" >>"$TMP_DIR/cases.tsv"
 }
 
 run_case() {
@@ -154,7 +165,7 @@ start_go_server_with_home() {
   local home=$2
   shift 2
   local log="$TMP_DIR/server-${label//[^A-Za-z0-9_.-]/_}.log"
-  HOME="$home" "$RSTREAM" webtty server "$@" >"$log" 2>&1 &
+  RSTREAM_DATA_DIR="$home/.rstream" "$RSTREAM" webtty server "$@" >"$log" 2>&1 &
   PIDS+=("$!")
 }
 
@@ -162,9 +173,12 @@ go_exec_text() {
   local expected=$1
   shift
   local out
-  out=$("$RSTREAM" webtty exec "$@" 2>&1)
+  if ! out=$("$RSTREAM" webtty exec "$@" 2>&1); then
+    printf "%s\n" "$out"
+    return 1
+  fi
   printf "%s\n" "$out"
-  printf "%s" "$out" | grep -q "$expected"
+  printf "%s" "$out" | python3 "$ROOT/test/e2e/webtty_exec_assert.py" "$expected"
 }
 
 go_exec_text_with_home() {
@@ -172,18 +186,24 @@ go_exec_text_with_home() {
   local expected=$2
   shift 2
   local out
-  out=$(HOME="$home" "$RSTREAM" webtty exec "$@" 2>&1)
+  if ! out=$(RSTREAM_DATA_DIR="$home/.rstream" "$RSTREAM" webtty exec "$@" 2>&1); then
+    printf "%s\n" "$out"
+    return 1
+  fi
   printf "%s\n" "$out"
-  printf "%s" "$out" | grep -q "$expected"
+  printf "%s" "$out" | python3 "$ROOT/test/e2e/webtty_exec_assert.py" "$expected"
 }
 
 go_client_stdin() {
   local expected=$1
   shift
   local out
-  out=$(printf "payload\n" | "$RSTREAM" webtty client "$@" 2>&1)
+  if ! out=$(printf "payload\n" | "$RSTREAM" webtty client "$@" 2>&1); then
+    printf "%s\n" "$out"
+    return 1
+  fi
   printf "%s\n" "$out"
-  printf "%s" "$out" | grep -q "$expected"
+  [ "$out" = "$expected" ]
 }
 
 start_cpp_server() {
@@ -199,7 +219,7 @@ start_cpp_server_with_home() {
   local home=$2
   shift 2
   local log="$TMP_DIR/cpp-server-${label//[^A-Za-z0-9_.-]/_}.log"
-  HOME="$home" "$CPP_SERVER" "$@" >"$log" 2>&1 &
+  RSTREAM_DATA_DIR="$home/.rstream" "$CPP_SERVER" "$@" >"$log" 2>&1 &
   PIDS+=("$!")
 }
 
@@ -207,9 +227,12 @@ cpp_client_text() {
   local expected=$1
   shift
   local out
-  out=$("$CPP_CLIENT" "$@" 2>&1)
+  if ! out=$("$CPP_CLIENT" "$@" 2>&1); then
+    printf "%s\n" "$out"
+    return 1
+  fi
   printf "%s\n" "$out"
-  printf "%s" "$out" | grep -q "$expected"
+  [ "$out" = "$expected" ]
 }
 
 cpp_client_text_with_home() {
@@ -217,9 +240,12 @@ cpp_client_text_with_home() {
   local expected=$2
   shift 2
   local out
-  out=$(HOME="$home" "$CPP_CLIENT" "$@" 2>&1)
+  if ! out=$(RSTREAM_DATA_DIR="$home/.rstream" "$CPP_CLIENT" "$@" 2>&1); then
+    printf "%s\n" "$out"
+    return 1
+  fi
   printf "%s\n" "$out"
-  printf "%s" "$out" | grep -q "$expected"
+  [ "$out" = "$expected" ]
 }
 
 go_client_remote_exit_before_eof() {
@@ -235,7 +261,7 @@ go_client_remote_exit_before_eof() {
   local started
   started=$(python3 -c 'import time; print(time.monotonic())')
   local rc=0
-  "$RSTREAM" webtty exec "$@" -- /usr/bin/env python3 -c "import sys; print(len(sys.stdin.buffer.read($expected_size)))" <"$fifo" >"$output" 2>&1 || rc=$?
+  python3 "$ROOT/test/e2e/run_with_deadline.py" "$TIMEOUT_SECONDS" "$RSTREAM" webtty exec "$@" -- /usr/bin/env python3 -c "import sys; print(len(sys.stdin.buffer.read($expected_size)))" <"$fifo" >"$output" 2>&1 || rc=$?
   local finished
   finished=$(python3 -c 'import time; print(time.monotonic())')
   kill "$producer" 2>/dev/null || true
@@ -244,13 +270,13 @@ go_client_remote_exit_before_eof() {
     cat "$output"
     return "$rc"
   fi
-  python3 - "$started" "$finished" <<'PY'
+  python3 - "$started" "$finished" <<'PY' || return 1
 import sys
 elapsed = float(sys.argv[2]) - float(sys.argv[1])
 if elapsed >= 4:
     raise SystemExit(f"client waited {elapsed:.3f}s for local stdin EOF after remote exit")
 PY
-  grep -q "$expected_size" "$output"
+  python3 "$ROOT/test/e2e/webtty_exec_assert.py" "$expected_size" --newline <"$output"
 }
 
 cpp_client_remote_exit_before_eof() {
@@ -266,7 +292,7 @@ cpp_client_remote_exit_before_eof() {
   local started
   started=$(python3 -c 'import time; print(time.monotonic())')
   local rc=0
-  "$CPP_CLIENT" "$@" -i -T -- /usr/bin/env python3 -c "import sys; print(len(sys.stdin.buffer.read($expected_size)))" <"$fifo" >"$output" 2>&1 || rc=$?
+  python3 "$ROOT/test/e2e/run_with_deadline.py" "$TIMEOUT_SECONDS" "$CPP_CLIENT" "$@" -i -T -- /usr/bin/env python3 -c "import sys; print(len(sys.stdin.buffer.read($expected_size)))" <"$fifo" >"$output" 2>&1 || rc=$?
   local finished
   finished=$(python3 -c 'import time; print(time.monotonic())')
   kill "$producer" 2>/dev/null || true
@@ -275,13 +301,13 @@ cpp_client_remote_exit_before_eof() {
     cat "$output"
     return "$rc"
   fi
-  python3 - "$started" "$finished" <<'PY'
+  python3 - "$started" "$finished" <<'PY' || return 1
 import sys
 elapsed = float(sys.argv[2]) - float(sys.argv[1])
 if elapsed >= 4:
     raise SystemExit(f"client waited {elapsed:.3f}s for local stdin EOF after remote exit")
 PY
-  grep -q "$expected_size" "$output"
+  [ "$(cat "$output")" = "$expected_size" ]
 }
 
 go_client_archive() {
@@ -290,7 +316,7 @@ go_client_archive() {
     printf "%s\n" "$out"
     return 1
   fi
-  printf "%s" "$out" | grep -q "$ARCHIVE_DIGEST"
+  printf "%s" "$out" | python3 "$ROOT/test/e2e/webtty_exec_assert.py" "$ARCHIVE_DIGEST" --newline
 }
 
 cpp_client_archive() {
@@ -299,7 +325,7 @@ cpp_client_archive() {
     printf "%s\n" "$out"
     return 1
   fi
-  printf "%s" "$out" | grep -q "$ARCHIVE_DIGEST"
+  [ "$out" = "$ARCHIVE_DIGEST" ]
 }
 
 find_cpp_binary() {
@@ -321,6 +347,24 @@ find_cpp_binary() {
   return 1
 }
 
+case "$PROFILE" in
+  full-direct|go-direct) ;;
+  *) printf 'ERROR unknown direct runtime profile: %s\n' "$PROFILE" >&2; exit 2 ;;
+esac
+for required in python3 openssl; do
+  command -v "$required" >/dev/null || { printf 'ERROR missing required command: %s\n' "$required" >&2; exit 2; }
+done
+if [ "$PROFILE" = "full-direct" ]; then
+  for required in node npm; do
+    command -v "$required" >/dev/null || { printf 'ERROR missing required command: %s\n' "$required" >&2; exit 2; }
+  done
+  [ -f "$JS_ROOT/packages/webtty/dist/index.mjs" ] || { printf 'ERROR missing required built JS SDK: %s\n' "$JS_ROOT" >&2; exit 2; }
+  CPP_SERVER="${RSTREAM_CPP_WEBTTY_SERVER_BIN:-$(find_cpp_binary rstream-webtty-server || true)}"
+  CPP_CLIENT="${RSTREAM_CPP_WEBTTY_CLIENT_BIN:-$(find_cpp_binary rstream-webtty-client || true)}"
+  [ -x "${CPP_SERVER:-}" ] && [ -x "${CPP_CLIENT:-}" ] || { printf 'ERROR missing required C++ WebTTY binaries\n' >&2; exit 2; }
+  chrome_bin="${RSTREAM_WEBTTY_CHROME_BIN:-$(command -v google-chrome || command -v chromium || printf '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')}"
+  [ -x "$chrome_bin" ] || { printf 'ERROR missing required Chrome browser: %s\n' "$chrome_bin" >&2; exit 2; }
+fi
 RSTREAM=$(build_rstream)
 if [ ! -x "$RSTREAM" ]; then
   printf "ERROR missing rstream CLI: %s\n" "$RSTREAM" >&2
@@ -360,22 +404,22 @@ dynamic_home_client="$TMP_DIR/dynamic-client-home"
 mkdir -p "$dynamic_home_server" "$dynamic_home_client"
 dynamic_server_identity="$TMP_DIR/dynamic-server.identity.json"
 dynamic_client_identity="$TMP_DIR/dynamic-client.identity.json"
-HOME="$dynamic_home_server" "$RSTREAM" webtty identity create --name shell -o json >"$dynamic_server_identity"
-HOME="$dynamic_home_client" "$RSTREAM" webtty identity create --name operator-workstation -o json >"$dynamic_client_identity"
+RSTREAM_DATA_DIR="$dynamic_home_server/.rstream" "$RSTREAM" webtty identity create --name shell -o json >"$dynamic_server_identity"
+RSTREAM_DATA_DIR="$dynamic_home_client/.rstream" "$RSTREAM" webtty identity create --name operator-workstation -o json >"$dynamic_client_identity"
 dynamic_known_server=$(known_server_from_identity "$dynamic_server_identity")
 dynamic_authorized_client=$(known_server_from_identity "$dynamic_client_identity")
-HOME="$dynamic_home_client" "$RSTREAM" webtty known-server add shell --key "$dynamic_known_server" >/dev/null
+RSTREAM_DATA_DIR="$dynamic_home_client/.rstream" "$RSTREAM" webtty known-server add shell --key "$dynamic_known_server" >/dev/null
 dynamic_e2e_port=$(reserve_port)
 dynamic_e2e_addr="127.0.0.1:$dynamic_e2e_port"
 start_go_server_with_home "go-ws-e2e-dynamic-authz" "$dynamic_home_server" --listen "$dynamic_e2e_addr" --allow-unauthenticated --e2e --identity shell
 wait_tcp "$dynamic_e2e_addr"
-run_case_expect_fail "go/ws/e2e-dynamic-unauthorized" "signing key is not authorized" env HOME="$dynamic_home_client" "$RSTREAM" webtty exec --url "ws://$dynamic_e2e_addr" --known-server-key "$dynamic_known_server" --identity operator-workstation -- /bin/sh -c "printf no"
-HOME="$dynamic_home_server" "$RSTREAM" webtty authorized-client add operator-workstation --identity shell --key "$dynamic_authorized_client" >/dev/null
+run_case_expect_fail "go/ws/e2e-dynamic-unauthorized" "signing key is not authorized" env RSTREAM_DATA_DIR="$dynamic_home_client/.rstream" "$RSTREAM" webtty exec --url "ws://$dynamic_e2e_addr" --known-server-key "$dynamic_known_server" --identity operator-workstation -- /bin/sh -c "printf no"
+RSTREAM_DATA_DIR="$dynamic_home_server/.rstream" "$RSTREAM" webtty authorized-client add operator-workstation --identity shell --key "$dynamic_authorized_client" >/dev/null
 run_case "go/ws/e2e-dynamic-authorized" go_exec_text_with_home "$dynamic_home_client" "go-dynamic-e2e" --url "ws://$dynamic_e2e_addr" --known-server-key "$dynamic_known_server" --identity operator-workstation -- /bin/sh -c "printf go-dynamic-e2e"
-HOME="$dynamic_home_client" "$RSTREAM" webtty known-server set-identity shell --identity operator-workstation >/dev/null
+RSTREAM_DATA_DIR="$dynamic_home_client/.rstream" "$RSTREAM" webtty known-server set-identity shell --identity operator-workstation >/dev/null
 run_case "go/ws/e2e-known-server-client-identity" go_exec_text_with_home "$dynamic_home_client" "go-known-server-identity" --url "ws://$dynamic_e2e_addr" --known-server shell -- /bin/sh -c "printf go-known-server-identity"
-HOME="$dynamic_home_server" "$RSTREAM" webtty authorized-client remove operator-workstation --identity shell >/dev/null
-run_case_expect_fail "go/ws/e2e-dynamic-removed" "signing key is not authorized" env HOME="$dynamic_home_client" "$RSTREAM" webtty exec --url "ws://$dynamic_e2e_addr" --known-server-key "$dynamic_known_server" --identity operator-workstation -- /bin/sh -c "printf no"
+RSTREAM_DATA_DIR="$dynamic_home_server/.rstream" "$RSTREAM" webtty authorized-client remove operator-workstation --identity shell >/dev/null
+run_case_expect_fail "go/ws/e2e-dynamic-removed" "signing key is not authorized" env RSTREAM_DATA_DIR="$dynamic_home_client/.rstream" "$RSTREAM" webtty exec --url "ws://$dynamic_e2e_addr" --known-server-key "$dynamic_known_server" --identity operator-workstation -- /bin/sh -c "printf no"
 
 plain_port=$(reserve_port)
 plain_addr="127.0.0.1:$plain_port"
@@ -391,7 +435,6 @@ wait_tcp "$plain_e2e_addr"
 plain_known_server=$(known_server_from_identity "$plain_e2e_identity")
 run_case "go/plain/e2e" go_exec_text "go-plain-e2e" --transport plain --url "$plain_e2e_addr" --known-server-key "$plain_known_server" --identity-file "$runtime_client_identity" -- /bin/sh -c "printf go-plain-e2e"
 
-if command -v openssl >/dev/null 2>&1; then
   make_cert
 
   plain_tls_port=$(reserve_port)
@@ -421,9 +464,6 @@ if command -v openssl >/dev/null 2>&1; then
   sleep 0.5
   wt_known_server=$(known_server_from_identity "$wt_e2e_identity")
   run_case "go/webtransport/e2e" go_exec_text "go-webtransport-e2e" --transport webtransport --url "https://$wt_e2e_addr/" --tls-insecure-skip-verify --known-server-key "$wt_known_server" --identity-file "$runtime_client_identity" -- /bin/sh -c "printf go-webtransport-e2e"
-else
-  printf "SKIP %-48s openssl not available\n" "go/plain-tls+webtransport"
-fi
 
 go_cfg_port=$(reserve_port)
 go_cfg_addr="127.0.0.1:$go_cfg_port"
@@ -449,7 +489,7 @@ run_case_expect_fail "go/registered/requires-os-policy" "login execution mode re
 run_case_expect_fail "go/registered/missing-enrollment" "no such file or directory" env RSTREAM_ENGINE=127.0.0.1:1 RSTREAM_AUTHENTICATION_TOKEN=token "$RSTREAM" webtty server --server-id runtime-missing --execution-mode spawn
 
 echo "=== js client against go server ==="
-if [ -f "$JS_ROOT/packages/webtty/package.json" ]; then
+if [ "$PROFILE" = "full-direct" ]; then
   js_port=$(reserve_port)
   js_addr="127.0.0.1:$js_port"
   js_fs="$TMP_DIR/js-fs"
@@ -485,21 +525,12 @@ payload = {
 with open(sys.argv[2], "w", encoding="utf-8") as stream:
     json.dump(payload, stream)
 PY
-  run_case "js/ws/e2e-default-trust" env HOME="$TMP_DIR/js-home" WEBTTY_RUNTIME_E2E_URL="ws://$js_e2e_addr" WEBTTY_RUNTIME_E2E_SERVER_IDENTITY="$js_known_server" WEBTTY_RUNTIME_E2E_CLIENT_IDENTITY_FILE="$runtime_client_identity" WEBTTY_RUNTIME_E2E_LOCAL_TRUST=1 WEBTTY_RUNTIME_E2E_KEY_CONTEXT="runtime/js-local-trust" npm --prefix "$JS_ROOT/packages/webtty" run test:runtime
-  chrome_bin="${RSTREAM_WEBTTY_CHROME_BIN:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
-  if [ -x "$chrome_bin" ] && command -v openssl >/dev/null 2>&1; then
-    run_case "js/browser/webtransport/runtime" env RSTREAM_BIN="$RSTREAM" RSTREAM_JS_REPO="$JS_ROOT" RSTREAM_WEBTTY_CHROME_BIN="$chrome_bin" node "$ROOT/test/e2e/webtty-browser-webtransport.mjs"
-  else
-    printf "SKIP %-48s Chrome or openssl not available\n" "js/browser/webtransport/runtime"
-  fi
-else
-  printf "SKIP %-48s JS repo not found at %s\n" "js/runtime" "$JS_ROOT"
+  run_case "js/ws/e2e-default-trust" env RSTREAM_DATA_DIR="$TMP_DIR/js-home/.rstream" WEBTTY_RUNTIME_E2E_URL="ws://$js_e2e_addr" WEBTTY_RUNTIME_E2E_SERVER_IDENTITY="$js_known_server" WEBTTY_RUNTIME_E2E_CLIENT_IDENTITY_FILE="$runtime_client_identity" WEBTTY_RUNTIME_E2E_LOCAL_TRUST=1 WEBTTY_RUNTIME_E2E_KEY_CONTEXT="runtime/js-local-trust" npm --prefix "$JS_ROOT/packages/webtty" run test:runtime
+  run_case "js/browser/webtransport/runtime" env RSTREAM_BIN="$RSTREAM" RSTREAM_JS_REPO="$JS_ROOT" RSTREAM_WEBTTY_CHROME_BIN="$chrome_bin" node "$ROOT/test/e2e/webtty-browser-webtransport.mjs"
 fi
 
 echo "=== c++ cli interop ==="
-CPP_SERVER="${RSTREAM_CPP_WEBTTY_SERVER_BIN:-$(find_cpp_binary rstream-webtty-server || true)}"
-CPP_CLIENT="${RSTREAM_CPP_WEBTTY_CLIENT_BIN:-$(find_cpp_binary rstream-webtty-client || true)}"
-if [ -x "${CPP_SERVER:-}" ] && [ -x "${CPP_CLIENT:-}" ]; then
+if [ "$PROFILE" = "full-direct" ]; then
   EARLY_EXIT_SIZE=1048576
   EARLY_EXIT_PAYLOAD="$TMP_DIR/early-exit-payload"
   dd if=/dev/urandom of="$EARLY_EXIT_PAYLOAD" bs="$EARLY_EXIT_SIZE" count=1 status=none
@@ -563,14 +594,14 @@ if [ -x "${CPP_SERVER:-}" ] && [ -x "${CPP_CLIENT:-}" ]; then
   cpp_dynamic_home="$TMP_DIR/cpp-dynamic-server-home"
   mkdir -p "$cpp_dynamic_home"
   cpp_dynamic_identity_json="$TMP_DIR/cpp-dynamic-server.identity.json"
-  HOME="$cpp_dynamic_home" "$RSTREAM" webtty identity create --name shell -o json >"$cpp_dynamic_identity_json"
+  RSTREAM_DATA_DIR="$cpp_dynamic_home/.rstream" "$RSTREAM" webtty identity create --name shell -o json >"$cpp_dynamic_identity_json"
   cpp_dynamic_known_server=$(known_server_from_identity "$cpp_dynamic_identity_json")
   cpp_dynamic_port=$(reserve_port)
   cpp_dynamic_addr="127.0.0.1:$cpp_dynamic_port"
   start_cpp_server_with_home "cpp-ws-e2e-dynamic-authz" "$cpp_dynamic_home" --uri="$cpp_dynamic_addr" --transport=websocket --allow-unauthenticated --e2e --identity=shell
   wait_tcp "$cpp_dynamic_addr"
   run_case_expect_fail "cpp-server/e2e-dynamic-unauthorized" "WebTTY client signing key is not authorized" "$RSTREAM" webtty exec --url "ws://$cpp_dynamic_addr" --known-server-key "$cpp_dynamic_known_server" --identity-file "$runtime_client_identity" -- /bin/sh -c "printf no"
-  HOME="$cpp_dynamic_home" "$RSTREAM" webtty authorized-client add runtime --identity shell --key "$runtime_authorized_client" >/dev/null
+  RSTREAM_DATA_DIR="$cpp_dynamic_home/.rstream" "$RSTREAM" webtty authorized-client add runtime --identity shell --key "$runtime_authorized_client" >/dev/null
   run_case "go-client/cpp-server/ws/e2e-dynamic-authorized" go_exec_text "cpp-dynamic-e2e" --url "ws://$cpp_dynamic_addr" --known-server-key "$cpp_dynamic_known_server" --identity-file "$runtime_client_identity" -- /bin/sh -c "printf cpp-dynamic-e2e"
 
   cpp_env_port=$(reserve_port)
@@ -591,7 +622,7 @@ if [ -x "${CPP_SERVER:-}" ] && [ -x "${CPP_CLIENT:-}" ]; then
   go_cpp_known_server=$(known_server_from_identity "$go_cpp_e2e_identity")
   go_cpp_wrong_known_server=$(known_server_from_identity "$runtime_denied_client_identity")
   mkdir -p "$TMP_DIR/cpp-empty-home"
-  run_case_expect_fail "cpp-client/go-server/ws/e2e-requires-known-server" "E2E client mode requires" env HOME="$TMP_DIR/cpp-empty-home" "$CPP_CLIENT" --uri="$go_cpp_e2e_addr" --transport=websocket --e2e -I -T -- /bin/sh -c "printf no"
+  run_case_expect_fail "cpp-client/go-server/ws/e2e-requires-known-server" "E2E client mode requires" env RSTREAM_DATA_DIR="$TMP_DIR/cpp-empty-home/.rstream" "$CPP_CLIENT" --uri="$go_cpp_e2e_addr" --transport=websocket --e2e -I -T -- /bin/sh -c "printf no"
   run_case_expect_fail "cpp-client/go-server/ws/e2e-rejects-wrong-server-key" "WebTTY server endpoint identity does not match" "$CPP_CLIENT" --uri="$go_cpp_e2e_addr" --transport=websocket --known-server-key="$go_cpp_wrong_known_server" --identity-file="$runtime_client_identity" -I -T -- /bin/sh -c "printf no"
   run_case_expect_fail "cpp-client/go-server/ws/e2e-rejects-unauthorized-client" "WebTTY client signing key is not authorized" "$CPP_CLIENT" --uri="$go_cpp_e2e_addr" --transport=websocket --known-server-key="$go_cpp_known_server" --identity-file="$runtime_denied_client_identity" -I -T -- /bin/sh -c "printf no"
   run_case "cpp-client/go-server/ws/e2e-authenticated" cpp_client_text "go-server-e2e" --uri="$go_cpp_e2e_addr" --transport=websocket --known-server-key="$go_cpp_known_server" --identity-file="$runtime_client_identity" -I -T -- /bin/sh -c "printf go-server-e2e"
@@ -665,10 +696,9 @@ EOF
   wait_tcp "$cpp_cfg_addr"
   cpp_cfg_known_server=$(known_server_from_identity "$cpp_cfg_identity")
   run_case "cpp/config/ws/e2e" go_exec_text "cpp-config-e2e" --url "ws://$cpp_cfg_addr" --known-server-key "$cpp_cfg_known_server" --identity-file "$runtime_client_identity" -- /bin/sh -c "printf cpp-config-e2e"
-else
-  printf "SKIP %-48s C++ WebTTY binaries not found\n" "c++/interop"
 fi
 
+COMPLETED=1
 echo "=== summary ==="
 printf "PASS %d\nFAIL %d\n" "$PASS" "$FAIL"
 if [ "$FAIL" -ne 0 ]; then

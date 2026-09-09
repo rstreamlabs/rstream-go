@@ -30,6 +30,7 @@ import (
 	"github.com/quic-go/webtransport-go"
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/controlplane"
+	"github.com/rstreamlabs/rstream-go/filesystem"
 	"github.com/rstreamlabs/rstream-go/webtty"
 	"github.com/spf13/cobra"
 )
@@ -102,12 +103,14 @@ type webTTYClientCryptoConfig struct {
 
 type webTTYClientRstreamResolution struct {
 	URL           string
+	Server        *webtty.ServerInfo
 	PublishedHost string
 	RuntimeE2E    *webTTYClientRuntimeE2EContext
 	Scope         webTTYClientSecurityScope
 }
 
 type webTTYClientPublishedResolution struct {
+	Server     *webtty.ServerInfo
 	RuntimeE2E *webTTYClientRuntimeE2EContext
 	Scope      webTTYClientSecurityScope
 }
@@ -453,6 +456,12 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 	if err != nil {
 		return err
 	}
+	handlerHandedOff := false
+	defer func() {
+		if !handlerHandedOff {
+			closeWebTTYHTTPHandler(handler, logger)
+		}
+	}()
 	if !useRstream && transport == webtty.WebTTYTransportWebTransport {
 		addr, _ := cmd.Flags().GetString("listen")
 		certFile, _ := cmd.Flags().GetString("tls-cert-file")
@@ -565,6 +574,7 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 		return servePlainWebTTY(ctx, listener, terminalHandler, shutdownTimeout, logger, generations, releaseRstreamResources)
 	}
 	resourcesHandedOff = releaseRstreamResources != nil
+	handlerHandedOff = true
 	return serveWebSocketWebTTY(ctx, listener, server, terminalHandler, shutdownTimeout, logger, generations, releaseRstreamResources)
 }
 
@@ -583,6 +593,8 @@ func serveWebSocketWebTTY(ctx context.Context, listener net.Listener, server *ht
 	close(stopShutdownWatcher)
 	<-shutdownWatcherDone
 	cleanup := func(shutdownCtx context.Context) {
+		defer closeWebTTYHTTPHandler(server.Handler, logger)
+		defer server.Close()
 		if shutdownErr := server.Shutdown(shutdownCtx); shutdownErr != nil && !errors.Is(shutdownErr, http.ErrServerClosed) && !errors.Is(shutdownErr, context.Canceled) && !errors.Is(shutdownErr, context.DeadlineExceeded) {
 			logger.Warn("http webtty server shutdown failed", "error", shutdownErr)
 		}
@@ -861,7 +873,8 @@ func init() {
 	webttyServerCmd.Flags().StringArray("authorized-client-key", nil, "authorized WebTTY client signing key, as signing_key_id:signing_public_key")
 	webttyServerCmd.Flags().String("authorized-clients-file", "", "authorized WebTTY client keys file")
 	webttyServerCmd.Flags().StringArray("label", nil, "set WebTTY inventory labels (key=value, may be specified multiple times)")
-	webttyServerCmd.Flags().String("fs-root", "", "serve a WebDAV filesystem sidecar rooted at this directory")
+	webttyServerCmd.Flags().String("fs-root", "", "serve a filesystem sidecar rooted at this directory")
+	webttyServerCmd.Flags().String("fs-backend", filesystem.BackendWebDAV, "filesystem backend (webdav, webrtc; WebRTC is read-only)")
 	webttyServerCmd.Flags().Bool("fs-read-only", false, "serve the WebDAV filesystem sidecar in read-only mode")
 	webttyServerCmd.Flags().Int64("fs-max-upload-size", defaultWebTTYFSMaxUploadSize, "maximum WebDAV upload size in bytes")
 	webttyCmd.AddCommand(webttyServerCmd)
@@ -884,6 +897,7 @@ func init() {
 func addWebTTYClientFlags(cmd *cobra.Command, outputDefault string) {
 	cmd.Flags().String("url", "ws://127.0.0.1:8080", "WebTTY endpoint URL")
 	cmd.Flags().String("transport", defaultWebTTYClientTransportFlag(), "WebTTY transport override (plain, websocket, webtransport)")
+	cmd.Flags().Bool("no-discovery", false, "skip engine and control-plane metadata; requires --transport and locally configured security")
 	cmd.Flags().BoolP("interactive", "i", false, "enable interactive mode")
 	cmd.Flags().BoolP("no-interactive", "I", false, "disable interactive mode")
 	cmd.MarkFlagsMutuallyExclusive("interactive", "no-interactive")
@@ -902,6 +916,7 @@ func addWebTTYClientFlags(cmd *cobra.Command, outputDefault string) {
 	cmd.Flags().Bool("e2e", false, "require end-to-end encrypted WebTTY terminal content")
 	cmd.Flags().String("identity", "", "named local WebTTY client identity")
 	cmd.Flags().String("identity-file", "", "local WebTTY client identity file")
+	cmd.Flags().String("client-credential-file", "", "local signed workspace WebTTY client credential; requires authenticated E2E")
 	cmd.Flags().String("known-server", "", "local known WebTTY server name")
 	cmd.Flags().StringArray("known-server-key", nil, "known WebTTY server key or endpoint identity")
 	cmd.Flags().String("known-servers-file", "", "JSON file containing known WebTTY server endpoint identities")
@@ -964,8 +979,15 @@ func validateWebTTYServerFlags(cmd *cobra.Command) error {
 		return fmt.Errorf("--name, --publish and --no-publish require --rstream")
 	}
 	fsRoot, _ := cmd.Flags().GetString("fs-root")
-	if strings.TrimSpace(fsRoot) == "" && (cmd.Flags().Changed("fs-read-only") || cmd.Flags().Changed("fs-max-upload-size")) {
-		return fmt.Errorf("--fs-read-only and --fs-max-upload-size require --fs-root")
+	fsBackend, _ := cmd.Flags().GetString("fs-backend")
+	if _, err := filesystem.ResolveBackend(fsBackend); err != nil {
+		return err
+	}
+	if strings.TrimSpace(fsRoot) == "" && (cmd.Flags().Changed("fs-backend") || cmd.Flags().Changed("fs-read-only") || cmd.Flags().Changed("fs-max-upload-size")) {
+		return fmt.Errorf("--fs-backend, --fs-read-only and --fs-max-upload-size require --fs-root")
+	}
+	if fsBackend == filesystem.BackendWebRTC && cmd.Flags().Changed("fs-max-upload-size") {
+		return fmt.Errorf("--fs-max-upload-size requires --fs-backend=webdav; WebRTC is read-only")
 	}
 	fsMaxUploadSize, _ := cmd.Flags().GetInt64("fs-max-upload-size")
 	if strings.TrimSpace(fsRoot) != "" && fsMaxUploadSize <= 0 {
@@ -997,6 +1019,11 @@ func validateWebTTYServerFlags(cmd *cobra.Command) error {
 			return fmt.Errorf("--transport=webtransport requires --tls-cert-file and --tls-key-file")
 		}
 	} else if transport == webtty.WebTTYTransportPlain {
+		if useRstream && !registeredWebTTYServerRequested(cmd) {
+			if publish := getBoolPtr(cmd, "publish"); publish != nil && *publish {
+				return fmt.Errorf("lightweight plain WebTTY only supports private dialing; remove --publish or use websocket/webtransport")
+			}
+		}
 		certFile, _ := cmd.Flags().GetString("tls-cert-file")
 		keyFile, _ := cmd.Flags().GetString("tls-key-file")
 		if strings.TrimSpace(certFile) != "" || strings.TrimSpace(keyFile) != "" {
@@ -1381,7 +1408,12 @@ func webTTYClientCryptoWithRuntimeAndScope(ctx context.Context, cmd *cobra.Comma
 	if err != nil {
 		return webTTYClientCryptoConfig{}, err
 	}
-	return webTTYClientCryptoFromSources(ctx, e2eRequested, sources, serverKeysConfigured, runtimeE2E, scope)
+	cryptoConfig, err := webTTYClientCryptoFromSources(ctx, e2eRequested, sources, serverKeysConfigured, runtimeE2E, scope)
+	if err != nil {
+		return webTTYClientCryptoConfig{}, err
+	}
+	credentialFile, _ := cmd.Flags().GetString("client-credential-file")
+	return withWebTTYClientCredential(cryptoConfig, credentialFile)
 }
 
 func webTTYClientCryptoForRuntimeAndScope(ctx context.Context, runtimeE2E *webTTYClientRuntimeE2EContext, scope webTTYClientSecurityScope) (webTTYClientCryptoConfig, error) {
@@ -1393,7 +1425,7 @@ func webTTYClientCryptoForRuntimeAndScope(ctx context.Context, runtimeE2E *webTT
 	if err != nil {
 		return webTTYClientCryptoConfig{}, err
 	}
-	return cryptoConfig, nil
+	return withWebTTYClientCredential(cryptoConfig, "")
 }
 
 func webTTYClientCryptoFromSources(ctx context.Context, e2eRequested bool, sources []webTTYKnownServerSource, serverKeysConfigured bool, runtimeE2E *webTTYClientRuntimeE2EContext, scope webTTYClientSecurityScope) (webTTYClientCryptoConfig, error) {
@@ -2167,7 +2199,12 @@ func newWebTTYServerHTTPHandler(cmd *cobra.Command, terminalHandler *webtty.Hand
 	}
 	fsReadOnly, _ := cmd.Flags().GetBool("fs-read-only")
 	fsMaxUploadSize, _ := cmd.Flags().GetInt64("fs-max-upload-size")
-	fsHandler, err := webtty.NewFileSystemHandler(&webtty.FileSystemConfig{Root: fsRoot, ReadOnly: fsReadOnly, MaxUploadSize: &fsMaxUploadSize, Logger: logger})
+	backend, _ := cmd.Flags().GetString("fs-backend")
+	rtcConfig, err := filesystemRTCConfig(cmd, backend)
+	if err != nil {
+		return nil, err
+	}
+	fsHandler, err := webtty.NewFileSystemHandler(&webtty.FileSystemConfig{Root: fsRoot, Backend: backend, RTC: rtcConfig, ReadOnly: fsReadOnly, MaxUploadSize: &fsMaxUploadSize, Logger: logger})
 	if err != nil {
 		return nil, err
 	}
@@ -2175,7 +2212,7 @@ func newWebTTYServerHTTPHandler(cmd *cobra.Command, terminalHandler *webtty.Hand
 	mux.Handle(webtty.WebTTYDefaultFSPath, webtty.NewBearerAuthHandler(fsHandler, authToken, allowUnauthenticated))
 	mux.Handle(webtty.WebTTYDefaultFSPath+"/", webtty.NewBearerAuthHandler(fsHandler, authToken, allowUnauthenticated))
 	mux.Handle("/", terminalHandler)
-	return mux, nil
+	return &webTTYFilesystemMux{Handler: mux, filesystem: fsHandler}, nil
 }
 
 func newWebTTYServerTunnelProperties(cmd *cobra.Command, enrollment *webTTYServerEnrollmentFile) rstream.TunnelProperties {
@@ -2184,6 +2221,9 @@ func newWebTTYServerTunnelProperties(cmd *cobra.Command, enrollment *webTTYServe
 		publish = false
 	}
 	transport, _ := webTTYTransportFromFlag(cmd)
+	if enrollment == nil && transport == webtty.WebTTYTransportPlain {
+		publish = false
+	}
 	name := getStringPtr(cmd, "name")
 	if name == nil && enrollment != nil && strings.TrimSpace(enrollment.ServerID) != "" {
 		name = rstream.StringPtr(enrollment.ServerID)
@@ -2220,6 +2260,12 @@ func newWebTTYServerTunnelProperties(cmd *cobra.Command, enrollment *webTTYServe
 }
 
 func applyWebTTYServerLabels(cmd *cobra.Command, labels map[string]string) {
+	if transport, err := webTTYTransportFromFlag(cmd); err == nil {
+		if transport == "" {
+			transport = webtty.WebTTYTransportWebSocket
+		}
+		labels[webtty.WebTTYTransportLabelKey] = string(transport)
+	}
 	if mode, err := webTTYExecutionModeFromFlag(cmd); err == nil {
 		labels[webtty.WebTTYExecutionModeLabelKey] = string(mode)
 	}
@@ -2231,8 +2277,10 @@ func applyWebTTYServerLabels(cmd *cobra.Command, labels map[string]string) {
 		return
 	}
 	fsReadOnly, _ := cmd.Flags().GetBool("fs-read-only")
+	fsBackend, _ := cmd.Flags().GetString("fs-backend")
+	labels[webtty.WebTTYFSBackendLabelKey] = fsBackend
 	fsMode := webtty.WebTTYFSModeReadWrite
-	if fsReadOnly {
+	if fsReadOnly || fsBackend == filesystem.BackendWebRTC {
 		fsMode = webtty.WebTTYFSModeReadOnly
 	}
 	labels[webtty.WebTTYCapabilitiesLabelKey] = webtty.WebTTYCapabilityExec + "," + webtty.WebTTYCapabilityFS
@@ -2316,6 +2364,19 @@ func webttyClientUsesRstream(raw string) bool {
 	return strings.HasPrefix(strings.ToLower(raw), "rstrm://")
 }
 
+func resolveWebTTYClientExecURL(raw string, transport webtty.WebTTYTransport, execPath string, server *webtty.ServerInfo) (string, error) {
+	if transport == webtty.WebTTYTransportPlain {
+		if strings.TrimSpace(execPath) != "" {
+			return "", fmt.Errorf("--exec-path requires websocket or webtransport WebTTY transport")
+		}
+		return raw, nil
+	}
+	if strings.TrimSpace(execPath) == "" && server != nil && server.ExecPath != nil {
+		execPath = *server.ExecPath
+	}
+	return resolveWebTTYExecURL(raw, execPath)
+}
+
 func resolveWebTTYExecURL(raw string, execPath string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if strings.TrimSpace(execPath) == "" {
@@ -2333,7 +2394,7 @@ func resolveWebTTYExecURL(raw string, execPath string) (string, error) {
 		return "", fmt.Errorf("invalid WebTTY exec URL: %w", err)
 	}
 	switch strings.ToLower(strings.TrimSpace(u.Scheme)) {
-	case "ws", "wss", "rstrm":
+	case "ws", "wss", "https", "wt", "wts", "webtransport", "rstrm":
 	default:
 		return "", fmt.Errorf("unsupported WebTTY exec URL scheme %q", u.Scheme)
 	}
@@ -2402,6 +2463,15 @@ func newWebTTYClientPacketDialContext(client *rstream.Client) func(context.Conte
 	}
 }
 
+func webTTYClientRstreamTLSConfig(transport webtty.WebTTYTransport, configured *tls.Config) *tls.Config {
+	if configured != nil || transport != webtty.WebTTYTransportWebTransport {
+		return configured
+	}
+	// The authenticated rstream connection protects this internal QUIC hop;
+	// endpoint identity is verified separately by the WebTTY E2E handshake.
+	return &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}
+}
+
 func extractWebTTYTunnelTarget(addr string) (string, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -2451,10 +2521,10 @@ func resolveWebTTYClientRstream(ctx context.Context, runtime *resolvedRuntime, r
 		}
 	}
 	if serverInfo != nil && !webTTYClientRstreamNeedsControlPlane(serverInfo) {
-		return webTTYClientRstreamResolution{URL: urlValue, PublishedHost: publishedHost, Scope: scope}, nil
+		return webTTYClientRstreamResolution{URL: urlValue, Server: serverInfo, PublishedHost: publishedHost, Scope: scope}, nil
 	}
 	if runtime == nil || runtime.Resolved.Context == nil || strings.TrimSpace(runtime.Resolved.Context.ProjectEndpoint) == "" {
-		return webTTYClientRstreamResolution{URL: urlValue, PublishedHost: publishedHost, Scope: scope}, nil
+		return webTTYClientRstreamResolution{URL: urlValue, Server: serverInfo, PublishedHost: publishedHost, Scope: scope}, nil
 	}
 	controlClient := newRuntimeControlPlaneClient(runtime.Resolved)
 	project, ok := webTTYProjectFromRuntimeServerInfo(runtime, serverInfo)
@@ -2471,7 +2541,7 @@ func resolveWebTTYClientRstream(ctx context.Context, runtime *resolvedRuntime, r
 			return webTTYClientRstreamResolution{}, mapControlPlaneError(err)
 		}
 		if server == nil {
-			return webTTYClientRstreamResolution{URL: urlValue, PublishedHost: publishedHost, Scope: scope}, nil
+			return webTTYClientRstreamResolution{URL: urlValue, Server: serverInfo, PublishedHost: publishedHost, Scope: scope}, nil
 		}
 		serverID = strings.TrimSpace(server.ID)
 		urlValue, err = webTTYURLWithRstreamTarget(urlValue, serverID)
@@ -2491,14 +2561,15 @@ func resolveWebTTYClientRstream(ctx context.Context, runtime *resolvedRuntime, r
 			scope.Target = strings.TrimSpace(target)
 		}
 		if !webTTYClientRstreamNeedsControlPlane(serverInfo) {
-			return webTTYClientRstreamResolution{URL: urlValue, PublishedHost: publishedHost, Scope: scope}, nil
+			return webTTYClientRstreamResolution{URL: urlValue, Server: serverInfo, PublishedHost: publishedHost, Scope: scope}, nil
 		}
 	}
 	if serverID == "" {
-		return webTTYClientRstreamResolution{URL: urlValue, PublishedHost: publishedHost, Scope: scope}, nil
+		return webTTYClientRstreamResolution{URL: urlValue, Server: serverInfo, PublishedHost: publishedHost, Scope: scope}, nil
 	}
 	return webTTYClientRstreamResolution{
 		URL:           urlValue,
+		Server:        serverInfo,
 		PublishedHost: publishedHost,
 		RuntimeE2E: &webTTYClientRuntimeE2EContext{
 			controlClient: controlClient,
@@ -2507,6 +2578,17 @@ func resolveWebTTYClientRstream(ctx context.Context, runtime *resolvedRuntime, r
 		},
 		Scope: scope,
 	}, nil
+}
+
+func resolveWebTTYClientRstreamWithDiscovery(ctx context.Context, runtime *resolvedRuntime, client *rstream.Client, raw string, noDiscovery bool) (webTTYClientRstreamResolution, error) {
+	if !noDiscovery {
+		return resolveWebTTYClientRstream(ctx, runtime, client, raw)
+	}
+	target, err := webTTYClientRstreamTarget(raw)
+	if err != nil {
+		return webTTYClientRstreamResolution{}, err
+	}
+	return webTTYClientRstreamResolution{URL: raw, Scope: webTTYClientSecurityScope{Target: target}}, nil
 }
 
 func webTTYRuntimePublishedHost(serverInfo *webtty.ServerInfo) string {
@@ -2551,6 +2633,7 @@ func resolveWebTTYClientPublished(ctx context.Context, runtime *resolvedRuntime,
 	}
 	runtimeE2E, err := webTTYClientRuntimeE2EContextFromServerInfo(ctx, runtime, *serverInfo)
 	resolution := &webTTYClientPublishedResolution{
+		Server:     serverInfo,
 		RuntimeE2E: runtimeE2E,
 		Scope:      webTTYClientSecurityScopeFromServerInfo(target, serverInfo),
 	}
@@ -2797,17 +2880,11 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 	if err != nil {
 		return err
 	}
-	execPath, _ := cmd.Flags().GetString("exec-path")
-	if transport == webtty.WebTTYTransportPlain {
-		if strings.TrimSpace(execPath) != "" {
-			return fmt.Errorf("--exec-path requires websocket WebTTY transport")
-		}
-	} else {
-		urlValue, err = resolveWebTTYExecURL(urlValue, execPath)
-		if err != nil {
-			return err
-		}
+	noDiscovery, _ := cmd.Flags().GetBool("no-discovery")
+	if noDiscovery && transport == "" {
+		return fmt.Errorf("--no-discovery requires --transport (plain, websocket, webtransport)")
 	}
+	execPath, _ := cmd.Flags().GetString("exec-path")
 	interactive, allocateTTY := webTTYClientTerminalModes(cmd, args, options)
 	envVars, _ := cmd.Flags().GetStringArray("env")
 	workdir := getStringPtr(cmd, "workdir")
@@ -2842,8 +2919,9 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 	var runtimeE2E *webTTYClientRuntimeE2EContext
 	var securityScope webTTYClientSecurityScope
 	var rstreamClient *rstream.Client
+	var serverInfo *webtty.ServerInfo
 	if webttyClientUsesRstream(urlValue) {
-		runtime, err := resolveRuntime(cmd, true, true)
+		runtime, err := resolveRuntimeWithRegionDiscovery(cmd, true, true, !noDiscovery)
 		if err != nil {
 			return fmt.Errorf("failed to resolve runtime: %w", err)
 		}
@@ -2852,18 +2930,24 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 			return fmt.Errorf("failed to create rstream client: %w", err)
 		}
 		defer closeRstreamClientLogged(rstreamClient, logger)
-		rstreamResolution, err := resolveWebTTYClientRstream(ctx, runtime, rstreamClient, urlValue)
+		rstreamResolution, err := resolveWebTTYClientRstreamWithDiscovery(ctx, runtime, rstreamClient, urlValue, noDiscovery)
 		if err != nil {
 			return err
 		}
 		urlValue = rstreamResolution.URL
+		serverInfo = rstreamResolution.Server
+		transport, err = rstreamResolution.Server.ResolveTransport(transport)
+		if err != nil {
+			return err
+		}
+		clientCfg.Transport = transport
 		securityScope = rstreamResolution.Scope
 		urlValue, err = webTTYURLWithManagedSessionMode(urlValue, interactive)
 		if err != nil {
 			return err
 		}
 		runtimeE2E = rstreamResolution.RuntimeE2E
-		if transport == webtty.WebTTYTransportWebTransport && rstreamResolution.PublishedHost != "" {
+		if rstream.FIPSProfileEnabled() && transport == webtty.WebTTYTransportWebTransport && rstreamResolution.PublishedHost != "" {
 			urlValue, err = webTTYURLWithPublishedHost(urlValue, rstreamResolution.PublishedHost)
 			if err != nil {
 				return err
@@ -2883,13 +2967,11 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 			clientCfg.DialContext = newWebTTYClientDialContext(rstreamClient)
 			if transport == webtty.WebTTYTransportWebTransport {
 				clientCfg.DialPacketContext = newWebTTYClientPacketDialContext(rstreamClient)
-				if clientCfg.TLSConfig == nil {
-					clientCfg.TLSConfig = &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13}
-				}
+				clientCfg.TLSConfig = webTTYClientRstreamTLSConfig(transport, clientCfg.TLSConfig)
 			}
 		}
 		clientCfg.URL = urlValue
-	} else if authToken != nil && strings.TrimSpace(*authToken) != "" {
+	} else if !noDiscovery && authToken != nil && strings.TrimSpace(*authToken) != "" {
 		runtime, resolveErr := resolveRuntime(cmd, true, true)
 		if resolveErr == nil {
 			runtimeClient, clientErr := newClientFromResolved(runtime.Resolved)
@@ -2901,7 +2983,12 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 						return resolutionErr
 					}
 					runtimeE2E = publishedResolution.RuntimeE2E
+					serverInfo = publishedResolution.Server
 					securityScope = publishedResolution.Scope
+					clientCfg.Transport, err = publishedResolution.Server.ResolveTransport(transport)
+					if err != nil {
+						return err
+					}
 				} else if resolutionErr != nil {
 					logger.Debug("unable to resolve published WebTTY server metadata", "error", resolutionErr)
 				}
@@ -2911,6 +2998,10 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 		} else {
 			logger.Debug("unable to resolve rstream runtime for published WebTTY metadata", "error", resolveErr)
 		}
+	}
+	clientCfg.URL, err = resolveWebTTYClientExecURL(clientCfg.URL, clientCfg.Transport, execPath, serverInfo)
+	if err != nil {
+		return err
 	}
 	cryptoConfig, err := webTTYClientCryptoWithRuntimeAndScope(ctx, cmd, runtimeE2E, securityScope)
 	if err != nil {
@@ -3010,5 +3101,25 @@ func webTTYSessionConfigFromClientConfig(cfg *webtty.ClientConfig) *webtty.Sessi
 		CloseDeadline:          cfg.CloseDeadline,
 		HeartbeatInterval:      cfg.HeartbeatInterval,
 		Logger:                 cfg.Logger,
+	}
+}
+
+type webTTYFilesystemMux struct {
+	http.Handler
+	filesystem http.Handler
+}
+
+func (h *webTTYFilesystemMux) Close() error {
+	if closer, ok := h.filesystem.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+func closeWebTTYHTTPHandler(handler http.Handler, logger *slog.Logger) {
+	if closer, ok := handler.(io.Closer); ok {
+		if err := closer.Close(); err != nil {
+			logger.Warn("close WebTTY filesystem", "error", err)
+		}
 	}
 }

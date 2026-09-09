@@ -5,12 +5,14 @@ package webtty
 const (
 	WebTTYApplicationProtocol      = "rstream.webtty"
 	WebTTYApplicationProtocolKey   = webTTYApplicationProtocolKey
+	WebTTYTransportLabelKey        = "rstream.webtty.transport"
 	WebTTYCapabilitiesLabelKey     = webTTYCapabilitiesLabel
 	WebTTYCapabilityExec           = "exec"
 	WebTTYCapabilityFS             = "fs"
 	WebTTYDefaultExecPath          = "/"
 	WebTTYDefaultFSMode            = WebTTYFSModeReadWrite
 	WebTTYDefaultFSPath            = "/fs"
+	WebTTYFSBackendLabelKey        = "rstream.webtty.fs.backend"
 	WebTTYExecPathLabelKey         = webTTYExecPathLabel
 	WebTTYCustomLabelPrefix        = webTTYLabelPrefix
 	WebTTYE2ELabelKey              = webTTYE2ELabel

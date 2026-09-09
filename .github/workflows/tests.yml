@@ -14,6 +14,26 @@ concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name != 'schedule' }}
 jobs:
+  filesystem-platforms:
+    name: filesystem behavior (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Rooted filesystem, WebRTC, streaming, HTTP and embedded UI
+        run: go test -count=1 ./filesystem/... ./fileserver/...
+      - name: Actual CLI and MCP file transfers across both backends
+        run: go test -count=1 ./cmd/rstream/cmd -run '^TestFilesystem(CLIAndMCPBackendMatrix|WebRTCThroughCLIAndMCP|WebRTCPreparedContextAvoidsControlPlane)$'
   fast:
     name: format, generate, vet, build, and unit tests
     runs-on: ubuntu-latest
@@ -153,8 +173,30 @@ jobs:
         run: |
           set -euo pipefail
           go test -race -shuffle=on -count="${REPEAT}" ./...
+  windows-stdin-race:
+    name: Windows stdin race and lifecycle tests
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Test native Windows stdin with the race detector
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:PATH = "C:\msys64\mingw64\bin;" + $env:PATH
+          $env:CGO_ENABLED = '1'
+          gcc --version
+          if ($LASTEXITCODE -ne 0) { throw 'MinGW is required for the Windows race detector' }
+          go test -race -count=1 -run '^(TestWindowsStdinReader.*|TestRunClientWindows(StdinLifecycle|TerminalGeometry)|TestRunWebTTYClientCaptureForwardsPipedStdin)$' ./webtty ./cmd/rstream/cmd
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   webtty-runtime:
-    name: WebTTY CLI and Go runtime workflows
+    name: WebTTY Go direct profile (partial coverage)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -169,9 +211,12 @@ jobs:
         env:
           RSTREAM_KEEP_RUNTIME: "1"
         run: ./test/e2e/webtty-cli-workflows.sh
-      - name: Run WebTTY Go runtime matrix
+      - name: Validate WebTTY runtime coverage and deadline guards
+        run: python3 -m unittest discover -s test/e2e -p 'test_*.py'
+      - name: Run WebTTY Go direct profile
         env:
           RSTREAM_KEEP_RUNTIME: "1"
+          RSTREAM_WEBTTY_RUNTIME_PROFILE: go-direct
         run: ./test/e2e/webtty-runtime-matrix.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()

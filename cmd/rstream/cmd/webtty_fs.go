@@ -18,6 +18,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/filesystem"
 	"github.com/rstreamlabs/rstream-go/webtty"
 	"github.com/spf13/cobra"
 )
@@ -30,10 +31,13 @@ type webTTYFSClient struct {
 }
 
 func (c *webTTYFSClient) Close() error {
-	if c == nil || c.rstreamClient == nil {
+	if c == nil {
 		return nil
 	}
 	c.client.CloseIdleConnections()
+	if c.rstreamClient == nil {
+		return nil
+	}
 	return c.rstreamClient.Close()
 }
 
@@ -76,8 +80,8 @@ type webDAVResourceType struct {
 
 var webttyFSCmd = &cobra.Command{
 	Use:          "fs",
-	Short:        "Access a WebTTY filesystem sidecar",
-	Long:         "Access a WebTTY filesystem sidecar. Paths are relative to the server --fs-root: / is the configured filesystem root, not necessarily the remote host filesystem root.",
+	Short:        "Access a WebTTY or rstream files filesystem",
+	Long:         "Access a WebTTY filesystem sidecar or an rstream files share. Paths are relative to the exported root: / is the configured filesystem root, not necessarily the remote host filesystem root.",
 	GroupID:      "webtty-connect",
 	SilenceUsage: true,
 	Args:         cobra.NoArgs,
@@ -227,6 +231,7 @@ func init() {
 	webttyFSCmd.PersistentFlags().SortFlags = false
 	webttyFSCmd.PersistentFlags().String("url", "ws://127.0.0.1:8080", "WebTTY server URL (http://, https://, ws://, wss://, or rstrm://<tunnel-id-or-name>)")
 	webttyFSCmd.PersistentFlags().String("fs-path", "", "advertised WebTTY filesystem sidecar path")
+	webttyFSCmd.PersistentFlags().Bool("no-discovery", false, "dial the supplied tunnel id or name without inventory access; use --fs-path for a non-default path")
 	webttyFSCmd.PersistentFlags().String("auth-token-file", "", "read local WebTTY bearer token from file")
 	webttyFSListCmd.Flags().StringP("output", "o", "table", "output mode (table, json)")
 	webttyFSCmd.AddCommand(webttyFSListCmd)
@@ -269,7 +274,8 @@ func newWebTTYFSClient(cmd *cobra.Command) (result *webTTYFSClient, err error) {
 			return nil, fmt.Errorf("failed to create rstream client: %w", err)
 		}
 		rstreamClient = ownRstreamClient(client)
-		serverInfo, err := resolveWebTTYRuntimeServerInfo(cmd.Context(), client, target)
+		noDiscovery, _ := cmd.Flags().GetBool("no-discovery")
+		serverInfo, err := resolveWebTTYFilesystemServer(cmd.Context(), client, target, noDiscovery)
 		if err != nil {
 			return nil, err
 		}
@@ -290,12 +296,50 @@ func newWebTTYFSClient(cmd *cobra.Command) (result *webTTYFSClient, err error) {
 		}
 		httpClient = &http.Client{Transport: &http.Transport{DialContext: newWebTTYFSDialContext(client, target)}}
 	}
-	return &webTTYFSClient{client: httpClient, baseURL: baseURL, authToken: authToken, rstreamClient: rstreamClient}, nil
+	return &webTTYFSClient{client: filesystem.NewHTTPClient(baseURL, httpClient), baseURL: baseURL, authToken: authToken, rstreamClient: rstreamClient}, nil
+}
+
+func resolveWebTTYFilesystemServer(ctx context.Context, client *rstream.Client, target string, noDiscovery bool) (*webtty.ServerInfo, error) {
+	if noDiscovery {
+		return &webtty.ServerInfo{Target: target, TunnelID: target, Capabilities: []string{webtty.WebTTYCapabilityFS}}, nil
+	}
+	list, err := client.ListTunnels(ctx, &rstream.ListTunnelsParams{Filters: &rstream.ListTunnelsFilters{Status: rstream.StringPtr("online")}})
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve filesystem tunnel; use --no-discovery with an explicit target when inventory access is unavailable: %w", err)
+	}
+	if list == nil {
+		return nil, nil
+	}
+	return selectWebTTYFilesystemServer(*list, target)
+}
+
+func selectWebTTYFilesystemServer(tunnels []rstream.TunnelInventory, target string) (*webtty.ServerInfo, error) {
+	servers := webtty.ParseServers(tunnels)
+	for _, tunnel := range tunnels {
+		if tunnel.Protocol == nil || *tunnel.Protocol != rstream.ProtocolHTTP || tunnel.Labels[webtty.WebTTYApplicationProtocolKey] == webtty.WebTTYApplicationProtocol {
+			continue
+		}
+		if trimOptionalString(tunnel.ID) == "" || (trimOptionalString(tunnel.ID) != target && trimOptionalString(tunnel.Name) != target) {
+			continue
+		}
+		servers = append(servers, webtty.ServerInfo{Target: *tunnel.ID, TunnelID: *tunnel.ID, TunnelName: tunnel.Name, Capabilities: []string{webtty.WebTTYCapabilityFS}})
+	}
+	var match *webtty.ServerInfo
+	for i := range servers {
+		if !webTTYRuntimeServerMatchesTarget(servers[i], target) {
+			continue
+		}
+		if match != nil {
+			return nil, fmt.Errorf("multiple filesystem tunnels match %q; use the tunnel id or a unique name", target)
+		}
+		match = &servers[i]
+	}
+	return match, nil
 }
 
 func validateWebTTYFilesystemCapability(target string, serverInfo *webtty.ServerInfo) error {
 	if serverInfo == nil {
-		return fmt.Errorf("WebTTY server %q is not online", target)
+		return fmt.Errorf("filesystem tunnel %q is not online", target)
 	}
 	for _, capability := range serverInfo.Capabilities {
 		if capability == webtty.WebTTYCapabilityFS {

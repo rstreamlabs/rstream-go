@@ -37,8 +37,11 @@ func validateFIPSWebTTYServerConfig(cfg *ServerConfig) error {
 	if err := fipsprofile.Require(); err != nil {
 		return err
 	}
+	if cfg != nil && cfg.EndpointIdentity == nil && cfg.PayloadCryptoResolver == nil && cfg.PayloadCrypto == nil && (cfg.RequireSessionKeyGrant == nil || !*cfg.RequireSessionKeyGrant) && (cfg.RequireClientProof == nil || !*cfg.RequireClientProof) {
+		return nil
+	}
 	if cfg == nil || cfg.EndpointIdentity == nil || cfg.PayloadCryptoResolver == nil {
-		return errors.New("WebTTY requires endpoint identity and E2E payload encryption in the rstream FIPS profile")
+		return errors.New("WebTTY E2E requires endpoint identity and payload encryption in the rstream FIPS profile")
 	}
 	if cfg.RequireSessionKeyGrant == nil || !*cfg.RequireSessionKeyGrant {
 		return errors.New("WebTTY requires session key grants in the rstream FIPS profile")
@@ -53,17 +56,22 @@ func validateFIPSWebTTYClientConfig(cfg *SessionConfig, tlsConfig *tls.Config) e
 	if err := fipsprofile.Require(); err != nil {
 		return err
 	}
-	if cfg == nil || cfg.PayloadCrypto == nil || cfg.EndpointIdentity == nil {
-		return errors.New("WebTTY requires endpoint identity and E2E payload encryption in the rstream FIPS profile")
+	if cfg == nil {
+		return errors.New("WebTTY session config is required")
 	}
-	if cfg.Attach == nil && cfg.ExpectedServerIdentity == nil {
-		return errors.New("WebTTY requires an expected server identity in the rstream FIPS profile")
-	}
-	if cfg.PayloadCrypto.SessionKeyGrant != nil && cfg.PayloadCrypto.SessionKeyGrant.KeyEnvelopeSuite != defaultE2EKeyEnvelopeSuite() {
-		return errors.New("WebTTY session key grant does not use the FIPS key envelope suite")
-	}
-	if err := validateWebTTYEndpointIdentity(*cfg.EndpointIdentity); err != nil {
-		return err
+	if cfg.PayloadCrypto != nil || cfg.EndpointIdentity != nil || cfg.ExpectedServerIdentity != nil {
+		if cfg.PayloadCrypto == nil || cfg.EndpointIdentity == nil {
+			return errors.New("WebTTY E2E requires endpoint identity and payload encryption in the rstream FIPS profile")
+		}
+		if cfg.Attach == nil && cfg.ExpectedServerIdentity == nil {
+			return errors.New("WebTTY E2E requires an expected server identity in the rstream FIPS profile")
+		}
+		if grant := cfg.PayloadCrypto.SessionKeyGrant; grant != nil && (grant.KeyEnvelopeSuite != defaultE2EKeyEnvelopeSuite() || grant.PayloadSuite != PayloadCipherSuiteAES256GCMRandomNonce) {
+			return errors.New("WebTTY session key grant does not use the FIPS encryption suites")
+		}
+		if err := validateWebTTYEndpointIdentity(*cfg.EndpointIdentity); err != nil {
+			return err
+		}
 	}
 	if tlsConfig != nil {
 		if tlsConfig.InsecureSkipVerify {

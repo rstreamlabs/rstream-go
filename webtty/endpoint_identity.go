@@ -189,13 +189,19 @@ func LoadWebTTYEndpointIdentityFile(path string) (*WebTTYEndpointIdentity, error
 	return nil, fmt.Errorf("load WebTTY endpoint identity %s: %w", path, err)
 }
 
+// LoadOrCreateWebTTYEndpointIdentityFile preserves an existing profile-approved
+// identity or creates one using the current profile's default suite.
 func LoadOrCreateWebTTYEndpointIdentityFile(path string) (*WebTTYEndpointIdentity, error) {
-	return LoadOrCreateWebTTYEndpointIdentityFileForSuite(path, defaultE2EKeyEnvelopeSuite())
+	return loadOrCreateWebTTYEndpointIdentityFile(path, defaultE2EKeyEnvelopeSuite(), false)
 }
 
 // LoadOrCreateWebTTYEndpointIdentityFileForSuite creates an identity for the
 // requested suite or verifies that an existing identity uses it.
 func LoadOrCreateWebTTYEndpointIdentityFileForSuite(path string, suite KeyEnvelopeSuite) (*WebTTYEndpointIdentity, error) {
+	return loadOrCreateWebTTYEndpointIdentityFile(path, suite, true)
+}
+
+func loadOrCreateWebTTYEndpointIdentityFile(path string, suite KeyEnvelopeSuite, requireSuite bool) (*WebTTYEndpointIdentity, error) {
 	if err := validateProfileKeyEnvelopeSuite(suite); err != nil {
 		return nil, err
 	}
@@ -218,7 +224,7 @@ func LoadOrCreateWebTTYEndpointIdentityFileForSuite(path string, suite KeyEnvelo
 	defer lock.Unlock()
 	identity, err := loadWebTTYEndpointIdentityFileUnlocked(path)
 	if err == nil {
-		if identity.Encryption.KeyEnvelopeSuite != suite {
+		if requireSuite && identity.Encryption.KeyEnvelopeSuite != suite {
 			return nil, fmt.Errorf("WebTTY endpoint identity %s uses key envelope suite %d, requested %d", path, identity.Encryption.KeyEnvelopeSuite, suite)
 		}
 		return identity, nil

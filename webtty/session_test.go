@@ -37,6 +37,28 @@ type trackingSessionStdin struct {
 	writes     []byte
 }
 
+func TestSessionClosedChildInputDoesNotCloseOutput(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s := &session{stdinPipe: writer, ctx: t.Context()}
+	message := &pb.Data{Type: pb.Data_TYPE_STDIN, Payload: &pb.Data_Data{Data: []byte("late input")}}
+	if err := s.handleData(message); err != nil {
+		t.Fatalf("child closing stdin interrupted its output: %v", err)
+	}
+	if !s.stdinClosed || s.stdinPipe != nil || s.closed {
+		t.Fatal("child stdin closure must leave the session open to drain output")
+	}
+	if err := s.handleData(message); err != nil {
+		t.Fatalf("subsequent input was not ignored: %v", err)
+	}
+}
+
 func (s *trackingSessionStdin) Close() error {
 	s.closeCalls++
 	if s.closed {

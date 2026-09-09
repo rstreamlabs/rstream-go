@@ -13,7 +13,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func clientFileStdinRead(file *os.File) func(context.Context, []byte) (int, error) {
+func clientFileStdinRead(file *os.File) (clientStdinReadFunc, func() error, error) {
 	fd := int32(file.Fd())
 	return func(ctx context.Context, buffer []byte) (int, error) {
 		pollFDs := []unix.PollFd{{Fd: fd, Events: unix.POLLIN | unix.POLLHUP | unix.POLLERR}}
@@ -33,5 +33,5 @@ func clientFileStdinRead(file *os.File) func(context.Context, []byte) (int, erro
 			}
 			return file.Read(buffer)
 		}
-	}
+	}, nil, nil
 }

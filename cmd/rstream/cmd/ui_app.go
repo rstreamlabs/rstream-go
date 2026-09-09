@@ -842,6 +842,14 @@ func (u *uiApp) openWebTTY(server webtty.ServerInfo, selectedIdentity string, re
 }
 
 func (u *uiApp) webTTYSessionConfig(ctx context.Context, server webtty.ServerInfo, logger *slog.Logger, selectedIdentity string, rememberIdentity bool) (*uiWebTTYSessionPlan, *uiWebTTYIdentitySelection, error) {
+	transport, err := server.ResolveTransport("")
+	if err != nil {
+		return nil, nil, err
+	}
+	endpoint, err := resolveWebTTYClientExecURL(server.RstreamURL, transport, "", &server)
+	if err != nil {
+		return nil, nil, err
+	}
 	runtimeE2E, err := webTTYClientRuntimeE2EContextFromServerInfo(ctx, u.runtime, server)
 	if err != nil {
 		return nil, nil, err
@@ -878,8 +886,11 @@ func (u *uiApp) webTTYSessionConfig(ctx context.Context, server webtty.ServerInf
 	}
 	plan := &uiWebTTYSessionPlan{
 		config: &webtty.SessionConfig{
-			URL:                    server.RstreamURL,
+			URL:                    endpoint,
+			Transport:              transport,
 			DialContext:            newWebTTYClientDialContext(u.client),
+			DialPacketContext:      newWebTTYClientPacketDialContext(u.client),
+			TLSConfig:              webTTYClientRstreamTLSConfig(transport, nil),
 			Interactive:            true,
 			AllocateTTY:            true,
 			SendHeartbeat:          true,

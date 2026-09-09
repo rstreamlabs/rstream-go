@@ -7,10 +7,8 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -492,76 +490,6 @@ func TestWebTTYParticipantStreamURLRejectsMissingIDs(t *testing.T) {
 	}
 	if _, err := webTTYParticipantStreamURL(client, "session", " "); err == nil || !strings.Contains(err.Error(), "participant ID") {
 		t.Fatalf("expected participant ID error, got %v", err)
-	}
-}
-
-func TestWebTTYReadyFileReaderWaitsForReadyAndPreservesFD(t *testing.T) {
-	readFile, writeFile, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe() error = %v", err)
-	}
-	defer readFile.Close()
-	defer writeFile.Close()
-	ready := make(chan struct{})
-	reader := &webTTYReadyFileReader{ctx: t.Context(), file: readFile, ready: ready}
-	if reader.Fd() != readFile.Fd() {
-		t.Fatalf("Fd() = %d, want %d", reader.Fd(), readFile.Fd())
-	}
-	done := make(chan struct {
-		n   int
-		err error
-		buf []byte
-	}, 1)
-	go func() {
-		buf := make([]byte, 5)
-		n, err := reader.Read(buf)
-		done <- struct {
-			n   int
-			err error
-			buf []byte
-		}{n: n, err: err, buf: buf}
-	}()
-	if _, err := writeFile.Write([]byte("typed")); err != nil {
-		t.Fatalf("write pipe: %v", err)
-	}
-	select {
-	case result := <-done:
-		t.Fatalf("Read completed before ready: n=%d err=%v buf=%q", result.n, result.err, string(result.buf))
-	case <-time.After(150 * time.Millisecond):
-	}
-	close(ready)
-	select {
-	case result := <-done:
-		if result.err != nil || result.n != 5 || string(result.buf) != "typed" {
-			t.Fatalf("Read() = n=%d err=%v buf=%q", result.n, result.err, string(result.buf))
-		}
-	case <-time.After(time.Second):
-		t.Fatal("Read did not resume after ready was closed")
-	}
-}
-
-func TestWebTTYReadyFileReaderUnblocksOnContextCancel(t *testing.T) {
-	readFile, writeFile, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe() error = %v", err)
-	}
-	defer readFile.Close()
-	defer writeFile.Close()
-	ctx, cancel := context.WithCancel(t.Context())
-	reader := &webTTYReadyFileReader{ctx: ctx, file: readFile, ready: make(chan struct{})}
-	done := make(chan error, 1)
-	go func() {
-		_, err := reader.Read(make([]byte, 1))
-		done <- err
-	}()
-	cancel()
-	select {
-	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("Read() error = %v, want context.Canceled", err)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("Read did not unblock after context cancellation")
 	}
 }
 

@@ -115,8 +115,25 @@ jobs:
           {
             echo "tag=${RELEASE_TAG}"
             echo "version=${version}"
+            echo "sha=${RELEASE_SHA}"
             echo "run-id=${CANDIDATE_RUN_ID}"
           } >>"$GITHUB_OUTPUT"
+      - name: Checkout trusted WebTTY certification policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rstreamlabs/rstream-engine
+          ref: main
+          token: ${{ secrets.WEBTTY_REPOSITORIES_TOKEN }}
+          path: .webtty-policy
+          persist-credentials: false
+      - uses: ./.webtty-policy/.github/actions/verify-webtty-release
+        with:
+          component: go
+          candidate-sha: ${{ steps.release.outputs.sha }}
+          assembly: ${{ vars.WEBTTY_RELEASE_ASSEMBLY }}
+          run-id: ${{ vars.WEBTTY_CERTIFICATION_RUN_ID }}
+          allowed-actor: ${{ vars.CI_ALLOWED_ACTOR }}
+          token: ${{ secrets.WEBTTY_REPOSITORIES_TOKEN }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-candidate-${{ steps.release.outputs.version }}
@@ -605,6 +622,7 @@ jobs:
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           VERSION: ${{ needs.prepare.outputs.version }}
           WINGET_GUIDE_URL: https://github.com/rstreamlabs/winget/blob/main/README.md#official-community-repository
+          NEXTJS_REPOSITORY_URL: https://github.com/rstreamlabs/rstream-nextjs
         run: |
           set -euo pipefail
           gh release edit "$RELEASE_TAG" \
@@ -621,5 +639,9 @@ jobs:
             printf "The fallback WinGet manifests for \`%s\` are published. " "$VERSION"
             printf 'Submit this stable version to the official Microsoft repository.\n\n'
             printf '[Open the manual submission procedure](%s).\n' "$WINGET_GUIDE_URL"
+            printf '\n### Follow-up: rebuild the Next.js site\n\n'
+            printf 'After publication, trigger a fresh build and deployment of [rstream-nextjs](%s). ' "$NEXTJS_REPOSITORY_URL"
+            printf 'The site resolves the latest CLI release at build time; rebuilding refreshes the displayed version and manual download links for %s.\n' "$VERSION"
           } >>"$GITHUB_STEP_SUMMARY"
           echo "::notice title=Official WinGet follow-up::Submit rstream ${VERSION} to Microsoft: ${WINGET_GUIDE_URL}"
+          echo "::notice title=Next.js build follow-up::Rebuild and deploy rstream-nextjs after publishing ${VERSION} to refresh the CLI version and manual download links: ${NEXTJS_REPOSITORY_URL}"

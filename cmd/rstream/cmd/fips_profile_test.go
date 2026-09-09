@@ -27,6 +27,8 @@ func TestFIPSProfileCommandPolicy(t *testing.T) {
 	}{
 		{path: "webtty client", want: "requires --transport=webtransport"},
 		{path: "ui", want: "ui is not available"},
+		{path: "files", want: "files is not available"},
+		{path: "files server", want: "files is not available"},
 		{path: "mcp serve", want: "mcp is not available"},
 		{path: "webtty sessions join", want: "managed participant streams do not yet support WebTransport"},
 	}

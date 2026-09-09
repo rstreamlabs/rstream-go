@@ -12,3 +12,7 @@ Read these documents in order:
 8. [Command runner](008-cmd-run.md) documents embedded command execution.
 9. [MCP](009-mcp.md) defines the local and hosted agent-connectivity contract.
 10. [FIPS 140-3 profile](010-fips-140-3-profile.md) defines the restricted build, runtime checks, and supported feature boundary.
+
+11. [File sharing](010-file-sharing.md) covers the integrated read-only server, authentication, backends and embedded UI.
+
+- [Filesystem WebRTC transport](011-filesystem-webrtc.md)

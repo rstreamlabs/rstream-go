@@ -13,6 +13,29 @@ import (
 	"testing"
 )
 
+func TestDefaultWebTTYPathsUseConfiguredDataDirectory(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("RSTREAM_DATA_DIR", root)
+	identity, err := DefaultE2EIdentityPath()
+	if err != nil || identity != filepath.Join(root, "webtty", "identities", "default.identity.json") {
+		t.Fatalf("identity path = %q, %v", identity, err)
+	}
+	trust, err := DefaultKnownServerKeysPath()
+	if err != nil || trust != filepath.Join(root, "webtty", "known_servers.json") {
+		t.Fatalf("known-server path = %q, %v", trust, err)
+	}
+	authorized, err := DefaultAuthorizedClientKeysPath("shell")
+	if err != nil || authorized != filepath.Join(root, "webtty", "authorized_clients", "shell.json") {
+		t.Fatalf("authorized-client path = %q, %v", authorized, err)
+	}
+	t.Setenv("RSTREAM_DATA_DIR", "relative-state")
+	for _, resolve := range []func() (string, error){DefaultRstreamDataDir, DefaultE2EIdentityPath, DefaultKnownServerKeysPath, func() (string, error) { return DefaultAuthorizedClientKeysPath("shell") }} {
+		if _, err := resolve(); err == nil {
+			t.Fatal("relative data directory was accepted")
+		}
+	}
+}
+
 func TestE2EIdentityFileRoundTrip(t *testing.T) {
 	identity, err := GenerateE2EIdentity()
 	if err != nil {

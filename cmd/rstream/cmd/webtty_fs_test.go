@@ -6,8 +6,59 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/webtty"
 )
+
+func TestFilesystemTunnelDiscoverySupportsStandaloneFilesAndWebTTY(t *testing.T) {
+	tunnels := []rstream.TunnelInventory{
+		{TunnelProperties: rstream.TunnelProperties{ID: rstream.StringPtr("files-id"), Name: rstream.StringPtr("exports"), Protocol: rstream.ProtocolPtr(rstream.ProtocolHTTP)}},
+		{TunnelProperties: rstream.TunnelProperties{ID: rstream.StringPtr("webtty-id"), Name: rstream.StringPtr("shell"), Protocol: rstream.ProtocolPtr(rstream.ProtocolWebTTY), Labels: map[string]string{webtty.WebTTYCapabilitiesLabelKey: "exec,fs", webtty.WebTTYFSPathLabelKey: "/workspace"}}},
+		{TunnelProperties: rstream.TunnelProperties{ID: rstream.StringPtr("exec-id"), Name: rstream.StringPtr("exec-only"), Protocol: rstream.ProtocolPtr(rstream.ProtocolHTTP), Labels: map[string]string{webtty.WebTTYApplicationProtocolKey: webtty.WebTTYApplicationProtocol}}},
+	}
+	for _, test := range []struct {
+		target string
+		id     string
+		path   string
+	}{
+		{target: "exports", id: "files-id"},
+		{target: "files-id", id: "files-id"},
+		{target: "shell", id: "webtty-id", path: "/workspace"},
+		{target: "webtty-id", id: "webtty-id", path: "/workspace"},
+	} {
+		t.Run(test.target, func(t *testing.T) {
+			server, err := selectWebTTYFilesystemServer(tunnels, test.target)
+			if err != nil || server == nil {
+				t.Fatalf("filesystem discovery = %v, %v", server, err)
+			}
+			if server.TunnelID != test.id || trimOptionalString(server.FSPath) != test.path {
+				t.Fatalf("discovery selected another tunnel or filesystem path: %+v", server)
+			}
+			if err := validateWebTTYFilesystemCapability(test.target, server); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	exec, err := selectWebTTYFilesystemServer(tunnels, "exec-only")
+	if err != nil || validateWebTTYFilesystemCapability("exec-only", exec) == nil {
+		t.Fatalf("HTTP WebTTY tunnel without filesystem capability was accepted: %v", err)
+	}
+	duplicate := tunnels[0]
+	duplicate.ID = rstream.StringPtr("other-files-id")
+	if _, err := selectWebTTYFilesystemServer(append(tunnels, duplicate), "exports"); err == nil {
+		t.Fatal("ambiguous filesystem tunnel name was accepted")
+	}
+	if server, err := selectWebTTYFilesystemServer(tunnels, "missing"); err != nil || server != nil {
+		t.Fatalf("missing filesystem tunnel = %v, %v", server, err)
+	}
+}
+
+func TestFilesystemExplicitTargetDoesNotRequireInventory(t *testing.T) {
+	server, err := resolveWebTTYFilesystemServer(t.Context(), nil, "restricted-tunnel", true)
+	if err != nil || server == nil || webTTYRuntimeDialTarget(server) != "restricted-tunnel" {
+		t.Fatalf("explicit filesystem target = %v, %v", server, err)
+	}
+}
 
 func TestResolveWebTTYFSBaseURL(t *testing.T) {
 	tests := []struct {
