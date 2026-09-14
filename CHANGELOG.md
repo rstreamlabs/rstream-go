@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.1](https://github.com/rstreamlabs/rstream-go/compare/v1.32.0...v1.32.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* **cli:** restore compact forward status output ([#113](https://github.com/rstreamlabs/rstream-go/issues/113)) ([53a74e9](https://github.com/rstreamlabs/rstream-go/commit/53a74e92dbff417489e6f61fdf794cfedce0c0a2))
+
 ## [1.32.0](https://github.com/rstreamlabs/rstream-go/compare/v1.31.0...v1.32.0) (2026-09-09)
 
 
