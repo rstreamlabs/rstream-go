@@ -4,12 +4,68 @@ package cmd
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/rstreamlabs/rstream-go"
 )
+
+func TestForwardUITCellStatusOutput(t *testing.T) {
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("screen Init() error = %v", err)
+	}
+	t.Cleanup(screen.Fini)
+	screen.SetSize(80, 24)
+	ui := &forwardUITCell{screen: screen}
+	status := newForwardStatus(&rstream.ServerDetails{
+		Version:  rstream.StringPtr("2.3.4"),
+		Channel:  rstream.StringPtr("preview"),
+		Update:   rstream.StringPtr("available"),
+		Plan:     rstream.StringPtr("pro"),
+		Provider: rstream.StringPtr("aws"),
+		Region:   rstream.StringPtr("eu-west-1"),
+	})
+	status.Status = rstream.StringPtr("online")
+	status.TunnelID = rstream.StringPtr("tun-1")
+	status.Forwarding = rstream.StringPtr("https://demo.example.com")
+	status.Forwarded = rstream.StringPtr("localhost:8080")
+	ui.SetStatus(status)
+	ui.draw()
+	screen.Show()
+	cells, width, height := screen.GetContents()
+	var rows []string
+	for y := 0; y < height; y++ {
+		var row strings.Builder
+		for x := 0; x < width; x++ {
+			row.WriteString(string(cells[y*width+x].Runes))
+		}
+		rows = append(rows, strings.TrimSpace(row.String()))
+	}
+	got := strings.Join(rows, "\n")
+	wantStatus := fmt.Sprintf("version     : %s\n"+
+		"update      : available\n"+
+		"status      : online\n"+
+		"plan        : pro\n"+
+		"provider    : aws\n"+
+		"region      : eu-west-1\n"+
+		"tunnel ID   : tun-1\n"+
+		"forwarding  : https://demo.example.com\n"+
+		"forwarded   : localhost:8080\n\n"+
+		"incoming connections:\n\nno connection", formatVersion(rstream.Version, rstream.Channel))
+	if !strings.Contains(got, wantStatus) {
+		t.Fatalf("screen output =\n%s\nwant status:\n%s", got, wantStatus)
+	}
+	for _, label := range []string{"client version", "server version", "transport configured", "transport selected"} {
+		if strings.Contains(got, label) {
+			t.Errorf("screen output contains diagnostic label %q", label)
+		}
+	}
+}
 
 func TestForwardUITCellFinalizesScreenOnce(t *testing.T) {
 	tests := []struct {
