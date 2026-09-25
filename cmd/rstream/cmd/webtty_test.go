@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -291,6 +292,114 @@ func TestRunWebTTYClientCaptureForwardsPipedStdin(t *testing.T) {
 	}
 	if result.ExitCode != 0 || result.Stdout != "capture-pipe\n" || result.Stderr != "" {
 		t.Fatalf("runWebTTYClientCapture() = %#v", result)
+	}
+}
+
+func TestRunWebTTYClientCaptureExternalPipeHelper(t *testing.T) {
+	if os.Getenv("RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_HELPER") != "1" {
+		return
+	}
+	resultPath := os.Getenv("RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_RESULT")
+	if resultPath == "" {
+		t.Fatal("external pipe result path is required")
+	}
+	clientURL := os.Getenv("RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_URL")
+	var transport webtty.WebTTYTransport
+	var dialContext func(context.Context, string, string) (net.Conn, error)
+	if address := os.Getenv("RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_DIAL_ADDRESS"); address != "" {
+		clientURL = "rstrm://external-pipe"
+		transport = webtty.WebTTYTransportWebSocket
+		dialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", address)
+		}
+	}
+	deadline := 2 * time.Second
+	result, err := runWebTTYClientCapture(t.Context(), &webtty.ClientConfig{
+		URL:         clientURL,
+		Transport:   transport,
+		DialContext: dialContext,
+		Interactive: false,
+		Stdin:       os.Stdin,
+		CmdArgs: []string{
+			"powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+			"$value = [Console]::ReadLine(); [Console]::Out.Write($value); [Console]::Error.Write('stderr-' + $value)",
+		},
+		OpenDeadline: &deadline,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resultPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunWebTTYClientCaptureForwardsExternalProcessPipe(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows anonymous pipe lifecycle")
+	}
+	zero := time.Duration(0)
+	allowUnauthenticated := true
+	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{HeartbeatInterval: &zero, AllowUnauthenticated: &allowUnauthenticated})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	clientURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	for _, test := range []struct {
+		name        string
+		url         string
+		dialAddress string
+	}{
+		{name: "websocket", url: clientURL},
+		{name: "rstrm custom dial", url: "rstrm://external-pipe", dialAddress: server.Listener.Addr().String()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resultPath := filepath.Join(t.TempDir(), "result.json")
+			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestRunWebTTYClientCaptureExternalPipeHelper$")
+			command.Env = append(os.Environ(),
+				"RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_HELPER=1",
+				"RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_URL="+test.url,
+				"RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_DIAL_ADDRESS="+test.dialAddress,
+				"RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_RESULT="+resultPath,
+				"GOCOVERDIR="+t.TempDir(),
+			)
+			stdin, err := command.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			command.Stdout = &output
+			command.Stderr = &output
+			if err := command.Start(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := io.WriteString(stdin, "external-pipe\n"); err != nil {
+				t.Fatal(err)
+			}
+			if err := stdin.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := command.Wait(); err != nil {
+				t.Fatalf("external WebTTY client failed: %v\n%s", err, output.String())
+			}
+			data, err := os.ReadFile(resultPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result webTTYClientResult
+			if err := json.Unmarshal(data, &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.ExitCode != 0 || result.Stdout != "external-pipe" || result.Stderr != "stderr-external-pipe" {
+				t.Fatalf("external WebTTY client result = %#v", result)
+			}
+		})
 	}
 }
 
