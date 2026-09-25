@@ -299,6 +299,8 @@ func TestRunWebTTYClientCaptureExternalPipeHelper(t *testing.T) {
 	if os.Getenv("RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_HELPER") != "1" {
 		return
 	}
+	rstream.Channel = "dev"
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	resultPath := os.Getenv("RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_RESULT")
 	if resultPath == "" {
 		t.Fatal("external pipe result path is required")
@@ -325,6 +327,7 @@ func TestRunWebTTYClientCaptureExternalPipeHelper(t *testing.T) {
 			"$value = [Console]::ReadLine(); [Console]::Out.Write($value); [Console]::Error.Write('stderr-' + $value)",
 		},
 		OpenDeadline: &deadline,
+		Logger:       logger,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -344,7 +347,15 @@ func TestRunWebTTYClientCaptureForwardsExternalProcessPipe(t *testing.T) {
 	}
 	zero := time.Duration(0)
 	allowUnauthenticated := true
-	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{HeartbeatInterval: &zero, AllowUnauthenticated: &allowUnauthenticated})
+	previousChannel := rstream.Channel
+	rstream.Channel = "dev"
+	defer func() { rstream.Channel = previousChannel }()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{
+		HeartbeatInterval:    &zero,
+		AllowUnauthenticated: &allowUnauthenticated,
+		Logger:               logger,
+	})
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	defer handler.Shutdown(t.Context())
