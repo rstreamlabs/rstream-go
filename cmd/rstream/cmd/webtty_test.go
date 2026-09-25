@@ -364,15 +364,31 @@ func TestRunWebTTYClientCaptureForwardsExternalProcessPipe(t *testing.T) {
 		name        string
 		url         string
 		dialAddress string
+		pythonPipe  bool
 	}{
 		{name: "websocket", url: clientURL},
+		{name: "websocket python pipe", url: clientURL, pythonPipe: true},
 		{name: "rstrm custom dial", url: "rstrm://external-pipe", dialAddress: server.Listener.Addr().String()},
+		{name: "rstrm custom dial python pipe", url: "rstrm://external-pipe", dialAddress: server.Listener.Addr().String(), pythonPipe: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			resultPath := filepath.Join(t.TempDir(), "result.json")
 			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
 			defer cancel()
-			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestRunWebTTYClientCaptureExternalPipeHelper$")
+			arguments := []string{"-test.run=^TestRunWebTTYClientCaptureExternalPipeHelper$", "-test.v"}
+			command := exec.CommandContext(ctx, os.Args[0], arguments...)
+			if test.pythonPipe {
+				script := "" +
+					"import subprocess, sys\n" +
+					"def emit(stream, data):\n" +
+					" stream.buffer.write(data if isinstance(data, bytes) else data.encode()) if data else None\n" +
+					"try:\n" +
+					" p = subprocess.run([sys.argv[1], *sys.argv[2:]], input='external-pipe\\n', text=True, capture_output=True, timeout=6)\n" +
+					" sys.stdout.write(p.stdout); sys.stderr.write(p.stderr); sys.exit(p.returncode)\n" +
+					"except subprocess.TimeoutExpired as e:\n" +
+					" emit(sys.stdout, e.stdout); emit(sys.stderr, e.stderr); sys.exit(124)\n"
+				command = exec.CommandContext(ctx, "python", append([]string{"-c", script, os.Args[0]}, arguments...)...)
+			}
 			command.Env = append(os.Environ(),
 				"RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_HELPER=1",
 				"RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_URL="+test.url,
@@ -380,9 +396,13 @@ func TestRunWebTTYClientCaptureForwardsExternalProcessPipe(t *testing.T) {
 				"RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_RESULT="+resultPath,
 				"GOCOVERDIR="+t.TempDir(),
 			)
-			stdin, err := command.StdinPipe()
-			if err != nil {
-				t.Fatal(err)
+			var stdin io.WriteCloser
+			if !test.pythonPipe {
+				var err error
+				stdin, err = command.StdinPipe()
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 			var output bytes.Buffer
 			command.Stdout = &output
@@ -390,11 +410,13 @@ func TestRunWebTTYClientCaptureForwardsExternalProcessPipe(t *testing.T) {
 			if err := command.Start(); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := io.WriteString(stdin, "external-pipe\n"); err != nil {
-				t.Fatal(err)
-			}
-			if err := stdin.Close(); err != nil {
-				t.Fatal(err)
+			if !test.pythonPipe {
+				if _, err := io.WriteString(stdin, "external-pipe\n"); err != nil {
+					t.Fatal(err)
+				}
+				if err := stdin.Close(); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if err := command.Wait(); err != nil {
 				t.Fatalf("external WebTTY client failed: %v\n%s", err, output.String())
