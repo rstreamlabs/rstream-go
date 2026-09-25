@@ -16,6 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
+	"google.golang.org/protobuf/proto"
 )
 
 type blockingSessionMessageConn struct {
@@ -35,6 +36,120 @@ type trackingSessionStdin struct {
 	closed     bool
 	closeCalls int
 	writes     []byte
+}
+
+type recordingSessionMessageConn struct {
+	mu       sync.Mutex
+	messages [][]byte
+}
+
+func (c *recordingSessionMessageConn) Close() error { return nil }
+
+func (c *recordingSessionMessageConn) ReadMessage() (int, []byte, error) {
+	return 0, nil, io.EOF
+}
+
+func (c *recordingSessionMessageConn) SetReadLimit(int64) {}
+
+func (c *recordingSessionMessageConn) SetWriteDeadline(time.Time) error { return nil }
+
+func (c *recordingSessionMessageConn) WriteControl(int, []byte, time.Time) error { return nil }
+
+func (c *recordingSessionMessageConn) WriteMessage(_ int, payload []byte) error {
+	c.mu.Lock()
+	c.messages = append(c.messages, append([]byte(nil), payload...))
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *recordingSessionMessageConn) decoded(t *testing.T) []*pb.Message {
+	t.Helper()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	messages := make([]*pb.Message, 0, len(c.messages))
+	for _, payload := range c.messages {
+		message := &pb.Message{}
+		if err := proto.Unmarshal(payload, message); err != nil {
+			t.Fatalf("decode recorded WebTTY message: %v", err)
+		}
+		messages = append(messages, message)
+	}
+	return messages
+}
+
+func TestSessionSerializesAllOutputEOSBeforeCloseForConcurrentTerminalEvents(t *testing.T) {
+	for attempt := range 256 {
+		conn := &recordingSessionMessageConn{}
+		ctx, cancel := context.WithCancel(t.Context())
+		zero := time.Duration(0)
+		s := &session{
+			conn:          conn,
+			cfg:           resolveServerConfig(&ServerConfig{HeartbeatInterval: &zero, SessionCloseDeadline: &zero}),
+			logger:        slog.Default(),
+			ctx:           ctx,
+			cancel:        cancel,
+			doneCh:        make(chan struct{}),
+			streamsActive: 2,
+			streamsEnding: make(map[pb.Data_Type]bool, 2),
+			streamsOpen: map[pb.Data_Type]bool{
+				pb.Data_TYPE_STDOUT: true,
+				pb.Data_TYPE_STDERR: true,
+			},
+		}
+		if !s.onReadStream(pb.Data_TYPE_STDOUT, nil, nil) {
+			t.Fatalf("attempt %d: zero-byte stdout was not accepted", attempt)
+		}
+		if !s.onReadStream(pb.Data_TYPE_STDERR, []byte{byte(attempt)}, nil) {
+			t.Fatalf("attempt %d: one-byte stderr was not accepted", attempt)
+		}
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = s.onReadStream(pb.Data_TYPE_STDOUT, nil, io.EOF)
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = s.onReadStream(pb.Data_TYPE_STDERR, nil, io.EOF)
+		}()
+		go func() {
+			defer wg.Done()
+			<-start
+			_ = s.onChildExit(17, nil)
+		}()
+		close(start)
+		wg.Wait()
+		messages := conn.decoded(t)
+		if len(messages) != 5 {
+			t.Fatalf("attempt %d: message count = %d, want 5", attempt, len(messages))
+		}
+		if messages[0].GetData() == nil || messages[1].GetData() == nil {
+			t.Fatalf("attempt %d: first messages are not stream data", attempt)
+		}
+		seenEOS := map[pb.Data_Type]bool{}
+		for _, message := range messages[2:4] {
+			data := message.GetData()
+			if data == nil || data.GetEos() == nil {
+				t.Fatalf("attempt %d: message before close is %T, want EOS", attempt, message.Payload)
+			}
+			seenEOS[data.Type] = true
+		}
+		if !seenEOS[pb.Data_TYPE_STDOUT] || !seenEOS[pb.Data_TYPE_STDERR] {
+			t.Fatalf("attempt %d: EOS streams = %v", attempt, seenEOS)
+		}
+		if closeMessage := messages[4].GetClose(); closeMessage == nil || closeMessage.ReturnCode != 17 {
+			t.Fatalf("attempt %d: final message = %T, want close(17)", attempt, messages[4].Payload)
+		}
+		before := len(messages)
+		_ = s.onReadStream(pb.Data_TYPE_STDOUT, nil, io.EOF)
+		if got := len(conn.decoded(t)); got != before {
+			t.Fatalf("attempt %d: duplicate EOS emitted another message", attempt)
+		}
+		cancel()
+	}
 }
 
 func TestSessionClosedChildInputDoesNotCloseOutput(t *testing.T) {

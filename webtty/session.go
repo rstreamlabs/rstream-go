@@ -46,6 +46,8 @@ type session struct {
 	closeTimer      *time.Timer
 	heartbeatTicker *time.Ticker
 	streamsActive   int
+	streamsEnding   map[pb.Data_Type]bool
+	streamsOpen     map[pb.Data_Type]bool
 	childDone       bool
 	childExitCode   int
 	opened          bool
@@ -434,6 +436,13 @@ func (s *session) onReadStream(t pb.Data_Type, p []byte, err error) bool {
 		return false
 	}
 	eos := isStreamEOS(err, s.ptyFile != nil)
+	if eos && s.streamsOpen != nil {
+		if !s.streamsOpen[t] || s.streamsEnding[t] {
+			s.mu.Unlock()
+			return false
+		}
+		s.streamsEnding[t] = true
+	}
 	s.mu.Unlock()
 	if err != nil {
 		s.logger.Debug("stream closed", "stream", t.String(), "eos", eos, "error", err)
@@ -442,7 +451,11 @@ func (s *session) onReadStream(t pb.Data_Type, p []byte, err error) bool {
 		err = s.sendEOS(t)
 		if err == nil {
 			s.mu.Lock()
-			if s.streamsActive > 0 {
+			if s.streamsOpen != nil {
+				delete(s.streamsOpen, t)
+				delete(s.streamsEnding, t)
+				s.streamsActive = len(s.streamsOpen)
+			} else if s.streamsActive > 0 {
 				s.streamsActive--
 			}
 			shouldClose := s.streamsActive == 0 && s.childDone
@@ -598,6 +611,12 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 	s.stdinPipe = resources.stdinPipe
 	s.cmd = resources.cmd
 	s.streamsActive = resources.streamsActive
+	s.streamsEnding = make(map[pb.Data_Type]bool, resources.streamsActive)
+	s.streamsOpen = make(map[pb.Data_Type]bool, resources.streamsActive)
+	s.streamsOpen[pb.Data_TYPE_STDOUT] = true
+	if !resources.allocateTTY {
+		s.streamsOpen[pb.Data_TYPE_STDERR] = true
+	}
 	s.opened = true
 	if s.openTimer != nil {
 		s.openTimer.Stop()

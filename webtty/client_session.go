@@ -85,10 +85,13 @@ type ClientSession struct {
 	closeTransportOnce sync.Once
 	finalizeOnce       sync.Once
 	loopWG             sync.WaitGroup
+	stdinMu            sync.Mutex
+	stdinClosed        bool
 	resultMu           sync.Mutex
 	closeResult        *clientSessionResult
 	result             clientSessionResult
 	resultReady        bool
+	streamEOS          map[ClientSessionStream]bool
 }
 
 func (cfg *ClientConfig) sessionConfig() *SessionConfig {
@@ -624,6 +627,11 @@ func (s *ClientSession) SendInputContext(ctx context.Context, data []byte) error
 	if len(data) == 0 {
 		return nil
 	}
+	s.stdinMu.Lock()
+	defer s.stdinMu.Unlock()
+	if s.stdinClosed {
+		return fmt.Errorf("WebTTY stdin is already closed")
+	}
 	msg, err := s.runtime.stdinDataMessage(ctx, data)
 	if err != nil {
 		return err
@@ -639,6 +647,12 @@ func (s *ClientSession) SendText(text string) error {
 }
 
 func (s *ClientSession) SendEOF() error {
+	s.stdinMu.Lock()
+	defer s.stdinMu.Unlock()
+	if s.stdinClosed {
+		return nil
+	}
+	s.stdinClosed = true
 	return s.runtime.writeStdinMessage(&pb.Message{
 		Payload: &pb.Message_Data{
 			Data: &pb.Data{Type: pb.Data_TYPE_STDIN, Payload: &pb.Data_Eos{Eos: &pb.EndOfStream{}}},
@@ -699,7 +713,7 @@ func (s *ClientSession) run(ctx context.Context, readEvents <-chan clientEvent, 
 			}
 			switch payload := event.msg.Payload.(type) {
 			case *pb.Message_Data:
-				sessionEvent, ok, err := s.runtime.decodeClientSessionEvent(ctx, payload.Data)
+				sessionEvent, ok, err := s.decodeEvent(ctx, payload.Data)
 				if err != nil {
 					s.finalize(-1, err)
 					return
@@ -743,6 +757,35 @@ func (s *ClientSession) run(ctx context.Context, readEvents <-chan clientEvent, 
 			}
 		}
 	}
+}
+
+func (s *ClientSession) decodeEvent(ctx context.Context, data *pb.Data) (ClientSessionEvent, bool, error) {
+	if data == nil {
+		return ClientSessionEvent{}, false, fmt.Errorf("received empty data message")
+	}
+	var stream ClientSessionStream
+	switch data.Type {
+	case pb.Data_TYPE_STDOUT:
+		stream = ClientSessionStdout
+	case pb.Data_TYPE_STDERR:
+		stream = ClientSessionStderr
+	default:
+		return ClientSessionEvent{}, false, fmt.Errorf("unexpected data stream type: %v", data.Type)
+	}
+	if s.streamEOS == nil {
+		s.streamEOS = make(map[ClientSessionStream]bool, 2)
+	}
+	if _, eos := data.Payload.(*pb.Data_Eos); eos {
+		if s.streamEOS[stream] {
+			return ClientSessionEvent{}, false, fmt.Errorf("received duplicate WebTTY %s end of stream", stream)
+		}
+		s.streamEOS[stream] = true
+		return ClientSessionEvent{}, false, nil
+	}
+	if s.streamEOS[stream] {
+		return ClientSessionEvent{}, false, fmt.Errorf("received WebTTY %s data after end of stream", stream)
+	}
+	return s.runtime.decodeClientSessionEvent(ctx, data)
 }
 
 func (s *ClientSession) requestClose(exitCode int, err error, sendError bool) {

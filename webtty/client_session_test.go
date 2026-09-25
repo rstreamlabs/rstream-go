@@ -675,6 +675,55 @@ func TestClientSessionRunRejectsMalformedMessages(t *testing.T) {
 	}
 }
 
+func TestClientSessionRejectsDuplicateEOSAndDataAfterEOS(t *testing.T) {
+	eos := func() clientEvent {
+		return clientEvent{msg: &pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{
+			Type:    pb.Data_TYPE_STDOUT,
+			Payload: &pb.Data_Eos{Eos: &pb.EndOfStream{}},
+		}}}}
+	}
+	data := func() clientEvent {
+		return clientEvent{msg: &pb.Message{Payload: &pb.Message_Data{Data: &pb.Data{
+			Type:    pb.Data_TYPE_STDOUT,
+			Payload: &pb.Data_Data{Data: []byte{1}},
+		}}}}
+	}
+	for _, test := range []struct {
+		name   string
+		events []clientEvent
+	}{
+		{
+			name: "duplicate EOS",
+			events: []clientEvent{
+				eos(),
+				eos(),
+			},
+		},
+		{
+			name: "data after EOS",
+			events: []clientEvent{
+				eos(),
+				data(),
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			session := newBareClientSession(t)
+			session.runtime = &clientRuntime{cfg: &ClientConfig{}, conn: stdinEOFWriteFailureConn{}}
+			readEvents := make(chan clientEvent, len(test.events))
+			loopErrCh := make(chan error, 1)
+			for _, event := range test.events {
+				readEvents <- event
+			}
+			go session.run(t.Context(), readEvents, loopErrCh)
+			exitCode, err := session.Wait()
+			if exitCode != -1 || err == nil {
+				t.Fatalf("Wait() = %d, %v; want protocol error", exitCode, err)
+			}
+		})
+	}
+}
+
 func TestClientSessionStringFolding(t *testing.T) {
 	if !stringsEqualFoldTrimmed(" Dev ", "dev") {
 		t.Fatalf("trimmed fold comparison failed")
@@ -710,6 +759,12 @@ func TestOpenClientSessionSendsInputEOFResizeAndWaitsForClose(t *testing.T) {
 	}
 	if err := session.SendEOF(); err != nil {
 		t.Fatalf("SendEOF() error = %v", err)
+	}
+	if err := session.SendEOF(); err != nil {
+		t.Fatalf("second SendEOF() error = %v", err)
+	}
+	if err := session.SendText("after-eof"); err == nil {
+		t.Fatal("SendText() after EOF succeeded")
 	}
 	if err := session.Resize(24, 80); err != nil {
 		t.Fatalf("Resize() error = %v", err)
