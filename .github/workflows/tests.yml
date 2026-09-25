@@ -294,19 +294,54 @@ jobs:
           if ($client.Count -ne 1 -or $server.Count -ne 1) { throw 'expected exactly one C++ WebTTY client and server' }
           "CPP_CLIENT=$($client[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CPP_SERVER=$($server[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Execute the exact Windows Engine route matrix
+      - name: Execute the exact Windows Engine route matrix serially
+        id: exact_matrix
+        continue-on-error: true
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          python sources/rstream-engine/test/e2e/webtty_network_matrix.py --output-dir windows-network --jobs 3 --engine-repo sources/rstream-engine --go-repo sources/rstream-go --cpp-repo sources/rstream-cpp --js-repo sources/rstream-js --nextjs-repo sources/rstream-nextjs --engine-bin build/engine.exe --go-bin build/go.exe --cpp-client-bin $env:CPP_CLIENT --cpp-server-bin $env:CPP_SERVER
+          python sources/rstream-engine/test/e2e/webtty_network_matrix.py --output-dir windows-network --jobs 1 --engine-repo sources/rstream-engine --go-repo sources/rstream-go --cpp-repo sources/rstream-cpp --js-repo sources/rstream-js --nextjs-repo sources/rstream-nextjs --engine-bin build/engine.exe --go-bin build/go.exe --cpp-client-bin $env:CPP_CLIENT --cpp-server-bin $env:CPP_SERVER
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Stress exact C++ short-lived child completion through Engine
+        id: cpp_completion_stress
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path windows-cpp-completion-stress | Out-Null
+          $failures = @()
+          foreach ($networkCase in @('auto-quic', 'auto-tls')) {
+            foreach ($iteration in 1..48) {
+              $output = "windows-cpp-completion-stress/$networkCase-$iteration"
+              python sources/rstream-engine/test/e2e/webtty_native_fixture.py --output-dir $output --engine-bin build/engine.exe --go-bin build/go.exe --cpp-client-bin $env:CPP_CLIENT --cpp-server-bin $env:CPP_SERVER --cpp-server --private --no-discovery --by-id --network-case $networkCase
+              if ($LASTEXITCODE -ne 0) {
+                $failures += "$networkCase-$iteration"
+              }
+            }
+          }
+          $summary = @{
+            expected = 96
+            executed = 96
+            failures = $failures
+            passed = $failures.Count -eq 0
+          }
+          $summary | ConvertTo-Json | Set-Content -Encoding utf8 windows-cpp-completion-stress/results.json
+          if ($failures.Count -ne 0) {
+            throw "C++ completion stress failed $($failures.Count)/96 times: $($failures -join ', ')"
+          }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: exact-assembly-windows-network-${{ github.sha }}
-          path: windows-network
+          path: |
+            windows-network
+            windows-cpp-completion-stress
           if-no-files-found: error
           retention-days: 30
+      - name: Require the serial matrix
+        if: always() && steps.exact_matrix.outcome != 'success'
+        shell: pwsh
+        run: throw 'The exact serial Windows Engine route matrix failed'
   webtty-runtime:
     name: WebTTY Go direct profile (partial coverage)
     runs-on: ubuntu-latest
