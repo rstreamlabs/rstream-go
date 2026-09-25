@@ -189,6 +189,8 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          go test -count=8 -run '^TestRunWebTTYClientCaptureForwardsExternalProcessPipe$' ./cmd/rstream/cmd
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:PATH = "C:\msys64\mingw64\bin;" + $env:PATH
           $env:CGO_ENABLED = '1'
           gcc --version
