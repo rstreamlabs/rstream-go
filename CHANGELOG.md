@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.32.2](https://github.com/rstreamlabs/rstream-go/compare/v1.32.1...v1.32.2) (2026-09-25)
+
+
+### Bug Fixes
+
+* **webtty:** enforce stream terminal ordering ([4abae81](https://github.com/rstreamlabs/rstream-go/commit/4abae8193915290cb4239ba00961c126040bd6ab))
+* **webtty:** enforce stream terminal ordering ([ea14c4e](https://github.com/rstreamlabs/rstream-go/commit/ea14c4e4fcfc739a8931c1362edbba109652d46d))
+
 ## [1.32.1](https://github.com/rstreamlabs/rstream-go/compare/v1.32.0...v1.32.1) (2026-09-14)
 
 
