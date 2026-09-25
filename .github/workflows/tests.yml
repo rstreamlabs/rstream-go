@@ -197,12 +197,93 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'MinGW is required for the Windows race detector' }
           go test -race -count=1 -run '^(TestWindowsStdinReader.*|TestRunClientWindows(StdinLifecycle|TerminalGeometry)|TestRunWebTTYClientCaptureForwards(PipedStdin|ExternalProcessPipe))$' ./webtty ./cmd/rstream/cmd
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-  windows-assembly-network-diagnostic:
-    name: Exact assembly Windows network diagnostic
+  build-patched-cpp-windows:
+    name: Build patched C++ Windows candidate
     if: >-
       github.event_name == 'pull_request' &&
       github.actor == vars.CI_ALLOWED_ACTOR &&
       github.head_ref == 'codex/webtty-windows-pipe-diagnostic'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      CONAN_VERSION: "2.31.2"
+      LLVM_MINGW_VERSION: "20260616"
+    steps:
+      - name: Checkout patched C++ source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rstreamlabs/rstream-cpp
+          ref: 6494bf88ceee95f9bdb2707e7fd5e3d7efa09527
+          token: ${{ secrets.GIT_TOKEN }}
+          path: sources/rstream-cpp
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install cross-build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ccache cmake jq libdigest-sha-perl nasm ninja-build pipx pkg-config xz-utils
+          pipx install "conan==${CONAN_VERSION}"
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+          host_arch=$(dpkg --print-architecture)
+          case "${host_arch}" in
+            amd64) llvm_mingw_host_arch=x86_64 ;;
+            arm64) llvm_mingw_host_arch=aarch64 ;;
+            *) echo "unsupported host architecture: ${host_arch}" >&2; exit 1 ;;
+          esac
+          llvm_mingw_dir="/opt/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-${llvm_mingw_host_arch}"
+          curl -fsSL "https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-${llvm_mingw_host_arch}.tar.xz" | sudo tar -xJf - -C /opt
+          sudo ln -sfn "${llvm_mingw_dir}" /opt/llvm-mingw
+          echo "/opt/llvm-mingw/bin" >> "${GITHUB_PATH}"
+      - name: Restore exact qualified C++ dependency cache
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GIT_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh run download 36119690618 --repo rstreamlabs/rstream-cpp --name cpp-release-candidate-505545d4b32faf38c23f9bad83fb6e14809b4cf1-windows-x86_64 --dir cpp-base-candidate
+          (cd cpp-base-candidate/conan && shasum -a 256 -c SHA256SUMS)
+          conan profile detect -f
+          conan config install sources/rstream-cpp/conan/config
+          conan cache restore cpp-base-candidate/conan/cache.tgz
+      - name: Build patched x86_64 Windows package
+        shell: bash
+        env:
+          CHANNEL: stable
+          EXPORT_PACKAGE_NAME: rstream-utils
+          OSS: windows
+          USE_DOCKER: "off"
+          USE_PATCHED_CONAN_DEPS: "on"
+          WINDOWS_ARCHS: x86_64
+          WINDOWS_BUILD_SHARED: "off"
+        run: |
+          set -euo pipefail
+          sources/rstream-cpp/build-conan-cross.sh
+          package=$(find sources/rstream-cpp/out/release -type f -path '*/windows/x86_64/static/packages/rstream-utils.zip' -print -quit)
+          test -n "${package}"
+          mkdir -p patched-cpp
+          unzip -q "${package}" -d patched-cpp
+          test -f patched-cpp/bin/rstream-webtty-client.exe
+          test -f patched-cpp/bin/rstream-webtty-server.exe
+          (cd patched-cpp && sha256sum bin/rstream-webtty-client.exe bin/rstream-webtty-server.exe > SHA256SUMS)
+          printf '%s\n' '6494bf88ceee95f9bdb2707e7fd5e3d7efa09527' > patched-cpp/SOURCE
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: patched-cpp-windows-6494bf88ceee95f9bdb2707e7fd5e3d7efa09527
+          path: patched-cpp
+          if-no-files-found: error
+          retention-days: 7
+
+  windows-assembly-network-diagnostic:
+    name: Patched assembly Windows network diagnostic
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.actor == vars.CI_ALLOWED_ACTOR &&
+      github.head_ref == 'codex/webtty-windows-pipe-diagnostic'
+    needs: build-patched-cpp-windows
     runs-on: windows-2025
     timeout-minutes: 45
     steps:
@@ -224,7 +305,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: rstreamlabs/rstream-cpp
-          ref: 505545d4b32faf38c23f9bad83fb6e14809b4cf1
+          ref: 6494bf88ceee95f9bdb2707e7fd5e3d7efa09527
           token: ${{ secrets.GIT_TOKEN }}
           path: sources/rstream-cpp
           persist-credentials: false
@@ -266,19 +347,18 @@ jobs:
           go build -trimpath -tags 'ee,http2legacy' -o ../../build/engine.exe ./cmd/rstream-engine-ee
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Pop-Location
-      - name: Restore the exact qualified C++ release binaries
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: patched-cpp-windows-6494bf88ceee95f9bdb2707e7fd5e3d7efa09527
+          path: cpp-candidate
+      - name: Verify the patched C++ binaries
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.GIT_TOKEN }}
         run: |
           $ErrorActionPreference = 'Stop'
-          gh run download 36119690618 --repo rstreamlabs/rstream-cpp --name cpp-release-candidate-505545d4b32faf38c23f9bad83fb6e14809b4cf1-windows-x86_64 --dir cpp-candidate
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $release = Get-Content -Raw cpp-candidate/release.json | ConvertFrom-Json
-          if ($release.source -ne '505545d4b32faf38c23f9bad83fb6e14809b4cf1' -or $release.os -ne 'windows' -or $release.arch -ne 'x86_64') {
-            throw 'C++ candidate metadata differs from the selected release source'
+          if ((Get-Content -Raw cpp-candidate/SOURCE).Trim() -ne '6494bf88ceee95f9bdb2707e7fd5e3d7efa09527') {
+            throw 'C++ candidate metadata differs from the selected source'
           }
-          Push-Location cpp-candidate/conan
+          Push-Location cpp-candidate
           $checksums = Get-Content SHA256SUMS
           foreach ($line in $checksums) {
             if ($line -notmatch '^([0-9a-f]{64})  (.+)$') { throw "invalid C++ candidate checksum: $line" }
@@ -286,11 +366,8 @@ jobs:
             if ($actual -ne $Matches[1]) { throw "C++ candidate checksum mismatch: $($Matches[2])" }
           }
           Pop-Location
-          New-Item -ItemType Directory -Force -Path cpp-cache | Out-Null
-          tar -xzf cpp-candidate/conan/cache.tgz -C cpp-cache
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $client = @(Get-ChildItem cpp-cache -Recurse -Filter rstream-webtty-client.exe)
-          $server = @(Get-ChildItem cpp-cache -Recurse -Filter rstream-webtty-server.exe)
+          $client = @(Get-ChildItem cpp-candidate -Recurse -Filter rstream-webtty-client.exe)
+          $server = @(Get-ChildItem cpp-candidate -Recurse -Filter rstream-webtty-server.exe)
           if ($client.Count -ne 1 -or $server.Count -ne 1) { throw 'expected exactly one C++ WebTTY client and server' }
           "CPP_CLIENT=$($client[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CPP_SERVER=$($server[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
