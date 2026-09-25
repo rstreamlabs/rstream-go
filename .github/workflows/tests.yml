@@ -227,6 +227,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ccache cmake jq libdigest-sha-perl nasm ninja-build pipx pkg-config xz-utils
           pipx install "conan==${CONAN_VERSION}"
+          python3 -m pip install --user PyYAML
           echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
           host_arch=$(dpkg --print-architecture)
           case "${host_arch}" in
