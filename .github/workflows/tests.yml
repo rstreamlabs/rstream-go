@@ -197,6 +197,116 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'MinGW is required for the Windows race detector' }
           go test -race -count=1 -run '^(TestWindowsStdinReader.*|TestRunClientWindows(StdinLifecycle|TerminalGeometry)|TestRunWebTTYClientCaptureForwards(PipedStdin|ExternalProcessPipe))$' ./webtty ./cmd/rstream/cmd
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+  windows-assembly-network-diagnostic:
+    name: Exact assembly Windows network diagnostic
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.actor == vars.CI_ALLOWED_ACTOR &&
+      github.head_ref == 'codex/webtty-windows-pipe-diagnostic'
+    runs-on: windows-2025
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact Go source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: c14ca32d0f4e9b4e7ed809722726350ed10ed849
+          path: sources/rstream-go
+          persist-credentials: false
+      - name: Checkout exact Engine source and certification policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rstreamlabs/rstream-engine
+          ref: 1906e460ebf917dc1a334ddde2f5198129b2561c
+          token: ${{ secrets.GIT_TOKEN }}
+          path: sources/rstream-engine
+          persist-credentials: false
+      - name: Checkout exact C++ source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rstreamlabs/rstream-cpp
+          ref: 505545d4b32faf38c23f9bad83fb6e14809b4cf1
+          token: ${{ secrets.GIT_TOKEN }}
+          path: sources/rstream-cpp
+          persist-credentials: false
+      - name: Checkout exact JavaScript source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rstreamlabs/rstream-js
+          ref: 0071efad393b0b199a49b62a8209e416661911b0
+          token: ${{ secrets.GIT_TOKEN }}
+          path: sources/rstream-js
+          persist-credentials: false
+      - name: Checkout exact Next.js source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rstreamlabs/rstream-nextjs
+          ref: 9213c356f7cd127ba5cdcd95290cf682362f8031
+          token: ${{ secrets.GIT_TOKEN }}
+          path: sources/rstream-nextjs
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: sources/rstream-go/go.mod
+          cache-dependency-path: |
+            sources/rstream-go/go.sum
+            sources/rstream-engine/go.sum
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Build the exact Go and Engine binaries
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          Push-Location sources/rstream-go
+          go build -trimpath -o ../../build/go.exe ./cmd/rstream
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+          Push-Location sources/rstream-engine
+          go build -trimpath -tags 'ee,http2legacy' -o ../../build/engine.exe ./cmd/rstream-engine-ee
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+      - name: Restore the exact qualified C++ release binaries
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GIT_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh run download 36119690618 --repo rstreamlabs/rstream-cpp --name cpp-release-candidate-505545d4b32faf38c23f9bad83fb6e14809b4cf1-windows-x86_64 --dir cpp-candidate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $release = Get-Content -Raw cpp-candidate/release.json | ConvertFrom-Json
+          if ($release.source -ne '505545d4b32faf38c23f9bad83fb6e14809b4cf1' -or $release.os -ne 'windows' -or $release.arch -ne 'x86_64') {
+            throw 'C++ candidate metadata differs from the selected release source'
+          }
+          Push-Location cpp-candidate/conan
+          $checksums = Get-Content SHA256SUMS
+          foreach ($line in $checksums) {
+            if ($line -notmatch '^([0-9a-f]{64})  (.+)$') { throw "invalid C++ candidate checksum: $line" }
+            $actual = (Get-FileHash -Algorithm SHA256 $Matches[2]).Hash.ToLowerInvariant()
+            if ($actual -ne $Matches[1]) { throw "C++ candidate checksum mismatch: $($Matches[2])" }
+          }
+          Pop-Location
+          New-Item -ItemType Directory -Force -Path cpp-cache | Out-Null
+          tar -xzf cpp-candidate/conan/cache.tgz -C cpp-cache
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $client = @(Get-ChildItem cpp-cache -Recurse -Filter rstream-webtty-client.exe)
+          $server = @(Get-ChildItem cpp-cache -Recurse -Filter rstream-webtty-server.exe)
+          if ($client.Count -ne 1 -or $server.Count -ne 1) { throw 'expected exactly one C++ WebTTY client and server' }
+          "CPP_CLIENT=$($client[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "CPP_SERVER=$($server[0].FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Execute the exact Windows Engine route matrix
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python sources/rstream-engine/test/e2e/webtty_network_matrix.py --output-dir windows-network --jobs 3 --engine-repo sources/rstream-engine --go-repo sources/rstream-go --cpp-repo sources/rstream-cpp --js-repo sources/rstream-js --nextjs-repo sources/rstream-nextjs --engine-bin build/engine.exe --go-bin build/go.exe --cpp-client-bin $env:CPP_CLIENT --cpp-server-bin $env:CPP_SERVER
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: exact-assembly-windows-network-${{ github.sha }}
+          path: windows-network
+          if-no-files-found: error
+          retention-days: 30
   webtty-runtime:
     name: WebTTY Go direct profile (partial coverage)
     runs-on: ubuntu-latest
