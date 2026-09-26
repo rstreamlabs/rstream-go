@@ -378,7 +378,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          python sources/rstream-engine/test/e2e/webtty_network_matrix.py --output-dir windows-network --jobs 1 --engine-repo sources/rstream-engine --go-repo sources/rstream-go --cpp-repo sources/rstream-cpp --js-repo sources/rstream-js --nextjs-repo sources/rstream-nextjs --engine-bin build/engine.exe --go-bin build/go.exe --cpp-client-bin $env:CPP_CLIENT --cpp-server-bin $env:CPP_SERVER
+          python sources/rstream-engine/test/e2e/webtty_network_matrix.py --output-dir windows-network --jobs 3 --engine-repo sources/rstream-engine --go-repo sources/rstream-go --cpp-repo sources/rstream-cpp --js-repo sources/rstream-js --nextjs-repo sources/rstream-nextjs --engine-bin build/engine.exe --go-bin build/go.exe --cpp-client-bin $env:CPP_CLIENT --cpp-server-bin $env:CPP_SERVER
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Stress exact C++ short-lived child completion through Engine
         id: cpp_completion_stress
