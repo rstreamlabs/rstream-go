@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.32.4](https://github.com/rstreamlabs/rstream-go/compare/v1.32.3...v1.32.4) (2026-09-26)
+
+
+### Bug Fixes
+
+* **fips:** validate managed proxy transport delegate ([d10d602](https://github.com/rstreamlabs/rstream-go/commit/d10d602ead44c836931afdd27f7a5732b2ad8292))
+* **fips:** validate managed proxy transport delegate ([bcde628](https://github.com/rstreamlabs/rstream-go/commit/bcde628c434dad72c8f20db95a7c40d33b554616))
+
 ## [1.32.3](https://github.com/rstreamlabs/rstream-go/compare/v1.32.2...v1.32.3) (2026-09-26)
 
 
