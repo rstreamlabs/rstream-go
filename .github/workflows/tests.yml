@@ -212,7 +212,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: rstreamlabs/rstream-engine
-          ref: ca66b6d49995091258ae7320b0c8f4e988db5e59
+          ref: bcfe5a8decfc2d9d5fef1bdab69f74315e641454
           token: ${{ secrets.GIT_TOKEN }}
           path: policy
           persist-credentials: false
