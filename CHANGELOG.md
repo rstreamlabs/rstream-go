@@ -1,11 +1,17 @@
 # Changelog
 
+## [1.32.4](https://github.com/rstreamlabs/rstream-go/compare/v1.32.3...v1.32.4) (2026-09-26)
+
+
+### Bug Fixes
+
+* **fips:** validate managed proxy transport delegate ([bcde628](https://github.com/rstreamlabs/rstream-go/commit/bcde628c434dad72c8f20db95a7c40d33b554616))
+
 ## [1.32.3](https://github.com/rstreamlabs/rstream-go/compare/v1.32.2...v1.32.3) (2026-09-26)
 
 
 ### Bug Fixes
 
-* **webtty:** drain plain session close frames ([bf030b1](https://github.com/rstreamlabs/rstream-go/commit/bf030b1e6f1f051e6cf9f6d3fd453902d3dac352))
 * **webtty:** drain plain session close frames ([c2cd1f6](https://github.com/rstreamlabs/rstream-go/commit/c2cd1f69a033babee4636b4858453489d6501417))
 
 ## [1.32.2](https://github.com/rstreamlabs/rstream-go/compare/v1.32.1...v1.32.2) (2026-09-25)
