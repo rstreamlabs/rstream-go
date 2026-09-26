@@ -72,13 +72,11 @@ func (c *plainMessageConn) SetWriteDeadline(deadline time.Time) error {
 	return c.conn.SetWriteDeadline(deadline)
 }
 
-func (c *plainMessageConn) WriteControl(messageType int, _ []byte, deadline time.Time) error {
-	if err := c.conn.SetWriteDeadline(deadline); err != nil {
-		return err
-	}
-	if messageType == websocket.CloseMessage {
-		return c.conn.Close()
-	}
+func (c *plainMessageConn) WriteControl(_ int, _ []byte, _ time.Time) error {
+	// Plain sessions have no transport-level control frame. The protobuf Close
+	// message is their terminal record, so the sender must keep the transport
+	// open until the peer consumes that record and closes its side. Closing or
+	// half-closing here can discard buffered terminal frames inside a tunnel.
 	return nil
 }
 

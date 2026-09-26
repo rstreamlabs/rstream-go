@@ -1080,6 +1080,66 @@ func TestWebTTYHandlerServesPlainTransport(t *testing.T) {
 	<-done
 }
 
+func TestWebTTYHandlerFastCommandPreservesTerminalFramesAcrossBufferedTunnel(t *testing.T) {
+	zero := time.Duration(0)
+	closeDeadline := time.Second
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:    &zero,
+		SessionCloseDeadline: &closeDeadline,
+	}))
+	var sessions sync.WaitGroup
+	for attempt := range 32 {
+		client, server := net.Pipe()
+		buffered := &bufferedCloseWriteConn{
+			Conn:              server,
+			directWrites:      2,
+			pendingWriteCount: 10, // stdout, stderr, two EOS records, and Close
+			pendingReady:      make(chan struct{}),
+			prematureClose:    make(chan struct{}),
+		}
+		sessions.Add(1)
+		go func() {
+			defer sessions.Done()
+			handler.ServeConn(buffered)
+		}()
+		go func() {
+			select {
+			case <-buffered.pendingReady:
+			case <-time.After(time.Second):
+				return
+			}
+			select {
+			case <-buffered.prematureClose:
+			case <-time.After(10 * time.Millisecond):
+				_ = buffered.flushPending()
+			}
+		}()
+		var stdout, stderr bytes.Buffer
+		exitCode, err := RunClient(t.Context(), &ClientConfig{
+			URL:       "rstrm://fast-command",
+			Transport: WebTTYTransportPlain,
+			DialContext: func(context.Context, string, string) (net.Conn, error) {
+				return client, nil
+			},
+			CmdArgs:       testShellCommand("printf out; printf err >&2", "[Console]::Out.Write('out'); [Console]::Error.Write('err')"),
+			OpenDeadline:  durationPtr(time.Second),
+			CloseDeadline: durationPtr(time.Second),
+			Stdin:         strings.NewReader(""),
+			Stdout:        &stdout,
+			Stderr:        &stderr,
+		})
+		if err != nil || exitCode != 0 || stdout.String() != "out" || stderr.String() != "err" {
+			t.Fatalf("attempt %d: RunClient() = exit %d, stdout %q, stderr %q, error %v", attempt, exitCode, stdout.String(), stderr.String(), err)
+		}
+	}
+	shutdownCtx, cancel := context.WithTimeout(t.Context(), closeDeadline)
+	defer cancel()
+	if err := handler.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	sessions.Wait()
+}
+
 func TestWebTTYHandlerServesWebTransport(t *testing.T) {
 	zero := time.Duration(0)
 	handler := NewWebTTYHandler(testServerConfig(ServerConfig{HeartbeatInterval: &zero}))
