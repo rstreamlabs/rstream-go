@@ -318,6 +318,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          # Keep the copied Engine guard honest: this public diagnostic may
+          # reproduce the assembly, but it must not mint a main-workflow identity.
+          $env:GITHUB_ACTIONS = 'false'
           python policy/test/e2e/webtty_assembly.py --assembly assembly.json --source-root sources --legacy-go-repo baseline/rstream-go --cpp-candidate-dir cpp-candidate --cpp-candidate-proof cpp-candidate-proof/cpp-candidates.json --output-dir build --jobs 3
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify release executables start with their authenticated runtime
@@ -334,6 +337,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $env:GITHUB_ACTIONS = 'false'
           python policy/test/e2e/webtty_assembly_runtime.py --assembly assembly.json --source-root sources --build-dir build --output-dir runtime --jobs 3
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
