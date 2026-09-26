@@ -48,6 +48,49 @@ func TestFIPSProfileRejectsProxiedQUICTransport(t *testing.T) {
 	}
 }
 
+func TestFIPSProfileValidatesDrainingProxyTransportDelegate(t *testing.T) {
+	if err := validateFIPSDialer(&drainingProxyTransport{dialer: &QUICTransport{}}); err != nil {
+		t.Fatalf("approved wrapped QUIC transport rejected: %v", err)
+	}
+
+	proxy := "http://proxy.example:8080"
+	err := validateFIPSDialer(&drainingProxyTransport{
+		dialer: &QUICTransport{ProxyHTTP: &proxy},
+	})
+	if err == nil || !strings.Contains(err.Error(), "proxied QUIC transport") {
+		t.Fatalf("wrapped proxied QUIC transport error = %v, want proxy rejection", err)
+	}
+
+	err = validateFIPSDialer(&drainingProxyTransport{
+		dialer: fipsTestDialer{},
+	})
+	if err == nil || !strings.Contains(err.Error(), "custom transport") {
+		t.Fatalf("wrapped custom transport error = %v, want custom transport rejection", err)
+	}
+}
+
+func TestFIPSProfileAcceptsManagedQUICProxyTransport(t *testing.T) {
+	selected := &QUICTransport{}
+	channel := &controlChannelImpl{
+		client: &Client{Transport: &AutoTransport{
+			selected:     selected,
+			selectedMode: TunnelTransportModeQUIC,
+		}},
+	}
+	endpoint := "ingress.example.com:443"
+	transport := channel.proxyTransportLocked(&endpoint)
+	managed, ok := transport.(*drainingProxyTransport)
+	if !ok {
+		t.Fatalf("managed proxy transport = %T, want draining proxy transport", transport)
+	}
+	if managed.dialer == selected {
+		t.Fatal("managed proxy transport reused the control-channel QUIC transport")
+	}
+	if err := validateFIPSDialer(managed); err != nil {
+		t.Fatalf("managed QUIC proxy transport rejected: %v", err)
+	}
+}
+
 func TestFIPSProfileRejectsUnsafeTLSConfig(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -44,6 +44,14 @@ func validateFIPSDialer(transport Dialer) error {
 		return nil
 	case *QUICTransport:
 		return validateFIPSQUICTransport(transport)
+	case *drainingProxyTransport:
+		if transport == nil {
+			return nil
+		}
+		// The control channel uses this lifecycle-only wrapper for direct
+		// ingress connections. It does not alter the cryptographic path, so
+		// approval remains entirely dependent on the wrapped transport.
+		return validateFIPSDialer(transport.dialer)
 	default:
 		return fmt.Errorf("custom transport %T is not approved for the rstream FIPS profile", transport)
 	}
