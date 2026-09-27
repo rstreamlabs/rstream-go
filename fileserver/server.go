@@ -35,7 +35,8 @@ type Config struct {
 	Password      string
 	UI            http.Handler
 	Logger        *slog.Logger
-	OnActivity    func(Activity)
+	// OnActivity may be called concurrently and must return promptly.
+	OnActivity func(Activity)
 }
 
 type Capabilities struct {
@@ -67,7 +68,6 @@ type Server struct {
 	info     Info
 	access   atomic.Value
 	archives chan struct{}
-	activity func(Activity)
 }
 
 func New(cfg Config) (*Server, error) {
@@ -85,7 +85,7 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	s := &Server{local: local, logger: cfg.Logger, archives: make(chan struct{}, 2), activity: cfg.OnActivity}
+	s := &Server{local: local, logger: cfg.Logger, archives: make(chan struct{}, 2)}
 	dav, err := filesystem.NewBackend(local, filesystem.BackendConfig{Backend: backend, RTC: cfg.RTC, ArchivePath: ArchivePath, Archive: http.HandlerFunc(s.serveArchive), WrapData: func(next http.Handler) http.Handler { return observeActivity(backend, cfg.OnActivity, next) }, WebDAV: filesystem.WebDAVConfig{Prefix: FSPath, ReadOnly: true, Download: true, BoundedDepth: true, Logger: cfg.Logger}})
 	if err != nil {
 		_ = local.Close()
@@ -111,7 +111,7 @@ func New(cfg Config) (*Server, error) {
 		if cfg.Username == "" {
 			cfg.Username = "rstream"
 		}
-		s.handler = basicAuth(mux, cfg.Username, cfg.Password)
+		s.handler = basicAuth(mux, cfg.Username, cfg.Password, backend, cfg.OnActivity)
 		s.SetAccess("password")
 		s.info.Username = cfg.Username
 	}
@@ -134,16 +134,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive")
-	if s.activity == nil {
-		s.handler.ServeHTTP(w, r)
-		return
-	}
-	observed := &activityResponseWriter{ResponseWriter: w}
-	started := time.Now()
-	s.handler.ServeHTTP(observed, r)
-	if observed.status == http.StatusUnauthorized || observed.status == http.StatusForbidden {
-		s.activity(newActivity(s.info.Backend, started, r, observed, "authorization"))
-	}
+	s.handler.ServeHTTP(w, r)
 }
 
 func (s *Server) serveInfo(w http.ResponseWriter, r *http.Request) {
@@ -198,7 +189,7 @@ func (s *Server) serveArchive(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func basicAuth(next http.Handler, username, password string) http.Handler {
+func basicAuth(next http.Handler, username, password, backend string, activity func(Activity)) http.Handler {
 	wantUser := sha256.Sum256([]byte(username))
 	wantPassword := sha256.Sum256([]byte(password))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -207,9 +198,22 @@ func basicAuth(next http.Handler, username, password string) http.Handler {
 		gotPassword := sha256.Sum256([]byte(pass))
 		valid := subtle.ConstantTimeCompare(gotUser[:], wantUser[:]) & subtle.ConstantTimeCompare(gotPassword[:], wantPassword[:])
 		if !ok || valid != 1 {
-			w.Header().Set("WWW-Authenticate", "Basic realm=\"rstream files\", charset=\"UTF-8\"")
-			w.Header().Set("Cache-Control", "no-store")
-			http.Error(w, "A username and password are required.", http.StatusUnauthorized)
+			var started time.Time
+			if activity != nil {
+				started = time.Now()
+			}
+			target := w
+			var observed *activityResponseWriter
+			if activity != nil {
+				observed = &activityResponseWriter{ResponseWriter: w}
+				target = observed
+			}
+			target.Header().Set("WWW-Authenticate", "Basic realm=\"rstream files\", charset=\"UTF-8\"")
+			target.Header().Set("Cache-Control", "no-store")
+			http.Error(target, "A username and password are required.", http.StatusUnauthorized)
+			if observed != nil {
+				activity(newActivity(backend, started, r, observed, "authorization"))
+			}
 			return
 		}
 		next.ServeHTTP(w, r)

@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
@@ -77,6 +78,7 @@ type forwardCtx struct {
 	Logger           *slog.Logger
 	OutputFormat     forwardOutputFormat
 	Out              io.Writer
+	outMu            sync.Mutex
 	UI               forwardUI
 	clientCloser     *ownedRstreamClient
 	resolveProject   func(context.Context) (controlplane.Project, error)
@@ -710,6 +712,8 @@ func (s *forwardCtx) writeLine(a ...any) {
 	if s.Out == nil {
 		return
 	}
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
 	fmt.Fprintln(s.Out, a...)
 }
 
@@ -717,6 +721,8 @@ func (s *forwardCtx) writef(format string, a ...any) {
 	if s.Out == nil {
 		return
 	}
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
 	fmt.Fprintf(s.Out, format, a...)
 }
 
@@ -724,6 +730,8 @@ func (s *forwardCtx) writeJSON(v any) {
 	if s.Out == nil {
 		return
 	}
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
 	enc := json.NewEncoder(s.Out)
 	_ = enc.Encode(v)
 }

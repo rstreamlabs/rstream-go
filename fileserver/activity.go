@@ -8,6 +8,7 @@ import (
 	"path"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Activity describes one bounded, content-free filesystem operation.
@@ -70,7 +71,15 @@ func observeActivity(backend string, observer func(Activity), next http.Handler)
 		started := time.Now()
 		observed := &activityResponseWriter{ResponseWriter: w}
 		defer func() {
-			observer(newActivity(backend, started, r, observed, ""))
+			recovered := recover()
+			activity := newActivity(backend, started, r, observed, "")
+			if recovered != nil {
+				activity.Outcome = "error"
+			}
+			observer(activity)
+			if recovered != nil {
+				panic(recovered)
+			}
 		}()
 		next.ServeHTTP(observed, r)
 	})
@@ -128,7 +137,11 @@ func activityPath(r *http.Request) string {
 	}
 	value = path.Clean("/" + strings.TrimPrefix(value, "/"))
 	if len(value) > 512 {
-		value = value[:509] + "..."
+		value = value[:509]
+		for !utf8.ValidString(value) {
+			value = value[:len(value)-1]
+		}
+		value += "..."
 	}
 	return value
 }

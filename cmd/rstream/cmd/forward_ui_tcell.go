@@ -12,17 +12,18 @@ import (
 )
 
 type forwardUITCell struct {
-	mu        sync.Mutex
-	screen    tcell.Screen
-	startOnce sync.Once
-	stopOnce  sync.Once
-	stop      chan struct{}
-	done      chan struct{}
-	status    forwardStatus
-	conns     []forwardConnInfo
-	files     bool
-	activity  []filesActivityEvent
-	started   bool
+	mu           sync.Mutex
+	screen       tcell.Screen
+	startOnce    sync.Once
+	stopOnce     sync.Once
+	stop         chan struct{}
+	done         chan struct{}
+	status       forwardStatus
+	conns        []forwardConnInfo
+	files        bool
+	activity     []filesActivityEvent
+	activityNext int
+	started      bool
 }
 
 const maxFileActivities = 200
@@ -143,8 +144,8 @@ func (u *forwardUITCell) AddFileActivity(event filesActivityEvent) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if len(u.activity) == maxFileActivities {
-		copy(u.activity, u.activity[1:])
-		u.activity[len(u.activity)-1] = event
+		u.activity[u.activityNext] = event
+		u.activityNext = (u.activityNext + 1) % maxFileActivities
 		return
 	}
 	u.activity = append(u.activity, event)
@@ -262,7 +263,10 @@ func (u *forwardUITCell) draw() {
 func (u *forwardUITCell) snapshot() (forwardStatus, []forwardConnInfo, bool, []filesActivityEvent) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return u.status, append([]forwardConnInfo(nil), u.conns...), u.files, append([]filesActivityEvent(nil), u.activity...)
+	activity := make([]filesActivityEvent, 0, len(u.activity))
+	activity = append(activity, u.activity[u.activityNext:]...)
+	activity = append(activity, u.activity[:u.activityNext]...)
+	return u.status, append([]forwardConnInfo(nil), u.conns...), u.files, activity
 }
 
 func formatFileBytes(value int64) string {

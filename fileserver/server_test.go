@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestPasswordProtectsEverySurface(t *testing.T) {
@@ -136,6 +137,51 @@ func TestActivityReportsCompletedTransfersAndAuthorizationFailures(t *testing.T)
 	assertActivity(t, activities, Activity{
 		Backend: "webdav", Operation: "authorization", Method: http.MethodGet,
 		Path: "/hello.txt", Status: http.StatusUnauthorized, Bytes: int64(response.Body.Len()), Outcome: "error",
+	})
+
+	request = httptest.NewRequest(http.MethodPut, FSPath+"/hello.txt", strings.NewReader("replacement"))
+	request.SetBasicAuth("developer", "test-only-share-password")
+	response = httptest.NewRecorder()
+	s.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("read-only status = %d", response.Code)
+	}
+	assertActivity(t, activities, Activity{
+		Backend: "webdav", Operation: "request", Method: http.MethodPut,
+		Path: "/hello.txt", Status: http.StatusForbidden, Bytes: int64(response.Body.Len()), Outcome: "error",
+	})
+	select {
+	case duplicate := <-activities:
+		t.Fatalf("request emitted duplicate activity: %#v", duplicate)
+	default:
+	}
+}
+
+func TestActivityPathTruncationPreservesUTF8(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, FSPath+"/"+strings.Repeat("é", 300), nil)
+	got := activityPath(request)
+	if len(got) > 512 || !utf8.ValidString(got) || !strings.HasSuffix(got, "...") {
+		t.Fatalf("invalid truncated path: bytes=%d valid=%v suffix=%q", len(got), utf8.ValidString(got), got[len(got)-3:])
+	}
+}
+
+func TestActivityReportsInterruptedHandlersAsErrors(t *testing.T) {
+	activities := make(chan Activity, 1)
+	handler := observeActivity("webdav", func(activity Activity) { activities <- activity }, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		panic(http.ErrAbortHandler)
+	}))
+	recovered := func() (value any) {
+		defer func() { value = recover() }()
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, FSPath+"/large.bin", nil))
+		return nil
+	}()
+	if recovered != http.ErrAbortHandler {
+		t.Fatalf("recovered panic = %v, want %v", recovered, http.ErrAbortHandler)
+	}
+	assertActivity(t, activities, Activity{
+		Backend: "webdav", Operation: "download", Method: http.MethodGet,
+		Path: "/large.bin", Status: http.StatusOK, Outcome: "error",
 	})
 }
 
