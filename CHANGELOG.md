@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.6](https://github.com/rstreamlabs/rstream-go/compare/v1.32.5...v1.32.6) (2026-09-27)
+
+
+### Bug Fixes
+
+* **webtty:** treat remote code-zero stream close as clean ([022898e](https://github.com/rstreamlabs/rstream-go/commit/022898e0345c1a2eb7898780c2d956d6c5fc79ac))
+
 ## [1.32.5](https://github.com/rstreamlabs/rstream-go/compare/v1.32.4...v1.32.5) (2026-09-27)
 
 
