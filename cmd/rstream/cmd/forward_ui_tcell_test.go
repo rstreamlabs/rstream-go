@@ -77,7 +77,18 @@ func TestForwardUITCellFilesModeShowsBoundedTransferHistory(t *testing.T) {
 	screen.SetSize(100, 28)
 	ui := &forwardUITCell{screen: screen}
 	ui.SetFilesMode()
-	status := newForwardStatus(nil)
+	status := newForwardStatus(&rstream.ServerDetails{
+		Version:  rstream.StringPtr("2.3.4"),
+		Channel:  rstream.StringPtr("preview"),
+		Update:   rstream.StringPtr("available"),
+		Plan:     rstream.StringPtr("pro"),
+		Provider: rstream.StringPtr("aws"),
+		Region:   rstream.StringPtr("eu-west-1"),
+	})
+	status.Status = rstream.StringPtr("online")
+	status.TunnelID = rstream.StringPtr("tun-1")
+	status.Forwarding = rstream.StringPtr("https://files.example.com")
+	status.Forwarded = rstream.StringPtr("/Users/developer/project")
 	status.Files = &fileserver.Info{Backend: "webdav", Access: "password", Username: "developer"}
 	ui.SetStatus(status)
 	for i := 0; i < maxFileActivities+3; i++ {
@@ -103,13 +114,27 @@ func TestForwardUITCellFilesModeShowsBoundedTransferHistory(t *testing.T) {
 		rows = append(rows, strings.TrimSpace(row.String()))
 	}
 	got := strings.Join(rows, "\n")
-	for _, want := range []string{"file backend: webdav", "file access : password", "file username: developer", "file activity:", "/report-202.csv", "200", "2.0KiB", "17ms"} {
+	wantStatus := fmt.Sprintf("version     : %s\n"+
+		"update      : available\n"+
+		"status      : online\n"+
+		"forwarding  : https://files.example.com\n"+
+		"forwarded   : /Users/developer/project\n"+
+		"backend     : webdav\n"+
+		"access      : password\n"+
+		"username    : developer\n"+
+		"mode        : read-only", formatVersion(rstream.Version, rstream.Channel))
+	if !strings.Contains(got, wantStatus) {
+		t.Fatalf("files screen output =\n%s\nwant status:\n%s", got, wantStatus)
+	}
+	for _, want := range []string{"file activity:", "/report-202.csv", "200", "2.0KiB", "17ms"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("files screen missing %q in:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "incoming connections") || strings.Contains(got, "no connection") {
-		t.Fatalf("files screen contains tunnel connection wording:\n%s", got)
+	for _, unwanted := range []string{"plan", "provider", "region", "tunnel ID", "incoming connections", "no connection"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("files screen contains irrelevant %q label:\n%s", unwanted, got)
+		}
 	}
 }
 

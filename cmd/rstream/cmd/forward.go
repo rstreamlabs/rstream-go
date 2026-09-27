@@ -744,23 +744,19 @@ func (s *forwardCtx) renderStatusText(st forwardStatus) {
 		}
 		return *p
 	}
-	lines := []kv{
-		{"version", val(st.Version)},
-		{"update", val(st.Update)},
-		{"plan", val(st.Plan)},
-		{"provider", val(st.Provider)},
-		{"region", val(st.Region)},
-		{"status", val(st.Status)},
-		{"tunnel ID", val(st.TunnelID)},
-		{"forwarding", val(st.Forwarding)},
-		{"forwarded", val(st.Forwarded)},
+	files := s.LocalHTTP != nil || st.Files != nil
+	lines := []kv{{"version", val(st.Version)}, {"update", val(st.Update)}}
+	if files {
+		lines = append(lines, kv{"status", val(st.Status)}, kv{"forwarding", val(st.Forwarding)}, kv{"forwarded", val(st.Forwarded)})
+	} else {
+		lines = append(lines, kv{"plan", val(st.Plan)}, kv{"provider", val(st.Provider)}, kv{"region", val(st.Region)}, kv{"status", val(st.Status)}, kv{"tunnel ID", val(st.TunnelID)}, kv{"forwarding", val(st.Forwarding)}, kv{"forwarded", val(st.Forwarded)})
 	}
-	if st.Files != nil {
-		lines = append(lines, kv{"file backend", st.Files.Backend}, kv{"file access", st.Files.Access})
+	if files && st.Files != nil {
+		lines = append(lines, kv{"backend", st.Files.Backend}, kv{"access", st.Files.Access})
 		if st.Files.Username != "" {
-			lines = append(lines, kv{"file username", st.Files.Username})
+			lines = append(lines, kv{"username", st.Files.Username})
 		}
-		lines = append(lines, kv{"file mode", "read-only"})
+		lines = append(lines, kv{"mode", "read-only"})
 	}
 	maxw := 0
 	for _, kv := range lines {
@@ -768,7 +764,11 @@ func (s *forwardCtx) renderStatusText(st forwardStatus) {
 			maxw = len(kv.k)
 		}
 	}
-	s.writeLine("tunnel status")
+	if files {
+		s.writeLine("file server status")
+	} else {
+		s.writeLine("tunnel status")
+	}
 	for _, kv := range lines {
 		s.writef("  %-*s : %s\n", maxw, kv.k, kv.v)
 	}

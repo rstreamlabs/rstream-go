@@ -126,6 +126,39 @@ func TestFilesActivityOutputModes(t *testing.T) {
 	}
 }
 
+func TestFilesStatusTextShowsOnlyActionableFields(t *testing.T) {
+	var out bytes.Buffer
+	ctx := &forwardCtx{LocalHTTP: &localHTTPService{}, OutputFormat: forwardOutputFormatText, Out: &out, Logger: slog.Default()}
+	status := newForwardStatus(&rstream.ServerDetails{
+		Update: rstream.StringPtr("up to date"), Plan: rstream.StringPtr("pro"),
+		Provider: rstream.StringPtr("aws"), Region: rstream.StringPtr("eu-west-3"),
+	})
+	status.Status = rstream.StringPtr("online")
+	status.TunnelID = rstream.StringPtr("tun-1")
+	status.Forwarding = rstream.StringPtr("https://files.example.com")
+	status.Forwarded = rstream.StringPtr("/Users/developer/project")
+	status.Files = &fileserver.Info{Backend: "webdav", Access: "password", Username: "developer"}
+	ctx.setStatus(status)
+	want := fmt.Sprintf("file server status\n"+
+		"  version    : %s\n"+
+		"  update     : up to date\n"+
+		"  status     : online\n"+
+		"  forwarding : https://files.example.com\n"+
+		"  forwarded  : /Users/developer/project\n"+
+		"  backend    : webdav\n"+
+		"  access     : password\n"+
+		"  username   : developer\n"+
+		"  mode       : read-only\n", formatVersion(rstream.Version, rstream.Channel))
+	if got := out.String(); got != want {
+		t.Fatalf("files status output =\n%s\nwant:\n%s", got, want)
+	}
+	for _, unwanted := range []string{"plan", "provider", "region", "tunnel ID"} {
+		if strings.Contains(out.String(), unwanted) {
+			t.Fatalf("files status contains irrelevant %q field:\n%s", unwanted, out.String())
+		}
+	}
+}
+
 func TestFilesActivityJSONOutputIsSerializedAcrossRequests(t *testing.T) {
 	const requests = 64
 	var out bytes.Buffer
