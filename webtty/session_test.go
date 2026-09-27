@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/quic-go/quic-go"
+	"github.com/quic-go/webtransport-go"
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
 	"google.golang.org/protobuf/proto"
 )
@@ -409,6 +411,31 @@ func TestIsExpectedWebTTYPeerCloseError(t *testing.T) {
 			name: "abnormal websocket close",
 			err:  &websocket.CloseError{Code: websocket.CloseAbnormalClosure},
 			want: true,
+		},
+		{
+			name: "remote QUIC stream closed normally",
+			err:  &quic.StreamError{Remote: true},
+			want: true,
+		},
+		{
+			name: "remote WebTransport stream closed normally",
+			err:  &webtransport.StreamError{Remote: true},
+			want: true,
+		},
+		{
+			name: "local QUIC stream cancellation",
+			err:  &quic.StreamError{},
+			want: false,
+		},
+		{
+			name: "remote QUIC stream failure",
+			err:  &quic.StreamError{Remote: true, ErrorCode: 7},
+			want: false,
+		},
+		{
+			name: "remote WebTransport stream failure",
+			err:  &webtransport.StreamError{Remote: true, ErrorCode: 7},
+			want: false,
 		},
 		{
 			name: "protocol error",

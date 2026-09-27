@@ -418,7 +418,7 @@ func isExpectedWebTTYPeerCloseError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) {
+	if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) || isRemoteWebTTYStreamClose(err) {
 		return true
 	}
 	return websocket.IsCloseError(
