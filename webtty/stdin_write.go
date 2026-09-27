@@ -31,6 +31,10 @@ func isClientStdinWriteClosed(err error) bool {
 	if isPipeWriteClosed(err) || errors.Is(err, net.ErrClosed) {
 		return true
 	}
+	return isRemoteWebTTYStreamClose(err)
+}
+
+func isRemoteWebTTYStreamClose(err error) bool {
 	var quicErr *quic.StreamError
 	if errors.As(err, &quicErr) {
 		return quicErr.Remote && quicErr.ErrorCode == 0
