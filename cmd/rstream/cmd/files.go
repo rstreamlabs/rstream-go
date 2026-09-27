@@ -63,13 +63,13 @@ func runFiles(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	password, err := filesPassword(cmd)
-	if err != nil {
-		return err
-	}
 	username, _ := cmd.Flags().GetString("username")
 	if strings.ContainsAny(username, ":\r\n") || username == "" {
 		return fmt.Errorf("--username must be nonempty and contain no colon or newline")
+	}
+	password, err := filesPassword(cmd, username)
+	if err != nil {
+		return err
 	}
 	if password == "" && cmd.Flags().Changed("username") {
 		return fmt.Errorf("--username requires --password or --password-file")
@@ -84,11 +84,6 @@ func runFiles(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	service, err := fileserver.New(fileserver.Config{Root: root, Backend: backend, RTC: rtcConfig, IncludeHidden: hidden, Exclude: exclude, Username: username, Password: password, UI: filesui.Handler(), Logger: slog.With("cmd", "files")})
-	if err != nil {
-		return err
-	}
-	defer service.Close()
 	props := &rstream.TunnelProperties{
 		Type:        rstream.TunnelTypePtr(rstream.TunnelTypeBytestream),
 		Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
@@ -107,6 +102,14 @@ func runFiles(cmd *cobra.Command, args []string) error {
 	}
 	defer s.Close()
 	s.Logger = slog.With("cmd", "files")
+	if ui, ok := s.UI.(interface{ SetFilesMode() }); ok {
+		ui.SetFilesMode()
+	}
+	service, err := fileserver.New(fileserver.Config{Root: root, Backend: backend, RTC: rtcConfig, IncludeHidden: hidden, Exclude: exclude, Username: username, Password: password, UI: filesui.Handler(), Logger: s.Logger, OnActivity: s.addFileActivity})
+	if err != nil {
+		return err
+	}
+	defer service.Close()
 	s.LocalHTTP = &localHTTPService{Server: service, Root: root, Password: password != ""}
 	if err := runForwardWithUI(cmd.Context(), s.UI, s.run); err != nil && !errors.Is(err, context.Canceled) {
 		return err
@@ -114,7 +117,7 @@ func runFiles(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func filesPassword(cmd *cobra.Command) (string, error) {
+func filesPassword(cmd *cobra.Command, username string) (string, error) {
 	filename, _ := cmd.Flags().GetString("password-file")
 	prompt, _ := cmd.Flags().GetBool("password")
 	if !prompt && filename == "" {
@@ -128,8 +131,8 @@ func filesPassword(cmd *cobra.Command) (string, error) {
 		if !ok || !term.IsTerminal(int(input.Fd())) {
 			return "", fmt.Errorf("--password requires a terminal; use --password-file - for stdin")
 		}
-		_, _ = fmt.Fprint(cmd.ErrOrStderr(), "Password for rstream files: ")
-		value, err := term.ReadPassword(int(input.Fd()))
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "HTTP Basic username: %s\nPassword for rstream files: ", username)
+		value, err := readPasswordContext(cmd.Context(), input)
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr())
 		if err != nil {
 			return "", err

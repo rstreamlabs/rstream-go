@@ -38,7 +38,7 @@ func TestFilesPasswordInputs(t *testing.T) {
 			if err := command.ParseFlags(tc.args); err != nil {
 				t.Fatal(err)
 			}
-			got, err := filesPassword(command)
+			got, err := filesPassword(command, "rstream")
 			if (err != nil) != tc.fails || got != tc.want {
 				t.Fatalf("password mismatch or unexpected error: %v", err)
 			}
@@ -52,7 +52,7 @@ func TestFilesPasswordInputs(t *testing.T) {
 	if err := command.ParseFlags([]string{"--password-file", filename}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := filesPassword(command); got != "from-file" || err != nil {
+	if got, err := filesPassword(command, "rstream"); got != "from-file" || err != nil {
 		t.Fatalf("file input failed: %v", err)
 	}
 }

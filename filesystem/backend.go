@@ -21,6 +21,7 @@ type BackendConfig struct {
 	RTC         rtc.ServerConfig
 	ArchivePath string
 	Archive     http.Handler
+	WrapData    func(http.Handler) http.Handler
 }
 
 type BackendHandler struct {
@@ -66,9 +67,13 @@ func NewBackend(local *Local, config BackendConfig) (*BackendHandler, error) {
 	if config.Archive != nil {
 		data.Handle(config.ArchivePath, config.Archive)
 	}
+	var dataHandler http.Handler = data
+	if config.WrapData != nil {
+		dataHandler = config.WrapData(dataHandler)
+	}
 	result := &BackendHandler{}
 	mux := http.NewServeMux()
-	mux.Handle("/", data)
+	mux.Handle("/", dataHandler)
 	endpoint := root + rtc.Endpoint
 	if backend == BackendWebRTC {
 		config.RTC.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +81,7 @@ func NewBackend(local *Local, config BackendConfig) (*BackendHandler, error) {
 				http.Error(w, "WebRTC filesystem is read-only; writing is not supported", http.StatusForbidden)
 				return
 			}
-			data.ServeHTTP(w, r)
+			dataHandler.ServeHTTP(w, r)
 		})
 		result.rtc = rtc.NewServer(config.RTC)
 		mux.Handle(endpoint, result.rtc)

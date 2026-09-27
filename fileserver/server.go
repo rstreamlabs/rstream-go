@@ -14,6 +14,7 @@ import (
 	"path"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/rstreamlabs/rstream-go/filesystem"
 	"github.com/rstreamlabs/rstream-go/filesystem/rtc"
@@ -34,6 +35,7 @@ type Config struct {
 	Password      string
 	UI            http.Handler
 	Logger        *slog.Logger
+	OnActivity    func(Activity)
 }
 
 type Capabilities struct {
@@ -53,6 +55,7 @@ type Info struct {
 	FSPath       string       `json:"fs_path"`
 	ArchivePath  string       `json:"archive_path,omitempty"`
 	Access       string       `json:"access"`
+	Username     string       `json:"username,omitempty"`
 	Capabilities Capabilities `json:"capabilities"`
 }
 
@@ -64,6 +67,7 @@ type Server struct {
 	info     Info
 	access   atomic.Value
 	archives chan struct{}
+	activity func(Activity)
 }
 
 func New(cfg Config) (*Server, error) {
@@ -81,8 +85,8 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	s := &Server{local: local, logger: cfg.Logger, archives: make(chan struct{}, 2)}
-	dav, err := filesystem.NewBackend(local, filesystem.BackendConfig{Backend: backend, RTC: cfg.RTC, ArchivePath: ArchivePath, Archive: http.HandlerFunc(s.serveArchive), WebDAV: filesystem.WebDAVConfig{Prefix: FSPath, ReadOnly: true, Download: true, BoundedDepth: true, Logger: cfg.Logger}})
+	s := &Server{local: local, logger: cfg.Logger, archives: make(chan struct{}, 2), activity: cfg.OnActivity}
+	dav, err := filesystem.NewBackend(local, filesystem.BackendConfig{Backend: backend, RTC: cfg.RTC, ArchivePath: ArchivePath, Archive: http.HandlerFunc(s.serveArchive), WrapData: func(next http.Handler) http.Handler { return observeActivity(backend, cfg.OnActivity, next) }, WebDAV: filesystem.WebDAVConfig{Prefix: FSPath, ReadOnly: true, Download: true, BoundedDepth: true, Logger: cfg.Logger}})
 	if err != nil {
 		_ = local.Close()
 		return nil, err
@@ -96,7 +100,7 @@ func New(cfg Config) (*Server, error) {
 	s.SetAccess("public")
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+InfoPath, s.serveInfo)
-	mux.HandleFunc("GET "+ArchivePath, s.serveArchive)
+	mux.Handle("GET "+ArchivePath, observeActivity(backend, cfg.OnActivity, http.HandlerFunc(s.serveArchive)))
 	mux.Handle(FSPath, dav)
 	mux.Handle(FSPath+"/", dav)
 	if cfg.UI != nil {
@@ -109,6 +113,7 @@ func New(cfg Config) (*Server, error) {
 		}
 		s.handler = basicAuth(mux, cfg.Username, cfg.Password)
 		s.SetAccess("password")
+		s.info.Username = cfg.Username
 	}
 	return s, nil
 }
@@ -129,7 +134,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow, noarchive")
-	s.handler.ServeHTTP(w, r)
+	if s.activity == nil {
+		s.handler.ServeHTTP(w, r)
+		return
+	}
+	observed := &activityResponseWriter{ResponseWriter: w}
+	started := time.Now()
+	s.handler.ServeHTTP(observed, r)
+	if observed.status == http.StatusUnauthorized || observed.status == http.StatusForbidden {
+		s.activity(newActivity(s.info.Backend, started, r, observed, "authorization"))
+	}
 }
 
 func (s *Server) serveInfo(w http.ResponseWriter, r *http.Request) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/fileserver"
 )
 
 func TestForwardUITCellStatusOutput(t *testing.T) {
@@ -64,6 +65,51 @@ func TestForwardUITCellStatusOutput(t *testing.T) {
 		if strings.Contains(got, label) {
 			t.Errorf("screen output contains diagnostic label %q", label)
 		}
+	}
+}
+
+func TestForwardUITCellFilesModeShowsBoundedTransferHistory(t *testing.T) {
+	screen := tcell.NewSimulationScreen("UTF-8")
+	if err := screen.Init(); err != nil {
+		t.Fatalf("screen Init() error = %v", err)
+	}
+	t.Cleanup(screen.Fini)
+	screen.SetSize(100, 28)
+	ui := &forwardUITCell{screen: screen}
+	ui.SetFilesMode()
+	status := newForwardStatus(nil)
+	status.Files = &fileserver.Info{Backend: "webdav", Access: "password", Username: "developer"}
+	ui.SetStatus(status)
+	for i := 0; i < maxFileActivities+3; i++ {
+		ui.AddFileActivity(filesActivityEvent{
+			Date: time.Date(2026, 9, 27, 10, 0, i%60, 0, time.UTC), Backend: "webdav",
+			Method: "GET", Path: fmt.Sprintf("/report-%03d.csv", i), Status: 200,
+			Bytes: 2048, DurationMS: 17, Outcome: "success",
+		})
+	}
+	_, _, files, activity := ui.snapshot()
+	if !files || len(activity) != maxFileActivities || activity[0].Path != "/report-003.csv" {
+		t.Fatalf("files snapshot = files:%v len:%d first:%q", files, len(activity), activity[0].Path)
+	}
+	ui.draw()
+	screen.Show()
+	cells, width, height := screen.GetContents()
+	var rows []string
+	for y := 0; y < height; y++ {
+		var row strings.Builder
+		for x := 0; x < width; x++ {
+			row.WriteString(string(cells[y*width+x].Runes))
+		}
+		rows = append(rows, strings.TrimSpace(row.String()))
+	}
+	got := strings.Join(rows, "\n")
+	for _, want := range []string{"file backend: webdav", "file access : password", "file username: developer", "file activity:", "/report-202.csv", "200", "2.0KiB", "17ms"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("files screen missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "incoming connections") || strings.Contains(got, "no connection") {
+		t.Fatalf("files screen contains tunnel connection wording:\n%s", got)
 	}
 }
 

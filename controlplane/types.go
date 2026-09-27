@@ -35,6 +35,14 @@ type Project struct {
 	TurnRealm         string                    `json:"turnRealm,omitempty"`
 	TurnPort          int                       `json:"turnPort,omitempty"`
 	TurnsPort         int                       `json:"turnsPort,omitempty"`
+	Issue             *ProjectIssue             `json:"issue,omitempty"`
+}
+
+type ProjectIssue struct {
+	Category   string `json:"category"`
+	Code       string `json:"code"`
+	Message    string `json:"message"`
+	OccurredAt string `json:"occurredAt,omitempty"`
 }
 
 type ProjectRegionalEndpoint struct {
