@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.32.7](https://github.com/rstreamlabs/rstream-go/compare/v1.32.6...v1.32.7) (2026-09-27)
+
+
+### Bug Fixes
+
+* **files:** align and simplify CLI status ([80ddfe2](https://github.com/rstreamlabs/rstream-go/commit/80ddfe28a61ec9c6d64716f4ba5d9c78a958e87a))
+* **files:** align and simplify CLI status ([3e029fc](https://github.com/rstreamlabs/rstream-go/commit/3e029fcb222b3077c4330a59a0c3f1dc2c002717))
+
 ## [1.32.6](https://github.com/rstreamlabs/rstream-go/compare/v1.32.5...v1.32.6) (2026-09-27)
 
 
