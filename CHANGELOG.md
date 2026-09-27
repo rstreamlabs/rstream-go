@@ -6,7 +6,6 @@
 ### Bug Fixes
 
 * **files:** harden concurrent activity reporting ([ffe154c](https://github.com/rstreamlabs/rstream-go/commit/ffe154c9c2cb2ddde73a786e128e6599767dd7a6))
-* **files:** report transfers and project availability ([dffbd79](https://github.com/rstreamlabs/rstream-go/commit/dffbd79019b576a8e01a80d540e8082dd03e8675))
 * **files:** report transfers and project availability ([affe937](https://github.com/rstreamlabs/rstream-go/commit/affe937e708f1a770191eba1866c7beec20ddfe4))
 
 ## [1.32.4](https://github.com/rstreamlabs/rstream-go/compare/v1.32.3...v1.32.4) (2026-09-26)
