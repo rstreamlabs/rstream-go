@@ -5,11 +5,13 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -18,6 +20,8 @@ import (
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/controlplane"
+	"github.com/rstreamlabs/rstream-go/fileserver"
 	"github.com/spf13/cobra"
 )
 
@@ -87,6 +91,98 @@ func TestForwardJSONAndNoneOutput(t *testing.T) {
 	ctx.closeConn(1)
 	if out.Len() != 0 {
 		t.Fatalf("none output wrote %q", out.String())
+	}
+}
+
+func TestFilesActivityOutputModes(t *testing.T) {
+	activity := fileserver.Activity{
+		Date: time.Date(2026, 9, 27, 10, 11, 12, 0, time.UTC), Backend: "webdav",
+		Operation: "download", Method: "GET", Path: "/reports/result.csv",
+		Status: 200, Bytes: 2048, Duration: 17 * time.Millisecond, Outcome: "success",
+	}
+	var out bytes.Buffer
+	ctx := &forwardCtx{OutputFormat: forwardOutputFormatText, Out: &out, Logger: slog.Default()}
+	ctx.addFileActivity(activity)
+	for _, want := range []string{"file request", "backend=webdav", `path="/reports/result.csv"`, "status=200", "bytes=2048", "duration_ms=17"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("text activity missing %q in %q", want, out.String())
+		}
+	}
+
+	out.Reset()
+	ctx.OutputFormat = forwardOutputFormatJSON
+	ctx.addFileActivity(activity)
+	for _, want := range []string{`"event":"file_request"`, `"operation":"download"`, `"path":"/reports/result.csv"`, `"status":200`, `"duration_ms":17`} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("JSON activity missing %q in %q", want, out.String())
+		}
+	}
+
+	out.Reset()
+	ctx.OutputFormat = forwardOutputFormatNone
+	ctx.addFileActivity(activity)
+	if out.Len() != 0 {
+		t.Fatalf("none output wrote %q", out.String())
+	}
+}
+
+func TestFilesActivityJSONOutputIsSerializedAcrossRequests(t *testing.T) {
+	const requests = 64
+	var out bytes.Buffer
+	ctx := &forwardCtx{OutputFormat: forwardOutputFormatJSON, Out: &out, Logger: slog.Default()}
+	var group sync.WaitGroup
+	group.Add(requests)
+	for i := 0; i < requests; i++ {
+		go func(i int) {
+			defer group.Done()
+			ctx.addFileActivity(fileserver.Activity{
+				Date: time.Unix(int64(i), 0).UTC(), Backend: "webdav",
+				Operation: "download", Method: http.MethodGet,
+				Path: fmt.Sprintf("/report-%d.csv", i), Status: http.StatusOK,
+				Bytes: int64(i), Duration: time.Millisecond, Outcome: "success",
+			})
+		}(i)
+	}
+	group.Wait()
+	lines := bytes.Split(bytes.TrimSpace(out.Bytes()), []byte("\n"))
+	if len(lines) != requests {
+		t.Fatalf("JSON lines = %d, want %d", len(lines), requests)
+	}
+	seen := make(map[string]bool, requests)
+	for _, line := range lines {
+		var event filesActivityEvent
+		if err := json.Unmarshal(line, &event); err != nil {
+			t.Fatalf("interleaved JSON output %q: %v", line, err)
+		}
+		seen[event.Path] = true
+	}
+	if len(seen) != requests {
+		t.Fatalf("unique JSON events = %d, want %d", len(seen), requests)
+	}
+}
+
+func TestDiagnoseProjectAvailabilityPreservesTransportErrorsUnlessProjectIsUnavailable(t *testing.T) {
+	transportErr := errors.New("TLS handshake failed")
+	ctx := &forwardCtx{resolveProject: func(context.Context) (controlplane.Project, error) {
+		return controlplane.Project{Status: "active"}, nil
+	}}
+	if got := ctx.diagnoseProjectAvailability(t.Context(), transportErr); !errors.Is(got, transportErr) {
+		t.Fatalf("active project error = %v", got)
+	}
+
+	ctx.resolveProject = func(context.Context) (controlplane.Project, error) {
+		return controlplane.Project{
+			Name: "env-dev-pro", Endpoint: "b43462b4", Status: "error",
+			Issue: &controlplane.ProjectIssue{Category: "billing", Code: "subscription_canceled", Message: "The project subscription was canceled."},
+		}, nil
+	}
+	got := ctx.diagnoseProjectAvailability(t.Context(), transportErr)
+	var engineErr *rstream.EngineError
+	if !errors.As(got, &engineErr) || engineErr.Code != rstream.EngineErrorCodeInvalidRequest {
+		t.Fatalf("unavailable project error = %T %v", got, got)
+	}
+	if !strings.Contains(got.Error(), "subscription was canceled") || strings.Contains(got.Error(), "TLS handshake") {
+		t.Fatalf("unavailable project message = %q", got)
 	}
 }
 

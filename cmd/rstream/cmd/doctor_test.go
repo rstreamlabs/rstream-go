@@ -174,6 +174,57 @@ func TestRunDoctorWithoutContextStaysLocalAndReportsActionableChecks(t *testing.
 	}
 }
 
+func TestRunDoctorReportsUnavailableProjectBeforeTransportFailures(t *testing.T) {
+	clearRstreamTestEnv(t)
+	token := doctorToken(map[string]any{"exp": time.Now().Add(time.Hour).Unix()})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/whoami":
+			_, _ = w.Write([]byte(`{"id":"user-1","role":"owner"}`))
+		case "/api/projects/tunnels/resolve/env-dev-pro":
+			_, _ = w.Write([]byte(`{"id":"project-1","workspaceId":"workspace-1","name":"env-dev-pro","endpoint":"env-dev-pro","status":"error","routing":"regional","provider":"aws","region":"eu-west-3","plan":"pro","deployment":"shared","issue":{"category":"billing","code":"billing_subscription_canceled","message":"This project's billing subscription was canceled.","occurredAt":"2026-09-24T08:15:59.040Z"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	cfg := config.Config{
+		Defaults: config.Defaults{Context: &config.DefaultContext{Name: "dev-pro"}},
+		Contexts: []config.Context{{
+			Name: "dev-pro", APIURL: server.URL, Engine: "127.0.0.1:1", ProjectEndpoint: "env-dev-pro",
+			Auth: &config.Auth{Token: &config.Token{Storage: &config.TokenStorage{Kind: config.TokenStorageInline, Value: token}}},
+		}},
+	}
+	if err := config.WriteAtomic(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	command := runtimeFlagsCommand(t)
+	mustSetFlag(t, command, "config", path)
+	report := runDoctor(command)
+	checks := make(map[string]doctorCheck, len(report.Checks))
+	for _, check := range report.Checks {
+		checks[check.Name] = check
+	}
+	project := checks["project"]
+	if project.Status != doctorStatusFail || !strings.Contains(project.Message, "billing subscription was canceled") {
+		t.Fatalf("project check = %#v", project)
+	}
+	if project.Details["issueCategory"] != "billing" || project.Details["issueCode"] != "billing_subscription_canceled" {
+		t.Fatalf("project details = %#v", project.Details)
+	}
+	for _, name := range []string{"engine_address", "dns", "tls", "quic_transport", "tunnel_transport", "engine"} {
+		if checks[name].Status != doctorStatusSkip {
+			t.Fatalf("%s check = %#v, want skip", name, checks[name])
+		}
+	}
+}
+
 func TestDoctorTLSAndTunnelHelpers(t *testing.T) {
 	if tlsVersionName(tls.VersionTLS13) != "TLS 1.3" || tlsVersionName(0x1234) != "0x1234" {
 		t.Fatalf("unexpected TLS version names")

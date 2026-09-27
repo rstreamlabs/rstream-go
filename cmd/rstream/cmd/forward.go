@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
@@ -19,6 +20,7 @@ import (
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/netretry"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/sessiongroup"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/streamrelay"
+	"github.com/rstreamlabs/rstream-go/controlplane"
 	"github.com/rstreamlabs/rstream-go/fileserver"
 	"github.com/spf13/cobra"
 )
@@ -52,6 +54,19 @@ type forwardConnInfo struct {
 	SourceIP *net.IP   `json:"source_ip,omitempty"`
 }
 
+type filesActivityEvent struct {
+	Event      string    `json:"event"`
+	Date       time.Time `json:"date"`
+	Backend    string    `json:"backend"`
+	Operation  string    `json:"operation"`
+	Method     string    `json:"method"`
+	Path       string    `json:"path"`
+	Status     int       `json:"status"`
+	Bytes      int64     `json:"bytes"`
+	DurationMS int64     `json:"duration_ms"`
+	Outcome    string    `json:"outcome"`
+}
+
 type forwardCtx struct {
 	LocalHTTP        *localHTTPService
 	Client           *rstream.Client
@@ -63,8 +78,10 @@ type forwardCtx struct {
 	Logger           *slog.Logger
 	OutputFormat     forwardOutputFormat
 	Out              io.Writer
+	outMu            sync.Mutex
 	UI               forwardUI
 	clientCloser     *ownedRstreamClient
+	resolveProject   func(context.Context) (controlplane.Project, error)
 }
 
 type forwardSessionGroup = sessiongroup.Group
@@ -273,7 +290,7 @@ func newForwardCtxWithProperties(cmd *cobra.Command, host, port string, props *r
 			return nil, err
 		}
 	}
-	return &forwardCtx{
+	result = &forwardCtx{
 		Client:           client,
 		Props:            props,
 		Host:             host,
@@ -285,7 +302,15 @@ func newForwardCtxWithProperties(cmd *cobra.Command, host, port string, props *r
 		Out:              os.Stdout,
 		UI:               ui,
 		clientCloser:     clientCloser,
-	}, nil
+	}
+	if runtime.Resolved.Context != nil && runtime.Resolved.Context.ProjectEndpoint != "" && runtime.Resolved.APIURL != "" && runtime.Resolved.Token != "" {
+		controlClient := newRuntimeControlPlaneClient(runtime.Resolved)
+		endpoint := runtime.Resolved.Context.ProjectEndpoint
+		result.resolveProject = func(ctx context.Context) (controlplane.Project, error) {
+			return controlClient.ResolveProjectByEndpoint(ctx, endpoint)
+		}
+	}
+	return result, nil
 }
 
 func formatVersion(version, channel string) string {
@@ -361,6 +386,7 @@ func (s *forwardCtx) runOnce(ctx context.Context, sessions *forwardSessionGroup)
 	s.setStatus(connectingStatus)
 	ctrl, err := s.Client.Connect(ctx, nil)
 	if err != nil {
+		err = s.diagnoseProjectAvailability(ctx, err)
 		status := newForwardStatus(nil)
 		status.Status = rstream.StringPtr(formatStatusError("connection failed", err))
 		s.setStatus(status)
@@ -416,6 +442,23 @@ func (s *forwardCtx) runOnce(ctx context.Context, sessions *forwardSessionGroup)
 		return s.serveWithCtx(ctx, pl.Close, func() error { return s.serveUDP(ctx, pl, sessions) })
 	}
 	return fmt.Errorf("tunnel does not implement net.Listener or rstream.PacketListener")
+}
+
+func (s *forwardCtx) diagnoseProjectAvailability(ctx context.Context, transportErr error) error {
+	if s.resolveProject == nil || ctx.Err() != nil {
+		return transportErr
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	project, err := s.resolveProject(checkCtx)
+	if err != nil || project.Status == "active" {
+		return transportErr
+	}
+	message := fmt.Sprintf("project %q (%s) is %s and cannot serve traffic", project.Name, project.Endpoint, project.Status)
+	if project.Issue != nil && project.Issue.Message != "" {
+		message += ": " + project.Issue.Message
+	}
+	return &rstream.EngineError{Code: rstream.EngineErrorCodeInvalidRequest, Message: message}
 }
 
 func formatStatusError(prefix string, err error) string {
@@ -638,10 +681,39 @@ func (s *forwardCtx) closeConn(idx int) {
 	}
 }
 
+func (s *forwardCtx) addFileActivity(activity fileserver.Activity) {
+	event := filesActivityEvent{
+		Event:      "file_request",
+		Date:       activity.Date,
+		Backend:    activity.Backend,
+		Operation:  activity.Operation,
+		Method:     activity.Method,
+		Path:       activity.Path,
+		Status:     activity.Status,
+		Bytes:      activity.Bytes,
+		DurationMS: activity.Duration.Milliseconds(),
+		Outcome:    activity.Outcome,
+	}
+	s.Logger.Debug("File request", "backend", event.Backend, "operation", event.Operation, "method", event.Method, "path", event.Path, "status", event.Status, "bytes", event.Bytes, "duration_ms", event.DurationMS, "outcome", event.Outcome)
+	switch s.OutputFormat {
+	case forwardOutputFormatText:
+		s.writef("file request: date=%s backend=%s operation=%s method=%s path=%q status=%d bytes=%d duration_ms=%d outcome=%s\n", event.Date.UTC().Format("2006-01-02 15:04:05.000 UTC"), event.Backend, event.Operation, event.Method, event.Path, event.Status, event.Bytes, event.DurationMS, event.Outcome)
+	case forwardOutputFormatJSON:
+		s.writeJSON(event)
+	case forwardOutputFormatXTerm:
+		if ui, ok := s.UI.(interface{ AddFileActivity(filesActivityEvent) }); ok {
+			ui.AddFileActivity(event)
+		}
+	case forwardOutputFormatNone:
+	}
+}
+
 func (s *forwardCtx) writeLine(a ...any) {
 	if s.Out == nil {
 		return
 	}
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
 	fmt.Fprintln(s.Out, a...)
 }
 
@@ -649,6 +721,8 @@ func (s *forwardCtx) writef(format string, a ...any) {
 	if s.Out == nil {
 		return
 	}
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
 	fmt.Fprintf(s.Out, format, a...)
 }
 
@@ -656,6 +730,8 @@ func (s *forwardCtx) writeJSON(v any) {
 	if s.Out == nil {
 		return
 	}
+	s.outMu.Lock()
+	defer s.outMu.Unlock()
 	enc := json.NewEncoder(s.Out)
 	_ = enc.Encode(v)
 }
@@ -680,7 +756,11 @@ func (s *forwardCtx) renderStatusText(st forwardStatus) {
 		{"forwarded", val(st.Forwarded)},
 	}
 	if st.Files != nil {
-		lines = append(lines, kv{"file access", st.Files.Access}, kv{"file mode", "read-only"})
+		lines = append(lines, kv{"file backend", st.Files.Backend}, kv{"file access", st.Files.Access})
+		if st.Files.Username != "" {
+			lines = append(lines, kv{"file username", st.Files.Username})
+		}
+		lines = append(lines, kv{"file mode", "read-only"})
 	}
 	maxw := 0
 	for _, kv := range lines {

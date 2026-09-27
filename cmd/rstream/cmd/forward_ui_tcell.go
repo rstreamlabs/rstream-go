@@ -12,16 +12,21 @@ import (
 )
 
 type forwardUITCell struct {
-	mu        sync.Mutex
-	screen    tcell.Screen
-	startOnce sync.Once
-	stopOnce  sync.Once
-	stop      chan struct{}
-	done      chan struct{}
-	status    forwardStatus
-	conns     []forwardConnInfo
-	started   bool
+	mu           sync.Mutex
+	screen       tcell.Screen
+	startOnce    sync.Once
+	stopOnce     sync.Once
+	stop         chan struct{}
+	done         chan struct{}
+	status       forwardStatus
+	conns        []forwardConnInfo
+	files        bool
+	activity     []filesActivityEvent
+	activityNext int
+	started      bool
 }
+
+const maxFileActivities = 200
 
 func newForwardUITCell() (forwardUI, error) {
 	s, err := tcell.NewScreen()
@@ -129,9 +134,26 @@ func (u *forwardUITCell) CloseConn(idx int) {
 	}
 }
 
+func (u *forwardUITCell) SetFilesMode() {
+	u.mu.Lock()
+	u.files = true
+	u.mu.Unlock()
+}
+
+func (u *forwardUITCell) AddFileActivity(event filesActivityEvent) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if len(u.activity) == maxFileActivities {
+		u.activity[u.activityNext] = event
+		u.activityNext = (u.activityNext + 1) % maxFileActivities
+		return
+	}
+	u.activity = append(u.activity, event)
+}
+
 func (u *forwardUITCell) draw() {
 	s := u.screen
-	status, conns := u.snapshot()
+	status, conns, files, activity := u.snapshot()
 	s.Clear()
 	sw, sh := s.Size()
 	if sw <= 0 || sh <= 0 {
@@ -165,11 +187,21 @@ func (u *forwardUITCell) draw() {
 		{"forwarding", val(status.Forwarding)},
 		{"forwarded", val(status.Forwarded)},
 	}
+	if status.Files != nil {
+		rows = append(rows, [2]string{"file backend", status.Files.Backend}, [2]string{"file access", status.Files.Access})
+		if status.Files.Username != "" {
+			rows = append(rows, [2]string{"file username", status.Files.Username})
+		}
+	}
 	lines := make([]string, 0, len(rows)+3)
 	for _, r := range rows {
 		lines = append(lines, fmt.Sprintf("%-12s: %s", r[0], r[1]))
 	}
-	lines = append(lines, "", "incoming connections:", "")
+	if files {
+		lines = append(lines, "", "file activity:", "")
+	} else {
+		lines = append(lines, "", "incoming connections:", "")
+	}
 	for _, t := range lines {
 		if row > maxRow {
 			break
@@ -177,7 +209,17 @@ func (u *forwardUITCell) draw() {
 		printLineTruncated(s, row, left, right, t)
 		row++
 	}
-	if len(conns) == 0 {
+	if files {
+		if len(activity) == 0 && row <= maxRow {
+			printLineTruncated(s, row, left, right, "no file activity yet")
+			row++
+		}
+		for i := len(activity) - 1; i >= 0 && row <= maxRow; i-- {
+			event := activity[i]
+			printLineTruncated(s, row, left, right, fmt.Sprintf("[%s %s %s %d %s %dms %s]", event.Date.UTC().Format("15:04:05"), event.Method, event.Path, event.Status, formatFileBytes(event.Bytes), event.DurationMS, event.Backend))
+			row++
+		}
+	} else if len(conns) == 0 {
 		if row <= maxRow {
 			printLineTruncated(s, row, left, right, "no connection")
 			row++
@@ -218,10 +260,26 @@ func (u *forwardUITCell) draw() {
 	}
 }
 
-func (u *forwardUITCell) snapshot() (forwardStatus, []forwardConnInfo) {
+func (u *forwardUITCell) snapshot() (forwardStatus, []forwardConnInfo, bool, []filesActivityEvent) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	return u.status, append([]forwardConnInfo(nil), u.conns...)
+	activity := make([]filesActivityEvent, 0, len(u.activity))
+	activity = append(activity, u.activity[u.activityNext:]...)
+	activity = append(activity, u.activity[:u.activityNext]...)
+	return u.status, append([]forwardConnInfo(nil), u.conns...), u.files, activity
+}
+
+func formatFileBytes(value int64) string {
+	const unit = int64(1024)
+	if value < unit {
+		return fmt.Sprintf("%dB", value)
+	}
+	div, exp := unit, 0
+	for n := value / unit; n >= unit && exp < 3; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%ciB", float64(value)/float64(div), "KMGT"[exp])
 }
 
 func printWrappedLine(s tcell.Screen, start, left, right int, text string, maxRow int) int {

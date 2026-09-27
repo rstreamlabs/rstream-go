@@ -14,6 +14,7 @@ import (
 	"path"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/rstreamlabs/rstream-go/filesystem"
 	"github.com/rstreamlabs/rstream-go/filesystem/rtc"
@@ -34,6 +35,8 @@ type Config struct {
 	Password      string
 	UI            http.Handler
 	Logger        *slog.Logger
+	// OnActivity may be called concurrently and must return promptly.
+	OnActivity func(Activity)
 }
 
 type Capabilities struct {
@@ -53,6 +56,7 @@ type Info struct {
 	FSPath       string       `json:"fs_path"`
 	ArchivePath  string       `json:"archive_path,omitempty"`
 	Access       string       `json:"access"`
+	Username     string       `json:"username,omitempty"`
 	Capabilities Capabilities `json:"capabilities"`
 }
 
@@ -82,7 +86,7 @@ func New(cfg Config) (*Server, error) {
 		cfg.Logger = slog.Default()
 	}
 	s := &Server{local: local, logger: cfg.Logger, archives: make(chan struct{}, 2)}
-	dav, err := filesystem.NewBackend(local, filesystem.BackendConfig{Backend: backend, RTC: cfg.RTC, ArchivePath: ArchivePath, Archive: http.HandlerFunc(s.serveArchive), WebDAV: filesystem.WebDAVConfig{Prefix: FSPath, ReadOnly: true, Download: true, BoundedDepth: true, Logger: cfg.Logger}})
+	dav, err := filesystem.NewBackend(local, filesystem.BackendConfig{Backend: backend, RTC: cfg.RTC, ArchivePath: ArchivePath, Archive: http.HandlerFunc(s.serveArchive), WrapData: func(next http.Handler) http.Handler { return observeActivity(backend, cfg.OnActivity, next) }, WebDAV: filesystem.WebDAVConfig{Prefix: FSPath, ReadOnly: true, Download: true, BoundedDepth: true, Logger: cfg.Logger}})
 	if err != nil {
 		_ = local.Close()
 		return nil, err
@@ -96,7 +100,7 @@ func New(cfg Config) (*Server, error) {
 	s.SetAccess("public")
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+InfoPath, s.serveInfo)
-	mux.HandleFunc("GET "+ArchivePath, s.serveArchive)
+	mux.Handle("GET "+ArchivePath, observeActivity(backend, cfg.OnActivity, http.HandlerFunc(s.serveArchive)))
 	mux.Handle(FSPath, dav)
 	mux.Handle(FSPath+"/", dav)
 	if cfg.UI != nil {
@@ -107,8 +111,9 @@ func New(cfg Config) (*Server, error) {
 		if cfg.Username == "" {
 			cfg.Username = "rstream"
 		}
-		s.handler = basicAuth(mux, cfg.Username, cfg.Password)
+		s.handler = basicAuth(mux, cfg.Username, cfg.Password, backend, cfg.OnActivity)
 		s.SetAccess("password")
+		s.info.Username = cfg.Username
 	}
 	return s, nil
 }
@@ -184,7 +189,7 @@ func (s *Server) serveArchive(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func basicAuth(next http.Handler, username, password string) http.Handler {
+func basicAuth(next http.Handler, username, password, backend string, activity func(Activity)) http.Handler {
 	wantUser := sha256.Sum256([]byte(username))
 	wantPassword := sha256.Sum256([]byte(password))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -193,9 +198,22 @@ func basicAuth(next http.Handler, username, password string) http.Handler {
 		gotPassword := sha256.Sum256([]byte(pass))
 		valid := subtle.ConstantTimeCompare(gotUser[:], wantUser[:]) & subtle.ConstantTimeCompare(gotPassword[:], wantPassword[:])
 		if !ok || valid != 1 {
-			w.Header().Set("WWW-Authenticate", "Basic realm=\"rstream files\", charset=\"UTF-8\"")
-			w.Header().Set("Cache-Control", "no-store")
-			http.Error(w, "A username and password are required.", http.StatusUnauthorized)
+			var started time.Time
+			if activity != nil {
+				started = time.Now()
+			}
+			target := w
+			var observed *activityResponseWriter
+			if activity != nil {
+				observed = &activityResponseWriter{ResponseWriter: w}
+				target = observed
+			}
+			target.Header().Set("WWW-Authenticate", "Basic realm=\"rstream files\", charset=\"UTF-8\"")
+			target.Header().Set("Cache-Control", "no-store")
+			http.Error(target, "A username and password are required.", http.StatusUnauthorized)
+			if observed != nil {
+				activity(newActivity(backend, started, r, observed, "authorization"))
+			}
 			return
 		}
 		next.ServeHTTP(w, r)

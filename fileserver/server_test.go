@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 )
 
 func TestPasswordProtectsEverySurface(t *testing.T) {
@@ -92,5 +94,109 @@ func TestArchiveConcurrencyLimit(t *testing.T) {
 	s.ServeHTTP(response, httptest.NewRequest("GET", ArchivePath, nil))
 	if response.Code != 429 || response.Header().Get("Retry-After") == "" {
 		t.Fatal("archive admission exceeded its resource bound")
+	}
+}
+
+func TestActivityReportsCompletedTransfersAndAuthorizationFailures(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "hello.txt"), []byte("hello"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	activities := make(chan Activity, 4)
+	s, err := New(Config{
+		Root:       root,
+		Username:   "developer",
+		Password:   "test-only-share-password",
+		OnActivity: func(activity Activity) { activities <- activity },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if got := s.Info().Username; got != "developer" {
+		t.Fatalf("username = %q, want developer", got)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, FSPath+"/hello.txt", nil)
+	request.SetBasicAuth("developer", "test-only-share-password")
+	response := httptest.NewRecorder()
+	s.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Body.String() != "hello" {
+		t.Fatalf("download = %d %q", response.Code, response.Body.String())
+	}
+	assertActivity(t, activities, Activity{
+		Backend: "webdav", Operation: "download", Method: http.MethodGet,
+		Path: "/hello.txt", Status: http.StatusOK, Bytes: 5, Outcome: "success",
+	})
+
+	response = httptest.NewRecorder()
+	s.ServeHTTP(response, httptest.NewRequest(http.MethodGet, FSPath+"/hello.txt", nil))
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized status = %d", response.Code)
+	}
+	assertActivity(t, activities, Activity{
+		Backend: "webdav", Operation: "authorization", Method: http.MethodGet,
+		Path: "/hello.txt", Status: http.StatusUnauthorized, Bytes: int64(response.Body.Len()), Outcome: "error",
+	})
+
+	request = httptest.NewRequest(http.MethodPut, FSPath+"/hello.txt", strings.NewReader("replacement"))
+	request.SetBasicAuth("developer", "test-only-share-password")
+	response = httptest.NewRecorder()
+	s.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("read-only status = %d", response.Code)
+	}
+	assertActivity(t, activities, Activity{
+		Backend: "webdav", Operation: "request", Method: http.MethodPut,
+		Path: "/hello.txt", Status: http.StatusForbidden, Bytes: int64(response.Body.Len()), Outcome: "error",
+	})
+	select {
+	case duplicate := <-activities:
+		t.Fatalf("request emitted duplicate activity: %#v", duplicate)
+	default:
+	}
+}
+
+func TestActivityPathTruncationPreservesUTF8(t *testing.T) {
+	request := httptest.NewRequest(http.MethodGet, FSPath+"/"+strings.Repeat("é", 300), nil)
+	got := activityPath(request)
+	if len(got) > 512 || !utf8.ValidString(got) || !strings.HasSuffix(got, "...") {
+		t.Fatalf("invalid truncated path: bytes=%d valid=%v suffix=%q", len(got), utf8.ValidString(got), got[len(got)-3:])
+	}
+}
+
+func TestActivityReportsInterruptedHandlersAsErrors(t *testing.T) {
+	activities := make(chan Activity, 1)
+	handler := observeActivity("webdav", func(activity Activity) { activities <- activity }, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		panic(http.ErrAbortHandler)
+	}))
+	recovered := func() (value any) {
+		defer func() { value = recover() }()
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, FSPath+"/large.bin", nil))
+		return nil
+	}()
+	if recovered != http.ErrAbortHandler {
+		t.Fatalf("recovered panic = %v, want %v", recovered, http.ErrAbortHandler)
+	}
+	assertActivity(t, activities, Activity{
+		Backend: "webdav", Operation: "download", Method: http.MethodGet,
+		Path: "/large.bin", Status: http.StatusOK, Outcome: "error",
+	})
+}
+
+func assertActivity(t *testing.T, activities <-chan Activity, want Activity) {
+	t.Helper()
+	select {
+	case got := <-activities:
+		if got.Backend != want.Backend || got.Operation != want.Operation || got.Method != want.Method ||
+			got.Path != want.Path || got.Status != want.Status || got.Bytes != want.Bytes || got.Outcome != want.Outcome {
+			t.Fatalf("activity = %#v, want %#v", got, want)
+		}
+		if got.Date.IsZero() || got.Duration < 0 {
+			t.Fatalf("invalid activity timing: %#v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("activity was not reported")
 	}
 }

@@ -134,18 +134,28 @@ func runDoctor(cmd *cobra.Command) doctorReport {
 	ctx := cmd.Context()
 	checkDoctorContext(&report, resolved)
 	checkDoctorToken(&report, resolved.Token)
+	projectReady := true
 	if doctorUsesControlPlane(resolved) {
 		checkDoctorControlPlane(ctx, &report, resolved)
-		checkDoctorProject(ctx, &report, resolved)
+		projectReady = checkDoctorProject(ctx, &report, resolved)
 	} else {
 		report.add("control_plane_auth", doctorStatusSkip, "context is not linked to a hosted API URL", nil)
 		report.add("project", doctorStatusSkip, "context is engine-only", nil)
 	}
-	checkDoctorNetwork(ctx, &report, resolved)
-	checkDoctorEngine(ctx, &report, resolved)
+	if projectReady {
+		checkDoctorNetwork(ctx, &report, resolved)
+		checkDoctorEngine(ctx, &report, resolved)
+	} else {
+		message := "project must be active before transport checks"
+		for _, name := range []string{"engine_address", "dns", "tls", "quic_transport", "tunnel_transport", "engine"} {
+			report.add(name, doctorStatusSkip, message, nil)
+		}
+	}
 	deep, _ := cmd.Flags().GetBool("deep")
-	if deep {
+	if deep && projectReady {
 		checkDoctorTunnelCreation(ctx, &report, resolved)
+	} else if deep {
+		report.add("tunnel_creation", doctorStatusSkip, "project must be active before a tunnel lifecycle probe", nil)
 	}
 	report.finalize()
 	return report
@@ -260,14 +270,14 @@ func checkDoctorControlPlane(ctx context.Context, report *doctorReport, resolved
 	report.add("control_plane_auth", doctorStatusPass, "Control plane API token accepted", details)
 }
 
-func checkDoctorProject(ctx context.Context, report *doctorReport, resolved config.Resolved) {
+func checkDoctorProject(ctx context.Context, report *doctorReport, resolved config.Resolved) bool {
 	if resolved.Context == nil || resolved.Context.ProjectEndpoint == "" {
 		report.add("project", doctorStatusSkip, "project endpoint is not configured", nil)
-		return
+		return true
 	}
 	if resolved.Token == "" {
 		report.add("project", doctorStatusSkip, "token is required", nil)
-		return
+		return true
 	}
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -275,13 +285,35 @@ func checkDoctorProject(ctx context.Context, report *doctorReport, resolved conf
 	project, err := client.ResolveProjectByEndpoint(runCtx, resolved.Context.ProjectEndpoint)
 	if err != nil {
 		report.add("project", doctorStatusFail, mapControlPlaneError(err).Error(), map[string]string{"projectEndpoint": resolved.Context.ProjectEndpoint})
-		return
+		// A control plane lookup failure does not prove that a prepared data plane
+		// context is unavailable. Keep probing transports in that case.
+		return true
 	}
 	details := map[string]string{"id": project.ID, "name": project.Name, "endpoint": project.Endpoint, "status": project.Status, "plan": project.Plan, "engine": project.EngineAddress()}
 	if project.Region != "" {
 		details["region"] = project.Region
 	}
+	if project.Status != "active" {
+		message := fmt.Sprintf("project is %s and cannot serve traffic", project.Status)
+		if project.Issue != nil {
+			if project.Issue.Category != "" {
+				details["issueCategory"] = project.Issue.Category
+			}
+			if project.Issue.Code != "" {
+				details["issueCode"] = project.Issue.Code
+			}
+			if project.Issue.OccurredAt != "" {
+				details["issueOccurredAt"] = project.Issue.OccurredAt
+			}
+			if project.Issue.Message != "" {
+				message += ": " + project.Issue.Message
+			}
+		}
+		report.add("project", doctorStatusFail, message, details)
+		return false
+	}
 	report.add("project", doctorStatusPass, "project resolved", details)
+	return true
 }
 
 func checkDoctorNetwork(ctx context.Context, report *doctorReport, resolved config.Resolved) {
