@@ -170,32 +170,16 @@ func (u *forwardUITCell) draw() {
 	row++
 	row = printWrappedLine(s, row, left, right, "this program is part of rstream (https://rstream.io/download) and was created using rstream Go SDK", maxRow)
 	row++
-	val := func(p *string) string {
-		if p == nil || *p == "" {
-			return "-"
-		}
-		return *p
-	}
-	rows := [][2]string{
-		{"version", val(status.Version)},
-		{"update", val(status.Update)},
-		{"status", val(status.Status)},
-		{"plan", val(status.Plan)},
-		{"provider", val(status.Provider)},
-		{"region", val(status.Region)},
-		{"tunnel ID", val(status.TunnelID)},
-		{"forwarding", val(status.Forwarding)},
-		{"forwarded", val(status.Forwarded)},
-	}
-	if status.Files != nil {
-		rows = append(rows, [2]string{"file backend", status.Files.Backend}, [2]string{"file access", status.Files.Access})
-		if status.Files.Username != "" {
-			rows = append(rows, [2]string{"file username", status.Files.Username})
-		}
-	}
+	rows := forwardUIStatusRows(status, files)
 	lines := make([]string, 0, len(rows)+3)
+	labelWidth := 12
 	for _, r := range rows {
-		lines = append(lines, fmt.Sprintf("%-12s: %s", r[0], r[1]))
+		if len(r[0]) > labelWidth {
+			labelWidth = len(r[0])
+		}
+	}
+	for _, r := range rows {
+		lines = append(lines, fmt.Sprintf("%-*s: %s", labelWidth, r[0], r[1]))
 	}
 	if files {
 		lines = append(lines, "", "file activity:", "")
@@ -258,6 +242,29 @@ func (u *forwardUITCell) draw() {
 		clearLine(s, foot-1, left, sw-right)
 		printLineTruncated(s, foot, left, right, "press 'q' or 'Ctrl-C' to exit")
 	}
+}
+
+func forwardUIStatusRows(status forwardStatus, files bool) [][2]string {
+	val := func(p *string) string {
+		if p == nil || *p == "" {
+			return "-"
+		}
+		return *p
+	}
+	rows := [][2]string{{"version", val(status.Version)}, {"update", val(status.Update)}, {"status", val(status.Status)}}
+	if files {
+		rows = append(rows, [2]string{"forwarding", val(status.Forwarding)}, [2]string{"forwarded", val(status.Forwarded)})
+	} else {
+		rows = append(rows, [2]string{"plan", val(status.Plan)}, [2]string{"provider", val(status.Provider)}, [2]string{"region", val(status.Region)}, [2]string{"tunnel ID", val(status.TunnelID)}, [2]string{"forwarding", val(status.Forwarding)}, [2]string{"forwarded", val(status.Forwarded)})
+	}
+	if files && status.Files != nil {
+		rows = append(rows, [2]string{"backend", status.Files.Backend}, [2]string{"access", status.Files.Access})
+		if status.Files.Username != "" {
+			rows = append(rows, [2]string{"username", status.Files.Username})
+		}
+		rows = append(rows, [2]string{"mode", "read-only"})
+	}
+	return rows
 }
 
 func (u *forwardUITCell) snapshot() (forwardStatus, []forwardConnInfo, bool, []filesActivityEvent) {
