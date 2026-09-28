@@ -953,6 +953,40 @@ func TestQUICDatagramListenerCloseReleasesQueuedConnections(t *testing.T) {
 	}
 }
 
+func TestQUICDatagramListenerSkipsClosedQueuedChannel(t *testing.T) {
+	listenerCtx, listenerCancel := context.WithCancel(t.Context())
+	defer listenerCancel()
+	listener := &quicDatagramListener{
+		conns:  make(chan net.PacketConn, 2),
+		ctx:    listenerCtx,
+		cancel: listenerCancel,
+	}
+	newChannel := func(addr stubNetAddr) *quicDatagramChannel {
+		ctx, cancel := context.WithCancel(t.Context())
+		return &quicDatagramChannel{
+			ctx:           ctx,
+			cancel:        cancel,
+			raddr:         addr,
+			readDeadline:  newPacketDeadline(),
+			writeDeadline: newPacketDeadline(),
+		}
+	}
+	closed := newChannel("closed")
+	closed.initiateClose()
+	healthy := newChannel("healthy")
+	defer healthy.initiateClose()
+	listener.conns <- closed
+	listener.conns <- healthy
+
+	conn, addr, err := listener.Accept()
+	if err != nil {
+		t.Fatalf("Accept() error = %v", err)
+	}
+	if conn != healthy || addr.String() != "healthy" {
+		t.Fatalf("Accept() = %v, %v, want healthy channel", conn, addr)
+	}
+}
+
 type recordingDatagramProvider struct {
 	sent [][]byte
 	err  error

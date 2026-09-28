@@ -858,37 +858,36 @@ type quicDatagramListener struct {
 }
 
 func (l *quicDatagramListener) Accept() (net.PacketConn, net.Addr, error) {
-	select {
-	case <-l.ctx.Done():
-		return nil, nil, net.ErrClosed
-	default:
-	}
-	select {
-	case conn, ok := <-l.conns:
-		if !ok {
-			return nil, nil, net.ErrClosed
-		}
+	for {
 		select {
 		case <-l.ctx.Done():
-			_ = conn.Close()
 			return nil, nil, net.ErrClosed
-		default:
-		}
-		if ch, ok := conn.(*quicDatagramChannel); ok {
-			if !ch.accept() {
-				ch.initiateClose()
+		case conn, ok := <-l.conns:
+			if !ok {
 				return nil, nil, net.ErrClosed
 			}
 			select {
-			case <-ch.ctx.Done():
+			case <-l.ctx.Done():
+				_ = conn.Close()
 				return nil, nil, net.ErrClosed
 			default:
 			}
-			return conn, ch.raddr, nil
+			if ch, ok := conn.(*quicDatagramChannel); ok {
+				if !ch.accept() {
+					ch.initiateClose()
+					continue
+				}
+				// A short-lived or incompatible client can close its channel before
+				// admission. That channel is stale; the tunnel listener remains valid.
+				select {
+				case <-ch.ctx.Done():
+					continue
+				default:
+				}
+				return conn, ch.raddr, nil
+			}
+			return conn, conn.LocalAddr(), nil
 		}
-		return conn, conn.LocalAddr(), nil
-	case <-l.ctx.Done():
-		return nil, nil, net.ErrClosed
 	}
 }
 
