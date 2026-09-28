@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.32.9](https://github.com/rstreamlabs/rstream-go/compare/v1.32.8...v1.32.9) (2026-09-28)
+
+
+### Bug Fixes
+
+* **webtty:** align shutdown across transports ([bec5d16](https://github.com/rstreamlabs/rstream-go/commit/bec5d16de8436beaa9a41b47243e2e60c48ef604))
+* **webtty:** align shutdown across transports ([a51f9b4](https://github.com/rstreamlabs/rstream-go/commit/a51f9b418594eb467da0d4c43d68141fe6c0872e))
+
 ## [1.32.8](https://github.com/rstreamlabs/rstream-go/compare/v1.32.7...v1.32.8) (2026-09-28)
 
 
