@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.10](https://github.com/rstreamlabs/rstream-go/compare/v1.32.9...v1.32.10) (2026-09-28)
+
+
+### Bug Fixes
+
+* preserve WebTransport admission after stale client ([5e7697f](https://github.com/rstreamlabs/rstream-go/commit/5e7697fbf06fbce1f6851411e6b04aa8cdd9fc5a))
+
 ## [1.32.9](https://github.com/rstreamlabs/rstream-go/compare/v1.32.8...v1.32.9) (2026-09-28)
 
 
