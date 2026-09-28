@@ -345,6 +345,124 @@ func TestServePlainWebTTYGracefulShutdownDeliversProtocolClose(t *testing.T) {
 	}
 }
 
+func TestServeWebTransportWebTTYGracefulShutdownDeliversProtocolClose(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX signal trap test")
+	}
+	zero := time.Duration(0)
+	closeDeadline := 2 * time.Second
+	allowUnauthenticated := true
+	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{
+		HeartbeatInterval:    &zero,
+		SessionCloseDeadline: &closeDeadline,
+		AllowUnauthenticated: &allowUnauthenticated,
+	})
+	packetConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket() error = %v", err)
+	}
+	tlsConfig, err := generateWebTTYInternalWebTransportTLSConfig()
+	if err != nil {
+		_ = packetConn.Close()
+		t.Fatalf("generateWebTTYInternalWebTransportTLSConfig() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- serveWebTransportWebTTYOnPacketConn(ctx, packetConn, handler, nil, true, nil, closeDeadline, tlsConfig, false, slog.Default(), &webTTYGenerationGroup{}, nil, nil)
+	}()
+	clientOpenDeadline := 3 * time.Second
+	clientCloseDeadline := time.Second
+	session, err := webtty.OpenClientSession(t.Context(), &webtty.SessionConfig{
+		URL:           "https://" + packetConn.LocalAddr().String() + "/",
+		Transport:     webtty.WebTTYTransportWebTransport,
+		TLSConfig:     &tls.Config{InsecureSkipVerify: true},
+		CmdArgs:       []string{os.Args[0], "-test.run=^TestCmdWebTTYInterruptHelperProcess$"},
+		EnvVars:       []string{"RSTREAM_CMD_WEBTTY_TEST_INTERRUPT_HELPER=1", "GOCOVERDIR=" + t.TempDir()},
+		OpenDeadline:  &clientOpenDeadline,
+		CloseDeadline: &clientCloseDeadline,
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	waitForCmdWebTTYStdout(t, session, "ready\n")
+	started := time.Now()
+	cancel()
+	exitCode, err := session.Wait()
+	if err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if exitCode != 7 {
+		t.Fatalf("shutdown exit code = %d, want trapped interrupt exit code 7", exitCode)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("serveWebTransportWebTTYOnPacketConn() error = %v", err)
+		}
+	case <-time.After(closeDeadline + time.Second):
+		t.Fatalf("serveWebTransportWebTTYOnPacketConn() did not return after context cancellation")
+	}
+	t.Logf("WebTransport graceful shutdown completed in %s", time.Since(started))
+}
+
+func TestServeWebTransportWebTTYPTYShutdownDoesNotWaitForDeadline(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX PTY shutdown test")
+	}
+	zero := time.Duration(0)
+	closeDeadline := 2 * time.Second
+	allowUnauthenticated := true
+	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{
+		HeartbeatInterval:    &zero,
+		SessionCloseDeadline: &closeDeadline,
+		AllowUnauthenticated: &allowUnauthenticated,
+	})
+	packetConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket() error = %v", err)
+	}
+	tlsConfig, err := generateWebTTYInternalWebTransportTLSConfig()
+	if err != nil {
+		_ = packetConn.Close()
+		t.Fatalf("generateWebTTYInternalWebTransportTLSConfig() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- serveWebTransportWebTTYOnPacketConn(ctx, packetConn, handler, nil, true, nil, closeDeadline, tlsConfig, false, slog.Default(), &webTTYGenerationGroup{}, nil, nil)
+	}()
+	clientOpenDeadline := 3 * time.Second
+	clientCloseDeadline := time.Second
+	session, err := webtty.OpenClientSession(t.Context(), &webtty.SessionConfig{
+		URL:           "https://" + packetConn.LocalAddr().String() + "/",
+		Transport:     webtty.WebTTYTransportWebTransport,
+		TLSConfig:     &tls.Config{InsecureSkipVerify: true},
+		Interactive:   true,
+		AllocateTTY:   true,
+		CmdArgs:       []string{"/bin/sh", "-c", "trap '' INT; while :; do sleep 1; done"},
+		OpenDeadline:  &clientOpenDeadline,
+		CloseDeadline: &clientCloseDeadline,
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	defer session.Close()
+	started := time.Now()
+	cancel()
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("serveWebTransportWebTTYOnPacketConn() error = %v", err)
+		}
+	case <-time.After(750 * time.Millisecond):
+		t.Fatalf("PTY shutdown waited for the %s deadline", closeDeadline)
+	}
+	t.Logf("WebTransport PTY shutdown completed in %s", time.Since(started))
+}
+
 func TestServePlainWebTTYDrainsEstablishedSessionAfterAdmissionFailure(t *testing.T) {
 	zero := time.Duration(0)
 	closeDeadline := 2 * time.Second

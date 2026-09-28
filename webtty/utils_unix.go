@@ -36,6 +36,14 @@ func interruptChildProcess(cmd *exec.Cmd) error {
 	return err
 }
 
+func hangupChildProcess(cmd *exec.Cmd) error {
+	err := cmd.Process.Signal(syscall.SIGHUP)
+	if err != nil && errors.Is(err, os.ErrProcessDone) {
+		return nil
+	}
+	return err
+}
+
 func isStreamEOS(err error, usingPTY bool) bool {
 	if err == nil {
 		return false

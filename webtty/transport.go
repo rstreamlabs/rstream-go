@@ -101,10 +101,14 @@ func (c *plainMessageConn) WriteMessage(messageType int, payload []byte) error {
 }
 
 type webTransportMessageConn struct {
-	session   *webtransport.Session
+	session   webTransportSession
 	stream    *webtransport.Stream
 	readLimit int64
 	closeOnce sync.Once
+}
+
+type webTransportSession interface {
+	CloseWithError(webtransport.SessionErrorCode, string) error
 }
 
 func newWebTransportMessageConn(session *webtransport.Session, stream *webtransport.Stream) *webTransportMessageConn {
@@ -118,9 +122,10 @@ func (c *webTransportMessageConn) Close() error {
 			err = c.stream.Close()
 		}
 		if c.session != nil {
-			if closeErr := c.session.CloseWithError(0, ""); err == nil {
-				err = closeErr
-			}
+			// CloseWithError waits for the peer to acknowledge the WebTransport
+			// session close. The transport owns that eventual teardown; a message
+			// connection Close must release WebTTY lifecycle cleanup immediately.
+			go func() { _ = c.session.CloseWithError(0, "") }()
 		}
 	})
 	return err

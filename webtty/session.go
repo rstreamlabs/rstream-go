@@ -217,6 +217,7 @@ func (s *session) shutdown(ctx context.Context) {
 	}
 	s.shutdownReq = true
 	cmd := s.cmd
+	ptyFile := s.ptyFile
 	childDone := s.childDone
 	s.mu.Unlock()
 	if cmd == nil || cmd.Process == nil {
@@ -224,8 +225,8 @@ func (s *session) shutdown(ctx context.Context) {
 		return
 	}
 	if !childDone {
-		if err := signalChildInterrupt(cmd); err != nil {
-			s.logger.Debug("failed to send child interrupt", "error", err)
+		if err := requestChildShutdown(cmd, ptyFile); err != nil {
+			s.logger.Debug("failed to request child process shutdown", "error", err)
 		} else {
 			s.logger.Debug("requested child process shutdown")
 		}
@@ -271,6 +272,13 @@ func signalChildInterrupt(cmd *exec.Cmd) error {
 		return err
 	}
 	return nil
+}
+
+func requestChildShutdown(cmd *exec.Cmd, ptyFile *os.File) error {
+	if ptyFile != nil {
+		return hangupChildProcess(cmd)
+	}
+	return signalChildInterrupt(cmd)
 }
 
 func (s *session) readLoop(initial *pb.Message) {
@@ -647,8 +655,8 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 	}
 	s.mu.Unlock()
 	if shutdownReq {
-		if err := signalChildInterrupt(resources.cmd); err != nil {
-			s.logger.Debug("failed to send child interrupt", "error", err)
+		if err := requestChildShutdown(resources.cmd, resources.ptyFile); err != nil {
+			s.logger.Debug("failed to request child process shutdown", "error", err)
 		} else {
 			s.logger.Debug("requested child process shutdown")
 		}
