@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.32.8](https://github.com/rstreamlabs/rstream-go/compare/v1.32.7...v1.32.8) (2026-09-28)
+
+
+### Bug Fixes
+
+* **webtty:** close WebTransport servers promptly ([1d4ffba](https://github.com/rstreamlabs/rstream-go/commit/1d4ffbaf3846c7292426e88c3261ca0760f4a5b8))
+
 ## [1.32.7](https://github.com/rstreamlabs/rstream-go/compare/v1.32.6...v1.32.7) (2026-09-27)
 
 
