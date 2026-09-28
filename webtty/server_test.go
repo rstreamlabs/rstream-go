@@ -346,6 +346,76 @@ func TestWebTTYHandlerShutdownDeliversProtocolClosePlain(t *testing.T) {
 	<-done
 }
 
+func TestWebTTYHandlerShutdownDeliversProtocolCloseWebTransport(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX signal trap test")
+	}
+	zero := time.Duration(0)
+	closeDeadline := 2 * time.Second
+	handler := NewWebTTYHandler(testServerConfig(ServerConfig{
+		HeartbeatInterval:    &zero,
+		SessionCloseDeadline: &closeDeadline,
+	}))
+	packetConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket() error = %v", err)
+	}
+	defer packetConn.Close()
+	mux := http.NewServeMux()
+	server := webtransport.Server{
+		H3: &http3.Server{
+			Handler:         mux,
+			TLSConfig:       testWebTransportTLSConfig(t),
+			EnableDatagrams: true,
+		},
+		CheckOrigin: func(*http.Request) bool { return true },
+	}
+	webtransport.ConfigureHTTP3Server(server.H3)
+	mux.HandleFunc("/webtty", func(w http.ResponseWriter, r *http.Request) {
+		transportSession, upgradeErr := server.Upgrade(w, r)
+		if upgradeErr != nil {
+			http.Error(w, "upgrade failed", http.StatusBadRequest)
+			return
+		}
+		go handler.ServeWebTransportSession(transportSession.Context(), transportSession)
+	})
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Serve(packetConn) }()
+	defer server.Close()
+	session, err := OpenClientSession(t.Context(), &SessionConfig{
+		URL:           "https://" + packetConn.LocalAddr().String() + "/webtty",
+		Transport:     WebTTYTransportWebTransport,
+		TLSConfig:     &tls.Config{InsecureSkipVerify: true},
+		CmdArgs:       testInterruptHelperCommand(),
+		EnvVars:       []string{"RSTREAM_WEBTTY_TEST_INTERRUPT_HELPER=1"},
+		OpenDeadline:  durationPtr(3 * time.Second),
+		CloseDeadline: durationPtr(time.Second),
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	waitForClientStdout(t, session, "ready\n")
+	shutdownCtx, cancel := context.WithTimeout(t.Context(), closeDeadline)
+	defer cancel()
+	if err := handler.Shutdown(shutdownCtx); err != nil {
+		t.Fatalf("Shutdown() error = %v", err)
+	}
+	_, _, exitCode, err := collectClientSessionOutput(t, session)
+	if err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if exitCode != 7 {
+		t.Fatalf("WebTransport shutdown exit code = %d, want trapped interrupt exit code 7", exitCode)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil && !strings.Contains(err.Error(), "server closed") {
+			t.Fatalf("WebTransport server error = %v", err)
+		}
+	default:
+	}
+}
+
 func TestWebTTYHandlerPassesStdinWorkdirAndEnvironment(t *testing.T) {
 	zero := time.Duration(0)
 	workdir := t.TempDir()
