@@ -579,19 +579,10 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 }
 
 func serveWebSocketWebTTY(ctx context.Context, listener net.Listener, server *http.Server, terminalHandler *webtty.Handler, shutdownTimeout time.Duration, logger *slog.Logger, generations *webTTYGenerationGroup, release func(context.Context)) error {
-	stopShutdownWatcher := make(chan struct{})
-	shutdownWatcherDone := make(chan struct{})
+	serveResult := make(chan error, 1)
 	go func() {
-		defer close(shutdownWatcherDone)
-		select {
-		case <-ctx.Done():
-			_ = listener.Close()
-		case <-stopShutdownWatcher:
-		}
+		serveResult <- server.Serve(listener)
 	}()
-	err := server.Serve(listener)
-	close(stopShutdownWatcher)
-	<-shutdownWatcherDone
 	cleanup := func(shutdownCtx context.Context) {
 		defer closeWebTTYHTTPHandler(server.Handler, logger)
 		defer server.Close()
@@ -603,14 +594,21 @@ func serveWebSocketWebTTY(ctx context.Context, listener net.Listener, server *ht
 			release(shutdownCtx)
 		}
 	}
-	if ctx.Err() != nil {
+	select {
+	case err := <-serveResult:
+		if ctx.Err() != nil {
+			logger.Info("stopping webtty server", "reason", "context canceled")
+			stopWebTTYGeneration(ctx, terminalHandler, shutdownTimeout, logger, cleanup)
+			return nil
+		}
+		logger.Warn("webtty admission generation ended; draining established sessions", "error", err)
+		generations.Drain(ctx, terminalHandler, shutdownTimeout, logger, cleanup)
+		return retryableWebTTYServeError("websocket", err)
+	case <-ctx.Done():
 		logger.Info("stopping webtty server", "reason", "context canceled")
 		stopWebTTYGeneration(ctx, terminalHandler, shutdownTimeout, logger, cleanup)
 		return nil
 	}
-	logger.Warn("webtty admission generation ended; draining established sessions", "error", err)
-	generations.Drain(ctx, terminalHandler, shutdownTimeout, logger, cleanup)
-	return retryableWebTTYServeError("websocket", err)
 }
 
 func webTTYShutdownContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
@@ -622,43 +620,38 @@ func webTTYShutdownContext(ctx context.Context, timeout time.Duration) (context.
 }
 
 func servePlainWebTTY(ctx context.Context, listener net.Listener, terminalHandler *webtty.Handler, shutdownTimeout time.Duration, logger *slog.Logger, generations *webTTYGenerationGroup, release func(context.Context)) error {
-	stopShutdownWatcher := make(chan struct{})
-	shutdownWatcherDone := make(chan struct{})
+	serveResult := make(chan error, 1)
 	go func() {
-		defer close(shutdownWatcherDone)
-		select {
-		case <-ctx.Done():
-			_ = listener.Close()
-		case <-stopShutdownWatcher:
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				serveResult <- err
+				return
+			}
+			go terminalHandler.ServeConn(conn)
 		}
 	}()
-	var acceptErr error
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			acceptErr = err
-			break
-		}
-		go func() {
-			terminalHandler.ServeConn(conn)
-		}()
-	}
-	close(stopShutdownWatcher)
-	<-shutdownWatcherDone
 	cleanup := func(shutdownCtx context.Context) {
 		_ = listener.Close()
 		if release != nil {
 			release(shutdownCtx)
 		}
 	}
-	if ctx.Err() != nil {
+	select {
+	case err := <-serveResult:
+		if ctx.Err() != nil {
+			logger.Info("stopping plain webtty server", "reason", "context canceled")
+			stopWebTTYGeneration(ctx, terminalHandler, shutdownTimeout, logger, cleanup)
+			return nil
+		}
+		logger.Warn("plain webtty admission generation ended; draining established sessions", "error", err)
+		generations.Drain(ctx, terminalHandler, shutdownTimeout, logger, cleanup)
+		return retryableWebTTYServeError("plain", err)
+	case <-ctx.Done():
 		logger.Info("stopping plain webtty server", "reason", "context canceled")
 		stopWebTTYGeneration(ctx, terminalHandler, shutdownTimeout, logger, cleanup)
 		return nil
 	}
-	logger.Warn("plain webtty admission generation ended; draining established sessions", "error", acceptErr)
-	generations.Drain(ctx, terminalHandler, shutdownTimeout, logger, cleanup)
-	return retryableWebTTYServeError("plain", acceptErr)
 }
 
 func serveWebTransportWebTTY(ctx context.Context, addr string, terminalHandler *webtty.Handler, authToken *string, allowUnauthenticated bool, allowedOrigins []string, shutdownTimeout time.Duration, certFile string, keyFile string, logger *slog.Logger, generations *webTTYGenerationGroup) error {
@@ -693,7 +686,7 @@ func serveWebTransportWebTTYOnPacketConn(ctx context.Context, packetConn net.Pac
 		},
 	}
 	webtransport.ConfigureHTTP3Server(server.H3)
-	mux.Handle("/", webtty.NewBearerAuthHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upgradeHandler := webtty.NewBearerAuthHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		session, err := server.Upgrade(w, r)
 		if err != nil {
 			logger.Warn("failed to upgrade webtransport session", "error", err)
@@ -703,7 +696,8 @@ func serveWebTransportWebTTYOnPacketConn(ctx context.Context, packetConn net.Pac
 		go func() {
 			terminalHandler.ServeWebTransportSession(session.Context(), session)
 		}()
-	}), authToken, allowUnauthenticated))
+	}), authToken, allowUnauthenticated)
+	mux.Handle("/", webTTYRejectNewSessionsWhileDraining(terminalHandler, upgradeHandler))
 	serveResult := make(chan error, 1)
 	serveDone := make(chan struct{})
 	go func() {
@@ -742,6 +736,16 @@ func serveWebTransportWebTTYOnPacketConn(ctx context.Context, packetConn net.Pac
 	logger.Warn("webtransport webtty admission generation ended; draining established sessions", "error", err)
 	generations.Drain(ctx, terminalHandler, shutdownTimeout, logger, cleanup)
 	return retryableWebTTYServeError("webtransport", err)
+}
+
+func webTTYRejectNewSessionsWhileDraining(handler *webtty.Handler, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if handler.IsDraining() {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func webTTYWebTransportQUICConfig(tunneled bool) *quic.Config {
