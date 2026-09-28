@@ -44,6 +44,61 @@ type webTTYCloseTrackingTransport struct {
 	closeErr   error
 }
 
+// webTTYClosingListener models tunnel listeners whose Close also tears down
+// accepted connections. Root shutdown must drain sessions before closing it.
+type webTTYClosingListener struct {
+	net.Listener
+	mu    sync.Mutex
+	conns map[*webTTYClosingConn]struct{}
+}
+
+type webTTYClosingConn struct {
+	net.Conn
+	once    sync.Once
+	onClose func()
+}
+
+func newWebTTYClosingListener(listener net.Listener) *webTTYClosingListener {
+	return &webTTYClosingListener{Listener: listener, conns: make(map[*webTTYClosingConn]struct{})}
+}
+
+func (l *webTTYClosingListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	tracked := &webTTYClosingConn{Conn: conn}
+	tracked.onClose = func() {
+		l.mu.Lock()
+		delete(l.conns, tracked)
+		l.mu.Unlock()
+	}
+	l.mu.Lock()
+	l.conns[tracked] = struct{}{}
+	l.mu.Unlock()
+	return tracked, nil
+}
+
+func (l *webTTYClosingListener) Close() error {
+	err := l.Listener.Close()
+	l.mu.Lock()
+	connections := make([]*webTTYClosingConn, 0, len(l.conns))
+	for conn := range l.conns {
+		connections = append(connections, conn)
+	}
+	l.mu.Unlock()
+	for _, conn := range connections {
+		_ = conn.Close()
+	}
+	return err
+}
+
+func (c *webTTYClosingConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(c.onClose)
+	return err
+}
+
 func (t *webTTYCloseTrackingTransport) Dial(context.Context, string, *tls.Config) (net.Conn, error) {
 	return nil, errors.New("unexpected dial")
 }
@@ -304,10 +359,11 @@ func TestServePlainWebTTYGracefulShutdownDeliversProtocolClose(t *testing.T) {
 		HeartbeatInterval:    &zero,
 		SessionCloseDeadline: &closeDeadline,
 	})
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	baseListener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Listen() error = %v", err)
 	}
+	listener := newWebTTYClosingListener(baseListener)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	errCh := make(chan error, 1)
@@ -342,6 +398,61 @@ func TestServePlainWebTTYGracefulShutdownDeliversProtocolClose(t *testing.T) {
 		}
 	case <-time.After(closeDeadline + time.Second):
 		t.Fatalf("servePlainWebTTY() did not return after context cancellation")
+	}
+}
+
+func TestServeWebSocketWebTTYGracefulShutdownDeliversProtocolClose(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX signal trap test")
+	}
+	zero := time.Duration(0)
+	closeDeadline := 2 * time.Second
+	allowUnauthenticated := true
+	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{
+		HeartbeatInterval:    &zero,
+		SessionCloseDeadline: &closeDeadline,
+		AllowUnauthenticated: &allowUnauthenticated,
+	})
+	baseListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	listener := newWebTTYClosingListener(baseListener)
+	server := &http.Server{Handler: handler}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- serveWebSocketWebTTY(ctx, listener, server, handler, closeDeadline, slog.Default(), &webTTYGenerationGroup{}, nil)
+	}()
+	clientOpenDeadline := time.Second
+	clientCloseDeadline := time.Second
+	session, err := webtty.OpenClientSession(t.Context(), &webtty.SessionConfig{
+		URL:           "ws://" + listener.Addr().String(),
+		CmdArgs:       []string{os.Args[0], "-test.run=^TestCmdWebTTYInterruptHelperProcess$"},
+		EnvVars:       []string{"RSTREAM_CMD_WEBTTY_TEST_INTERRUPT_HELPER=1", "GOCOVERDIR=" + t.TempDir()},
+		OpenDeadline:  &clientOpenDeadline,
+		CloseDeadline: &clientCloseDeadline,
+	})
+	if err != nil {
+		t.Fatalf("OpenClientSession() error = %v", err)
+	}
+	waitForCmdWebTTYStdout(t, session, "ready\n")
+	cancel()
+	exitCode, err := session.Wait()
+	if err != nil {
+		t.Fatalf("Wait() error = %v", err)
+	}
+	if exitCode != 7 {
+		t.Fatalf("shutdown exit code = %d, want trapped interrupt exit code 7", exitCode)
+	}
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("serveWebSocketWebTTY() error = %v", err)
+		}
+	case <-time.After(closeDeadline + time.Second):
+		t.Fatal("serveWebSocketWebTTY() did not return after context cancellation")
 	}
 }
 
@@ -461,6 +572,23 @@ func TestServeWebTransportWebTTYPTYShutdownDoesNotWaitForDeadline(t *testing.T) 
 		t.Fatalf("PTY shutdown waited for the %s deadline", closeDeadline)
 	}
 	t.Logf("WebTransport PTY shutdown completed in %s", time.Since(started))
+}
+
+func TestWebTTYRejectNewSessionsWhileDraining(t *testing.T) {
+	handler := webtty.NewWebTTYHandler(nil)
+	called := false
+	next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true })
+	wrapped := webTTYRejectNewSessionsWhileDraining(handler, next)
+
+	handler.BeginDrain()
+	recorder := httptest.NewRecorder()
+	wrapped.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "https://example.test/", nil))
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+	if called {
+		t.Fatal("draining handler admitted a new session")
+	}
 }
 
 func TestServePlainWebTTYDrainsEstablishedSessionAfterAdmissionFailure(t *testing.T) {

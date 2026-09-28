@@ -309,6 +309,11 @@ func (h *Handler) BeginDrain() <-chan struct{} {
 	return h.drainedCh
 }
 
+// IsDraining reports whether the handler has stopped admitting new sessions.
+func (h *Handler) IsDraining() bool {
+	return h.draining.Load()
+}
+
 func (h *Handler) Shutdown(ctx context.Context) error {
 	h.BeginDrain()
 	deadline := *h.cfg.SessionCloseDeadline

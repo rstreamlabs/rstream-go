@@ -88,6 +88,9 @@ func TestResolveServerConfigDefaultsAndHandlerDrain(t *testing.T) {
 		t.Fatalf("unexpected snapshot: %#v", got)
 	}
 	drained := handler.BeginDrain()
+	if !handler.IsDraining() {
+		t.Fatal("handler must report draining after BeginDrain")
+	}
 	select {
 	case <-drained:
 		t.Fatal("drain completed while a session remained registered")
