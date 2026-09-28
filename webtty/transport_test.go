@@ -7,11 +7,66 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/quic-go/webtransport-go"
 )
+
+type blockingWebTransportSession struct {
+	calls    atomic.Int64
+	started  chan struct{}
+	release  chan struct{}
+	finished chan struct{}
+}
+
+func (s *blockingWebTransportSession) CloseWithError(webtransport.SessionErrorCode, string) error {
+	defer close(s.finished)
+	s.calls.Add(1)
+	close(s.started)
+	<-s.release
+	return nil
+}
+
+func TestWebTransportMessageConnCloseDoesNotWaitForPeer(t *testing.T) {
+	session := &blockingWebTransportSession{
+		started:  make(chan struct{}),
+		release:  make(chan struct{}),
+		finished: make(chan struct{}),
+	}
+	conn := &webTransportMessageConn{session: session}
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		if err := conn.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	}()
+	select {
+	case <-closed:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Close() waited for the WebTransport peer")
+	}
+	select {
+	case <-session.started:
+	case <-time.After(time.Second):
+		t.Fatal("Close() did not initiate the WebTransport session close")
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatalf("second Close() error = %v", err)
+	}
+	if got := session.calls.Load(); got != 1 {
+		t.Fatalf("CloseWithError() calls = %d, want 1", got)
+	}
+	close(session.release)
+	select {
+	case <-session.finished:
+	case <-time.After(time.Second):
+		t.Fatal("WebTransport close goroutine did not finish after peer release")
+	}
+}
 
 type closeTrackingConn struct {
 	mu            sync.Mutex

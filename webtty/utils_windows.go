@@ -39,6 +39,10 @@ func interruptChildProcess(cmd *exec.Cmd) error {
 	return err
 }
 
+func hangupChildProcess(cmd *exec.Cmd) error {
+	return interruptChildProcess(cmd)
+}
+
 func isStreamEOS(err error, _ bool) bool {
 	if err == nil {
 		return false
