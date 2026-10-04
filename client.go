@@ -745,7 +745,13 @@ func (c *drainingProxyConn) Close() error {
 	return c.err
 }
 
+// Connect opens a control channel. The context bounds transport establishment
+// and the opening handshake; canceling it after success does not close the
+// returned channel. Callers must close that channel when it is no longer needed.
 func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, error) {
+	if cause := context.Cause(ctx); cause != nil {
+		return nil, cause
+	}
 	enableHeartbeat, heartbeatInterval, closeTimeout, err := resolveControlChannelConfig(cfg)
 	if err != nil {
 		return nil, err
@@ -759,6 +765,14 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial engine: %w", err)
 	}
+	// Dial cancellation alone does not interrupt the protocol exchange on an
+	// established transport. Own cancellation until the handshake completes,
+	// then detach it before handing the connection to the channel lifecycle.
+	interruptDone := make(chan struct{})
+	stopInterrupt := context.AfterFunc(ctx, func() {
+		_ = conn.Close()
+		close(interruptDone)
+	})
 	ClientDetails, cause := c.getClientDetails(engine, nil)
 	if cause != nil {
 		err = fmt.Errorf("failed to get client details: %w", cause)
@@ -822,6 +836,13 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 			}
 		}
 	}
+	interrupted := !stopInterrupt()
+	if interrupted {
+		<-interruptDone
+	}
+	if cause := context.Cause(ctx); cause != nil {
+		err = fmt.Errorf("control channel handshake: %w", cause)
+	}
 	if err == nil {
 		if ch.heartbeatTimeout > 0 {
 			if cause := ch.conn.SetReadDeadline(time.Now().Add(ch.heartbeatTimeout)); cause != nil {
@@ -858,7 +879,9 @@ func (c *Client) Connect(ctx context.Context, cfg *Config) (ControlChannel, erro
 		}
 	}
 	if err != nil {
-		conn.Close()
+		if !interrupted {
+			_ = conn.Close()
+		}
 		return nil, err
 	}
 	return ch, nil
