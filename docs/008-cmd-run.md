@@ -155,6 +155,8 @@ labels:
 
 `tls.mtls` enables mTLS for clients connecting to the published tunnel endpoint. It is separate from agent authentication, which controls how `rstream run` authenticates its own control-channel connection.
 
+For HSM identities exposed through a local executable, use a central [external mTLS signer context](012-external-mtls-signer.md). Select it as the default context or reference it with `external: true`; YAML tunnel entries and Docker labels do not define executable commands.
+
 For agent authentication, `rstream run` uses the selected CLI context or explicit environment variables. Token authentication and mTLS authentication are mutually exclusive on the control-channel connection. Inline `contexts.<name>.token` entries are supported for self-contained apply files; for mTLS agent authentication, use a named CLI configuration context with `auth.mtls`, or set `RSTREAM_MTLS_CERT_FILE` and `RSTREAM_MTLS_KEY_FILE` in the process environment. Engine HTTP API operations use token authentication.
 
 ### Forward Target Resolution (Docker)

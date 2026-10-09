@@ -73,6 +73,8 @@ Appropriate for servers, CI runners, and embedded systems that must not rely on 
 
 ### Agent mTLS
 
+Non-PKCS#11 HSMs can use the standard Go CLI's [external mTLS signer backend](012-external-mtls-signer.md). Configure `auth.mtls.storage.kind: exec` in the selected context; the helper provides certificates and signatures without exporting its key.
+
 Use agent mTLS when the engine should authenticate the agent with a client certificate instead of a token.
 
 - The context can store `auth.mtls.certificate` and `auth.mtls.key` inline, or `auth.mtls.certificateFile` and `auth.mtls.keyFile` paths.

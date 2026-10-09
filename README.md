@@ -176,6 +176,8 @@ rstream doctor -o json
 
 The diagnostic output covers config, context, token claims, Control plane API authentication, project resolution, DNS, TLS, and engine inventory without printing secrets.
 
+The standard Go CLI and config package also support [external mTLS signers](docs/012-external-mtls-signer.md) for HSMs with vendor-specific APIs. A local executable supplies the public identity and signatures while rstream handles TLS; this backend also works without CGO.
+
 ## Environment variables
 
 These variables are shared across CLI and SDK configuration resolution. Prefer configuration contexts for regular usage, and use overrides for automation or constrained environments.

@@ -5,6 +5,8 @@ package config
 import (
 	"fmt"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
@@ -69,22 +71,48 @@ type MTLS struct {
 }
 
 type MTLSStorage struct {
-	Kind              string `yaml:"kind,omitempty"`
-	Provider          string `yaml:"provider,omitempty"`
-	Module            string `yaml:"module,omitempty"`
-	OpenSSLProvider   string `yaml:"opensslProvider,omitempty"`
-	TokenLabel        string `yaml:"tokenLabel,omitempty"`
-	TokenSerial       string `yaml:"tokenSerial,omitempty"`
-	Slot              *int   `yaml:"slot,omitempty"`
-	KeyLabel          string `yaml:"keyLabel,omitempty"`
-	KeyIDHex          string `yaml:"keyIdHex,omitempty"`
-	Certificate       string `yaml:"certificate,omitempty"`
-	CertificateFile   string `yaml:"certificateFile,omitempty"`
-	CertificateLabel  string `yaml:"certificateLabel,omitempty"`
-	CertificateIDHex  string `yaml:"certificateIdHex,omitempty"`
-	CertificateSHA256 string `yaml:"certificateSHA256,omitempty"`
-	PINEnv            string `yaml:"pinEnv,omitempty"`
-	MaxSessions       int    `yaml:"maxSessions,omitempty"`
+	Kind              string           `yaml:"kind,omitempty"`
+	Provider          string           `yaml:"provider,omitempty"`
+	Module            string           `yaml:"module,omitempty"`
+	OpenSSLProvider   string           `yaml:"opensslProvider,omitempty"`
+	TokenLabel        string           `yaml:"tokenLabel,omitempty"`
+	TokenSerial       string           `yaml:"tokenSerial,omitempty"`
+	Slot              *int             `yaml:"slot,omitempty"`
+	KeyLabel          string           `yaml:"keyLabel,omitempty"`
+	KeyIDHex          string           `yaml:"keyIdHex,omitempty"`
+	Certificate       string           `yaml:"certificate,omitempty"`
+	CertificateFile   string           `yaml:"certificateFile,omitempty"`
+	CertificateLabel  string           `yaml:"certificateLabel,omitempty"`
+	CertificateIDHex  string           `yaml:"certificateIdHex,omitempty"`
+	CertificateSHA256 string           `yaml:"certificateSHA256,omitempty"`
+	PINEnv            string           `yaml:"pinEnv,omitempty"`
+	MaxSessions       int              `yaml:"maxSessions,omitempty"`
+	Exec              *MTLSExecStorage `yaml:"exec,omitempty"`
+}
+
+// MTLSExecStorage selects a trusted local executable implementing the v1 mTLS
+// identity/sign protocol. Arguments must not contain secrets.
+type MTLSExecStorage struct {
+	Command        string   `yaml:"command"`
+	Args           []string `yaml:"args,omitempty"`
+	Timeout        string   `yaml:"timeout,omitempty"`
+	MaxConcurrency int      `yaml:"maxConcurrency,omitempty"`
+	PassEnv        []string `yaml:"passEnv,omitempty"`
+}
+
+func (s *MTLSExecStorage) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("mTLS exec settings must be a mapping")
+	}
+	for i := 0; i < len(node.Content); i += 2 {
+		switch node.Content[i].Value {
+		case "command", "args", "timeout", "maxConcurrency", "passEnv":
+		default:
+			return fmt.Errorf("unknown mTLS exec field %q", node.Content[i].Value)
+		}
+	}
+	type plain MTLSExecStorage
+	return node.Decode((*plain)(s))
 }
 
 func (c *Config) EnsureVersion() {

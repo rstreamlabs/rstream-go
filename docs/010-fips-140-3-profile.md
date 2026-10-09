@@ -62,6 +62,8 @@ The implemented phase-one through phase-three profile covers:
 
 The current phase excludes:
 
+- external mTLS signers (`auth.mtls.storage.kind: exec`); arbitrary provider executables are outside the reviewed module boundary and are rejected before execution;
+
 - proxied QUIC transport;
 - generic datagram tunnels, DTLS, and TURN; datagram tunnel metadata is accepted
   only for published QUIC and HTTP/3;

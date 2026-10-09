@@ -118,6 +118,8 @@ func loadMTLSStorageConfig(storage *MTLSStorage) (*tls.Config, error) {
 		return nil, errors.New("mTLS storage is required")
 	}
 	switch strings.TrimSpace(storage.Kind) {
+	case MTLSStorageExec:
+		return loadExecMTLSConfig(storage)
 	case MTLSStoragePKCS11:
 		if err := validatePKCS11MTLSStorage(storage); err != nil {
 			return nil, err
@@ -136,6 +138,9 @@ func loadMTLSStorageConfig(storage *MTLSStorage) (*tls.Config, error) {
 }
 
 func validatePKCS11MTLSStorage(storage *MTLSStorage) error {
+	if storage.Exec != nil {
+		return errors.New("pkcs11 mTLS storage cannot include exec settings")
+	}
 	if strings.TrimSpace(storage.Provider) != "" {
 		return errors.New("pkcs11 mTLS storage must not set provider")
 	}
@@ -176,6 +181,9 @@ func validatePKCS11MTLSStorage(storage *MTLSStorage) error {
 }
 
 func validateMacOSKeychainMTLSStorage(storage *MTLSStorage) error {
+	if storage.Exec != nil {
+		return errors.New("macOS keychain mTLS storage cannot include exec settings")
+	}
 	if strings.TrimSpace(storage.Provider) == "" {
 		return errors.New("mTLS keychain storage provider is required")
 	}

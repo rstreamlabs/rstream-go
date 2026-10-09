@@ -44,19 +44,32 @@ var runCmd = &cobra.Command{
 			StableDomainEngine: res.StableDomainEngine,
 			Token:              res.Token,
 			TransportConfig:    res.TransportConfig,
+			TLSClientConfig:    res.TLSClientConfig,
+			CredentialID:       res.CredentialID,
+		}
+		contexts := map[string]runmodel.ResolvedContext{}
+		if res.ContextName != "" {
+			contexts[res.ContextName] = fallback
 		}
 		lookup := func(name string) (runmodel.ResolvedContext, error) {
+			if cached, ok := contexts[name]; ok {
+				return cached, nil
+			}
 			resolved, err := resolveNamedContext(cfg, env, cmd, name)
 			if err != nil {
 				return runmodel.ResolvedContext{}, err
 			}
-			return runmodel.ResolvedContext{
+			result := runmodel.ResolvedContext{
 				Name:               name,
 				Engine:             resolved.Engine,
 				StableDomainEngine: resolved.StableDomainEngine,
 				Token:              resolved.Token,
 				TransportConfig:    resolved.TransportConfig,
-			}, nil
+				TLSClientConfig:    resolved.TLSClientConfig,
+				CredentialID:       resolved.CredentialID,
+			}
+			contexts[name] = result
+			return result, nil
 		}
 		starter := runengine.New(
 			runengine.WithLogger(slog.With("component", "run.tunnel")),
@@ -166,6 +179,7 @@ func loadRuntimeContext(cmd *cobra.Command) (config.Resolved, config.Config, con
 func resolveNamedContext(cfg config.Config, env config.EnvSettings, cmd *cobra.Command, name string) (config.Resolved, error) {
 	flagAPIURL, _ := cmd.Flags().GetString("api-url")
 	flagRegion, _ := cmd.Flags().GetString("region")
+	flagTunnelTransport, _ := cmd.Flags().GetString("tunnel-transport")
 	input := config.ResolveInput{
 		Config:                 cfg,
 		FlagAPIURL:             flagAPIURL,
@@ -175,7 +189,12 @@ func resolveNamedContext(cfg config.Config, env config.EnvSettings, cmd *cobra.C
 		EnvContext:             env.Context,
 		EnvEngine:              env.Engine,
 		EnvToken:               env.Token,
+		EnvMTLSCert:            env.MTLSCert,
+		EnvMTLSKey:             env.MTLSKey,
 		EnvRegion:              env.Region,
+		FlagTunnelTransport:    flagTunnelTransport,
+		EnvTunnelTransport:     env.TunnelTransport,
+		EnvUseQUIC:             env.UseQUIC,
 		EnvControlPlaneHeaders: env.ControlPlaneHeaders,
 		RequireEngine:          true,
 		RequireToken:           true,

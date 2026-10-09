@@ -225,7 +225,7 @@ func resolveNamedContexts(contexts map[string]ContextEntry, lookup ResolvedConte
 
 func resolveTunnelContext(ref *ContextRef, named map[string]runmodel.ResolvedContext, fallback runmodel.ResolvedContext) (runmodel.ResolvedContext, error) {
 	if ref == nil {
-		if fallback.Engine == "" || fallback.Token == "" {
+		if fallback.Engine == "" || !fallback.HasAuthentication() {
 			return runmodel.ResolvedContext{}, fmt.Errorf("fallback context is not configured")
 		}
 		return fallback, nil

@@ -3,6 +3,7 @@
 package runapply
 
 import (
+	"crypto/tls"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,6 +15,28 @@ import (
 	"github.com/rstreamlabs/rstream-go/config"
 	"gopkg.in/yaml.v3"
 )
+
+func TestDesiredTunnelsPreservesExternalMTLSIdentity(t *testing.T) {
+	identity := &tls.Config{GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return &tls.Certificate{}, nil }}
+	resolved := runmodel.ResolvedContext{Engine: "engine.example:443", TLSClientConfig: identity, CredentialID: "pin"}
+	for _, named := range []bool{false, true} {
+		data := "version: 1\ntunnels:\n  - name: web\n    forward: 8080\n    tunnel:\n      publish: false\n"
+		if named {
+			data += "    context: device\ncontexts:\n  device:\n    external: true\n    name: device\n"
+		}
+		path := filepath.Join(t.TempDir(), "tunnels.yaml")
+		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		desired, err := DesiredTunnels(path, resolved, func(string) (runmodel.ResolvedContext, error) { return resolved, nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(desired) != 1 || desired[0].Context.TLSClientConfig != identity || desired[0].Context.CredentialID != "pin" || desired[0].Context.Token != "" {
+			t.Fatal("run apply lost the selected mTLS identity")
+		}
+	}
+}
 
 func TestLoadConfigValidationAndEnvExpansion(t *testing.T) {
 	cases := []struct {
