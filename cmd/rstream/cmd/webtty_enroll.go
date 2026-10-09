@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/configdecode"
 	"github.com/rstreamlabs/rstream-go/config"
 	"github.com/rstreamlabs/rstream-go/controlplane"
 	"github.com/rstreamlabs/rstream-go/webtty"
@@ -513,10 +514,8 @@ func loadWebTTYServerEnrollmentFile(path string) (*webTTYServerEnrollmentFile, e
 	if err != nil {
 		return nil, err
 	}
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
 	var enrollment webTTYServerEnrollmentFile
-	if err := dec.Decode(&enrollment); err != nil {
+	if err := configdecode.YAML(data, &enrollment); err != nil {
 		return nil, fmt.Errorf("invalid WebTTY server enrollment YAML: %w", err)
 	}
 	if enrollment.Version != webTTYServerEnrollmentVersion {

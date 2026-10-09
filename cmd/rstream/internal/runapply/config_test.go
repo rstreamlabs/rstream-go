@@ -12,6 +12,7 @@ import (
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/tunnelconfig"
 	"github.com/rstreamlabs/rstream-go/config"
 	"gopkg.in/yaml.v3"
 )
@@ -135,8 +136,8 @@ tunnels:
     tunnel:
       publish: true
       protocol: "http"
+      upstreamTLS: false
       http:
-        upstreamTLS: false
         version: "http/1.1"
         auth:
           token: true
@@ -405,21 +406,21 @@ contexts:
 func TestTunnelPropertiesFromSpecFullSurface(t *testing.T) {
 	props, err := tunnelPropertiesFromSpec(&TunnelSpec{
 		Publish:     rstream.BoolPtr(false),
-		Protocol:    "http",
-		Type:        "bytestream",
-		Host:        " app.example.com ",
+		Protocol:    rstream.StringPtr("http"),
+		Type:        rstream.StringPtr("bytestream"),
+		Host:        rstream.StringPtr(" app.example.com "),
 		UpstreamTLS: rstream.BoolPtr(true),
 		Labels:      map[string]string{"tier": "edge"},
 		TrustedIPs:  []string{"10.0.0.0/8"},
 		GeoIP:       []string{"FR"},
 		HTTP: &HTTPSpec{
-			Version: "h2c",
+			Version: rstream.StringPtr("h2c"),
 			Auth:    &HTTPAuthSpec{Token: rstream.BoolPtr(true), Rstream: rstream.BoolPtr(false)},
 			Gate:    &HTTPGateSpec{Challenge: rstream.BoolPtr(true)},
 		},
 		TLS: &TLSSpec{
-			Mode:       "terminated",
-			MinVersion: "tls1.3",
+			Mode:       rstream.StringPtr("terminated"),
+			MinVersion: rstream.StringPtr("tls1.3"),
 			ALPNs:      []string{"h2"},
 		},
 	})
@@ -438,8 +439,8 @@ func TestTunnelPropertiesFromSpecFullSurface(t *testing.T) {
 	if props.Hostname == nil || *props.Hostname != "app.example.com" {
 		t.Fatalf("unexpected host: %#v", props.Hostname)
 	}
-	if props.HTTPUseTLS == nil || !*props.HTTPUseTLS || props.UpstreamTLS == nil || !*props.UpstreamTLS {
-		t.Fatalf("expected HTTP upstream TLS propagation")
+	if props.HTTPUseTLS != nil || props.UpstreamTLS == nil || !*props.UpstreamTLS {
+		t.Fatalf("expected canonical upstream TLS only")
 	}
 	if props.HTTPVersion == nil || *props.HTTPVersion != rstream.HTTP2 {
 		t.Fatalf("unexpected HTTP version: %#v", props.HTTPVersion)
@@ -466,7 +467,7 @@ func TestTunnelPropertiesFromSpecReadsMTLSAuth(t *testing.T) {
 
 func TestTunnelPropertiesFromSpecMapsDatagramGuaranteedDelivery(t *testing.T) {
 	props, err := tunnelPropertiesFromSpec(&TunnelSpec{
-		Type:                       "datagram",
+		Type:                       rstream.StringPtr("datagram"),
 		DatagramGuaranteedDelivery: rstream.BoolPtr(true),
 	})
 	if err != nil {
@@ -490,48 +491,37 @@ func TestTunnelPropertiesFromSpecAllowsMultiplePublishedAuthMethods(t *testing.T
 	}
 }
 
-func TestTunnelPropertiesFromSpecRejectsConflictingHTTPUpstreamTLS(t *testing.T) {
-	_, err := tunnelPropertiesFromSpec(&TunnelSpec{
-		Protocol:    "http",
-		UpstreamTLS: rstream.BoolPtr(true),
-		HTTP:        &HTTPSpec{UpstreamTLS: rstream.BoolPtr(false)},
-	})
-	if err == nil || !strings.Contains(err.Error(), "conflicts") {
-		t.Fatalf("expected upstream TLS conflict, got %v", err)
-	}
-}
-
 func TestRunApplyParsers(t *testing.T) {
-	protocol, err := parseProtocol(" QUIC ")
+	protocol, err := tunnelconfig.ParseProtocol(" QUIC ")
 	if err != nil || protocol != rstream.ProtocolQUIC {
 		t.Fatalf("parseProtocol got %q err=%v", protocol, err)
 	}
-	protocol, err = parseProtocol(" WebTTY ")
+	protocol, err = tunnelconfig.ParseProtocol(" WebTTY ")
 	if err != nil || protocol != rstream.ProtocolWebTTY {
 		t.Fatalf("parseProtocol got %q err=%v", protocol, err)
 	}
-	tunnelType, err := parseTunnelType(" datagram ")
+	tunnelType, err := tunnelconfig.ParseTunnelType(" datagram ")
 	if err != nil || tunnelType != rstream.TunnelTypeDatagram {
 		t.Fatalf("parseTunnelType got %q err=%v", tunnelType, err)
 	}
-	httpVersion, err := parseHTTPVersion(" HTTP/1.1 ")
+	httpVersion, err := tunnelconfig.ParseHTTPVersion(" HTTP/1.1 ")
 	if err != nil || httpVersion != rstream.HTTP1_1 {
 		t.Fatalf("parseHTTPVersion got %q err=%v", httpVersion, err)
 	}
-	tlsMode, err := parseTLSMode(" passthrough ")
+	tlsMode, err := tunnelconfig.ParseTLSMode(" passthrough ")
 	if err != nil || tlsMode != rstream.TLSModePassthrough {
 		t.Fatalf("parseTLSMode got %q err=%v", tlsMode, err)
 	}
-	tlsMinVersion, err := parseTLSMinVersion(" TLS1.2 ")
+	tlsMinVersion, err := tunnelconfig.ParseTLSMinVersion(" TLS1.2 ")
 	if err != nil || tlsMinVersion != "tls1.2" {
 		t.Fatalf("parseTLSMinVersion got %q err=%v", tlsMinVersion, err)
 	}
 	for name, fn := range map[string]func(string) error{
-		"protocol": func(v string) error { _, err := parseProtocol(v); return err },
-		"type":     func(v string) error { _, err := parseTunnelType(v); return err },
-		"http":     func(v string) error { _, err := parseHTTPVersion(v); return err },
-		"tlsMode":  func(v string) error { _, err := parseTLSMode(v); return err },
-		"tlsMin":   func(v string) error { _, err := parseTLSMinVersion(v); return err },
+		"protocol": func(v string) error { _, err := tunnelconfig.ParseProtocol(v); return err },
+		"type":     func(v string) error { _, err := tunnelconfig.ParseTunnelType(v); return err },
+		"http":     func(v string) error { _, err := tunnelconfig.ParseHTTPVersion(v); return err },
+		"tlsMode":  func(v string) error { _, err := tunnelconfig.ParseTLSMode(v); return err },
+		"tlsMin":   func(v string) error { _, err := tunnelconfig.ParseTLSMinVersion(v); return err },
 	} {
 		if err := fn("invalid"); err == nil {
 			t.Fatalf("%s parser should reject invalid input", name)
@@ -564,7 +554,7 @@ func TestResolveNamedContextsErrors(t *testing.T) {
 func TestContextRefUnmarshalYAMLValidation(t *testing.T) {
 	var cfg FileConfig
 	err := yaml.Unmarshal([]byte("version: 1\ntunnels:\n- name: x\n  forward: \"8080\"\n  context:\n    unknown: true\n  tunnel:\n    publish: true\n"), &cfg)
-	if err == nil || !strings.Contains(err.Error(), "unknown field") {
+	if err == nil || !strings.Contains(err.Error(), "field unknown not found") {
 		t.Fatalf("expected unknown context field error, got %v", err)
 	}
 	err = yaml.Unmarshal([]byte("version: 1\ntunnels:\n- name: x\n  forward: \"8080\"\n  context: {}\n  tunnel:\n    publish: true\n"), &cfg)
@@ -586,5 +576,54 @@ func TestTunnelPropertiesFromSpecKeepsSlicesAndMaps(t *testing.T) {
 	}
 	if !reflect.DeepEqual(props.Labels, labels) || !reflect.DeepEqual(props.GeoIP, geo) || !reflect.DeepEqual(props.TrustedIPs, trusted) {
 		t.Fatalf("collections not applied: %#v", props)
+	}
+}
+
+func TestLoadConfigRejectsNestedUnknownFieldsAndAdditionalDocuments(t *testing.T) {
+	for _, data := range []string{
+		"version: 1\ntunnels: []\n---\n",
+		"version: 1\ntunnels: []\n---\nversion: 2\n",
+		"version: 1\ntunnels:\n  - name: test\n    forward: 8080\n    tunnel: {}\n    context:\n      engine: engine.example.com\n      token: test\n      transport:\n        tls:\n          caFiel: /wrong.pem\n",
+		"version: 1\ntunnels: []\ncontexts:\n  test:\n    engine: engine.example.com\n    token: test\n    transport:\n      tls:\n        caFiel: /wrong.pem\n",
+	} {
+		path := filepath.Join(t.TempDir(), "run.yaml")
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+		_, err := LoadConfig(path)
+		if err == nil {
+			t.Fatalf("accepted invalid YAML: %s", data)
+		}
+		if !strings.Contains(err.Error(), "exactly one YAML document") && !strings.Contains(err.Error(), "field caFiel not found") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+}
+
+func TestLoadConfigPreservesInlineContextYAMLAliases(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "run.yaml")
+	data := `version: 1
+contexts:
+  named:
+    transport: &sharedTransport
+      mode: tls
+tunnels:
+  - name: test
+    forward: 8080
+    tunnel: {}
+    context:
+      engine: engine.example.com
+      token: test
+      transport: *sharedTransport
+`
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Tunnels[0].Context.Inline.Transport.Mode != "tls" {
+		t.Fatal("inline transport alias lost")
 	}
 }

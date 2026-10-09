@@ -383,9 +383,6 @@ func mcpLocalTunnelApplySecurityOptions(args map[string]json.RawMessage, props *
 	props.MTLSAuth = mtlsAuth
 	props.UpstreamTLS = upstreamTLS
 	props.DatagramGuaranteedDelivery = datagramGuaranteedDelivery
-	if upstreamTLS != nil && props.Protocol != nil && *props.Protocol == rstream.ProtocolHTTP {
-		props.HTTPUseTLS = upstreamTLS
-	}
 	return nil
 }
 

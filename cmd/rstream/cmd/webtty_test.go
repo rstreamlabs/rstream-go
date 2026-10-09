@@ -113,37 +113,7 @@ func (t *webTTYCloseTrackingTransport) Close() error {
 
 func newTestWebTTYServerCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "server"}
-	cmd.Flags().String("listen", "127.0.0.1:8080", "")
-	cmd.Flags().Bool("rstream", false, "")
-	cmd.Flags().String("name", "", "")
-	cmd.Flags().String("server-id", "", "")
-	cmd.Flags().String("server-enrollment", "", "")
-	cmd.Flags().String("webtty-config", "", "")
-	cmd.Flags().Bool("publish", false, "")
-	cmd.Flags().Bool("no-publish", false, "")
-	cmd.Flags().Bool("retry", false, "")
-	cmd.Flags().Bool("no-retry", false, "")
-	cmd.Flags().Int64("retry-interval", 5000, "")
-	cmd.Flags().Int64("shutdown-timeout", 5000, "")
-	cmd.Flags().String("auth-token-file", "", "")
-	cmd.Flags().Bool("allow-unauthenticated", false, "")
-	cmd.Flags().StringArray("allowed-origin", nil, "")
-	cmd.Flags().String("execution-mode", "", "")
-	cmd.Flags().String("login-user", "", "")
-	cmd.Flags().Bool("allow-client-user", false, "")
-	cmd.Flags().String("transport", string(webtty.WebTTYTransportWebSocket), "")
-	cmd.Flags().String("tls-cert-file", "", "")
-	cmd.Flags().String("tls-key-file", "", "")
-	cmd.Flags().Bool("e2e", false, "")
-	cmd.Flags().String("identity", "", "")
-	cmd.Flags().String("identity-file", "", "")
-	cmd.Flags().StringArray("authorized-client-key", nil, "")
-	cmd.Flags().String("authorized-clients-file", "", "")
-	cmd.Flags().StringArray("label", nil, "")
-	cmd.Flags().String("fs-root", "", "")
-	cmd.Flags().String("fs-backend", "webdav", "")
-	cmd.Flags().Bool("fs-read-only", false, "")
-	cmd.Flags().Int64("fs-max-upload-size", defaultWebTTYFSMaxUploadSize, "")
+	addWebTTYServerFlags(cmd)
 	return cmd
 }
 

@@ -36,12 +36,12 @@ func ParseForwardTarget(raw, defaultHost string) (ForwardTarget, error) {
 	host := defaultHost
 	port := clean
 	if strings.Contains(clean, ":") {
-		parts := strings.SplitN(clean, ":", 2)
-		if strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
-			return ForwardTarget{}, fmt.Errorf("invalid forward target %q", raw)
+		var err error
+		host, port, err = net.SplitHostPort(clean)
+		if err != nil {
+			return ForwardTarget{}, fmt.Errorf("invalid forward target %q: %w", raw, err)
 		}
-		host = strings.TrimSpace(parts[0])
-		port = strings.TrimSpace(parts[1])
+		host, port = strings.TrimSpace(host), strings.TrimSpace(port)
 	}
 	if strings.TrimSpace(host) == "" || strings.TrimSpace(port) == "" {
 		return ForwardTarget{}, fmt.Errorf("invalid forward target %q", raw)

@@ -98,3 +98,13 @@ func TestShouldTriggerDockerEventFiltersContainerLifecycle(t *testing.T) {
 		})
 	}
 }
+
+func TestContainerNetworksPreservesIPv6OnlyEndpoints(t *testing.T) {
+	networks := containerNetworks(container.Summary{NetworkSettings: &container.NetworkSettingsSummary{Networks: map[string]*network.EndpointSettings{
+		"v6":   {GlobalIPv6Address: netip.MustParseAddr("2001:db8::1")},
+		"dual": {IPAddress: netip.MustParseAddr("192.0.2.1"), GlobalIPv6Address: netip.MustParseAddr("2001:db8::2")},
+	}}})
+	if networks["v6"] != "2001:db8::1" || networks["dual"] != "192.0.2.1" {
+		t.Fatalf("unexpected network selection: %#v", networks)
+	}
+}

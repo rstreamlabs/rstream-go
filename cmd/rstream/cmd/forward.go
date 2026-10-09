@@ -18,6 +18,7 @@ import (
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/cmd/logging"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/netretry"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/sessiongroup"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/streamrelay"
 	"github.com/rstreamlabs/rstream-go/controlplane"
@@ -120,13 +121,11 @@ var forwardCmd = &cobra.Command{
 		host := "localhost"
 		port := "8080"
 		if len(args) == 1 {
-			hostPort := strings.SplitN(args[0], ":", 2)
-			if len(hostPort) == 2 {
-				host = hostPort[0]
-				port = hostPort[1]
-			} else {
-				port = hostPort[0]
+			target, err := runmodel.ParseForwardTarget(args[0], host)
+			if err != nil {
+				return err
 			}
+			host, port = target.Host, target.Port
 		}
 		s, err := newForwardCtx(cmd, host, port)
 		if err != nil {
@@ -168,45 +167,48 @@ func runForwardWithUI(ctx context.Context, ui forwardUI, run func(context.Contex
 }
 
 func init() {
-	forwardCmd.Flags().SortFlags = false
-	forwardCmd.PersistentFlags().SortFlags = false
-	forwardCmd.Flags().StringP("output", "o", "", "output mode (text, json, xterm, none)")
-	forwardCmd.Flags().String("name", "", "tunnel name")
-	forwardCmd.Flags().Bool("bytestream", false, "create a bytestream tunnel")
-	forwardCmd.Flags().Bool("datagram", false, "create a raw private datagram tunnel")
-	forwardCmd.MarkFlagsMutuallyExclusive("bytestream", "datagram")
-	forwardCmd.Flags().Bool("publish", false, "publish the tunnel")
-	forwardCmd.Flags().Bool("no-publish", false, "do not publish the tunnel")
-	forwardCmd.MarkFlagsMutuallyExclusive("publish", "no-publish")
-	forwardCmd.Flags().Bool("tls", false, "use TLS protocol")
-	forwardCmd.Flags().Bool("tcp", false, "publish a TCP tunnel")
-	forwardCmd.Flags().Bool("dtls", false, "use DTLS protocol")
-	forwardCmd.Flags().Bool("quic", false, "use QUIC protocol")
-	forwardCmd.Flags().Bool("http", false, "use HTTP protocol")
-	forwardCmd.MarkFlagsMutuallyExclusive("tls", "tcp", "dtls", "quic", "http")
-	forwardCmd.Flags().Uint32("tcp-port", 0, "use a reserved published TCP port")
-	forwardCmd.Flags().Bool("allow-cross-region-routing", false, "allow cross-region routing when ingress and tunnel owner are in different regions")
-	forwardCmd.Flags().StringArray("label", nil, "set tunnel labels (key=value, might be specified multiple times)")
-	forwardCmd.Flags().String("geoip", "", "comma-separated allowed countries (ISO 3166-1 alpha-2)")
-	forwardCmd.Flags().String("trusted-ips", "", "comma-separated allowed IP/CIDR ranges")
-	forwardCmd.Flags().String("host", "", "Stable domain for publishing")
-	forwardCmd.Flags().String("tls-mode", "", "TLS mode (terminated, passthrough)")
-	forwardCmd.Flags().String("tls-alpn", "", "comma-separated ALPN protocols")
-	forwardCmd.Flags().String("tls-min-version", "", "minimum TLS version (tls1.2, tls1.3)")
-	forwardCmd.Flags().String("tls-ciphers", "", "comma-separated TLS ciphers")
-	forwardCmd.Flags().Bool("mtls", false, "enable mTLS Tunnel access")
-	forwardCmd.Flags().String("http-version", "", "HTTP version (http/1.1, h2c, h3)")
-	forwardCmd.Flags().Bool("upstream-tls", false, "use TLS for the upstream side")
-	forwardCmd.Flags().Bool("http-use-tls", false, "use TLS for HTTP upstream (deprecated; use --upstream-tls)")
-	forwardCmd.Flags().Bool("datagram-guaranteed-delivery", false, "require reliable delivery for datagram tunnels")
-	forwardCmd.Flags().Bool("token-auth", false, "enable token-based HTTP authentication")
-	forwardCmd.Flags().Bool("rstream-auth", false, "require rstream account authentication (HTTP only)")
-	forwardCmd.Flags().Bool("challenge-mode", false, "require an interactive challenge before access (HTTP only)")
-	forwardCmd.Flags().Bool("retry", true, "enable automatic reconnection on disconnect")
-	forwardCmd.Flags().Bool("no-retry", false, "disable automatic reconnection on disconnect")
-	forwardCmd.MarkFlagsMutuallyExclusive("retry", "no-retry")
-	forwardCmd.Flags().Int64("retry-interval", 5000, "retry interval in ms")
+	addForwardFlags(forwardCmd)
 	rootCmd.AddCommand(forwardCmd)
+}
+
+func addForwardFlags(cmd *cobra.Command) {
+	cmd.Flags().SortFlags = false
+	cmd.PersistentFlags().SortFlags = false
+	cmd.Flags().StringP("output", "o", "", "output mode (text, json, xterm, none)")
+	cmd.Flags().String("name", "", "tunnel name")
+	cmd.Flags().Bool("bytestream", false, "create a bytestream tunnel")
+	cmd.Flags().Bool("datagram", false, "create a raw private datagram tunnel")
+	cmd.MarkFlagsMutuallyExclusive("bytestream", "datagram")
+	cmd.Flags().Bool("publish", false, "publish the tunnel")
+	cmd.Flags().Bool("no-publish", false, "do not publish the tunnel")
+	cmd.MarkFlagsMutuallyExclusive("publish", "no-publish")
+	cmd.Flags().Bool("tls", false, "use TLS protocol")
+	cmd.Flags().Bool("tcp", false, "publish a TCP tunnel")
+	cmd.Flags().Bool("dtls", false, "use DTLS protocol")
+	cmd.Flags().Bool("quic", false, "use QUIC protocol")
+	cmd.Flags().Bool("http", false, "use HTTP protocol")
+	cmd.MarkFlagsMutuallyExclusive("tls", "tcp", "dtls", "quic", "http")
+	cmd.Flags().Uint32("tcp-port", 0, "use a reserved published TCP port")
+	cmd.Flags().Bool("allow-cross-region-routing", false, "allow cross-region routing when ingress and tunnel owner are in different regions")
+	cmd.Flags().StringArray("label", nil, "set tunnel labels (key=value, might be specified multiple times)")
+	cmd.Flags().String("geoip", "", "comma-separated allowed countries (ISO 3166-1 alpha-2)")
+	cmd.Flags().String("trusted-ips", "", "comma-separated allowed IP/CIDR ranges")
+	cmd.Flags().String("host", "", "Stable domain for publishing")
+	cmd.Flags().String("tls-mode", "", "TLS mode (terminated, passthrough)")
+	cmd.Flags().String("tls-alpn", "", "comma-separated ALPN protocols")
+	cmd.Flags().String("tls-min-version", "", "minimum TLS version (tls1.2, tls1.3)")
+	cmd.Flags().String("tls-ciphers", "", "comma-separated TLS ciphers")
+	cmd.Flags().Bool("mtls", false, "enable mTLS Tunnel access")
+	cmd.Flags().String("http-version", "", "HTTP version (http/1.1, h2c, h3)")
+	cmd.Flags().Bool("upstream-tls", false, "use TLS for the upstream side")
+	cmd.Flags().Bool("datagram-guaranteed-delivery", false, "require reliable delivery for datagram tunnels")
+	cmd.Flags().Bool("token-auth", false, "enable token-based HTTP authentication")
+	cmd.Flags().Bool("rstream-auth", false, "require rstream account authentication (HTTP only)")
+	cmd.Flags().Bool("challenge-mode", false, "require an interactive challenge before access (HTTP only)")
+	cmd.Flags().Bool("retry", true, "enable automatic reconnection on disconnect")
+	cmd.Flags().Bool("no-retry", false, "disable automatic reconnection on disconnect")
+	cmd.MarkFlagsMutuallyExclusive("retry", "no-retry")
+	cmd.Flags().Int64("retry-interval", 5000, "retry interval in ms")
 }
 
 func newForwardCtx(cmd *cobra.Command, host, port string) (*forwardCtx, error) {

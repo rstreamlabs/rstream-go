@@ -72,8 +72,8 @@ func TestNewTunnelPropertiesFromFlags(t *testing.T) {
 	if props.HTTPVersion == nil || *props.HTTPVersion != rstream.HTTP3 {
 		t.Fatalf("unexpected http version: %#v", props.HTTPVersion)
 	}
-	if props.UpstreamTLS == nil || !*props.UpstreamTLS || props.HTTPUseTLS == nil || !*props.HTTPUseTLS {
-		t.Fatalf("expected upstream/http TLS to be enabled")
+	if props.UpstreamTLS == nil || !*props.UpstreamTLS || props.HTTPUseTLS != nil {
+		t.Fatalf("expected canonical upstream TLS only")
 	}
 	if props.TokenAuth == nil || !*props.TokenAuth || props.RstreamAuth == nil || *props.RstreamAuth || props.ChallengeMode == nil || !*props.ChallengeMode {
 		t.Fatalf("unexpected HTTP auth/gate flags: %#v", props)
@@ -103,8 +103,8 @@ func TestNewTunnelPropertiesFromFlagsRejectsInvalidForwardEnums(t *testing.T) {
 		value   string
 		wantErr string
 	}{
-		{name: "tls mode", flag: "tls-mode", value: "optional", wantErr: "invalid --tls-mode"},
-		{name: "http version", flag: "http-version", value: "http/4", wantErr: "invalid --http-version"},
+		{name: "tls mode", flag: "tls-mode", value: "optional", wantErr: "invalid tls mode"},
+		{name: "http version", flag: "http-version", value: "http/4", wantErr: "invalid http version"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -138,7 +138,7 @@ func TestNewTunnelPropertiesFromFlagsRejectsHTTPAuthWithoutHTTP(t *testing.T) {
 	mustSetFlag(t, command, "tls", "true")
 	mustSetFlag(t, command, "token-auth", "true")
 	_, err := newTunnelPropertiesFromFlags(command)
-	if err == nil || !strings.Contains(err.Error(), "require --http") {
+	if err == nil || !strings.Contains(err.Error(), "require protocol") {
 		t.Fatalf("expected HTTP flag validation error, got %v", err)
 	}
 }
@@ -161,7 +161,7 @@ func TestNewTunnelPropertiesFromFlagsRejectsPublishedRawDatagram(t *testing.T) {
 	mustSetFlag(t, command, "datagram", "true")
 	mustSetFlag(t, command, "publish", "true")
 	_, err := newTunnelPropertiesFromFlags(command)
-	if err == nil || !strings.Contains(err.Error(), "requires --dtls, --quic, or --http --http-version h3") {
+	if err == nil || !strings.Contains(err.Error(), "requires dtls, quic, HTTP/3") {
 		t.Fatalf("expected published datagram protocol error, got %v", err)
 	}
 }
@@ -224,7 +224,6 @@ func tunnelFlagsCommand() *cobra.Command {
 	command.Flags().StringSlice("tls-ciphers", nil, "")
 	command.Flags().Bool("mtls", false, "")
 	command.Flags().String("http-version", "", "")
-	command.Flags().Bool("http-use-tls", false, "")
 	command.Flags().Bool("upstream-tls", false, "")
 	command.Flags().Bool("datagram-guaranteed-delivery", false, "")
 	command.Flags().Bool("token-auth", false, "")
@@ -275,13 +274,13 @@ func TestNewTunnelPropertiesFromFlagsRejectsInvalidPublishedTCP(t *testing.T) {
 		flags   [][2]string
 		wantErr string
 	}{
-		{name: "port without protocol", flags: [][2]string{{"tcp-port", "10042"}}, wantErr: "requires --tcp"},
+		{name: "port without protocol", flags: [][2]string{{"tcp-port", "10042"}}, wantErr: "requires protocol"},
 		{name: "zero port", flags: [][2]string{{"tcp", "true"}, {"tcp-port", "0"}}, wantErr: "between 1 and 65535"},
 		{name: "datagram", flags: [][2]string{{"tcp", "true"}, {"datagram", "true"}}, wantErr: "requires a bytestream"},
-		{name: "private", flags: [][2]string{{"tcp", "true"}, {"no-publish", "true"}}, wantErr: "cannot be used with --no-publish"},
-		{name: "hostname", flags: [][2]string{{"tcp", "true"}, {"host", "ssh.example.com"}}, wantErr: "--host cannot be used with --tcp"},
-		{name: "TLS option", flags: [][2]string{{"tcp", "true"}, {"upstream-tls", "true"}}, wantErr: "--upstream-tls cannot be used with --tcp"},
-		{name: "edge authentication", flags: [][2]string{{"tcp", "true"}, {"mtls", "true"}}, wantErr: "--mtls cannot be used with --tcp"},
+		{name: "private", flags: [][2]string{{"tcp", "true"}, {"no-publish", "true"}}, wantErr: "requires a published tunnel"},
+		{name: "hostname", flags: [][2]string{{"tcp", "true"}, {"host", "ssh.example.com"}}, wantErr: "does not accept host"},
+		{name: "TLS option", flags: [][2]string{{"tcp", "true"}, {"upstream-tls", "true"}}, wantErr: "does not accept HTTP, TLS"},
+		{name: "edge authentication", flags: [][2]string{{"tcp", "true"}, {"mtls", "true"}}, wantErr: "does not accept HTTP, TLS"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

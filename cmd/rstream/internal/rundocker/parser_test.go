@@ -9,6 +9,7 @@ import (
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/tunnelconfig"
 )
 
 func TestParseDesiredTunnels(t *testing.T) {
@@ -273,13 +274,13 @@ func TestParseDesiredTunnelsRejectsInvalidSecurityLabels(t *testing.T) {
 			wantError: "unknown tls label",
 		},
 		{
-			name: "conflicting upstream tls aliases",
+			name: "unknown HTTP upstream TLS option",
 			labels: map[string]string{
 				"rstream.tunnel.app.forward":          "8080",
 				"rstream.tunnel.app.upstream-tls":     "true",
 				"rstream.tunnel.app.http.upstreamTLS": "false",
 			},
-			wantError: "conflicts",
+			wantError: "unknown http label",
 		},
 		{
 			name: "host loopback forward",
@@ -310,7 +311,7 @@ func TestParseDesiredTunnelsHTTPAuthAndGate(t *testing.T) {
 			"rstream.tunnel.app.http.auth.token":       "true",
 			"rstream.tunnel.app.http.auth.rstream":     "false",
 			"rstream.tunnel.app.http.gate.challenge":   "true",
-			"rstream.tunnel.app.http.upstreamTLS":      "false",
+			"rstream.tunnel.app.upstream-tls":          "false",
 			"rstream.tunnel.app.http.version":          "http/1.1",
 			"rstream.tunnel.app.label.environment":     "dev",
 			"rstream.tunnel.app.label.service-version": "v1",
@@ -355,7 +356,7 @@ func TestParseDesiredTunnelsRejectsHTTPSettingsOnNonHTTPProtocol(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error")
 	}
-	if !strings.Contains(err.Error(), "http labels require protocol") {
+	if !strings.Contains(err.Error(), "http settings require protocol") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -457,36 +458,36 @@ func TestParserPrimitives(t *testing.T) {
 }
 
 func TestEnumParsersAcceptTrimmedCaseInsensitiveInput(t *testing.T) {
-	protocol, err := parseProtocol(" HTTP ")
+	protocol, err := tunnelconfig.ParseProtocol(" HTTP ")
 	if err != nil || protocol != rstream.ProtocolHTTP {
 		t.Fatalf("parseProtocol got %q err=%v", protocol, err)
 	}
-	protocol, err = parseProtocol(" WebTTY ")
+	protocol, err = tunnelconfig.ParseProtocol(" WebTTY ")
 	if err != nil || protocol != rstream.ProtocolWebTTY {
 		t.Fatalf("parseProtocol got %q err=%v", protocol, err)
 	}
-	tunnelType, err := parseTunnelType(" DATAGRAM ")
+	tunnelType, err := tunnelconfig.ParseTunnelType(" DATAGRAM ")
 	if err != nil || tunnelType != rstream.TunnelTypeDatagram {
 		t.Fatalf("parseTunnelType got %q err=%v", tunnelType, err)
 	}
-	httpVersion, err := parseHTTPVersion(" H3 ")
+	httpVersion, err := tunnelconfig.ParseHTTPVersion(" H3 ")
 	if err != nil || httpVersion != rstream.HTTP3 {
 		t.Fatalf("parseHTTPVersion got %q err=%v", httpVersion, err)
 	}
-	tlsMode, err := parseTLSMode(" PASSTHROUGH ")
+	tlsMode, err := tunnelconfig.ParseTLSMode(" PASSTHROUGH ")
 	if err != nil || tlsMode != rstream.TLSModePassthrough {
 		t.Fatalf("parseTLSMode got %q err=%v", tlsMode, err)
 	}
-	tlsMinVersion, err := parseTLSMinVersion(" TLS1.3 ")
+	tlsMinVersion, err := tunnelconfig.ParseTLSMinVersion(" TLS1.3 ")
 	if err != nil || tlsMinVersion != "tls1.3" {
 		t.Fatalf("parseTLSMinVersion got %q err=%v", tlsMinVersion, err)
 	}
 	for name, fn := range map[string]func(string) error{
-		"protocol": func(v string) error { _, err := parseProtocol(v); return err },
-		"type":     func(v string) error { _, err := parseTunnelType(v); return err },
-		"http":     func(v string) error { _, err := parseHTTPVersion(v); return err },
-		"tlsMode":  func(v string) error { _, err := parseTLSMode(v); return err },
-		"tlsMin":   func(v string) error { _, err := parseTLSMinVersion(v); return err },
+		"protocol": func(v string) error { _, err := tunnelconfig.ParseProtocol(v); return err },
+		"type":     func(v string) error { _, err := tunnelconfig.ParseTunnelType(v); return err },
+		"http":     func(v string) error { _, err := tunnelconfig.ParseHTTPVersion(v); return err },
+		"tlsMode":  func(v string) error { _, err := tunnelconfig.ParseTLSMode(v); return err },
+		"tlsMin":   func(v string) error { _, err := tunnelconfig.ParseTLSMinVersion(v); return err },
 	} {
 		if err := fn("invalid"); err == nil || !strings.Contains(err.Error(), "invalid") {
 			t.Fatalf("%s parser should reject invalid input, got %v", name, err)
@@ -522,5 +523,26 @@ func TestResolveForwardDoesNotTrustContainerNameAsHost(t *testing.T) {
 	}
 	if target.Host != "10.0.0.2" {
 		t.Fatalf("bare port resolved to %q, want Docker network IP", target.Host)
+	}
+}
+
+func TestDockerForwardIPv6AndNetworkBoundary(t *testing.T) {
+	for _, host := range []string{"::1", "2001:db8::1"} {
+		for _, raw := range []string{"8080", "[" + host + "]:8080", "[2001:db8::99]:8080"} {
+			info := ContainerInfo{Name: "app", Networks: map[string]string{"v6": host}, Labels: map[string]string{"rstream.tunnel.app.forward": raw}}
+			desired, err := ParseDesiredTunnels(info, "v6", runmodel.ResolvedContext{})
+			if raw == "[2001:db8::99]:8080" {
+				if err == nil || !strings.Contains(err.Error(), "outside the discovered container network") {
+					t.Fatalf("external host allowed: %v", err)
+				}
+				continue
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := desired[0].Forward; got.Host != host || got.String() != "["+host+"]:8080" {
+				t.Fatalf("IPv6 corrupted: %#v", got)
+			}
+		}
 	}
 }
