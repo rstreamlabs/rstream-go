@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.33.0](https://github.com/rstreamlabs/rstream-go/compare/v1.32.10...v1.33.0) (2026-10-09)
+
+
+### Features
+
+* **mtls:** support external executable signers in CLI and config ([b2177ef](https://github.com/rstreamlabs/rstream-go/commit/b2177ef227f3ebaf0b2dd4c48f1fecc7896fe897))
+
+
+### Bug Fixes
+
+* honor context cancellation during control handshake ([410706e](https://github.com/rstreamlabs/rstream-go/commit/410706ef94076e8588c3631505a1a9c568975fb5))
+* honor context cancellation during control handshake ([37a8f97](https://github.com/rstreamlabs/rstream-go/commit/37a8f975a113147de473fcd6378c5541468e8cc9))
+
 ## [1.32.10](https://github.com/rstreamlabs/rstream-go/compare/v1.32.9...v1.32.10) (2026-09-28)
 
 
