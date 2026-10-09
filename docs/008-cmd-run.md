@@ -63,14 +63,13 @@ tunnels:
       publish: true
       labels:
         app: "web"
-      protocol: "http"           # http|tls|dtls|quic|webtty
+      protocol: "http"           # http|tls|tcp|dtls|quic|webtty
       type: "bytestream"         # bytestream|datagram (optional)
       host: "web-project.t.cluster.example.com" # optional stable domain
       upstreamTLS: true          # optional, applies to published protocols
       trustedIPs: ["10.0.0.0/8"]
       geoip: ["FR", "DE"]
       http:
-        upstreamTLS: true        # deprecated alias for HTTP-only configs
         version: "http/1.1"      # http/1.1|h2c|h3
         auth:
           token: true
@@ -81,6 +80,7 @@ tunnels:
         mode: "terminated"       # terminated|passthrough
         minVersion: "tls1.2"     # tls1.2|tls1.3
         alpns: ["postgres"]
+        ciphers: ["TLS_AES_128_GCM_SHA256"]
         mtls: true
 contexts:
   prod:
@@ -106,6 +106,20 @@ contexts:
 ```
 
 Environment variables expand in YAML values (e.g. `${RSTREAM_TOKEN}`).
+
+`tunnel.tls.ciphers` selects TLS ciphers, equivalent to `forward --tls-ciphers`.
+Each apply file must contain exactly one YAML document. Unknown fields are
+rejected, including nested transport fields in inline contexts. Enum values and
+hostnames must be nonempty when set; omit the field to leave it unspecified.
+
+`forward`, apply YAML and Docker labels use the same tunnel normalization and
+validation rules. Explicit `false` is preserved. Upstream TLS uses `--upstream-tls`
+in the CLI, `tunnel.upstreamTLS` in YAML and `upstream-tls` in Docker labels.
+Docker defaults to `publish: true` and `protocol: http`; forward/apply leave
+unspecified exposure settings to the tunnel API.
+
+Forward targets accept a bare port, `host:port` or bracketed IPv6 such as
+`[2001:db8::1]:8080`.
 
 ### Context Resolution Order
 
@@ -134,7 +148,7 @@ labels:
 
 - `rstream.tunnel.<name>.forward` (required)
 - `rstream.tunnel.<name>.publish` (true|false, default true)
-- `rstream.tunnel.<name>.protocol` (http|tls|dtls|quic|webtty, default http)
+- `rstream.tunnel.<name>.protocol` (http|tls|tcp|dtls|quic|webtty, default http)
 - `rstream.tunnel.<name>.type` (bytestream|datagram)
 - `rstream.tunnel.<name>.host` (Stable domain)
 - `rstream.tunnel.<name>.upstream-tls` (true|false)
@@ -142,13 +156,16 @@ labels:
 - `rstream.tunnel.<name>.trusted-ips` (comma-separated)
 - `rstream.tunnel.<name>.geoip` (comma-separated)
 - `rstream.tunnel.<name>.http.version` (http/1.1|h2c|h3)
-- `rstream.tunnel.<name>.http.upstreamTLS` (true|false, deprecated alias)
 - `rstream.tunnel.<name>.http.auth.token` (true|false)
 - `rstream.tunnel.<name>.http.auth.rstream` (true|false)
 - `rstream.tunnel.<name>.http.gate.challenge` (true|false)
 - `rstream.tunnel.<name>.tls.mode` (terminated|passthrough)
 - `rstream.tunnel.<name>.tls.minVersion` (tls1.2|tls1.3)
 - `rstream.tunnel.<name>.tls.alpns` (comma-separated)
+- `rstream.tunnel.<name>.tls.ciphers` (comma-separated)
+- `rstream.tunnel.<name>.port` (reserved published TCP port)
+- `rstream.tunnel.<name>.allow-cross-region-routing` (true|false)
+- `rstream.tunnel.<name>.datagram-guaranteed-delivery` (true|false, datagram tunnels only)
 - `rstream.tunnel.<name>.tls.mtls` (true|false)
 
 `http.auth.*` and `http.gate.*` are valid only for HTTP tunnels (`protocol=http`).
@@ -161,10 +178,13 @@ For agent authentication, `rstream run` uses the selected CLI context or explici
 
 ### Forward Target Resolution (Docker)
 
-- If forward is a bare port (e.g. `8080`):
-  - with `--docker-network`, uses the container IP in that network
-  - otherwise uses the container name as host (or falls back to first container IP)
-- If forward is `host:port`, it is used as-is
+- A bare port uses the container address on `--docker-network` when available,
+  otherwise the first discovered network address (ordered by network name).
+- Each network prefers IPv4 when available, falling back to its global IPv6
+  address, supporting IPv6-only Docker networks.
+- Explicit `host:port` and `[IPv6]:port` targets must name the discovered container
+  or one of its discovered network addresses. Arbitrary external/internal hosts
+  remain rejected; use `--apply` for those targets.
 
 ## Managed Labels
 

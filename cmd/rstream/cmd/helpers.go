@@ -3,10 +3,10 @@
 package cmd
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/tunnelconfig"
 	"github.com/spf13/cobra"
 )
 
@@ -105,190 +105,60 @@ func getStringSlice(cmd *cobra.Command, name string) []string {
 }
 
 func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties, error) {
-	namePtr := getStringPtr(cmd, "name")
-	bytestreamPtr := getBoolPtr(cmd, "bytestream")
-	datagramPtr := getBoolPtr(cmd, "datagram")
-	var typePtr *rstream.TunnelType
-	if bytestreamPtr != nil && *bytestreamPtr {
-		t := rstream.TunnelTypeBytestream
-		typePtr = &t
-	} else if datagramPtr != nil && *datagramPtr {
-		t := rstream.TunnelTypeDatagram
-		typePtr = &t
+	publish, err := tunnelconfig.Bool(getBoolPtr(cmd, "publish"), getBoolPtr(cmd, "no-publish"))
+	if err != nil {
+		return nil, err
 	}
-	publishPtr := getBoolPtr(cmd, "publish")
-	noPublishPtr := getBoolPtr(cmd, "no-publish")
-	var publishFinalPtr *bool
-	switch {
-	case publishPtr != nil && *publishPtr:
-		publishFinalPtr = rstream.BoolPtr(true)
-	case noPublishPtr != nil && *noPublishPtr:
-		publishFinalPtr = rstream.BoolPtr(false)
-	default:
+	props := rstream.TunnelProperties{
+		Name:                       getStringPtr(cmd, "name"),
+		Publish:                    publish,
+		Labels:                     getStringArrayMap(cmd, "label"),
+		GeoIP:                      getStringSlice(cmd, "geoip"),
+		TrustedIPs:                 getStringSlice(cmd, "trusted-ips"),
+		Hostname:                   getStringPtr(cmd, "host"),
+		Port:                       getUint32Ptr(cmd, "tcp-port"),
+		AllowCrossRegionRouting:    getBoolPtr(cmd, "allow-cross-region-routing"),
+		TLSMode:                    stringOption[rstream.TLSMode](getStringPtr(cmd, "tls-mode")),
+		TLSALPNs:                   getStringSlice(cmd, "tls-alpn"),
+		TLSMinVersion:              getStringPtr(cmd, "tls-min-version"),
+		TLSCiphers:                 getStringSlice(cmd, "tls-ciphers"),
+		MTLSAuth:                   getBoolPtr(cmd, "mtls"),
+		HTTPVersion:                stringOption[rstream.HTTPVersion](getStringPtr(cmd, "http-version")),
+		UpstreamTLS:                getBoolPtr(cmd, "upstream-tls"),
+		DatagramGuaranteedDelivery: getBoolPtr(cmd, "datagram-guaranteed-delivery"),
+		TokenAuth:                  getBoolPtr(cmd, "token-auth"),
+		RstreamAuth:                getBoolPtr(cmd, "rstream-auth"),
+		ChallengeMode:              getBoolPtr(cmd, "challenge-mode"),
 	}
-	tlsPtr := getBoolPtr(cmd, "tls")
-	tcpPtr := getBoolPtr(cmd, "tcp")
-	dtlsPtr := getBoolPtr(cmd, "dtls")
-	quicPtr := getBoolPtr(cmd, "quic")
-	httpPtr := getBoolPtr(cmd, "http")
-	var protocol *rstream.Protocol
-	if tlsPtr != nil && *tlsPtr {
-		p := rstream.ProtocolTLS
-		protocol = &p
-	} else if tcpPtr != nil && *tcpPtr {
-		p := rstream.ProtocolTCP
-		protocol = &p
-	} else if dtlsPtr != nil && *dtlsPtr {
-		p := rstream.ProtocolDTLS
-		protocol = &p
-	} else if quicPtr != nil && *quicPtr {
-		p := rstream.ProtocolQUIC
-		protocol = &p
-	} else if httpPtr != nil && *httpPtr {
-		p := rstream.ProtocolHTTP
-		protocol = &p
-	}
-	labels := getStringArrayMap(cmd, "label")
-	geoipSlice := getStringSlice(cmd, "geoip")
-	trustedIPsSlice := getStringSlice(cmd, "trusted-ips")
-	hostnamePtr := getStringPtr(cmd, "host")
-	tcpPortPtr := getUint32Ptr(cmd, "tcp-port")
-	allowCrossRegionRoutingPtr := getBoolPtr(cmd, "allow-cross-region-routing")
-	if tcpPortPtr != nil && (protocol == nil || *protocol != rstream.ProtocolTCP) {
-		return nil, fmt.Errorf("--tcp-port requires --tcp")
-	}
-	if tcpPortPtr != nil && *tcpPortPtr == 0 {
-		return nil, fmt.Errorf("--tcp-port must be between 1 and 65535")
-	}
-	if protocol != nil && *protocol == rstream.ProtocolTCP {
-		if typePtr != nil && *typePtr != rstream.TunnelTypeBytestream {
-			return nil, fmt.Errorf("--tcp requires a bytestream tunnel")
-		}
-		if noPublishPtr != nil && *noPublishPtr {
-			return nil, fmt.Errorf("--tcp cannot be used with --no-publish")
-		}
-		t := rstream.TunnelTypeBytestream
-		typePtr = &t
-		publishFinalPtr = rstream.BoolPtr(true)
-	}
-	var tlsModePtr *rstream.TLSMode
-	if cmd.Flags().Lookup("tls-mode").Changed {
-		val, _ := cmd.Flags().GetString("tls-mode")
-		tlsMode, err := parseForwardTLSMode(val)
-		if err != nil {
-			return nil, err
-		}
-		tlsModePtr = &tlsMode
-	}
-	var tlsALPNSlice []string
-	if cmd.Flags().Lookup("tls-alpn").Changed {
-		v, _ := cmd.Flags().GetString("tls-alpn")
-		if v != "" {
-			tlsALPNSlice = strings.Split(v, ",")
-		}
-		if len(tlsALPNSlice) == 0 {
-			tlsALPNSlice = nil
+	for _, name := range []string{"bytestream", "datagram"} {
+		if value := getBoolPtr(cmd, name); value != nil && *value {
+			props.Type = rstream.TunnelTypePtr(rstream.TunnelType(name))
 		}
 	}
-	tlsMinVersionPtr := getStringPtr(cmd, "tls-min-version")
-	tlsCipherIDs := getStringSlice(cmd, "tls-ciphers")
-	mtlsPtr := getBoolPtr(cmd, "mtls")
-	var httpVersionPtr *rstream.HTTPVersion
-	if cmd.Flags().Lookup("http-version").Changed {
-		val, _ := cmd.Flags().GetString("http-version")
-		httpVersion, err := parseForwardHTTPVersion(val)
-		if err != nil {
-			return nil, err
-		}
-		httpVersionPtr = &httpVersion
-	}
-	httpUseTLSPtr := getBoolPtr(cmd, "http-use-tls")
-	upstreamTLSPtr := getBoolPtr(cmd, "upstream-tls")
-	datagramGuaranteedDeliveryPtr := getBoolPtr(cmd, "datagram-guaranteed-delivery")
-	if datagramGuaranteedDeliveryPtr != nil {
-		usesDatagram := typePtr != nil && *typePtr == rstream.TunnelTypeDatagram
-		if typePtr == nil && protocol != nil {
-			usesDatagram = *protocol == rstream.ProtocolDTLS || *protocol == rstream.ProtocolQUIC ||
-				(*protocol == rstream.ProtocolHTTP && httpVersionPtr != nil && *httpVersionPtr == rstream.HTTP3)
-		}
-		if !usesDatagram {
-			return nil, fmt.Errorf("--datagram-guaranteed-delivery requires a datagram tunnel")
+	for _, name := range []string{"http", "tls", "tcp", "dtls", "quic"} {
+		if value := getBoolPtr(cmd, name); value != nil && *value {
+			props.Protocol = rstream.ProtocolPtr(rstream.Protocol(name))
 		}
 	}
-	if upstreamTLSPtr == nil {
-		upstreamTLSPtr = httpUseTLSPtr
+	resolved, err := tunnelconfig.Resolve(props)
+	if err != nil {
+		return nil, err
 	}
-	if httpUseTLSPtr == nil && upstreamTLSPtr != nil && (protocol == nil || *protocol == rstream.ProtocolHTTP) {
-		httpUseTLSPtr = upstreamTLSPtr
+	return &resolved, nil
+}
+
+func stringOption[T ~string](value *string) *T {
+	if value == nil {
+		return nil
 	}
-	if typePtr != nil && *typePtr == rstream.TunnelTypeDatagram && publishFinalPtr != nil && *publishFinalPtr {
-		publishedDatagramProtocol := protocol != nil && (*protocol == rstream.ProtocolDTLS || *protocol == rstream.ProtocolQUIC || (*protocol == rstream.ProtocolHTTP && httpVersionPtr != nil && *httpVersionPtr == rstream.HTTP3))
-		if !publishedDatagramProtocol {
-			return nil, fmt.Errorf("--datagram with --publish requires --dtls, --quic, or --http --http-version h3")
-		}
-	}
-	tokenAuthPtr := getBoolPtr(cmd, "token-auth")
-	rstreamAuthPtr := getBoolPtr(cmd, "rstream-auth")
-	challengeModePtr := getBoolPtr(cmd, "challenge-mode")
-	if protocol != nil && *protocol != rstream.ProtocolHTTP {
-		if tokenAuthPtr != nil || rstreamAuthPtr != nil || challengeModePtr != nil {
-			return nil, fmt.Errorf("--token-auth, --rstream-auth and --challenge-mode require --http")
-		}
-	}
-	if protocol != nil && *protocol == rstream.ProtocolTCP {
-		for _, name := range []string{"host", "tls-mode", "tls-alpn", "tls-min-version", "tls-ciphers", "mtls", "http-version", "http-use-tls", "upstream-tls", "datagram-guaranteed-delivery"} {
-			if flag := cmd.Flags().Lookup(name); flag != nil && flag.Changed {
-				return nil, fmt.Errorf("--%s cannot be used with --tcp", name)
-			}
-		}
-	}
-	tunnelProperties := &rstream.TunnelProperties{
-		Name:                       namePtr,
-		Type:                       typePtr,
-		Publish:                    publishFinalPtr,
-		Protocol:                   protocol,
-		Labels:                     labels,
-		GeoIP:                      geoipSlice,
-		TrustedIPs:                 trustedIPsSlice,
-		Hostname:                   hostnamePtr,
-		Port:                       tcpPortPtr,
-		AllowCrossRegionRouting:    allowCrossRegionRoutingPtr,
-		TLSMode:                    tlsModePtr,
-		TLSALPNs:                   tlsALPNSlice,
-		TLSMinVersion:              tlsMinVersionPtr,
-		TLSCiphers:                 tlsCipherIDs,
-		MTLSAuth:                   mtlsPtr,
-		HTTPVersion:                httpVersionPtr,
-		HTTPUseTLS:                 httpUseTLSPtr,
-		UpstreamTLS:                upstreamTLSPtr,
-		DatagramGuaranteedDelivery: datagramGuaranteedDeliveryPtr,
-		TokenAuth:                  tokenAuthPtr,
-		RstreamAuth:                rstreamAuthPtr,
-		ChallengeMode:              challengeModePtr,
-	}
-	return tunnelProperties, nil
+	result := T(*value)
+	return &result
 }
 
 func parseForwardTLSMode(value string) (rstream.TLSMode, error) {
-	switch strings.TrimSpace(strings.ToLower(value)) {
-	case string(rstream.TLSModeTerminated):
-		return rstream.TLSModeTerminated, nil
-	case string(rstream.TLSModePassthrough):
-		return rstream.TLSModePassthrough, nil
-	default:
-		return "", fmt.Errorf("invalid --tls-mode %q (valid: terminated, passthrough)", value)
-	}
+	return tunnelconfig.ParseTLSMode(value)
 }
 
 func parseForwardHTTPVersion(value string) (rstream.HTTPVersion, error) {
-	switch strings.TrimSpace(strings.ToLower(value)) {
-	case string(rstream.HTTP1_1):
-		return rstream.HTTP1_1, nil
-	case "h2c":
-		return rstream.HTTP2, nil
-	case string(rstream.HTTP3):
-		return rstream.HTTP3, nil
-	default:
-		return "", fmt.Errorf("invalid --http-version %q (valid: http/1.1, h2c, h3)", value)
-	}
+	return tunnelconfig.ParseHTTPVersion(value)
 }

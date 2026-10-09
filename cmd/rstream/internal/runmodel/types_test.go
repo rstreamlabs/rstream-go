@@ -23,6 +23,9 @@ func TestParseForwardTarget(t *testing.T) {
 	}{
 		{name: "port with default host", raw: "8080", defaultHost: "localhost", want: ForwardTarget{Host: "localhost", Port: "8080"}},
 		{name: "explicit host", raw: " 127.0.0.1:9000 ", defaultHost: "localhost", want: ForwardTarget{Host: "127.0.0.1", Port: "9000"}},
+		{name: "IPv6", raw: "[2001:db8::1]:8080", defaultHost: "localhost", want: ForwardTarget{Host: "2001:db8::1", Port: "8080"}},
+		{name: "IPv6 loopback", raw: "[::1]:8080", want: ForwardTarget{Host: "::1", Port: "8080"}},
+		{name: "unbracketed IPv6", raw: "::1:8080", wantErr: true},
 		{name: "empty raw", raw: " ", defaultHost: "localhost", wantErr: true},
 		{name: "missing host", raw: ":8080", defaultHost: "localhost", wantErr: true},
 		{name: "missing port", raw: "localhost:", defaultHost: "localhost", wantErr: true},
@@ -43,7 +46,7 @@ func TestParseForwardTarget(t *testing.T) {
 			if got != tt.want {
 				t.Fatalf("got %#v, want %#v", got, tt.want)
 			}
-			if got.String() != got.Host+":"+got.Port {
+			if got.String() != net.JoinHostPort(got.Host, got.Port) {
 				t.Fatalf("unexpected target string: %q", got.String())
 			}
 		})

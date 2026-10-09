@@ -175,6 +175,9 @@ rstream webtty server -v --listen 127.0.0.1:8080 --allow-unauthenticated`),
 		if err := applyWebTTYServerDerivedDefaults(cmd); err != nil {
 			return err
 		}
+		if err := validateFIPSCommand(cmd); err != nil {
+			return err
+		}
 		if err := validateWebTTYServerFlags(cmd); err != nil {
 			return err
 		}
@@ -492,17 +495,8 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 		admissionEnded = ctrl.Done()
 		props := newWebTTYServerTunnelProperties(cmd, serverEnrollment)
 		applyWebTTYRuntimeSecurityLabels(props.Labels, payloadCryptoConfig, serverEnrollment, requireClientProof, hostKeyID)
-		if props.Publish != nil && *props.Publish {
-			if stableHostname != nil && *stableHostname != nil {
-				props.Hostname = *stableHostname
-			} else {
-				if err := rstream.MaybeSetGeneratedStableDomain(&props, runtime.Resolved.StableDomainEndpoint()); err != nil {
-					return fmt.Errorf("failed to generate stable domain: %w", err)
-				}
-				if stableHostname != nil {
-					*stableHostname = props.Hostname
-				}
-			}
+		if err := applyWebTTYStableHostname(&props, runtime.Resolved.StableDomainEndpoint(), stableHostname); err != nil {
+			return err
 		}
 		if err := applyWebTTYServerAdmissionLabel(&props, serverEnrollment); err != nil {
 			return err
@@ -845,43 +839,47 @@ func init() {
 }
 
 func init() {
-	webttyServerCmd.Flags().SortFlags = false
-	webttyServerCmd.PersistentFlags().SortFlags = false
-	webttyServerCmd.Flags().String("listen", "127.0.0.1:8080", "listen address (e.g. 127.0.0.1:8080 or 0.0.0.0:8080)")
-	webttyServerCmd.Flags().Bool("rstream", false, "serve over an rstream tunnel")
-	webttyServerCmd.MarkFlagsMutuallyExclusive("listen", "rstream")
-	webttyServerCmd.Flags().String("name", "", "tunnel name when using --rstream")
-	webttyServerCmd.Flags().String("server-id", "", "registered WebTTY server ID; implies --rstream and loads ~/.rstream/webtty/enrollments/<server-id>.yaml")
-	webttyServerCmd.Flags().String("server-enrollment", "", "registered WebTTY server enrollment file; implies --rstream")
-	webttyServerCmd.Flags().String("webtty-config", "", "WebTTY server runtime config file; may contain serverId or serverEnrollment")
-	webttyServerCmd.Flags().Bool("publish", false, "publish the tunnel when using --rstream")
-	webttyServerCmd.Flags().Bool("no-publish", false, "do not publish the tunnel when using --rstream")
-	webttyServerCmd.MarkFlagsMutuallyExclusive("publish", "no-publish")
-	webttyServerCmd.Flags().Bool("retry", false, "enable automatic reconnection on disconnect")
-	webttyServerCmd.Flags().Bool("no-retry", false, "disable automatic reconnection on disconnect")
-	webttyServerCmd.MarkFlagsMutuallyExclusive("retry", "no-retry")
-	webttyServerCmd.Flags().Int64("retry-interval", 5000, "retry interval in ms")
-	webttyServerCmd.Flags().Int64("shutdown-timeout", 5000, "graceful shutdown timeout in ms")
-	webttyServerCmd.Flags().String("auth-token-file", "", "read local WebTTY bearer token from file")
-	webttyServerCmd.Flags().Bool("allow-unauthenticated", false, "allow unauthenticated local WebTTY access")
-	webttyServerCmd.Flags().StringArray("allowed-origin", nil, "allow a browser Origin for local WebTTY WebSocket/WebTransport access (may be specified multiple times)")
-	webttyServerCmd.Flags().String("execution-mode", "", "server execution mode (spawn, login); defaults to login for registered servers and spawn otherwise")
-	webttyServerCmd.Flags().String("login-user", "", "existing local OS username used for every login session")
-	webttyServerCmd.Flags().Bool("allow-client-user", false, "allow clients to request an OS user in login execution mode")
-	webttyServerCmd.Flags().String("transport", defaultWebTTYServerTransportFlag(), "WebTTY transport (plain, websocket, webtransport)")
-	webttyServerCmd.Flags().String("tls-cert-file", "", "TLS certificate file for local plain TLS or WebTransport")
-	webttyServerCmd.Flags().String("tls-key-file", "", "TLS private key file for local plain TLS or WebTransport")
-	webttyServerCmd.Flags().Bool("e2e", false, "require end-to-end encrypted WebTTY terminal content")
-	webttyServerCmd.Flags().String("identity", "", "named local WebTTY server identity")
-	webttyServerCmd.Flags().String("identity-file", "", "local WebTTY server identity file")
-	webttyServerCmd.Flags().StringArray("authorized-client-key", nil, "authorized WebTTY client signing key, as signing_key_id:signing_public_key")
-	webttyServerCmd.Flags().String("authorized-clients-file", "", "authorized WebTTY client keys file")
-	webttyServerCmd.Flags().StringArray("label", nil, "set WebTTY inventory labels (key=value, may be specified multiple times)")
-	webttyServerCmd.Flags().String("fs-root", "", "serve a filesystem sidecar rooted at this directory")
-	webttyServerCmd.Flags().String("fs-backend", filesystem.BackendWebDAV, "filesystem backend (webdav, webrtc; WebRTC is read-only)")
-	webttyServerCmd.Flags().Bool("fs-read-only", false, "serve the WebDAV filesystem sidecar in read-only mode")
-	webttyServerCmd.Flags().Int64("fs-max-upload-size", defaultWebTTYFSMaxUploadSize, "maximum WebDAV upload size in bytes")
+	addWebTTYServerFlags(webttyServerCmd)
 	webttyCmd.AddCommand(webttyServerCmd)
+}
+
+func addWebTTYServerFlags(cmd *cobra.Command) {
+	cmd.Flags().SortFlags = false
+	cmd.PersistentFlags().SortFlags = false
+	cmd.Flags().String("listen", "127.0.0.1:8080", "listen address (e.g. 127.0.0.1:8080 or 0.0.0.0:8080)")
+	cmd.Flags().Bool("rstream", false, "serve over an rstream tunnel")
+	cmd.Flags().String("host", "", "custom public hostname when using --rstream")
+	cmd.Flags().String("name", "", "tunnel name when using --rstream")
+	cmd.Flags().String("server-id", "", "registered WebTTY server ID; implies --rstream and loads ~/.rstream/webtty/enrollments/<server-id>.yaml")
+	cmd.Flags().String("server-enrollment", "", "registered WebTTY server enrollment file; implies --rstream")
+	cmd.Flags().String("webtty-config", "", "WebTTY server runtime config file; may contain serverId or serverEnrollment")
+	cmd.Flags().Bool("publish", false, "publish the tunnel when using --rstream")
+	cmd.Flags().Bool("no-publish", false, "do not publish the tunnel when using --rstream")
+	cmd.MarkFlagsMutuallyExclusive("publish", "no-publish")
+	cmd.Flags().Bool("retry", false, "enable automatic reconnection on disconnect")
+	cmd.Flags().Bool("no-retry", false, "disable automatic reconnection on disconnect")
+	cmd.MarkFlagsMutuallyExclusive("retry", "no-retry")
+	cmd.Flags().Int64("retry-interval", 5000, "retry interval in ms")
+	cmd.Flags().Int64("shutdown-timeout", 5000, "graceful shutdown timeout in ms")
+	cmd.Flags().String("auth-token-file", "", "read local WebTTY bearer token from file")
+	cmd.Flags().Bool("allow-unauthenticated", false, "allow unauthenticated local WebTTY access")
+	cmd.Flags().StringArray("allowed-origin", nil, "allow a browser Origin for local WebTTY WebSocket/WebTransport access (may be specified multiple times)")
+	cmd.Flags().String("execution-mode", "", "server execution mode (spawn, login); defaults to login for registered servers and spawn otherwise")
+	cmd.Flags().String("login-user", "", "existing local OS username used for every login session")
+	cmd.Flags().Bool("allow-client-user", false, "allow clients to request an OS user in login execution mode")
+	cmd.Flags().String("transport", defaultWebTTYServerTransportFlag(), "WebTTY transport (plain, websocket, webtransport)")
+	cmd.Flags().String("tls-cert-file", "", "TLS certificate file for local plain TLS or WebTransport")
+	cmd.Flags().String("tls-key-file", "", "TLS private key file for local plain TLS or WebTransport")
+	cmd.Flags().Bool("e2e", false, "require end-to-end encrypted WebTTY terminal content")
+	cmd.Flags().String("identity", "", "named local WebTTY server identity")
+	cmd.Flags().String("identity-file", "", "local WebTTY server identity file")
+	cmd.Flags().StringArray("authorized-client-key", nil, "authorized WebTTY client signing key, as signing_key_id:signing_public_key")
+	cmd.Flags().String("authorized-clients-file", "", "authorized WebTTY client keys file")
+	cmd.Flags().StringArray("label", nil, "set WebTTY inventory labels (key=value, may be specified multiple times)")
+	cmd.Flags().String("fs-root", "", "serve a filesystem sidecar rooted at this directory")
+	cmd.Flags().String("fs-backend", filesystem.BackendWebDAV, "filesystem backend (webdav, webrtc; WebRTC is read-only)")
+	cmd.Flags().Bool("fs-read-only", false, "serve the WebDAV filesystem sidecar in read-only mode")
+	cmd.Flags().Int64("fs-max-upload-size", defaultWebTTYFSMaxUploadSize, "maximum WebDAV upload size in bytes")
 }
 
 func init() {
@@ -982,6 +980,14 @@ func validateWebTTYServerFlags(cmd *cobra.Command) error {
 	if !useRstream && (cmd.Flags().Changed("name") || cmd.Flags().Changed("publish") || cmd.Flags().Changed("no-publish")) {
 		return fmt.Errorf("--name, --publish and --no-publish require --rstream")
 	}
+	if host := getStringPtr(cmd, "host"); host != nil {
+		if strings.TrimSpace(*host) == "" {
+			return fmt.Errorf("--host must not be empty")
+		}
+		if !useRstream || !webTTYServerPublish(cmd) || transport == webtty.WebTTYTransportPlain && !registeredWebTTYServerRequested(cmd) {
+			return fmt.Errorf("--host requires a published rstream WebTTY endpoint")
+		}
+	}
 	fsRoot, _ := cmd.Flags().GetString("fs-root")
 	fsBackend, _ := cmd.Flags().GetString("fs-backend")
 	if _, err := filesystem.ResolveBackend(fsBackend); err != nil {
@@ -1012,8 +1018,8 @@ func validateWebTTYServerFlags(cmd *cobra.Command) error {
 		keyFile, _ := cmd.Flags().GetString("tls-key-file")
 		if useRstream {
 			if registeredWebTTYServerRequested(cmd) {
-				if noPublishPtr := getBoolPtr(cmd, "no-publish"); noPublishPtr != nil && *noPublishPtr {
-					return fmt.Errorf("registered WebTTY servers cannot use --transport=webtransport with --no-publish; use a published WebTTY endpoint so the engine can terminate WebTransport and record the managed session")
+				if !webTTYServerPublish(cmd) {
+					return fmt.Errorf("registered WebTTY servers cannot use --transport=webtransport with --publish=false or --no-publish; use a published WebTTY endpoint so the engine can terminate WebTransport and record the managed session")
 				}
 			}
 			if strings.TrimSpace(certFile) != "" || strings.TrimSpace(keyFile) != "" {
@@ -2220,10 +2226,7 @@ func newWebTTYServerHTTPHandler(cmd *cobra.Command, terminalHandler *webtty.Hand
 }
 
 func newWebTTYServerTunnelProperties(cmd *cobra.Command, enrollment *webTTYServerEnrollmentFile) rstream.TunnelProperties {
-	publish := true
-	if noPublishPtr := getBoolPtr(cmd, "no-publish"); noPublishPtr != nil && *noPublishPtr {
-		publish = false
-	}
+	publish := webTTYServerPublish(cmd)
 	transport, _ := webTTYTransportFromFlag(cmd)
 	if enrollment == nil && transport == webtty.WebTTYTransportPlain {
 		publish = false
@@ -2233,9 +2236,10 @@ func newWebTTYServerTunnelProperties(cmd *cobra.Command, enrollment *webTTYServe
 		name = rstream.StringPtr(enrollment.ServerID)
 	}
 	props := rstream.TunnelProperties{
-		Name:    name,
-		Publish: rstream.BoolPtr(publish),
-		Labels:  webtty.DefaultLabels(),
+		Name:     name,
+		Hostname: getStringPtr(cmd, "host"),
+		Publish:  rstream.BoolPtr(publish),
+		Labels:   webtty.DefaultLabels(),
 	}
 	applyWebTTYServerLabels(cmd, props.Labels)
 	webTTYServerRegisteredLabels(enrollment, props.Labels)
@@ -3126,4 +3130,31 @@ func closeWebTTYHTTPHandler(handler http.Handler, logger *slog.Logger) {
 			logger.Warn("close WebTTY filesystem", "error", err)
 		}
 	}
+}
+
+func webTTYServerPublish(cmd *cobra.Command) bool {
+	if value := getBoolPtr(cmd, "publish"); value != nil {
+		return *value
+	}
+	if inverse := getBoolPtr(cmd, "no-publish"); inverse != nil {
+		return !*inverse
+	}
+	return true
+}
+
+func applyWebTTYStableHostname(props *rstream.TunnelProperties, engine string, stableHostname **string) error {
+	if props.Publish == nil || !*props.Publish {
+		return nil
+	}
+	if stableHostname != nil && *stableHostname != nil {
+		props.Hostname = *stableHostname
+		return nil
+	}
+	if err := rstream.MaybeSetGeneratedStableDomain(props, engine); err != nil {
+		return fmt.Errorf("failed to generate stable domain: %w", err)
+	}
+	if stableHostname != nil {
+		*stableHostname = props.Hostname
+	}
+	return nil
 }

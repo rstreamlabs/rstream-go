@@ -26,8 +26,11 @@ func newRootCmd() *cobra.Command {
 		Short:   "CLI for rstream - serverless networking",
 		Version: rootVersion(),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if err := validateFIPSCommand(cmd); err != nil {
-				return err
+			// WebTTY validates after merging its runtime YAML with explicit flags.
+			if cmd.CommandPath() != "rstream webtty server" {
+				if err := validateFIPSCommand(cmd); err != nil {
+					return err
+				}
 			}
 			return initLogger(cmd)
 		},

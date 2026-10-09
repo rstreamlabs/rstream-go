@@ -152,6 +152,8 @@ func containerNetworks(c container.Summary) map[string]string {
 		}
 		if settings.IPAddress.IsValid() {
 			out[name] = settings.IPAddress.String()
+		} else if settings.GlobalIPv6Address.IsValid() {
+			out[name] = settings.GlobalIPv6Address.String()
 		}
 	}
 	return out

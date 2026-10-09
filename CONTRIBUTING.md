@@ -20,6 +20,21 @@ If a change affects examples, documentation, or generated output, update the cor
 
 Public pull requests do not automatically run the repository release/build workflows. Maintainers run CI after reviewing the change; include the local commands you ran in the PR description.
 
+## CLI configuration changes
+
+Tunnel options from `forward`, apply YAML and Docker labels must use
+`cmd/rstream/internal/tunnelconfig` for shared normalization and validation.
+WebTTY runtime options use the typed `webTTYBindings` catalog for CLI/YAML
+correspondence. Preserve explicit false, zero and empty values when adapting an
+input source. Validate the effective configuration before starting runtime I/O.
+
+When adding an option, extend the source-equivalence tests and the option
+coverage inventories in `tunnel_config_parity_test.go` or
+`webtty_config_parity_test.go`. An option without an equivalent source must have
+an explicit, justified exclusion in the inventory. Keep the CLI/YAML reference
+tables current and reject unsupported spellings instead of adding compatibility
+fallbacks.
+
 ## Stable releases
 
 A release tag builds every supported target but does not publish packages. Publish the reviewed tag by dispatching `cross-compile, package, and deploy` on that tag with `publish_stable` enabled.

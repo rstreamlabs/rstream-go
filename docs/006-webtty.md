@@ -323,6 +323,93 @@ CLI flags override YAML values. `server.serverId` loads the matching enrollment
 from `~/.rstream/webtty/enrollments/<server-id>.yaml`. `server.serverEnrollment`
 can point to a non-default enrollment path.
 
+### CLI and YAML option correspondence
+
+Explicit CLI options override the corresponding YAML values, including `false`,
+zero, empty strings and empty lists. Values are validated after merging; an
+explicit empty hostname is an error. An explicit `--identity` replaces a YAML
+`e2e.identityFile`, and `--identity-file` replaces a YAML `e2e.identity`. The same
+selector precedence applies to `--server-id` and `--server-enrollment`. Supplying
+both selectors explicitly retains their normal validation. Switching between
+local listening and rstream mode still requires removing incompatible options.
+
+`--publish=false` and `--no-publish` both request a private endpoint.
+`--retry=false` and `--no-retry` both disable reconnection. Positive and negative
+forms of the same option cannot be supplied together. Omitted settings retain
+command defaults, including the private default for lightweight plain transport.
+
+Runtime and enrollment YAML files must each contain exactly one document. Unknown
+fields are rejected. Label keys and values are trimmed; empty or duplicate keys
+after trimming are errors. Global account/context configuration remains a
+separate file shared with SDKs.
+
+| CLI flag | WebTTY YAML field |
+| --- | --- |
+| `--rstream` | `server.rstream` |
+| `--listen` | `server.listen` |
+| `--name` | `server.name` |
+| `--host` | `server.host` |
+| `--server-id` | `server.serverId` |
+| `--server-enrollment` | `server.serverEnrollment` |
+| `--transport` | `server.transport` |
+| `--execution-mode` | `server.executionMode` |
+| `--login-user` | `server.loginUser` |
+| `--allow-client-user` | `server.allowClientUser` |
+| `--retry`, `--no-retry` | `server.retry` |
+| `--retry-interval` | `server.retryIntervalMs` |
+| `--shutdown-timeout` | `server.shutdownTimeoutMs` |
+| `--publish`, `--no-publish` | `server.publish` |
+| `--auth-token-file` | `server.authTokenFile` |
+| `--allow-unauthenticated` | `server.allowUnauthenticated` |
+| `--allowed-origin` | `server.allowedOrigins` (list) |
+| `--label` | `server.labels` (map) |
+| `--e2e` | `e2e.enabled` |
+| `--identity` | `e2e.identity` |
+| `--identity-file` | `e2e.identityFile` |
+| `--authorized-clients-file` | `e2e.authorizedClientsFile` |
+| `--authorized-client-key` | `e2e.authorizedClientKeys` (list) |
+| `--tls-cert-file` | `tls.certFile` |
+| `--tls-key-file` | `tls.keyFile` |
+| `--fs-root` | `filesystem.root` |
+| `--fs-backend` | `filesystem.backend` |
+| `--fs-read-only` | `filesystem.readOnly` |
+| `--fs-max-upload-size` | `filesystem.maxUploadSizeBytes` |
+
+The `--webtty-config` flag and `RSTREAM_WEBTTY_CONFIG` select the runtime file;
+`version: 1` identifies its schema. Global flags such as `--config` and `--context`
+select the connection context separately.
+
+### Public hostname and filesystem backend
+
+Use a project stable domain or a verified custom domain belonging to the project:
+
+```bash
+rstream webtty server --rstream --host shell.example.com
+```
+
+The hostname is retained across automatic reconnections. `--host` requires a
+published rstream endpoint; it is unavailable for local listeners, private
+tunnels and lightweight plain transport. Configure and verify custom DNS before
+starting the server.
+
+The corresponding runtime file can also select a filesystem backend:
+
+```yaml
+version: 1
+server:
+  rstream: true
+  transport: websocket
+  host: shell.example.com
+filesystem:
+  root: /srv/exports
+  backend: webrtc
+```
+
+`filesystem.backend` accepts `webdav` (default) or `webrtc`. WebRTC file access is
+read-only and rejects `filesystem.maxUploadSizeBytes`. Both backends require a
+filesystem root and WebSocket terminal transport; neither supports WebTTY E2E
+payload encryption or the FIPS profile.
+
 The service manager owns the daemon lifecycle. Installing a new CLI binary does
 not replace an already-running WebTTY process. After every package upgrade,
 restart the service and validate an actual terminal command. For the macOS

@@ -3,15 +3,16 @@
 package cmd
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/configdecode"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/tunnelconfig"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
+	"github.com/spf13/pflag"
 )
 
 type webTTYServerRuntimeConfig struct {
@@ -23,20 +24,21 @@ type webTTYServerRuntimeConfig struct {
 }
 
 type webTTYServerRuntimeServerConfig struct {
+	Host                 *string           `yaml:"host,omitempty"`
 	Rstream              *bool             `yaml:"rstream,omitempty"`
-	Listen               string            `yaml:"listen,omitempty"`
-	Name                 string            `yaml:"name,omitempty"`
-	ServerID             string            `yaml:"serverId,omitempty"`
-	ServerEnrollment     string            `yaml:"serverEnrollment,omitempty"`
-	Transport            string            `yaml:"transport,omitempty"`
-	ExecutionMode        string            `yaml:"executionMode,omitempty"`
-	LoginUser            string            `yaml:"loginUser,omitempty"`
+	Listen               *string           `yaml:"listen,omitempty"`
+	Name                 *string           `yaml:"name,omitempty"`
+	ServerID             *string           `yaml:"serverId,omitempty"`
+	ServerEnrollment     *string           `yaml:"serverEnrollment,omitempty"`
+	Transport            *string           `yaml:"transport,omitempty"`
+	ExecutionMode        *string           `yaml:"executionMode,omitempty"`
+	LoginUser            *string           `yaml:"loginUser,omitempty"`
 	AllowClientUser      *bool             `yaml:"allowClientUser,omitempty"`
 	Retry                *bool             `yaml:"retry,omitempty"`
 	RetryIntervalMS      *int64            `yaml:"retryIntervalMs,omitempty"`
 	ShutdownTimeoutMS    *int64            `yaml:"shutdownTimeoutMs,omitempty"`
 	Publish              *bool             `yaml:"publish,omitempty"`
-	AuthTokenFile        string            `yaml:"authTokenFile,omitempty"`
+	AuthTokenFile        *string           `yaml:"authTokenFile,omitempty"`
 	AllowUnauthenticated *bool             `yaml:"allowUnauthenticated,omitempty"`
 	AllowedOrigins       []string          `yaml:"allowedOrigins,omitempty"`
 	Labels               map[string]string `yaml:"labels,omitempty"`
@@ -44,21 +46,22 @@ type webTTYServerRuntimeServerConfig struct {
 
 type webTTYServerRuntimeE2EConfig struct {
 	Enabled               *bool    `yaml:"enabled,omitempty"`
-	Identity              string   `yaml:"identity,omitempty"`
-	IdentityFile          string   `yaml:"identityFile,omitempty"`
-	AuthorizedClientsFile string   `yaml:"authorizedClientsFile,omitempty"`
+	Identity              *string  `yaml:"identity,omitempty"`
+	IdentityFile          *string  `yaml:"identityFile,omitempty"`
+	AuthorizedClientsFile *string  `yaml:"authorizedClientsFile,omitempty"`
 	AuthorizedClientKeys  []string `yaml:"authorizedClientKeys,omitempty"`
 }
 
 type webTTYServerRuntimeTLSConfig struct {
-	CertFile string `yaml:"certFile,omitempty"`
-	KeyFile  string `yaml:"keyFile,omitempty"`
+	CertFile *string `yaml:"certFile,omitempty"`
+	KeyFile  *string `yaml:"keyFile,omitempty"`
 }
 
 type webTTYServerRuntimeFSConfig struct {
-	Root               string `yaml:"root,omitempty"`
-	ReadOnly           *bool  `yaml:"readOnly,omitempty"`
-	MaxUploadSizeBytes *int64 `yaml:"maxUploadSizeBytes,omitempty"`
+	Backend            *string `yaml:"backend,omitempty"`
+	Root               *string `yaml:"root,omitempty"`
+	ReadOnly           *bool   `yaml:"readOnly,omitempty"`
+	MaxUploadSizeBytes *int64  `yaml:"maxUploadSizeBytes,omitempty"`
 }
 
 func applyWebTTYServerRuntimeConfig(cmd *cobra.Command) error {
@@ -67,7 +70,7 @@ func applyWebTTYServerRuntimeConfig(cmd *cobra.Command) error {
 		return err
 	}
 	if strings.TrimSpace(path) == "" {
-		return nil
+		return applyWebTTYServerRuntimeConfigValues(cmd, nil)
 	}
 	cfg, err := loadWebTTYServerRuntimeConfig(path)
 	if err != nil {
@@ -104,10 +107,8 @@ func loadWebTTYServerRuntimeConfig(path string) (*webTTYServerRuntimeConfig, err
 	if err != nil {
 		return nil, fmt.Errorf("failed to read WebTTY runtime config: %w", err)
 	}
-	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true)
 	var cfg webTTYServerRuntimeConfig
-	if err := dec.Decode(&cfg); err != nil {
+	if err := configdecode.YAML(data, &cfg); err != nil {
 		return nil, fmt.Errorf("invalid WebTTY runtime config YAML: %w", err)
 	}
 	if cfg.Version == 0 {
@@ -116,199 +117,225 @@ func loadWebTTYServerRuntimeConfig(path string) (*webTTYServerRuntimeConfig, err
 	if cfg.Version != 1 {
 		return nil, fmt.Errorf("unsupported WebTTY runtime config version %d", cfg.Version)
 	}
-	if cfg.Server.Rstream != nil && !*cfg.Server.Rstream && (strings.TrimSpace(cfg.Server.ServerID) != "" || strings.TrimSpace(cfg.Server.ServerEnrollment) != "") {
-		return nil, fmt.Errorf("WebTTY runtime config server.serverId and server.serverEnrollment imply rstream mode")
-	}
 	return &cfg, nil
+}
+
+// Each binding is the single CLI/YAML correspondence for a runtime option.
+// Pointers distinguish absent values from explicit false, zero and empty values.
+type webTTYBinding[T any] struct {
+	flag  string
+	path  string
+	value *T
+}
+
+type webTTYRuntimeBindings struct {
+	strings  []webTTYBinding[*string]
+	bools    []webTTYBinding[*bool]
+	integers []webTTYBinding[*int64]
+	arrays   []webTTYBinding[[]string]
+	labels   webTTYBinding[map[string]string]
+}
+
+func webTTYBindings(cfg *webTTYServerRuntimeConfig) webTTYRuntimeBindings {
+	return webTTYRuntimeBindings{
+		strings: []webTTYBinding[*string]{
+			{"listen", "server.listen", &cfg.Server.Listen},
+			{"name", "server.name", &cfg.Server.Name},
+			{"host", "server.host", &cfg.Server.Host},
+			{"server-id", "server.serverId", &cfg.Server.ServerID},
+			{"server-enrollment", "server.serverEnrollment", &cfg.Server.ServerEnrollment},
+			{"transport", "server.transport", &cfg.Server.Transport},
+			{"execution-mode", "server.executionMode", &cfg.Server.ExecutionMode},
+			{"login-user", "server.loginUser", &cfg.Server.LoginUser},
+			{"auth-token-file", "server.authTokenFile", &cfg.Server.AuthTokenFile},
+			{"identity", "e2e.identity", &cfg.E2E.Identity},
+			{"identity-file", "e2e.identityFile", &cfg.E2E.IdentityFile},
+			{"authorized-clients-file", "e2e.authorizedClientsFile", &cfg.E2E.AuthorizedClientsFile},
+			{"tls-cert-file", "tls.certFile", &cfg.TLS.CertFile},
+			{"tls-key-file", "tls.keyFile", &cfg.TLS.KeyFile},
+			{"fs-root", "filesystem.root", &cfg.Filesystem.Root},
+			{"fs-backend", "filesystem.backend", &cfg.Filesystem.Backend},
+		},
+		bools: []webTTYBinding[*bool]{
+			{"rstream", "server.rstream", &cfg.Server.Rstream},
+			{"allow-client-user", "server.allowClientUser", &cfg.Server.AllowClientUser},
+			{"retry", "server.retry", &cfg.Server.Retry},
+			{"publish", "server.publish", &cfg.Server.Publish},
+			{"allow-unauthenticated", "server.allowUnauthenticated", &cfg.Server.AllowUnauthenticated},
+			{"e2e", "e2e.enabled", &cfg.E2E.Enabled},
+			{"fs-read-only", "filesystem.readOnly", &cfg.Filesystem.ReadOnly},
+		},
+		integers: []webTTYBinding[*int64]{
+			{"retry-interval", "server.retryIntervalMs", &cfg.Server.RetryIntervalMS},
+			{"shutdown-timeout", "server.shutdownTimeoutMs", &cfg.Server.ShutdownTimeoutMS},
+			{"fs-max-upload-size", "filesystem.maxUploadSizeBytes", &cfg.Filesystem.MaxUploadSizeBytes},
+		},
+		arrays: []webTTYBinding[[]string]{
+			{"allowed-origin", "server.allowedOrigins", &cfg.Server.AllowedOrigins},
+			{"authorized-client-key", "e2e.authorizedClientKeys", &cfg.E2E.AuthorizedClientKeys},
+		},
+		labels: webTTYBinding[map[string]string]{"label", "server.labels", &cfg.Server.Labels},
+	}
 }
 
 func applyWebTTYServerRuntimeConfigValues(cmd *cobra.Command, cfg *webTTYServerRuntimeConfig) error {
 	if cfg == nil {
-		return nil
+		cfg = &webTTYServerRuntimeConfig{}
 	}
-	server := cfg.Server
-	if server.Rstream != nil && *server.Rstream {
-		if err := setBoolFlagFromConfig(cmd, "rstream", true); err != nil {
-			return err
+	resolved := *cfg
+	// An explicit selector replaces the alternative selector from the file.
+	for _, pair := range []struct {
+		a, b   string
+		av, bv **string
+	}{
+		{"identity", "identity-file", &resolved.E2E.Identity, &resolved.E2E.IdentityFile},
+		{"server-id", "server-enrollment", &resolved.Server.ServerID, &resolved.Server.ServerEnrollment},
+	} {
+		if flagChanged(cmd, pair.a) && !flagChanged(cmd, pair.b) {
+			*pair.bv = nil
+		}
+		if flagChanged(cmd, pair.b) && !flagChanged(cmd, pair.a) {
+			*pair.av = nil
 		}
 	}
-	if err := setStringFlagFromConfig(cmd, "listen", server.Listen, false); err != nil {
-		return err
-	}
-	if err := setStringFlagFromConfig(cmd, "name", server.Name, false); err != nil {
-		return err
-	}
-	if err := setStringFlagFromConfig(cmd, "server-id", server.ServerID, false); err != nil {
-		return err
-	}
-	if err := setStringFlagFromConfig(cmd, "server-enrollment", server.ServerEnrollment, true); err != nil {
-		return err
-	}
-	if err := setStringFlagFromConfig(cmd, "transport", server.Transport, false); err != nil {
-		return err
-	}
-	if err := setStringFlagFromConfig(cmd, "execution-mode", server.ExecutionMode, false); err != nil {
-		return err
-	}
-	if err := setStringFlagFromConfig(cmd, "login-user", server.LoginUser, false); err != nil {
-		return err
-	}
-	if err := setBoolFlagFromConfigPtr(cmd, "allow-client-user", server.AllowClientUser); err != nil {
-		return err
-	}
-	if err := setRetryFlagsFromConfig(cmd, server.Retry); err != nil {
-		return err
-	}
-	if err := setInt64FlagFromConfig(cmd, "retry-interval", server.RetryIntervalMS); err != nil {
-		return err
-	}
-	if err := setInt64FlagFromConfig(cmd, "shutdown-timeout", server.ShutdownTimeoutMS); err != nil {
-		return err
-	}
-	if err := setPublishFlagsFromConfig(cmd, server.Publish); err != nil {
-		return err
-	}
-	if err := setStringFlagFromConfig(cmd, "auth-token-file", server.AuthTokenFile, true); err != nil {
-		return err
-	}
-	if err := setBoolFlagFromConfigPtr(cmd, "allow-unauthenticated", server.AllowUnauthenticated); err != nil {
-		return err
-	}
-	if err := setStringArrayFlagFromConfig(cmd, "allowed-origin", server.AllowedOrigins, false); err != nil {
-		return err
-	}
-	if err := setLabelFlagFromConfig(cmd, server.Labels); err != nil {
-		return err
-	}
-	if err := setBoolFlagFromConfigPtr(cmd, "e2e", cfg.E2E.Enabled); err != nil {
-		return err
-	}
-	if err := setStringFlagFromConfig(cmd, "identity", cfg.E2E.Identity, false); err != nil {
-		return err
-	}
-	if err := setStringFlagFromConfig(cmd, "identity-file", cfg.E2E.IdentityFile, true); err != nil {
-		return err
-	}
-	if err := setStringFlagFromConfig(cmd, "authorized-clients-file", cfg.E2E.AuthorizedClientsFile, true); err != nil {
-		return err
-	}
-	if err := setStringArrayFlagFromConfig(cmd, "authorized-client-key", cfg.E2E.AuthorizedClientKeys, false); err != nil {
-		return err
-	}
-	if err := setStringFlagFromConfig(cmd, "tls-cert-file", cfg.TLS.CertFile, true); err != nil {
-		return err
-	}
-	if err := setStringFlagFromConfig(cmd, "tls-key-file", cfg.TLS.KeyFile, true); err != nil {
-		return err
-	}
-	if err := setStringFlagFromConfig(cmd, "fs-root", cfg.Filesystem.Root, true); err != nil {
-		return err
-	}
-	if err := setBoolFlagFromConfigPtr(cmd, "fs-read-only", cfg.Filesystem.ReadOnly); err != nil {
-		return err
-	}
-	return setInt64FlagFromConfig(cmd, "fs-max-upload-size", cfg.Filesystem.MaxUploadSizeBytes)
-}
-
-func setStringFlagFromConfig(cmd *cobra.Command, name string, value string, pathValue bool) error {
-	value = strings.TrimSpace(value)
-	if value == "" || flagChanged(cmd, name) {
-		return nil
-	}
-	if pathValue {
-		var err error
-		value, err = expandWebTTYPath(value)
-		if err != nil {
-			return err
+	bindings := webTTYBindings(&resolved)
+	for _, b := range bindings.strings {
+		if flagChanged(cmd, b.flag) {
+			value, _ := cmd.Flags().GetString(b.flag)
+			*b.value = &value
 		}
-	}
-	return cmd.Flags().Set(name, value)
-}
-
-func setBoolFlagFromConfigPtr(cmd *cobra.Command, name string, value *bool) error {
-	if value == nil {
-		return nil
-	}
-	return setBoolFlagFromConfig(cmd, name, *value)
-}
-
-func setBoolFlagFromConfig(cmd *cobra.Command, name string, value bool) error {
-	if flagChanged(cmd, name) {
-		return nil
-	}
-	return cmd.Flags().Set(name, fmt.Sprintf("%t", value))
-}
-
-func setInt64FlagFromConfig(cmd *cobra.Command, name string, value *int64) error {
-	if value == nil || flagChanged(cmd, name) {
-		return nil
-	}
-	return cmd.Flags().Set(name, fmt.Sprintf("%d", *value))
-}
-
-func setStringArrayFlagFromConfig(cmd *cobra.Command, name string, values []string, pathValues bool) error {
-	if len(values) == 0 || flagChanged(cmd, name) {
-		return nil
-	}
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
+		if *b.value == nil {
 			continue
 		}
-		if pathValues {
+		value := strings.TrimSpace(**b.value)
+		switch b.flag {
+		case "server-enrollment", "auth-token-file", "identity-file", "authorized-clients-file", "tls-cert-file", "tls-key-file", "fs-root":
 			var err error
 			value, err = expandWebTTYPath(value)
 			if err != nil {
 				return err
 			}
 		}
-		if err := cmd.Flags().Set(name, value); err != nil {
+		*b.value = &value
+		if err := cmd.Flags().Set(b.flag, value); err != nil {
 			return err
 		}
 	}
+	for _, b := range bindings.bools {
+		inverse := ""
+		if b.flag == "publish" || b.flag == "retry" {
+			inverse = "no-" + b.flag
+		}
+		value, err := tunnelconfig.Bool(getBoolPtr(cmd, b.flag), getBoolPtr(cmd, inverse))
+		if err != nil {
+			return fmt.Errorf("--%s: %w", b.flag, err)
+		}
+		if value != nil {
+			*b.value = value
+		}
+		if *b.value == nil {
+			continue
+		}
+		if inverse != "" {
+			flag := cmd.Flags().Lookup(inverse)
+			if err := flag.Value.Set("false"); err != nil {
+				return err
+			}
+			flag.Changed = false
+		}
+		if err := cmd.Flags().Set(b.flag, fmt.Sprint(**b.value)); err != nil {
+			return err
+		}
+	}
+	for _, b := range bindings.integers {
+		if flagChanged(cmd, b.flag) {
+			value, _ := cmd.Flags().GetInt64(b.flag)
+			*b.value = &value
+		}
+		if *b.value != nil {
+			if err := cmd.Flags().Set(b.flag, fmt.Sprint(**b.value)); err != nil {
+				return err
+			}
+		}
+	}
+	for _, b := range bindings.arrays {
+		if flagChanged(cmd, b.flag) {
+			*b.value, _ = cmd.Flags().GetStringArray(b.flag)
+		}
+		if *b.value != nil {
+			values := make([]string, 0, len(*b.value))
+			for _, value := range *b.value {
+				if value = strings.TrimSpace(value); value != "" {
+					values = append(values, value)
+				}
+			}
+			if err := replaceWebTTYArray(cmd, b.flag, values); err != nil {
+				return err
+			}
+		}
+	}
+	if resolved.Server.Rstream != nil && !*resolved.Server.Rstream && (webTTYString(resolved.Server.ServerID) != "" || webTTYString(resolved.Server.ServerEnrollment) != "") {
+		return fmt.Errorf("server.serverId and server.serverEnrollment imply rstream mode")
+	}
+	return applyWebTTYLabels(cmd, bindings.labels)
+}
+
+func webTTYString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func replaceWebTTYArray(cmd *cobra.Command, name string, values []string) error {
+	flag := cmd.Flags().Lookup(name)
+	if err := flag.Value.(pflag.SliceValue).Replace(values); err != nil {
+		return err
+	}
+	flag.Changed = true
 	return nil
 }
 
-func setLabelFlagFromConfig(cmd *cobra.Command, labels map[string]string) error {
-	if len(labels) == 0 || flagChanged(cmd, "label") {
+func applyWebTTYLabels(cmd *cobra.Command, binding webTTYBinding[map[string]string]) error {
+	labels := *binding.value
+	if flagChanged(cmd, binding.flag) {
+		labels = map[string]string{}
+		values, _ := cmd.Flags().GetStringArray(binding.flag)
+		for _, value := range values {
+			key, val, ok := strings.Cut(value, "=")
+			if !ok {
+				return fmt.Errorf("--label expects key=value")
+			}
+			if _, exists := labels[key]; exists {
+				return fmt.Errorf("duplicate label key %q", key)
+			}
+			labels[key] = val
+		}
+	}
+	if labels == nil {
 		return nil
 	}
-	keys := make([]string, 0, len(labels))
-	for key := range labels {
+	normalized := map[string]string{}
+	for key, value := range labels {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return fmt.Errorf("label key must not be empty")
+		}
+		if _, exists := normalized[key]; exists {
+			return fmt.Errorf("duplicate label key %q", key)
+		}
+		normalized[key] = strings.TrimSpace(value)
+	}
+	keys := make([]string, 0, len(normalized))
+	for key := range normalized {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	values := make([]string, 0, len(keys))
 	for _, key := range keys {
-		key = strings.TrimSpace(key)
-		value := strings.TrimSpace(labels[key])
-		if key == "" {
-			continue
-		}
-		if err := cmd.Flags().Set("label", key+"="+value); err != nil {
-			return err
-		}
+		values = append(values, key+"="+normalized[key])
 	}
-	return nil
-}
-
-func setRetryFlagsFromConfig(cmd *cobra.Command, value *bool) error {
-	if value == nil || flagChanged(cmd, "retry") || flagChanged(cmd, "no-retry") {
-		return nil
-	}
-	if *value {
-		return cmd.Flags().Set("retry", "true")
-	}
-	return cmd.Flags().Set("no-retry", "true")
-}
-
-func setPublishFlagsFromConfig(cmd *cobra.Command, value *bool) error {
-	if value == nil || flagChanged(cmd, "publish") || flagChanged(cmd, "no-publish") {
-		return nil
-	}
-	if *value {
-		return cmd.Flags().Set("publish", "true")
-	}
-	return cmd.Flags().Set("no-publish", "true")
+	return replaceWebTTYArray(cmd, binding.flag, values)
 }
 
 func flagChanged(cmd *cobra.Command, name string) bool {
