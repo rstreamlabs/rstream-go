@@ -38,6 +38,9 @@ type Client struct {
 	closeErr        error
 	closed          atomic.Bool
 	ownsTransport   bool
+	dialMu          sync.Mutex
+	dialCancels     map[uint64]context.CancelFunc
+	nextDialID      uint64
 }
 
 type Config struct {
@@ -175,7 +178,11 @@ func (c *Client) dialEngineWithTransportConfig(ctx context.Context, engine *stri
 	if c == nil || c.closed.Load() {
 		return nil, net.ErrClosed
 	}
-	var err error
+	ctx, finishDial, err := c.beginDial(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer finishDial()
 	if engine == nil {
 		engine, err = c.getEngine()
 		if err != nil {
@@ -212,7 +219,30 @@ func (c *Client) dialEngineWithTransportConfig(ctx context.Context, engine *stri
 	return dialWithECH(ctx, transport, *engine, tlsCfg)
 }
 
-// Close releases API pools and transports owned by the client. Transports supplied
+// Only pending dials belong to this cancellation registry. Established streams
+// keep their existing ownership and are not canceled when a dial completes.
+func (c *Client) beginDial(parent context.Context) (context.Context, func(), error) {
+	c.dialMu.Lock()
+	defer c.dialMu.Unlock()
+	if c.closed.Load() {
+		return nil, nil, net.ErrClosed
+	}
+	ctx, cancel := context.WithCancel(parent)
+	if c.dialCancels == nil {
+		c.dialCancels = make(map[uint64]context.CancelFunc)
+	}
+	c.nextDialID++
+	id := c.nextDialID
+	c.dialCancels[id] = cancel
+	return ctx, func() {
+		c.dialMu.Lock()
+		delete(c.dialCancels, id)
+		c.dialMu.Unlock()
+		cancel()
+	}, nil
+}
+
+// Close cancels pending dials and releases API pools and owned transports. Transports supplied
 // through ClientOptions remain caller-owned unless OwnTransport is true. It is safe
 // to call concurrently and repeatedly. A closed client cannot be reused.
 func (c *Client) Close() error {
@@ -221,6 +251,13 @@ func (c *Client) Close() error {
 	}
 	c.closeOnce.Do(func() {
 		c.closed.Store(true)
+		c.dialMu.Lock()
+		cancels := c.dialCancels
+		c.dialCancels = nil
+		c.dialMu.Unlock()
+		for _, cancel := range cancels {
+			cancel()
+		}
 		c.CloseIdleConnections()
 		c.transportMu.Lock()
 		transport := c.Transport

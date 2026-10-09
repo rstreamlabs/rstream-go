@@ -35,12 +35,35 @@ type lifecycleDialer struct {
 	started   chan struct{}
 	startOnce sync.Once
 	closed    atomic.Int32
+	tlsConfig *tls.Config
 }
 
-func (d *lifecycleDialer) Dial(ctx context.Context, _ string, _ *tls.Config) (net.Conn, error) {
-	d.startOnce.Do(func() { close(d.started) })
+func (d *lifecycleDialer) Dial(ctx context.Context, _ string, tlsConfig *tls.Config) (net.Conn, error) {
+	d.startOnce.Do(func() { d.tlsConfig = tlsConfig; close(d.started) })
 	<-ctx.Done()
 	return nil, ctx.Err()
+}
+
+func TestRunnerPropagatesExternalIdentityWithoutToken(t *testing.T) {
+	dialer := &lifecycleDialer{started: make(chan struct{})}
+	runner := New(withTransportFactory(func(*config.TransportConfig) (rstream.Dialer, error) { return dialer, nil }))
+	identity := &tls.Config{GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return &tls.Certificate{}, nil }}
+	h, err := runner.Start(t.Context(), runmodel.DesiredTunnel{Name: "web", Context: runmodel.ResolvedContext{Engine: "engine.example:443", TLSClientConfig: identity, CredentialID: "pin"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = h.Stop() })
+	select {
+	case <-dialer.started:
+	case <-time.After(runEngineTestTimeout):
+		t.Fatal("mTLS-only runner did not dial")
+	}
+	if dialer.tlsConfig == nil || dialer.tlsConfig.GetClientCertificate == nil {
+		t.Fatal("runner discarded the client certificate callback")
+	}
+	if err := h.Stop(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func (d *lifecycleDialer) Close() error {
@@ -59,7 +82,7 @@ func TestRunnerStartValidation(t *testing.T) {
 		t.Fatalf("Start() missing engine error = %v", err)
 	}
 	_, err = runner.Start(t.Context(), runmodel.DesiredTunnel{Name: "web", Context: runmodel.ResolvedContext{Engine: "engine.example.com:443"}})
-	if err == nil || !strings.Contains(err.Error(), "token is required") {
+	if err == nil || !strings.Contains(err.Error(), "token or mTLS identity is required") {
 		t.Fatalf("Start() missing token error = %v", err)
 	}
 	var nilRunner *Runner

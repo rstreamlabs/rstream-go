@@ -3,6 +3,10 @@
 package rundocker
 
 import (
+	"crypto/tls"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"testing"
@@ -10,7 +14,40 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/api/types/network"
+	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
 )
+
+func TestDockerSourceAcceptsMTLSWithoutToken(t *testing.T) {
+	identity := &tls.Config{GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return &tls.Certificate{}, nil }}
+	resolved := runmodel.ResolvedContext{Engine: "engine.example:443", TLSClientConfig: identity, CredentialID: "pin"}
+	for _, named := range []bool{false, true} {
+		labels := map[string]string{"rstream.tunnel.web.forward": "8080"}
+		if named {
+			labels["rstream.context"] = "device"
+		}
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("API-Version", "1.48")
+			if strings.HasSuffix(r.URL.Path, "/_ping") {
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode([]container.Summary{{ID: "fixture", Names: []string{"/fixture"}, Labels: labels, NetworkSettings: &container.NetworkSettingsSummary{Networks: map[string]*network.EndpointSettings{"default": {IPAddress: netip.MustParseAddr("10.0.0.2")}}}}})
+		}))
+		t.Cleanup(server.Close)
+		source, err := NewSource("tcp://"+server.Listener.Addr().String(), "", resolved, func(string) (runmodel.ResolvedContext, error) { return resolved, nil }, true, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = source.Close() })
+		desired, err := source.List(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(desired) != 1 || desired[0].Context.TLSClientConfig != identity || desired[0].Context.Token != "" || desired[0].Context.CredentialID != "pin" {
+			t.Fatal("Docker discovery did not preserve its selected mTLS identity")
+		}
+	}
+}
 
 func TestContainerNameFallbacks(t *testing.T) {
 	if got := containerName(container.Summary{Names: []string{"/web"}}); got != "web" {

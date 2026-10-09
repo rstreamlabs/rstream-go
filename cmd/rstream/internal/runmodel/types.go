@@ -3,6 +3,7 @@
 package runmodel
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
 	"reflect"
@@ -55,6 +56,12 @@ type ResolvedContext struct {
 	Token              string
 	Transport          rstream.Dialer
 	TransportConfig    *config.TransportConfig
+	TLSClientConfig    *tls.Config
+	CredentialID       string
+}
+
+func (r ResolvedContext) HasAuthentication() bool {
+	return r.Token != "" || (config.Resolved{TLSClientConfig: r.TLSClientConfig}).HasMTLS()
 }
 
 func (r ResolvedContext) StableDomainEndpoint() string {
@@ -75,11 +82,16 @@ type DesiredTunnel struct {
 func EqualDesired(a, b DesiredTunnel) bool {
 	a.Context.Transport = nil
 	b.Context.Transport = nil
+	a.Context.TLSClientConfig = nil
+	b.Context.TLSClientConfig = nil
 	return reflect.DeepEqual(a, b)
 }
 
 func CloneDesired(d DesiredTunnel) DesiredTunnel {
 	d.Context.TransportConfig = config.MergeTransport(d.Context.TransportConfig, nil)
+	if d.Context.TLSClientConfig != nil {
+		d.Context.TLSClientConfig = d.Context.TLSClientConfig.Clone()
+	}
 	d.Props = cloneTunnelProperties(d.Props)
 	return d
 }

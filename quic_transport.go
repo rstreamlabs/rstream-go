@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/quic-go/quic-go"
+	"github.com/rstreamlabs/rstream-go/internal/handshakectx"
 )
 
 // ErrDatagramTooLarge is returned by datagram channel writes when the payload
@@ -537,7 +538,7 @@ func (t *QUICTransport) connect(ctx context.Context, addr string, tlsCfg *tls.Co
 		return nil, nil, nil, nil, err
 	}
 	qtransport := &quic.Transport{Conn: pconn}
-	conn, err := qtransport.Dial(ctx, remoteAddr, tlsCfg, quicCfg)
+	conn, err := qtransport.Dial(handshakectx.WithDial(ctx), remoteAddr, tlsCfg, quicCfg)
 	if err != nil {
 		_ = closeQUICTransportResources(qtransport, pconn, proxyCloser)
 		return nil, nil, nil, nil, fmt.Errorf("failed to establish QUIC connection: %w", err)

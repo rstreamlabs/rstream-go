@@ -3,6 +3,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -27,6 +28,7 @@ const (
 	CredentialProviderMacOS = "macos"
 	MTLSStorageKeychain     = "keychain"
 	MTLSStoragePKCS11       = "pkcs11"
+	MTLSStorageExec         = "exec"
 )
 
 type ResolveInput struct {
@@ -53,6 +55,8 @@ type ResolveInput struct {
 	RequireToken           bool
 	RequireEngine          bool
 	ResolveToken           bool
+	// TokenOnly resolves administrative API credentials without loading mTLS.
+	TokenOnly bool
 }
 
 type Resolved struct {
@@ -68,6 +72,10 @@ type Resolved struct {
 	TransportConfig     *TransportConfig
 	TLSClientConfig     *tls.Config
 	ControlPlaneHeaders map[string]string
+	// CredentialID identifies the selected source for reconciliation. It never
+	// includes plaintext credentials and is not an authentication credential.
+	CredentialID string
+	mtlsSource   *MTLS
 }
 
 func Resolve(input ResolveInput) (Resolved, error) {
@@ -143,32 +151,9 @@ func Resolve(input ResolveInput) (Resolved, error) {
 	if region != "" && (ctx == nil || strings.TrimSpace(ctx.ProjectEndpoint) == "") {
 		return Resolved{}, errors.New("managed project endpoint is required for region selection")
 	}
-	token := ""
-	explicitToken := input.FlagToken != "" || input.EnvToken != ""
-	explicitMTLS := input.FlagMTLSCert != "" || input.EnvMTLSCert != "" || input.FlagMTLSKey != "" || input.EnvMTLSKey != ""
-	shouldResolveToken := input.ResolveToken || input.RequireToken || explicitToken
-	if shouldResolveToken {
-		token = firstNonEmpty(input.FlagToken, input.EnvToken)
-		if token == "" && !explicitMTLS {
-			var err error
-			token, err = resolveToken(ctx, env)
-			if err != nil {
-				return Resolved{}, err
-			}
-			if token != "" && engineOverrideUsesStoredToken(engineOverride, ctx) {
-				return Resolved{}, errors.New("refusing to use a stored token with an explicit engine override; set RSTREAM_AUTHENTICATION_TOKEN or pass --token for the selected engine")
-			}
-		}
-	}
-	mtlsConfig, mtlsFromStoredConfig, err := resolveMTLSConfig(input, ctx, env)
+	token, mtlsConfig, credentialID, err := resolveAuthentication(input, ctx, env, engineOverride)
 	if err != nil {
 		return Resolved{}, err
-	}
-	if token != "" && mtlsConfig != nil {
-		return Resolved{}, errors.New("token and mTLS authentication cannot be used together")
-	}
-	if mtlsConfig != nil && engineOverrideUsesStoredToken(engineOverride, ctx) && mtlsFromStoredConfig {
-		return Resolved{}, errors.New("refusing to use stored mTLS credentials with an explicit engine override; set RSTREAM_MTLS_CERT_FILE and RSTREAM_MTLS_KEY_FILE for the selected engine")
 	}
 	if token != "" {
 		expired, err := isTokenExpired(token, time.Now())
@@ -224,6 +209,12 @@ func Resolve(input ResolveInput) (Resolved, error) {
 	if resolvedTransportConfig == nil {
 		resolvedTransportConfig = &TransportConfig{Mode: string(rstream.TunnelTransportModeAuto)}
 	}
+	var mtlsSource *MTLS
+	if mtlsConfig != nil && input.FlagMTLSCert == "" && input.FlagMTLSKey == "" && input.EnvMTLSCert == "" && input.EnvMTLSKey == "" {
+		if auth := selectedAuth(ctx, env); auth != nil {
+			mtlsSource = auth.MTLS
+		}
+	}
 	return Resolved{
 		APIURL:              apiURL,
 		ContextName:         contextName,
@@ -237,7 +228,88 @@ func Resolve(input ResolveInput) (Resolved, error) {
 		TransportConfig:     resolvedTransportConfig,
 		TLSClientConfig:     tlsClientConfig,
 		ControlPlaneHeaders: controlPlaneHeaders,
+		CredentialID:        credentialID,
+		mtlsSource:          mtlsSource,
 	}, nil
+}
+
+// HasMTLS reports whether a client identity is configured, including lazy
+// external signers. A TLS config containing only server trust is not mTLS.
+func (r Resolved) HasMTLS() bool {
+	return r.TLSClientConfig != nil && (len(r.TLSClientConfig.Certificates) > 0 || r.TLSClientConfig.GetClientCertificate != nil)
+}
+
+func selectedAuth(ctx *Context, env *Environment) *Auth {
+	if ctx != nil && ctx.Auth != nil && (ctx.Auth.Token != nil || ctx.Auth.MTLS != nil) {
+		return ctx.Auth
+	}
+	if env != nil && (ctx == nil || NormalizeAPIURL(ctx.APIURL) == NormalizeAPIURL(env.APIURL)) {
+		return env.Auth
+	}
+	return nil
+}
+
+func resolveAuthentication(input ResolveInput, ctx *Context, env *Environment, engineOverride string) (string, *tls.Config, string, error) {
+	token := firstNonEmpty(input.FlagToken, input.EnvToken)
+	explicitToken := token != ""
+	shouldResolveToken := input.ResolveToken || input.RequireToken || explicitToken
+	if input.TokenOnly {
+		if token == "" && shouldResolveToken {
+			var err error
+			token, err = resolveToken(ctx, env)
+			if err != nil {
+				return "", nil, "", err
+			}
+			if token != "" && engineOverrideUsesStoredToken(engineOverride, ctx) {
+				return "", nil, "", errors.New("refusing to use a stored token with an explicit engine override; set RSTREAM_AUTHENTICATION_TOKEN or pass --token for the selected engine")
+			}
+		}
+		return token, nil, "", nil
+	}
+	auth := selectedAuth(ctx, env)
+	certFile := firstNonEmpty(input.FlagMTLSCert, input.EnvMTLSCert)
+	keyFile := firstNonEmpty(input.FlagMTLSKey, input.EnvMTLSKey)
+	explicitMTLS := certFile != "" || keyFile != ""
+	if explicitMTLS {
+		auth = &Auth{MTLS: &MTLS{CertificateFile: certFile, KeyFile: keyFile}}
+	}
+	hasMTLS := auth != nil && auth.MTLS != nil && (hasMTLSAlias(auth.MTLS) || auth.MTLS.Storage != nil)
+	if hasMTLS && (explicitToken || auth.Token != nil) {
+		return "", nil, "", errors.New("token and mTLS authentication cannot be used together")
+	}
+	if hasMTLS && !explicitMTLS && engineOverrideUsesStoredToken(engineOverride, ctx) {
+		return "", nil, "", errors.New("refusing to use stored mTLS credentials with an explicit engine override; select a context for the selected engine or set RSTREAM_MTLS_CERT_FILE and RSTREAM_MTLS_KEY_FILE")
+	}
+	if token == "" && shouldResolveToken && !hasMTLS {
+		var err error
+		token, _, err = TokenFromAuth(auth)
+		if err != nil {
+			return "", nil, "", err
+		}
+		if token != "" && engineOverrideUsesStoredToken(engineOverride, ctx) {
+			return "", nil, "", errors.New("refusing to use a stored token with an explicit engine override; set RSTREAM_AUTHENTICATION_TOKEN or pass --token for the selected engine")
+		}
+	}
+	mtls, _, err := MTLSConfigFromAuth(auth)
+	if err != nil {
+		return "", nil, "", err
+	}
+	// Include loaded public material so renewing a file certificate changes the
+	// identity even when its path remains the same. Exec identities use the pin.
+	source, err := json.Marshal(auth)
+	if err != nil {
+		return "", nil, "", fmt.Errorf("encode authentication source: %w", err)
+	}
+	h := sha256.New()
+	_, _ = h.Write(source)
+	if mtls != nil {
+		for _, cert := range mtls.Certificates {
+			for _, der := range cert.Certificate {
+				_, _ = h.Write(der)
+			}
+		}
+	}
+	return token, mtls, fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
 func (r Resolved) StableDomainEndpoint() string {
@@ -327,30 +399,6 @@ func resolveToken(ctx *Context, env *Environment) (string, error) {
 		}
 	}
 	return "", nil
-}
-
-func resolveMTLSConfig(input ResolveInput, ctx *Context, env *Environment) (*tls.Config, bool, error) {
-	certFile := firstNonEmpty(input.FlagMTLSCert, input.EnvMTLSCert)
-	keyFile := firstNonEmpty(input.FlagMTLSKey, input.EnvMTLSKey)
-	if certFile != "" || keyFile != "" {
-		cfg, err := loadMTLSConfig("", "", certFile, keyFile)
-		return cfg, false, err
-	}
-	if ctx != nil {
-		if cfg, ok, err := MTLSConfigFromAuth(ctx.Auth); err != nil {
-			return nil, false, err
-		} else if ok {
-			return cfg, true, nil
-		}
-	}
-	if env != nil && (ctx == nil || NormalizeAPIURL(ctx.APIURL) == NormalizeAPIURL(env.APIURL)) {
-		if cfg, ok, err := MTLSConfigFromAuth(env.Auth); err != nil {
-			return nil, false, err
-		} else if ok {
-			return cfg, true, nil
-		}
-	}
-	return nil, false, nil
 }
 
 func MTLSConfigFromAuth(auth *Auth) (*tls.Config, bool, error) {

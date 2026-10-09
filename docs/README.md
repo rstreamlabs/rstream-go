@@ -16,3 +16,5 @@ Read these documents in order:
 11. [File sharing](010-file-sharing.md) covers the integrated read-only server, authentication, backends and embedded UI.
 
 - [Filesystem WebRTC transport](011-filesystem-webrtc.md)
+
+- [External mTLS signers](012-external-mtls-signer.md): shared configuration, CLI setup, protocol v1, lifecycle, and provider integration.

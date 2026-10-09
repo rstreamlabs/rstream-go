@@ -212,6 +212,9 @@ func runContextCreate(cmd *cobra.Command, args []string) error {
 		return errors.New("token is empty")
 	}
 	newCtx := config.Context{Name: args[0], APIURL: apiURL, Engine: engine, ProjectEndpoint: projectEndpoint, Region: region}
+	if err := setContextMTLSFromFlags(cmd, &newCtx); err != nil {
+		return err
+	}
 	if engine == "" {
 		if projectEndpoint == "" {
 			return errors.New("--engine is required")
@@ -353,6 +356,9 @@ var contextUpdateCmd = &cobra.Command{
 			}
 		}
 		tokenAPIURL := ctx.APIURL
+		if err := setContextMTLSFromFlags(cmd, ctx); err != nil {
+			return err
+		}
 		if noAPIURL || (apiURLFlagSet && apiURLValue == "") {
 			tokenAPIURL = ""
 		} else if applyAPIURL {
@@ -473,6 +479,7 @@ func addContextTransportFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("token-stdin", false, "read token from stdin")
 	cmd.Flags().String("token-file", "", "read token from file")
 	cmd.Flags().String("token-storage", tokenStorageInline, "token storage backend: inline or macos-keychain")
+	addContextMTLSFlags(cmd)
 	cmd.MarkFlagsMutuallyExclusive("token", "token-stdin", "token-file")
 	cmd.Flags().String("engine", "", "engine URL (host:port)")
 	cmd.Flags().String("bind-address", "", "bind to a specific local address")
@@ -624,6 +631,7 @@ func setContextTokenFromFlags(cmd *cobra.Command, ctx *config.Context, token, ap
 	default:
 		return fmt.Errorf("token storage kind %q is not supported", storage.Kind)
 	}
+	ctx.Auth.MTLS = nil
 	return nil
 }
 

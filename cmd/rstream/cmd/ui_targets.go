@@ -268,7 +268,7 @@ func (r *uiRuntimeResolver) controlPlaneCredentials(cfg config.Config, runtime *
 		return "", "", errors.New("control plane is not configured for the current context; local contexts remain available")
 	}
 	env := r.options.environment
-	resolved, err := config.Resolve(config.ResolveInput{Config: cfg, FlagAPIURL: apiURL, EnvToken: env.Token, IgnoreDefaultContext: true, RequireToken: true, ResolveToken: true})
+	resolved, err := config.Resolve(config.ResolveInput{Config: cfg, FlagAPIURL: apiURL, EnvToken: env.Token, IgnoreDefaultContext: true, RequireToken: true, ResolveToken: true, TokenOnly: true})
 	if err == nil && strings.TrimSpace(resolved.Token) != "" {
 		return apiURL, resolved.Token, nil
 	}

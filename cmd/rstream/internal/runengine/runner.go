@@ -91,8 +91,8 @@ func (r *Runner) Start(ctx context.Context, desired runmodel.DesiredTunnel) (run
 	if strings.TrimSpace(desired.Context.Engine) == "" {
 		return nil, fmt.Errorf("engine is required for tunnel %q", desired.Name)
 	}
-	if strings.TrimSpace(desired.Context.Token) == "" {
-		return nil, fmt.Errorf("token is required for tunnel %q", desired.Name)
+	if !desired.Context.HasAuthentication() {
+		return nil, fmt.Errorf("token or mTLS identity is required for tunnel %q", desired.Name)
 	}
 	if err := rstream.MaybeSetGeneratedStableDomain(&desired.Props, desired.Context.StableDomainEndpoint()); err != nil {
 		return nil, fmt.Errorf("failed to generate stable domain for tunnel %q: %w", desired.Name, err)
@@ -214,8 +214,9 @@ func (r *Runner) runOnce(ctx context.Context, desired runmodel.DesiredTunnel, lo
 
 func (r *Runner) runOnceReady(ctx context.Context, desired runmodel.DesiredTunnel, logger *slog.Logger, sessions *sessiongroup.Group, ready func()) error {
 	opts := rstream.ClientOptions{
-		Engine: desired.Context.Engine,
-		Token:  desired.Context.Token,
+		Engine:          desired.Context.Engine,
+		Token:           desired.Context.Token,
+		TLSClientConfig: desired.Context.TLSClientConfig,
 	}
 	if desired.Context.Transport != nil {
 		opts.Transport = desired.Context.Transport
@@ -224,6 +225,11 @@ func (r *Runner) runOnceReady(ctx context.Context, desired runmodel.DesiredTunne
 	if err != nil {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
+	defer func() {
+		if err := client.Close(); err != nil {
+			logger.Warn("Failed to close tunnel client", "error", err)
+		}
+	}()
 	ctrl, err := client.Connect(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %w", err)

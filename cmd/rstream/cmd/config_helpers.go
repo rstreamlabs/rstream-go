@@ -150,6 +150,7 @@ func resolveControlPlane(cmd *cobra.Command, requireToken bool) (*resolvedRuntim
 		IgnoreDefaultContext:   true,
 		RequireToken:           requireToken,
 		ResolveToken:           true,
+		TokenOnly:              true,
 	}
 	resolved, err := config.Resolve(input)
 	if err != nil {

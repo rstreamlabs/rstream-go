@@ -100,6 +100,22 @@ func TestCloneDesiredOwnsMutableConfiguration(t *testing.T) {
 	}
 }
 
+func TestDesiredExternalIdentityIsStableAcrossTLSClones(t *testing.T) {
+	identity := &tls.Config{GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return &tls.Certificate{}, nil }}
+	first := DesiredTunnel{Name: "web", Context: ResolvedContext{Engine: "engine", TLSClientConfig: identity, CredentialID: "enrolled-first"}}
+	second := CloneDesired(first)
+	if !second.Context.HasAuthentication() || second.Context.TLSClientConfig == identity || !EqualDesired(first, second) {
+		t.Fatal("cloning changed the external identity or retained a mutable tls.Config")
+	}
+	second.Context.CredentialID = "enrolled-replacement"
+	if EqualDesired(first, second) {
+		t.Fatal("an enrolled identity change must restart the tunnel")
+	}
+	if (ResolvedContext{TLSClientConfig: &tls.Config{ServerName: "engine"}}).HasAuthentication() {
+		t.Fatal("server trust settings must not count as client authentication")
+	}
+}
+
 func TestApplyManagedLabelsAndSanitizeName(t *testing.T) {
 	ApplyManagedLabels(nil, "docker")
 	props := rstream.TunnelProperties{Labels: map[string]string{"keep": "value"}}

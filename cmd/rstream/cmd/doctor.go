@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
@@ -133,14 +134,14 @@ func runDoctor(cmd *cobra.Command) doctorReport {
 	}
 	ctx := cmd.Context()
 	checkDoctorContext(&report, resolved)
-	checkDoctorToken(&report, resolved.Token)
+	checkDoctorAuthentication(ctx, &report, resolved)
 	projectReady := true
-	if doctorUsesControlPlane(resolved) {
+	if doctorUsesControlPlane(resolved) && !resolved.HasMTLS() {
 		checkDoctorControlPlane(ctx, &report, resolved)
 		projectReady = checkDoctorProject(ctx, &report, resolved)
 	} else {
-		report.add("control_plane_auth", doctorStatusSkip, "context is not linked to a hosted API URL", nil)
-		report.add("project", doctorStatusSkip, "context is engine-only", nil)
+		report.add("control_plane_auth", doctorStatusSkip, "agent connection does not require a Control plane token", nil)
+		report.add("project", doctorStatusSkip, "using the configured Engine directly", nil)
 	}
 	if projectReady {
 		checkDoctorNetwork(ctx, &report, resolved)
@@ -183,6 +184,8 @@ func resolveDoctorRuntime(cmd *cobra.Command, cfg config.Config) (config.Resolve
 		EnvContext:             env.Context,
 		EnvEngine:              env.Engine,
 		EnvToken:               env.Token,
+		EnvMTLSCert:            env.MTLSCert,
+		EnvMTLSKey:             env.MTLSKey,
 		EnvRegion:              env.Region,
 		EnvControlPlaneHeaders: env.ControlPlaneHeaders,
 		FlagTunnelTransport:    flagTunnelTransport,
@@ -248,6 +251,27 @@ func checkDoctorToken(report *doctorReport, token string) {
 		details["resources"] = "present"
 	}
 	report.add("token", doctorStatusPass, "token is configured", details)
+}
+
+func checkDoctorAuthentication(ctx context.Context, report *doctorReport, resolved config.Resolved) {
+	if !resolved.HasMTLS() {
+		checkDoctorToken(report, resolved.Token)
+		return
+	}
+	report.add("token", doctorStatusSkip, "agent uses mTLS authentication", nil)
+	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	certificate, err := resolved.CheckExternalMTLS(probeCtx)
+	if err != nil {
+		report.add("mtls", doctorStatusFail, "external mTLS identity/signature check failed", map[string]string{"error": err.Error()})
+		return
+	}
+	if certificate == nil {
+		report.add("mtls", doctorStatusPass, "client certificate is configured", nil)
+		return
+	}
+	fingerprint := sha256.Sum256(certificate.Raw)
+	report.add("mtls", doctorStatusPass, "external certificate and signing capabilities verified", map[string]string{"certificateSHA256": fmt.Sprintf("%x", fingerprint), "expiresAt": certificate.NotAfter.UTC().Format(time.RFC3339)})
 }
 
 func checkDoctorControlPlane(ctx context.Context, report *doctorReport, resolved config.Resolved) {
@@ -380,7 +404,7 @@ func checkDoctorEngine(ctx context.Context, report *doctorReport, resolved confi
 		report.add("engine", doctorStatusSkip, "engine is not configured", nil)
 		return
 	}
-	if resolved.Token == "" {
+	if resolved.Token == "" && !resolved.HasMTLS() {
 		report.add("engine", doctorStatusSkip, "token is required", nil)
 		return
 	}
@@ -392,6 +416,19 @@ func checkDoctorEngine(ctx context.Context, report *doctorReport, resolved confi
 	defer closeRstreamClientLogged(client, slog.Default())
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
+	if resolved.HasMTLS() {
+		ctrl, err := client.Connect(runCtx, nil)
+		if err != nil {
+			report.add("engine", doctorStatusFail, "mTLS control-channel admission failed", map[string]string{"error": err.Error()})
+			return
+		}
+		if err := ctrl.Close(); err != nil {
+			report.add("engine", doctorStatusFail, "failed to close mTLS control-channel probe", map[string]string{"error": err.Error()})
+			return
+		}
+		report.add("engine", doctorStatusPass, "mTLS control-channel admission succeeded", nil)
+		return
+	}
 	health, err := client.CheckHealth(runCtx)
 	if err != nil {
 		report.add("engine", doctorStatusFail, "engine health check failed", map[string]string{"error": err.Error()})
@@ -419,7 +456,7 @@ func checkDoctorTunnelCreation(ctx context.Context, report *doctorReport, resolv
 		report.add("tunnel_creation", doctorStatusSkip, "engine is not configured", nil)
 		return
 	}
-	if resolved.Token == "" {
+	if resolved.Token == "" && !resolved.HasMTLS() {
 		report.add("tunnel_creation", doctorStatusSkip, "token is required", nil)
 		return
 	}

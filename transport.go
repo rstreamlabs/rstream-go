@@ -123,7 +123,7 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 					tlsProxyCfg.ServerName = proxyURL.Hostname()
 				}
 				tlsConn := tls.Client(conn, tlsProxyCfg)
-				err = withContextConnDeadline(ctx, tlsConn, tlsConn.Handshake)
+				err = withContextConnDeadline(ctx, tlsConn, func() error { return tlsConn.HandshakeContext(ctx) })
 				if err != nil {
 					err = fmt.Errorf("failed to handshake with proxy: %w", err)
 				} else {
@@ -190,7 +190,7 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 	}
 	if err == nil && tlsCfg != nil {
 		tlsConn := tls.Client(conn, tlsCfg)
-		err = withContextConnDeadline(ctx, tlsConn, tlsConn.Handshake)
+		err = withContextConnDeadline(ctx, tlsConn, func() error { return tlsConn.HandshakeContext(ctx) })
 		if err != nil {
 			err = fmt.Errorf("failed to handshake: %w", err)
 		} else {

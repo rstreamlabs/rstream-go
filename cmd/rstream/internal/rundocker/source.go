@@ -70,7 +70,7 @@ func (s *Source) List(ctx context.Context) ([]runmodel.DesiredTunnel, error) {
 			}
 			ctxResolved = resolved
 		} else {
-			if strings.TrimSpace(ctxResolved.Engine) == "" || strings.TrimSpace(ctxResolved.Token) == "" {
+			if strings.TrimSpace(ctxResolved.Engine) == "" || !ctxResolved.HasAuthentication() {
 				return nil, fmt.Errorf("container %q requires a default context", info.Name)
 			}
 		}
