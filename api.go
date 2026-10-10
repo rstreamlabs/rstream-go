@@ -33,6 +33,19 @@ type Event struct {
 	Object      json.RawMessage `json:"object"`
 }
 
+// APIError reports a completed Engine API response without treating HTTP policy
+// errors as transport failures.
+type APIError struct {
+	StatusCode int
+	Method     string
+	Path       string
+	Message    string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("api %s %s: %s (%d)", e.Method, e.Path, e.Message, e.StatusCode)
+}
+
 type EngineHealth struct {
 	Live  bool `json:"live"`
 	Ready bool `json:"ready"`
@@ -130,10 +143,26 @@ func (c *Client) apiDialer() Dialer {
 func (c *Client) CloseIdleConnections() {
 	c.apiMu.Lock()
 	transport := c.apiTransport
-	c.apiTransport = nil
+	discovery := c.discoveryTransport
+	apiH3, discoveryH3 := c.apiHTTP3, c.discoveryHTTP3
+	if discoveryH3 == nil {
+		c.discoveryTransport = nil
+	}
+	if apiH3 == nil {
+		c.apiTransport = nil
+	}
 	c.apiMu.Unlock()
 	if transport != nil {
 		transport.CloseIdleConnections()
+	}
+	if discovery != nil {
+		discovery.CloseIdleConnections()
+	}
+	if apiH3 != nil {
+		apiH3.CloseIdleConnections()
+	}
+	if discoveryH3 != nil {
+		discoveryH3.CloseIdleConnections()
 	}
 }
 
@@ -147,9 +176,7 @@ func (c *Client) apiHttpClient() (*http.Client, error) {
 		dialer := c.apiDialer()
 		c.apiTransport = &http.Transport{
 			DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				// API calls always use TCP TLS regardless of the configured
-				// transport, because API endpoints require HTTP/1.1 or H2 (not H3).
-				return c.dialEngineWithTransport(ctx, &addr, &[]string{"h2", "http/1.1"}, dialer)
+				return c.dialEngineWithTransportConfig(ctx, &addr, &[]string{"h2", "http/1.1"}, dialer, c.apiTLSConfig(addr))
 			},
 			ForceAttemptHTTP2:   true,
 			MaxIdleConns:        4,
@@ -157,11 +184,22 @@ func (c *Client) apiHttpClient() (*http.Client, error) {
 			IdleConnTimeout:     90 * time.Second,
 		}
 	}
-	transport := c.apiTransport
+	var transport http.RoundTripper = c.apiTransport
+	if template, auto, delay := c.apiQUICOptions(); template != nil {
+		if c.apiHTTP3 == nil {
+			var fallback http.RoundTripper
+			if auto {
+				fallback = c.apiTransport
+			}
+			c.apiHTTP3 = newAPIHTTP3Transport(c, template, c.apiTLSConfig(""), fallback, delay)
+		}
+		transport = c.apiHTTP3
+	}
 	c.apiMu.Unlock()
 	return &http.Client{
-		Transport: transport,
-		Timeout:   apiRequestTimeout,
+		Transport:     transport,
+		Timeout:       apiRequestTimeout,
+		CheckRedirect: rejectAPIRedirect,
 	}, nil
 }
 
@@ -169,6 +207,8 @@ func (c *Client) apiDo(ctx context.Context, method, path string, query url.Value
 	if ctx == nil {
 		return nil, 0, errors.New("API request context is required")
 	}
+	requestCtx, cancel := context.WithTimeout(ctx, apiRequestTimeout)
+	defer cancel()
 	if engine == nil {
 		var err error
 		engine, err = c.getEngine()
@@ -176,24 +216,23 @@ func (c *Client) apiDo(ctx context.Context, method, path string, query url.Value
 			return nil, 0, err
 		}
 	}
-	if token == nil {
-		ClientDetails, err := c.getClientDetails(engine, nil)
-		if err != nil {
-			return nil, 0, fmt.Errorf("failed to get client details: %w", err)
-		}
-		token = ClientDetails.Token
+	clientDetails, err := c.getClientDetails(engine, token)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get client details: %w", err)
 	}
+	token = clientDetails.Token
 	httpc, err := c.apiHttpClient()
 	if err != nil {
 		return nil, 0, err
 	}
-	base := "https://" + *engine
-	url := base + "/api" + path
+	base, err := c.resolveEngineAPIURL(requestCtx, engine)
+	if err != nil {
+		return nil, 0, err
+	}
+	url := base + path
 	if len(query) > 0 {
 		url += "?" + query.Encode()
 	}
-	requestCtx, cancel := context.WithTimeout(ctx, apiRequestTimeout)
-	defer cancel()
 	retryable := body == nil && (method == http.MethodGet || method == http.MethodHead)
 	for attempt := 1; attempt <= apiRequestAttempts; attempt++ {
 		attemptCtx := requestCtx
@@ -210,11 +249,22 @@ func (c *Client) apiDo(ctx context.Context, method, path string, query url.Value
 				return nil, status, cause
 			}
 		}
+		if err != nil && status == 0 && tlsConfigHasClientCertificate(c.TLSClientConfig) && retryableAPITransportError(requestCtx, status, err) {
+			c.invalidateEngineDiscovery()
+		}
 		if err == nil || !retryable || attempt == apiRequestAttempts || !retryableAPITransportError(requestCtx, status, err) {
 			return responseBody, status, err
 		}
 		if err := waitAPIRetry(requestCtx); err != nil {
 			return nil, status, err
+		}
+		base, err = c.resolveEngineAPIURL(requestCtx, engine)
+		if err != nil {
+			return nil, 0, err
+		}
+		url = base + path
+		if len(query) > 0 {
+			url += "?" + query.Encode()
 		}
 	}
 	return nil, 0, errors.New("API request retry invariant failed")
@@ -236,16 +286,23 @@ func apiRequest(ctx context.Context, client *http.Client, method, requestURL, pa
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
-	b, rerr := io.ReadAll(resp.Body)
+	var responseBody io.Reader = resp.Body
+	if path == "/turn-server/credentials" {
+		responseBody = io.LimitReader(responseBody, 16385)
+	}
+	b, rerr := io.ReadAll(responseBody)
 	if rerr != nil {
 		return nil, resp.StatusCode, rerr
+	}
+	if path == "/turn-server/credentials" && len(b) > 16384 {
+		return nil, resp.StatusCode, errors.New("TURN response is too large")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg := strings.TrimSpace(string(b))
 		if msg == "" {
 			msg = http.StatusText(resp.StatusCode)
 		}
-		return nil, resp.StatusCode, fmt.Errorf("api %s %s: %s (%d)", method, path, msg, resp.StatusCode)
+		return nil, resp.StatusCode, &APIError{StatusCode: resp.StatusCode, Method: method, Path: path, Message: msg}
 	}
 	return b, resp.StatusCode, nil
 }
@@ -467,14 +524,26 @@ func (c *Client) openEventConn(ctx context.Context, transport string, params *Wa
 	if err != nil {
 		return nil, fmt.Errorf("failed to get client details: %w", err)
 	}
-	if cd.Token == nil || *cd.Token == "" {
+	if (cd.Token == nil || *cd.Token == "") && !tlsConfigHasClientCertificate(c.TLSClientConfig) {
 		return nil, fmt.Errorf("missing authentication token")
 	}
-	switch strings.ToLower(strings.TrimSpace(transport)) {
+	transport = strings.ToLower(strings.TrimSpace(transport))
+	if transport != "sse" && transport != "websocket" && transport != "ws" {
+		return nil, fmt.Errorf("invalid transport %q (valid: sse, websocket)", transport)
+	}
+	base, err := c.resolveEngineAPIURL(ctx, engine)
+	if err != nil {
+		return nil, err
+	}
+	token := ""
+	if cd.Token != nil {
+		token = *cd.Token
+	}
+	switch transport {
 	case "sse":
-		return c.openSSE(ctx, *engine, *cd.Token, params)
+		return c.openSSE(ctx, base, token, params)
 	case "websocket", "ws":
-		return c.openWS(ctx, *engine, *cd.Token, params)
+		return c.openWS(ctx, base, token, params)
 	default:
 		return nil, fmt.Errorf("invalid transport %q (valid: sse, websocket)", transport)
 	}
@@ -536,8 +605,7 @@ func (c *Client) openSSE(ctx context.Context, engine, token string, params *Watc
 		return nil, err
 	}
 	httpc.Timeout = 0
-	base := "https://" + engine
-	u := base + "/api/sse"
+	u := engine + "/sse"
 	q := url.Values{}
 	if err := setQueryJSON(q, "params", params); err != nil {
 		return nil, err
@@ -550,7 +618,9 @@ func (c *Client) openSSE(ctx context.Context, engine, token string, params *Watc
 		return nil, err
 	}
 	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Authorization", "Bearer "+token)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	resp, err := httpc.Do(req)
 	if err != nil {
 		return nil, err
@@ -652,11 +722,11 @@ func (w *wsConn) pingLoop() {
 }
 
 func (c *Client) openWS(ctx context.Context, engine, token string, params *WatchParams) (eventConn, error) {
-	u := url.URL{
-		Scheme: "wss",
-		Host:   engine,
-		Path:   "/api/websocket",
+	u, err := url.Parse(engine + "/websocket")
+	if err != nil {
+		return nil, err
 	}
+	u.Scheme = "wss"
 	q := u.Query()
 	if err := setQueryJSON(q, "params", params); err != nil {
 		return nil, err
@@ -666,13 +736,15 @@ func (c *Client) openWS(ctx context.Context, engine, token string, params *Watch
 	dialer := &websocket.Dialer{
 		NetDialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			np := []string{"http/1.1"}
-			return c.dialEngineWithTransport(ctx, &addr, &np, dialerTransport)
+			return c.dialEngineWithTransportConfig(ctx, &addr, &np, dialerTransport, c.apiTLSConfig(addr))
 		},
 		EnableCompression: false,
 		Proxy:             http.ProxyFromEnvironment,
 	}
 	header := http.Header{}
-	header.Set("Authorization", "Bearer "+token)
+	if token != "" {
+		header.Set("Authorization", "Bearer "+token)
+	}
 	conn, resp, err := dialer.DialContext(ctx, u.String(), header)
 	if err != nil {
 		if resp != nil {

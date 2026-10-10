@@ -162,6 +162,33 @@ func TestLookupConfigListFollowsAliasMode(t *testing.T) {
 	}
 }
 
+func TestMTLSHTTPDiscoveryFollowsCNAMEToExistingECHKeys(t *testing.T) {
+	lookup := lookupDNSResponse
+	defer func() { lookupDNSResponse = lookup }()
+	configList := testConfigList(t)
+	lookupDNSResponse = func(_ context.Context, name string, kind uint16, _ ResolverOptions) (dnsResponse, error) {
+		if kind != dns.TypeHTTPS {
+			t.Fatalf("HTTP mTLS queried type %d", kind)
+		}
+		switch name {
+		case "project.mtls.example.test.":
+			return dnsResponse{answer: []dns.RR{&dns.CNAME{Hdr: dns.RR_Header{Name: name, Rrtype: dns.TypeCNAME, Class: dns.ClassINET}, Target: "ordinary.example.test."}}}, nil
+		case "ordinary.example.test.":
+			return dnsResponse{answer: []dns.RR{&dns.HTTPS{SVCB: dns.SVCB{Hdr: dns.RR_Header{Name: name, Rrtype: dns.TypeHTTPS, Class: dns.ClassINET}, Priority: 1, Target: ".", Value: []dns.SVCBKeyValue{&dns.SVCBAlpn{Alpn: []string{"h2", "h3", "http/1.1"}}, &dns.SVCBECHConfig{ECH: configList}}}}}}, nil
+		default:
+			t.Fatalf("unexpected DNS name %q", name)
+			return dnsResponse{}, nil
+		}
+	}
+	for _, protocol := range []string{"http/1.1", "h2", "h3"} {
+		target := Target{Address: "project.mtls.example.test:443", ServerName: "project.mtls.example.test", NextProtos: []string{protocol}}
+		got, err := NewResolver().LookupConfigList(t.Context(), target, ResolverOptions{})
+		if err != nil || !bytes.Equal(got, configList) {
+			t.Fatalf("%s did not reuse ordinary ECH material: %v", protocol, err)
+		}
+	}
+}
+
 func TestResolverCachesConfigListsDefensively(t *testing.T) {
 	lookup := lookupDNSResponse
 	configList := testConfigList(t)

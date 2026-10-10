@@ -129,7 +129,7 @@ func TestFilesystemWebRTCPreparedContextAvoidsControlPlane(t *testing.T) {
 		http.Error(w, "control plane forbidden", http.StatusForbidden)
 	}))
 	defer control.Close()
-	token := "fixture." + base64.RawURLEncoding.EncodeToString([]byte(`{"type":"pat","token_endpoint":"restricted-device"}`)) + ".signature"
+	token := "fixture." + base64.RawURLEncoding.EncodeToString([]byte(`{"type":"pat","token_endpoint":"restricted-device","exp":2000000000,"permissions":["turn.relay.allocate"]}`)) + ".signature"
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	cfg := config.Config{
 		Defaults: config.Defaults{Context: &config.DefaultContext{Name: "device"}},
@@ -141,10 +141,11 @@ func TestFilesystemWebRTCPreparedContextAvoidsControlPlane(t *testing.T) {
 	t.Setenv("RSTREAM_CONFIG", path)
 	command := newFilesCmd()
 	command.SetContext(t.Context())
-	server, err := filesystemRTCConfig(command, "webrtc")
+	server, closeRTC, err := filesystemRTCConfig(command, "webrtc")
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer closeRTC()
 	if server.ICE == nil {
 		t.Fatal("missing ICE provider")
 	}

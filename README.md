@@ -192,7 +192,7 @@ These variables are shared across CLI and SDK configuration resolution. Prefer c
 - `RSTREAM_REGION`: Select an authorized region for a managed project.
 - `RSTREAM_CONTROL_PLANE_HEADERS`: Add Control plane request headers as a JSON object.
 
-Resolution behavior follows the same model used by `config.NewClientFromEnv()`: explicit SDK options are evaluated first, then environment overrides, then context/environment values from the config file. `RSTREAM_CONFIG` selects the config file path before fallback to the default config location. Token authentication and mTLS agent authentication are mutually exclusive for the control-channel connection. When the mTLS certificate and key variables are set, config-derived tokens are not used for that connection; setting mTLS variables together with `RSTREAM_AUTHENTICATION_TOKEN` is an error. Engine HTTP API requests use token authentication.
+Resolution behavior follows the same model used by `config.NewClientFromEnv()`: explicit SDK options are evaluated first, then environment overrides, then context/environment values from the config file. `RSTREAM_CONFIG` selects the config file path before fallback to the default config location. Token authentication and mTLS agent authentication are mutually exclusive for the control-channel connection. When the mTLS certificate and key variables are set, config-derived tokens are not used for that connection; setting mTLS variables together with `RSTREAM_AUTHENTICATION_TOKEN` is an error. Engine HTTP API requests reuse the token or certificate identity; certificate clients discover a separate mTLS authority.
 
 Region selection requires a managed project endpoint and cannot be combined
 with an explicit engine override. Control plane headers are intended for an
@@ -659,18 +659,22 @@ make nupkg       # Create Windows NuGet packages
 
 ## Code examples
 
-The Go SDK enables applications to create and manage tunnels programmatically. The examples below use `config.NewClientFromEnv()` to read the same config and environment settings as the CLI. Ensure a default context (or `RSTREAM_ENGINE`) is set, and provide either `RSTREAM_AUTHENTICATION_TOKEN` or the mTLS certificate/key environment variables if the selected agent control channel requires authentication. Engine HTTP API operations require token authentication.
+The Go SDK enables applications to create and manage tunnels programmatically. The examples below use `config.NewClientFromEnv()` to read the same config and environment settings as the CLI. Ensure a default context (or `RSTREAM_ENGINE`) is set, and provide either `RSTREAM_AUTHENTICATION_TOKEN` or the mTLS certificate/key environment variables if the selected agent control channel requires authentication. Engine HTTP API operations also support certificate authentication through automatic discovery.
 
 ### Managed TURN credentials
 
 The SDK also exposes helpers to generate managed TURN credentials.
 
-- `config.CreateTURNCredentialsFromEnv(...)` resolves the current config, context, and token automatically.
-- Auto mode selects local PAT derivation when the active token carries
-  `token_endpoint` and the context includes the TURN domain, realm, and listener
-  ports. It falls back to the Control plane API when that routing contract is
-  incomplete.
-- Explicit `PAT` mode requires a PAT token. Explicit `API` mode can use either a project ID or a project endpoint.
+- Keep one `Client` and call `client.CreateTURNCredentials(ctx, options)` for renewal.
+- Certificate clients use the discovered Engine API directly, with an in-memory cache.
+- Auto mode prefers eligible local PAT/APP derivation when relay metadata is known,
+  then Control plane issuance with availability-only Engine fallback.
+- Explicit `api`, `engine`, `pat` and `app` modes are supported. Both managed APIs
+  require `turn.credentials.create`; local derivation requires `turn.relay.allocate`.
+- `config.CreateTURNCredentialsFromEnv(...)` retains shared configuration support.
+
+See [Engine HTTP mTLS and TURN](docs/014-engine-mtls-turn.md) for transport,
+authorization, lifetime and CLI behavior.
 
 The TURN domain is the relay hostname placed in ICE URLs. The TURN realm is the
 authentication scope used for credential derivation. A regional relay attached

@@ -9,6 +9,7 @@ import (
 
 type ClientOptions struct {
 	Engine          string
+	MTLSAPIURL      string
 	Token           string
 	Transport       Dialer
 	OwnTransport    bool
@@ -36,6 +37,7 @@ func NewClient(options ClientOptions) (*Client, error) {
 	}
 	client := &Client{
 		EngineURL:       &engine,
+		MTLSAPIURL:      options.MTLSAPIURL,
 		Transport:       transport,
 		ownsTransport:   ownTransport,
 		TLSClientConfig: options.TLSClientConfig,

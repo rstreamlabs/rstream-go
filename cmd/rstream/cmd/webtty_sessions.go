@@ -940,7 +940,7 @@ func runWebTTYSessionAttach(cmd *cobra.Command, sessionID string) error {
 		defer cancel()
 		_, _ = client.DetachWebTTYParticipant(ctx, sessionID, participant.ID, rstream.DetachWebTTYParticipantRequest{Reason: "client disconnected"})
 	}()
-	streamURL, err := webTTYParticipantStreamURL(client, sessionID, participant.ID)
+	streamURL, err := webTTYParticipantStreamURL(cmd.Context(), client, sessionID, participant.ID)
 	if err != nil {
 		return err
 	}
@@ -1660,7 +1660,7 @@ func decodeOptionalWebTTYKeyMaterial(value string, field string) ([]byte, error)
 	return webtty.DecodeE2EKeyMaterial(value, 0, field)
 }
 
-func webTTYParticipantStreamURL(client *rstream.Client, sessionID string, participantID string) (string, error) {
+func webTTYParticipantStreamURL(ctx context.Context, client *rstream.Client, sessionID string, participantID string) (string, error) {
 	if client == nil || client.EngineURL == nil || strings.TrimSpace(*client.EngineURL) == "" {
 		return "", fmt.Errorf("engine URL is required")
 	}
@@ -1672,22 +1672,15 @@ func webTTYParticipantStreamURL(client *rstream.Client, sessionID string, partic
 	if participantID == "" {
 		return "", fmt.Errorf("WebTTY participant ID is required")
 	}
-	engine := strings.TrimSpace(*client.EngineURL)
-	host := engine
-	if strings.Contains(engine, "://") {
-		parsed, err := url.Parse(engine)
-		if err != nil {
-			return "", fmt.Errorf("invalid engine URL: %w", err)
-		}
-		host = parsed.Host
+	base, err := client.EngineAPIURL(ctx)
+	if err != nil {
+		return "", err
 	}
-	if strings.TrimSpace(host) == "" {
-		return "", fmt.Errorf("engine host is required")
+	u, err := url.Parse(base)
+	if err != nil {
+		return "", err
 	}
-	u := url.URL{
-		Scheme: "wss",
-		Host:   host,
-	}
+	u.Scheme = "wss"
 	u.Path = "/api/webtty/sessions/" + sessionID + "/participants/" + participantID + "/stream"
 	u.RawPath = "/api/webtty/sessions/" + url.PathEscape(sessionID) + "/participants/" + url.PathEscape(participantID) + "/stream"
 	return u.String(), nil

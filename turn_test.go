@@ -24,7 +24,7 @@ func modePtr(mode TURNCredentialMode) *TURNCredentialMode {
 }
 
 func TestCreateTURNCredentialsAutoUsesPATDerivation(t *testing.T) {
-	token := turnTestToken(t, map[string]string{"type": "pat", "token_endpoint": "b95faf7f"})
+	token := turnTestToken(t, map[string]any{"type": "pat", "token_endpoint": "b95faf7f", "exp": time.Now().Add(time.Hour).Unix(), "permissions": []string{"turn.relay.allocate"}})
 	res, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{
 		Token:           token,
 		ProjectEndpoint: "abc12345",
@@ -42,7 +42,7 @@ func TestCreateTURNCredentialsAutoUsesPATDerivation(t *testing.T) {
 }
 
 func TestCreateTURNCredentialsPATSeparatesRelayDomainFromAuthenticationRealm(t *testing.T) {
-	token := turnTestToken(t, map[string]string{"type": "pat", "token_endpoint": "b95faf7f"})
+	token := turnTestToken(t, map[string]any{"type": "pat", "token_endpoint": "b95faf7f", "exp": time.Now().Add(time.Hour).Unix(), "permissions": []string{"turn.relay.allocate"}})
 	res, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{
 		Token:           token,
 		ProjectEndpoint: "abc12345",
@@ -72,7 +72,7 @@ func TestCreateTURNCredentialsPATSeparatesRelayDomainFromAuthenticationRealm(t *
 }
 
 func TestCreateTURNCredentialsPATRequiresExplicitRealmWithoutLegacyClusterDomain(t *testing.T) {
-	token := turnTestToken(t, map[string]string{"type": "pat", "token_endpoint": "b95faf7f"})
+	token := turnTestToken(t, map[string]any{"type": "pat", "token_endpoint": "b95faf7f", "exp": time.Now().Add(time.Hour).Unix(), "permissions": []string{"turn.relay.allocate"}})
 	_, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{Token: token, ProjectEndpoint: "abc12345", TURNDomain: "regional.example.rstream.test", Mode: modePtr(TURNCredentialModePAT)})
 	if err == nil || err.Error() != "TURN realm is required for TURN PAT mode" {
 		t.Fatalf("unexpected error: %v", err)
@@ -99,7 +99,7 @@ func TestCreateTURNCredentialsFallsBackToAPIForLegacyPAT(t *testing.T) {
 			t.Fatalf("unexpected path: %s", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"username":"u","credential":"c","urls":["turn:example.com:3478?transport=udp"],"ttl":86400}`))
+		w.Write([]byte(`{"username":"u","credential":"c","urls":["turn:example.com:3478?transport=udp"],"ttl":600}`))
 	}))
 	defer server.Close()
 	res, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{
@@ -124,7 +124,7 @@ func TestCreateTURNCredentialsExplicitAPIAcceptsOpaqueToken(t *testing.T) {
 			t.Fatalf("control plane header = %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"username":"u","credential":"c","urls":["turn:example.com:3478?transport=udp"],"ttl":86400}`))
+		w.Write([]byte(`{"username":"u","credential":"c","urls":["turn:example.com:3478?transport=udp"],"ttl":600}`))
 	}))
 	defer server.Close()
 	res, err := CreateTURNCredentials(context.Background(), CreateTURNCredentialsOptions{
@@ -214,14 +214,14 @@ func TestPATTURNCredentialTTLIsBoundedByTokenExpiration(t *testing.T) {
 
 func TestPATTURNCredentialTTLIsCappedByServerMaximum(t *testing.T) {
 	now := time.Unix(1_900_000_000, 0)
-	ttl, err := normalizePATTURNCredentialTTL(24*time.Hour, turnTokenClaims{}, now)
+	expiresAt := now.Add(2 * time.Hour).Unix()
+	ttl, err := normalizePATTURNCredentialTTL(24*time.Hour, turnTokenClaims{ExpiresAt: &expiresAt}, now)
 	if err != nil {
 		t.Fatalf("normalizePATTURNCredentialTTL() error = %v", err)
 	}
 	if ttl != maxTURNCredentialTTL {
 		t.Fatalf("ttl = %v, want server maximum", ttl)
 	}
-	expiresAt := now.Add(2 * time.Hour).Unix()
 	ttl, err = normalizePATTURNCredentialTTL(24*time.Hour, turnTokenClaims{ExpiresAt: &expiresAt}, now)
 	if err != nil {
 		t.Fatalf("normalizePATTURNCredentialTTL() with PAT exp error = %v", err)

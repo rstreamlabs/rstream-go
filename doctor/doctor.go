@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"sort"
 	"strconv"
@@ -297,17 +298,13 @@ func checkDoctorEngine(ctx context.Context, report *Report, resolved config.Reso
 	runCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if resolved.HasMTLS() {
-		ctrl, err := client.Connect(runCtx, nil)
+		apiURL, err := client.EngineAPIURL(runCtx)
 		if err != nil {
-			report.add("engine", StatusFail, "mTLS control-channel admission failed", map[string]string{"error": err.Error()})
+			report.add("engine", StatusFail, "mTLS Engine API discovery failed", map[string]string{"error": err.Error()})
 			return
 		}
-		if err := ctrl.Close(); err != nil {
-			report.add("engine", StatusFail, "failed to close mTLS control-channel probe", map[string]string{"error": err.Error()})
-			return
-		}
-		report.add("engine", StatusPass, "mTLS control-channel admission succeeded", nil)
-		return
+		report.add("engine_api_discovery", StatusPass, "mTLS Engine API discovered", map[string]string{"url": apiURL})
+
 	}
 	health, err := client.CheckHealth(runCtx)
 	if err != nil {
@@ -320,11 +317,21 @@ func checkDoctorEngine(ctx context.Context, report *Report, resolved config.Reso
 	}
 	clients, err := client.ListClients(runCtx, nil)
 	if err != nil {
+		var apiError *rstream.APIError
+		if errors.As(err, &apiError) && apiError.StatusCode == http.StatusForbidden {
+			report.add("engine", StatusWarn, "engine is ready; credential permissions restrict inventory access", nil)
+			return
+		}
 		report.add("engine", StatusFail, "engine API is unavailable", map[string]string{"error": err.Error()})
 		return
 	}
 	tunnels, err := client.ListTunnels(runCtx, nil)
 	if err != nil {
+		var apiError *rstream.APIError
+		if errors.As(err, &apiError) && apiError.StatusCode == http.StatusForbidden {
+			report.add("engine", StatusWarn, "engine is ready; credential permissions restrict inventory access", nil)
+			return
+		}
 		report.add("engine", StatusFail, "engine API is unavailable", map[string]string{"error": err.Error()})
 		return
 	}

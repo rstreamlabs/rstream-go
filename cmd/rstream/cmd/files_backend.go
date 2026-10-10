@@ -15,23 +15,23 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func filesystemRTCConfig(cmd *cobra.Command, backend string) (rtc.ServerConfig, error) {
+func filesystemRTCConfig(cmd *cobra.Command, backend string) (rtc.ServerConfig, func() error, error) {
 	if backend != filesystem.BackendWebRTC {
-		return rtc.ServerConfig{}, nil
+		return rtc.ServerConfig{}, func() error { return nil }, nil
 	}
 	runtime, err := resolveRuntime(cmd, true, true)
 	if err != nil {
-		return rtc.ServerConfig{}, err
+		return rtc.ServerConfig{}, nil, err
 	}
 	configured := runtime.Resolved.Context
 	if configured == nil || configured.ProjectEndpoint == "" {
-		return rtc.ServerConfig{}, fmt.Errorf("WebRTC file sharing requires an rstream project context for STUN/TURN")
+		return rtc.ServerConfig{}, nil, fmt.Errorf("WebRTC file sharing requires an rstream project context for STUN/TURN")
 	}
-	options := rstream.CreateTURNCredentialsOptions{APIURL: runtime.Resolved.APIURL, Token: runtime.Resolved.Token, ProjectEndpoint: configured.ProjectEndpoint, TURNDomain: configured.TURNDomain, TURNRealm: configured.TURNRealm, TURNPort: configured.TURNPort, TURNSPort: configured.TURNSPort, TTL: time.Hour, ControlPlaneHeaders: runtime.Resolved.ControlPlaneHeaders}
-	if options.TURNDomain == "" || options.TURNRealm == "" || options.TURNPort == 0 || options.TURNSPort == 0 {
-		mode := rstream.TURNCredentialModeAPI
-		options.Mode = &mode
+	client, err := newClientFromResolved(runtime.Resolved)
+	if err != nil {
+		return rtc.ServerConfig{}, nil, err
 	}
+	options := rstream.CreateTURNCredentialsOptions{Client: client, APIURL: runtime.Resolved.APIURL, Token: runtime.Resolved.Token, ProjectEndpoint: configured.ProjectEndpoint, TURNDomain: configured.TURNDomain, TURNRealm: configured.TURNRealm, TURNPort: configured.TURNPort, TURNSPort: configured.TURNSPort, TTL: time.Hour, ControlPlaneHeaders: runtime.Resolved.ControlPlaneHeaders}
 	return rtc.ServerConfig{ICE: func(ctx context.Context) ([]webrtc.ICEServer, error) {
 		credentials, err := rstream.CreateTURNCredentials(ctx, options)
 		if err != nil {
@@ -52,5 +52,5 @@ func filesystemRTCConfig(cmd *cobra.Command, backend string) (rtc.ServerConfig, 
 			servers = append(servers, webrtc.ICEServer{URLs: stun})
 		}
 		return servers, nil
-	}}, nil
+	}}, client.Close, nil
 }

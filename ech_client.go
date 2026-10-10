@@ -20,27 +20,31 @@ var lookupECHConfigList = func(ctx context.Context, target enginetls.Target, opt
 }
 
 func dialWithECH(ctx context.Context, transport Dialer, addr string, baseCfg *tls.Config) (net.Conn, error) {
+	return dialWithECHResult(ctx, addr, baseCfg, echResolverOptions(transport), transport.Dial)
+}
+
+func dialWithECHResult[T any](ctx context.Context, addr string, baseCfg *tls.Config, opts enginetls.ResolverOptions, dial func(context.Context, string, *tls.Config) (T, error)) (T, error) {
+	var zero T
 	if fipsprofile.BuildEnabled() {
 		if baseCfg != nil && len(baseCfg.EncryptedClientHelloConfigList) > 0 {
-			return nil, fipsprofile.Unavailable("ECH")
+			return zero, fipsprofile.Unavailable("ECH")
 		}
-		return transport.Dial(ctx, addr, baseCfg)
+		return dial(ctx, addr, baseCfg)
 	}
 	if baseCfg == nil || len(baseCfg.EncryptedClientHelloConfigList) > 0 {
-		return transport.Dial(ctx, addr, baseCfg)
+		return dial(ctx, addr, baseCfg)
 	}
 	if baseCfg.MaxVersion != 0 && baseCfg.MaxVersion < tls.VersionTLS13 {
-		return transport.Dial(ctx, addr, baseCfg)
+		return dial(ctx, addr, baseCfg)
 	}
 	serverName := baseCfg.ServerName
 	if serverName == "" {
 		host, _, err := splitHostPort(addr)
 		if err != nil || host == nil {
-			return transport.Dial(ctx, addr, baseCfg)
+			return dial(ctx, addr, baseCfg)
 		}
 		serverName = *host
 	}
-	opts := echResolverOptions(transport)
 	target := enginetls.Target{
 		Address:    addr,
 		ServerName: serverName,
@@ -49,32 +53,32 @@ func dialWithECH(ctx context.Context, transport Dialer, addr string, baseCfg *tl
 	configList, err := lookupECHConfigList(ctx, target, opts)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
+			return zero, ctxErr
 		}
-		return transport.Dial(ctx, addr, baseCfg)
+		return dial(ctx, addr, baseCfg)
 	}
 	if len(configList) == 0 {
-		return transport.Dial(ctx, addr, baseCfg)
+		return dial(ctx, addr, baseCfg)
 	}
 	echCfg := newECHTLSConfig(baseCfg, configList)
-	conn, err := transport.Dial(ctx, addr, echCfg)
+	conn, err := dial(ctx, addr, echCfg)
 	if err == nil {
 		return conn, nil
 	}
 	var rejection *tls.ECHRejectionError
 	if !errors.As(err, &rejection) {
-		return nil, err
+		return zero, err
 	}
 	if len(rejection.RetryConfigList) > 0 && !bytes.Equal(rejection.RetryConfigList, configList) {
 		_ = defaultECHResolver.RememberConfigList(target, opts, rejection.RetryConfigList)
 		retryCfg := newECHTLSConfig(baseCfg, rejection.RetryConfigList)
-		retryConn, retryErr := transport.Dial(ctx, addr, retryCfg)
+		retryConn, retryErr := dial(ctx, addr, retryCfg)
 		if retryErr == nil {
 			return retryConn, nil
 		}
-		return nil, retryErr
+		return zero, retryErr
 	}
-	return nil, err
+	return zero, err
 }
 
 func newECHTLSConfig(baseCfg *tls.Config, configList []byte) *tls.Config {
