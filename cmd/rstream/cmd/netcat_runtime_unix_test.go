@@ -36,7 +36,6 @@ func TestRunNetcatExecSessionReturnsWhenChildExits(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatalf("exec session did not exit after child completion")
 	}
-	_ = server.Close()
 	select {
 	case err := <-copyDoneCh:
 		if err != nil {
