@@ -199,7 +199,13 @@ func (f *Local) OpenFile(ctx context.Context, name string, flag int, perm os.Fil
 	}
 	relative, err := f.resolve(name, false)
 	if errors.Is(err, os.ErrNotExist) && flag&os.O_CREATE != 0 {
+		originalErr := err
 		relative, err = f.resolve(name, true)
+		if err == nil {
+			if _, statErr := f.root.Lstat(relative); !errors.Is(statErr, os.ErrNotExist) {
+				return nil, originalErr
+			}
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -259,6 +265,9 @@ func (f *Local) RemoveAll(ctx context.Context, name string) error {
 	if relative == "." {
 		return os.ErrPermission
 	}
+	if err := f.checkMutationTree(ctx, relative, relative); err != nil {
+		return err
+	}
 	return f.root.RemoveAll(relative)
 }
 
@@ -277,7 +286,58 @@ func (f *Local) Rename(ctx context.Context, oldName, newName string) error {
 	if oldPath == "." || newPath == "." {
 		return os.ErrPermission
 	}
+	if err := f.checkMutationTree(ctx, oldPath, newPath); err != nil {
+		return err
+	}
 	return f.root.Rename(oldPath, newPath)
+}
+
+// Directory mutations must not bypass filters by acting on a visible ancestor.
+func (f *Local) checkMutationTree(ctx context.Context, source, destination string) error {
+	if !f.policy.HideHidden && len(f.policy.Exclude) == 0 {
+		return ctx.Err()
+	}
+	remaining := 10000
+	var visit func(string, string, int) error
+	visit = func(source, destination string, depth int) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		remaining--
+		if remaining < 0 || depth > 64 {
+			return ErrListingLimit
+		}
+		if !f.allowed(source) || !f.allowed(destination) {
+			return os.ErrPermission
+		}
+		info, err := f.root.Lstat(source)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return nil
+		}
+		directory, err := f.root.Open(source)
+		if err != nil {
+			return err
+		}
+		defer directory.Close()
+		for {
+			entries, err := directory.Readdirnames(128)
+			if err != nil && !errors.Is(err, io.EOF) {
+				return err
+			}
+			for _, entry := range entries {
+				if err := visit(filepath.Join(source, entry), filepath.Join(destination, entry), depth+1); err != nil {
+					return err
+				}
+			}
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+		}
+	}
+	return visit(source, destination, 0)
 }
 
 func (f *Local) writeAllowed(ctx context.Context) error {

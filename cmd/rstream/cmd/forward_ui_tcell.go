@@ -262,7 +262,7 @@ func forwardUIStatusRows(status forwardStatus, files bool) [][2]string {
 		if status.Files.Username != "" {
 			rows = append(rows, [2]string{"username", status.Files.Username})
 		}
-		rows = append(rows, [2]string{"mode", "read-only"})
+		rows = append(rows, [2]string{"mode", filesMode(status.Files)})
 	}
 	return rows
 }

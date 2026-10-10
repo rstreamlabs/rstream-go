@@ -1,6 +1,6 @@
 // See LICENSE file in the project root for license information.
 
-// Package fileserver composes a browser UI and a read-only filesystem backend.
+// Package fileserver composes an optional browser UI and a filesystem backend.
 package fileserver
 
 import (
@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -24,8 +25,13 @@ import (
 const InfoPath = "/_rstream/files/v1/info"
 const ArchivePath = "/_rstream/files/v1/archive"
 const FSPath = "/fs"
+const DefaultMaxUploadSize int64 = 64 << 20
 
 type Config struct {
+	// ReadWrite enables WebDAV mutations; the zero value keeps shares read-only.
+	ReadWrite bool
+	// MaxUploadSize defaults to DefaultMaxUploadSize when ReadWrite is enabled.
+	MaxUploadSize int64
 	Backend       string
 	RTC           rtc.ServerConfig
 	Root          string
@@ -49,15 +55,16 @@ type Capabilities struct {
 }
 
 type Info struct {
-	Version      int          `json:"version"`
-	Name         string       `json:"name"`
-	Kind         string       `json:"kind"`
-	Backend      string       `json:"backend"`
-	FSPath       string       `json:"fs_path"`
-	ArchivePath  string       `json:"archive_path,omitempty"`
-	Access       string       `json:"access"`
-	Username     string       `json:"username,omitempty"`
-	Capabilities Capabilities `json:"capabilities"`
+	Version       int          `json:"version"`
+	Name          string       `json:"name"`
+	Kind          string       `json:"kind"`
+	Backend       string       `json:"backend"`
+	FSPath        string       `json:"fs_path"`
+	ArchivePath   string       `json:"archive_path,omitempty"`
+	Access        string       `json:"access"`
+	Username      string       `json:"username,omitempty"`
+	Capabilities  Capabilities `json:"capabilities"`
+	MaxUploadSize int64        `json:"max_upload_size_bytes,omitempty"`
 }
 
 type Server struct {
@@ -70,15 +77,36 @@ type Server struct {
 	archives chan struct{}
 }
 
+// Validate checks transfer options without opening files or contacting the network.
+func (cfg Config) Validate() error {
+	backend, err := filesystem.ResolveBackend(cfg.Backend)
+	if err != nil {
+		return err
+	}
+	if cfg.ReadWrite && backend != filesystem.BackendWebDAV {
+		return fmt.Errorf("read-write mode requires the webdav backend; WebRTC is read-only")
+	}
+	if cfg.MaxUploadSize < 0 {
+		return fmt.Errorf("maximum upload size must be greater than zero")
+	}
+	if cfg.MaxUploadSize != 0 && !cfg.ReadWrite {
+		return fmt.Errorf("maximum upload size requires read-write mode")
+	}
+	return nil
+}
+
 func New(cfg Config) (*Server, error) {
 	if err := fipsprofile.Unavailable("Filesystem sharing"); err != nil {
 		return nil, err
 	}
-	backend, err := filesystem.ResolveBackend(cfg.Backend)
-	if err != nil {
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	local, err := filesystem.Open(cfg.Root, filesystem.Policy{ReadOnly: true, HideHidden: !cfg.IncludeHidden, Exclude: cfg.Exclude, MaxEntries: 10000, AllowFile: true})
+	backend, _ := filesystem.ResolveBackend(cfg.Backend)
+	if cfg.ReadWrite && cfg.MaxUploadSize == 0 {
+		cfg.MaxUploadSize = DefaultMaxUploadSize
+	}
+	local, err := filesystem.Open(cfg.Root, filesystem.Policy{ReadOnly: !cfg.ReadWrite, HideHidden: !cfg.IncludeHidden, Exclude: cfg.Exclude, MaxEntries: 10000, AllowFile: true})
 	if err != nil {
 		return nil, err
 	}
@@ -86,13 +114,13 @@ func New(cfg Config) (*Server, error) {
 		cfg.Logger = slog.Default()
 	}
 	s := &Server{local: local, logger: cfg.Logger, archives: make(chan struct{}, 2)}
-	dav, err := filesystem.NewBackend(local, filesystem.BackendConfig{Backend: backend, RTC: cfg.RTC, ArchivePath: ArchivePath, Archive: http.HandlerFunc(s.serveArchive), WrapData: func(next http.Handler) http.Handler { return observeActivity(backend, cfg.OnActivity, next) }, WebDAV: filesystem.WebDAVConfig{Prefix: FSPath, ReadOnly: true, Download: true, BoundedDepth: true, Logger: cfg.Logger}})
+	dav, err := filesystem.NewBackend(local, filesystem.BackendConfig{Backend: backend, RTC: cfg.RTC, ArchivePath: ArchivePath, Archive: http.HandlerFunc(s.serveArchive), WrapData: func(next http.Handler) http.Handler { return observeActivity(backend, cfg.OnActivity, next) }, WebDAV: filesystem.WebDAVConfig{Prefix: FSPath, ReadOnly: !cfg.ReadWrite, MaxUploadSize: cfg.MaxUploadSize, Download: true, BoundedDepth: true, Logger: cfg.Logger}})
 	if err != nil {
 		_ = local.Close()
 		return nil, err
 	}
 	s.backend = dav
-	s.info = Info{Version: 1, Name: local.Name(), Kind: "directory", Backend: backend, FSPath: FSPath, ArchivePath: ArchivePath, Capabilities: Capabilities{List: true, Read: true, Resume: true, Archive: !local.IsFile()}}
+	s.info = Info{Version: 1, Name: local.Name(), Kind: "directory", Backend: backend, FSPath: FSPath, ArchivePath: ArchivePath, MaxUploadSize: cfg.MaxUploadSize, Capabilities: Capabilities{List: true, Read: true, Write: cfg.ReadWrite, Resume: true, Archive: !local.IsFile()}}
 	if local.IsFile() {
 		s.info.Kind = "file"
 		s.info.ArchivePath = ""
