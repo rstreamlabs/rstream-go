@@ -83,6 +83,9 @@ func (r *uiRuntimeResolver) discoverTargets(ctx context.Context, runtime *resolv
 		return uiTargetDiscovery{Targets: r.contextTargets(fallback, runtime), ProjectError: fmt.Errorf("reload config: %w", err)}
 	}
 	discovery := uiTargetDiscovery{Targets: r.contextTargets(cfg, runtime)}
+	if runtime != nil && runtime.Resolved.HasMTLS() {
+		return discovery
+	}
 	apiURL, token, err := r.controlPlaneCredentials(cfg, runtime)
 	if err != nil {
 		discovery.ProjectError = err

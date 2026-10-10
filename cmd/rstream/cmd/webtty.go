@@ -2210,19 +2210,19 @@ func newWebTTYServerHTTPHandler(cmd *cobra.Command, terminalHandler *webtty.Hand
 	fsReadOnly, _ := cmd.Flags().GetBool("fs-read-only")
 	fsMaxUploadSize, _ := cmd.Flags().GetInt64("fs-max-upload-size")
 	backend, _ := cmd.Flags().GetString("fs-backend")
-	rtcConfig, err := filesystemRTCConfig(cmd, backend)
+	rtcConfig, closeRTC, err := filesystemRTCConfig(cmd, backend)
 	if err != nil {
 		return nil, err
 	}
 	fsHandler, err := webtty.NewFileSystemHandler(&webtty.FileSystemConfig{Root: fsRoot, Backend: backend, RTC: rtcConfig, ReadOnly: fsReadOnly, MaxUploadSize: &fsMaxUploadSize, Logger: logger})
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, closeRTC())
 	}
 	mux := http.NewServeMux()
 	mux.Handle(webtty.WebTTYDefaultFSPath, webtty.NewBearerAuthHandler(fsHandler, authToken, allowUnauthenticated))
 	mux.Handle(webtty.WebTTYDefaultFSPath+"/", webtty.NewBearerAuthHandler(fsHandler, authToken, allowUnauthenticated))
 	mux.Handle("/", terminalHandler)
-	return &webTTYFilesystemMux{Handler: mux, filesystem: fsHandler}, nil
+	return &webTTYFilesystemMux{Handler: mux, filesystem: fsHandler, closeRTC: closeRTC}, nil
 }
 
 func newWebTTYServerTunnelProperties(cmd *cobra.Command, enrollment *webTTYServerEnrollmentFile) rstream.TunnelProperties {
@@ -3115,13 +3115,18 @@ func webTTYSessionConfigFromClientConfig(cfg *webtty.ClientConfig) *webtty.Sessi
 type webTTYFilesystemMux struct {
 	http.Handler
 	filesystem http.Handler
+	closeRTC   func() error
 }
 
 func (h *webTTYFilesystemMux) Close() error {
+	var err error
 	if closer, ok := h.filesystem.(io.Closer); ok {
-		return closer.Close()
+		err = closer.Close()
 	}
-	return nil
+	if h.closeRTC != nil {
+		err = errors.Join(err, h.closeRTC())
+	}
+	return err
 }
 
 func closeWebTTYHTTPHandler(handler http.Handler, logger *slog.Logger) {

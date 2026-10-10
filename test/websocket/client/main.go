@@ -14,6 +14,8 @@
 //
 // All modes verify the echo "hello-ws" arrives unmodified.
 
+//lint:file-ignore SA1019 Keep explicit x/net HTTP/2 fixtures for h2c and extended CONNECT compatibility.
+
 package main
 
 import (

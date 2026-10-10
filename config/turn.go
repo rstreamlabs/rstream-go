@@ -13,6 +13,7 @@ import (
 )
 
 type TURNCredentialsEnvOptions struct {
+	Client          *rstream.Client
 	ConfigPath      string
 	APIURL          string
 	Context         string
@@ -41,6 +42,9 @@ func CreateTURNCredentialsFromEnv(
 		resolvedOpts = opts[0]
 	}
 	resolvedMode := resolvedOpts.Mode
+	if resolvedMode != nil && *resolvedMode == rstream.TURNCredentialModeAuto {
+		resolvedMode = nil
+	}
 	resolution, err := ResolveFromEnv(ClientEnvOptions{
 		ConfigPath:   resolvedOpts.ConfigPath,
 		APIURL:       resolvedOpts.APIURL,
@@ -89,11 +93,19 @@ func CreateTURNCredentialsFromEnv(
 			return nil, err
 		}
 	}
-	if resolvedMode == nil && (turnDomain == "" || turnRealm == "" || turnPort == 0 || turnsPort == 0) {
-		apiMode := rstream.TURNCredentialModeAPI
-		resolvedMode = &apiMode
+	client := resolvedOpts.Client
+	if client == nil && resolution.Resolved.Engine != "" && (resolvedMode == nil || *resolvedMode == rstream.TURNCredentialModeEngine) {
+		client, err = NewClientFromResolved(resolution.Resolved)
+		if err != nil {
+			return nil, err
+		}
+		defer client.Close()
+	}
+	if resolution.Resolved.HasMTLS() && client == nil {
+		return nil, errors.New("an Engine address is required for certificate TURN issuance")
 	}
 	return rstream.CreateTURNCredentials(ctx, rstream.CreateTURNCredentialsOptions{
+		Client:              client,
 		APIURL:              resolution.Resolved.APIURL,
 		Token:               resolution.Resolved.Token,
 		ProjectID:           strings.TrimSpace(resolvedOpts.ProjectID),

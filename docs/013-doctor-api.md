@@ -57,7 +57,7 @@ The shared checks cover context, token claims or mTLS identity/signatures,
 Control plane authentication, project status, engine address, DNS, TLS and
 QUIC connectivity, selected tunnel transport, and Engine readiness/inventory.
 Unavailable projects produce an actionable project failure and skip transport
-probes. mTLS agents probe control-channel admission without requiring a token.
+probes. mTLS agents probe native admission, dedicated API discovery, and Engine HTTP readiness/inventory without requiring a token. Insufficient inventory rights produce a warning; they are not classified as invalid certificates. The runner does not mint TURN credentials.
 The restricted FIPS build also validates its cryptographic runtime before
 starting diagnostics.
 

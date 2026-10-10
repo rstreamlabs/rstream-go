@@ -11,6 +11,8 @@
 // The server prints "READY <forwarding-address>" to stdout once the tunnel is
 // established, then echoes every received WebSocket frame back to the sender.
 
+//lint:file-ignore SA1019 Keep explicit x/net HTTP/2 fixtures for h2c and extended CONNECT compatibility.
+
 package main
 
 import (

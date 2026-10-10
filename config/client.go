@@ -102,6 +102,9 @@ func resolveClientRegion(ctx context.Context, resolved *Resolved) error {
 	if resolved.Region == "" {
 		return nil
 	}
+	if resolved.HasMTLS() {
+		return errors.New("region selection requires Control plane metadata; for mTLS, use a context with the explicit regional engine address and no region selector")
+	}
 	if resolved.Context == nil || strings.TrimSpace(resolved.Context.ProjectEndpoint) == "" {
 		return errors.New("managed project endpoint is required for region selection")
 	}

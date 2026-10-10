@@ -1,0 +1,19 @@
+{
+  "now": 1999999400,
+  "ttl": 600,
+  "realm": "global.test",
+  "domain": "regional.test",
+  "projectEndpoint": "project-1",
+  "app": {
+    "clientId": "app-1",
+    "clientSecret": "3081ee020100301006072a8648ce3d020106052b810400230481d63081d30201010442007150f569c9dbb263b1ecd863503b13f1f680e451ea1df63431008299b62f80ee11667fd6a4264a97d2a95aca6b8f42f66f891c7432e065631db759a90ed59e5466a18189038186000400807318900e70b38c992005816efe73baa2cffb5a0cdbe3fb77ce9b326438d2f15aff4fa0c9c7fc9448e0b53db83d1e244d555aead4341f823c60333f36e042f35e006bd4c86d6be01bfab94671b6d185586982aa766abb3c35b10a6c12b4536ae2117168bf8e6f301c12219b05f230a6dad22377f1643a149678f477405ecbb0b563a3",
+    "serverPublicKeyHex": "30819b301006072a8648ce3d020106052b81040023038186000400857192daf2205fa6ca4606d95b6b89126f2c87f856f28291bc551616bac323fd5086efa38ed2494c71dfd615ead85c3ce31a84192813a9228d6918a6f83756110301543d3b6ad6e537ed6fcff5bbccbf35b73ba6a6b80b2d801f0a765497a81f3460dec94e7180a5a808838af05c80869533414133679613a3ac7168939ca431bd7452",
+    "username": "v1:2000000000:app:project-1:app-1",
+    "credential": "h/Qmj86kO0KYhye/YP+jjZKovPoohlp51/2Xu8E/Wos="
+  },
+  "pat": {
+    "token": "e30.eyJ0eXBlIjoicGF0IiwiZXhwIjoyMDAwMDAwMDAwLCJ0b2tlbl9lbmRwb2ludCI6InRva2VuLTEiLCJwZXJtaXNzaW9ucyI6WyJ0dXJuLnJlbGF5LmFsbG9jYXRlIl19.sig",
+    "username": "v1:2000000000:pat:project-1:token-1",
+    "credential": "/baPzaMn/oczHGRXEVr7o1D73NRX5NtX1dg1a0XgR4s="
+  }
+}

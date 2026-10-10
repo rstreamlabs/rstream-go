@@ -48,15 +48,15 @@ func TestCreateTURNCredentialsFromEnvUsesPATDerivation(t *testing.T) {
 			Context: &DefaultContext{Name: "prod"},
 		},
 		Environments: []Environment{{
-			APIURL: "https://rstream.io",
+			APIURL: "https://control-plane.invalid",
 			Auth: &Auth{Token: &Token{Storage: &TokenStorage{
 				Kind:  TokenStorageInline,
-				Value: "eyJhbGciOiJIUzI1NiJ9.eyJ0eXBlIjoicGF0IiwidG9rZW5fZW5kcG9pbnQiOiJiOTVmYWY3ZiJ9.sig",
+				Value: "eyJhbGciOiJIUzI1NiJ9.eyJ0eXBlIjoicGF0IiwidG9rZW5fZW5kcG9pbnQiOiJiOTVmYWY3ZiIsImV4cCI6MjAwMDAwMDAwMCwicGVybWlzc2lvbnMiOlsidHVybi5yZWxheS5hbGxvY2F0ZSJdfQ.sig",
 			}}},
 		}},
 		Contexts: []Context{{
 			Name:            "prod",
-			APIURL:          "https://rstream.io",
+			APIURL:          "https://control-plane.invalid",
 			ProjectEndpoint: "abc12345",
 			Engine:          "abc12345.regional.example.rstream.test:443",
 			TURNDomain:      "regional.example.rstream.test",
@@ -105,7 +105,7 @@ func TestCreateTURNCredentialsFromEnvFallsBackToAPIWithoutTURNContext(t *testing
 			Username:   "u",
 			Credential: "c",
 			URLs:       []string{"turn:example.com:3478?transport=udp"},
-			TTL:        86400,
+			TTL:        600,
 		}); err != nil {
 			t.Fatalf("encode response: %v", err)
 		}

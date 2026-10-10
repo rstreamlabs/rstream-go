@@ -109,6 +109,9 @@ func resolveRuntimeRegion(cmd *cobra.Command, cfg config.Config, resolved *confi
 }
 
 func resolveRuntimeRegionContext(ctx context.Context, cfg config.Config, resolved *config.Resolved) error {
+	if resolved.HasMTLS() {
+		return errors.New("region selection requires Control plane metadata; for mTLS, use a context with the explicit regional engine address and no region selector")
+	}
 	if resolved.Context == nil || resolved.Context.ProjectEndpoint == "" {
 		return errors.New("managed project endpoint is required for region selection")
 	}

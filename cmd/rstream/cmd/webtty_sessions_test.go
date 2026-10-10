@@ -459,7 +459,7 @@ func newWebTTYResolveControlTestCommand() *cobra.Command {
 func TestWebTTYParticipantStreamURL(t *testing.T) {
 	engine := "engine.example.com:443"
 	client := &rstream.Client{EngineURL: &engine}
-	got, err := webTTYParticipantStreamURL(client, "session/1", "participant 1")
+	got, err := webTTYParticipantStreamURL(context.Background(), client, "session/1", "participant 1")
 	if err != nil {
 		t.Fatalf("webTTYParticipantStreamURL() error = %v", err)
 	}
@@ -472,7 +472,7 @@ func TestWebTTYParticipantStreamURL(t *testing.T) {
 func TestWebTTYParticipantStreamURLAcceptsScheme(t *testing.T) {
 	engine := "https://engine.example.com"
 	client := &rstream.Client{EngineURL: &engine}
-	got, err := webTTYParticipantStreamURL(client, "session", "participant")
+	got, err := webTTYParticipantStreamURL(context.Background(), client, "session", "participant")
 	if err != nil {
 		t.Fatalf("webTTYParticipantStreamURL() error = %v", err)
 	}
@@ -485,10 +485,10 @@ func TestWebTTYParticipantStreamURLAcceptsScheme(t *testing.T) {
 func TestWebTTYParticipantStreamURLRejectsMissingIDs(t *testing.T) {
 	engine := "https://engine.example.com"
 	client := &rstream.Client{EngineURL: &engine}
-	if _, err := webTTYParticipantStreamURL(client, " ", "participant"); err == nil || !strings.Contains(err.Error(), "session ID") {
+	if _, err := webTTYParticipantStreamURL(context.Background(), client, " ", "participant"); err == nil || !strings.Contains(err.Error(), "session ID") {
 		t.Fatalf("expected session ID error, got %v", err)
 	}
-	if _, err := webTTYParticipantStreamURL(client, "session", " "); err == nil || !strings.Contains(err.Error(), "participant ID") {
+	if _, err := webTTYParticipantStreamURL(context.Background(), client, "session", " "); err == nil || !strings.Contains(err.Error(), "participant ID") {
 		t.Fatalf("expected participant ID error, got %v", err)
 	}
 }
@@ -961,5 +961,18 @@ func TestPrintWebTTYParticipantsTable(t *testing.T) {
 	}
 	if strings.Index(text, "participant-1") > strings.Index(text, "participant-2") {
 		t.Fatalf("participants should be ordered by attach time:\n%s", text)
+	}
+}
+
+func TestWebTTYParticipantStreamURLUsesMTLSAPI(t *testing.T) {
+	client, err := rstream.NewClient(rstream.ClientOptions{Engine: "project.engine.test:443", MTLSAPIURL: "https://project.certificates.test:8443/api", TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{{}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	got, err := webTTYParticipantStreamURL(t.Context(), client, "session/1", "participant 1")
+	want := "wss://project.certificates.test:8443/api/webtty/sessions/session%2F1/participants/participant%201/stream"
+	if err != nil || got != want {
+		t.Fatalf("participant stream=%q err=%v", got, err)
 	}
 }

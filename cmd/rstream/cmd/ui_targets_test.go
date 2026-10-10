@@ -4,6 +4,7 @@ package cmd
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +23,34 @@ import (
 	"github.com/rstreamlabs/rstream-go/controlplane"
 	"github.com/rstreamlabs/rstream-go/webtty"
 )
+
+func TestUIMTLSContextDoesNotUseAmbientControlPlaneCredentials(t *testing.T) {
+	var calls atomic.Int32
+	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	defer control.Close()
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	contextValue := config.Context{Name: "certificate-device", APIURL: control.URL, Engine: "project.engine.test:443", ProjectEndpoint: "project"}
+	cfg := config.Config{Contexts: []config.Context{contextValue}, Environments: []config.Environment{{APIURL: control.URL, Auth: testUIInlineAuth("unrelated-administrator")}}}
+	if err := config.WriteAtomic(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	resolved := config.Resolved{APIURL: control.URL, Context: &contextValue, Engine: contextValue.Engine, TLSClientConfig: &tls.Config{GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+		t.Error("discovery invoked signer")
+		return &tls.Certificate{}, nil
+	}}}
+	runtime := &resolvedRuntime{ConfigPath: path, Config: cfg, Resolved: resolved}
+	discovery := newUIRuntimeResolver(path, uiRuntimeOptions{}).discoverTargets(t.Context(), runtime)
+	if len(discovery.Targets) != 1 || discovery.Targets[0].Context.Name != contextValue.Name || discovery.ProjectError != nil || calls.Load() != 0 {
+		t.Fatalf("certificate context discovery: %+v, Control plane calls %d", discovery, calls.Load())
+	}
+	resolved.Region = "eu-west-3"
+	if err := resolveRuntimeRegionContext(t.Context(), cfg, &resolved); err == nil || !strings.Contains(err.Error(), "explicit regional engine") || calls.Load() != 0 {
+		t.Fatalf("region selector should explain authoritative metadata requirement without using another identity: %v", err)
+	}
+}
 
 func TestUIRuntimeResolverKeepsLocalContextsWithoutControlPlane(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")

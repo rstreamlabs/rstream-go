@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -29,15 +30,24 @@ type TURNCredentials = controlplane.TURNCredentials
 type TURNCredentialMode string
 
 const (
-	TURNCredentialModeAPI TURNCredentialMode = "api"
-	TURNCredentialModePAT TURNCredentialMode = "pat"
+	TURNCredentialModeAuto   TURNCredentialMode = "auto"
+	TURNCredentialModeAPI    TURNCredentialMode = "api"
+	TURNCredentialModeEngine TURNCredentialMode = "engine"
+	TURNCredentialModePAT    TURNCredentialMode = "pat"
+	TURNCredentialModeAPP    TURNCredentialMode = "app"
 )
 
 type CreateTURNCredentialsOptions struct {
-	APIURL          string
-	Token           string
-	ProjectID       string
-	ProjectEndpoint string
+	// Client reuses Engine connections and in-memory discovery across renewals.
+	Client                 *Client
+	APIURL                 string
+	Token                  string
+	ClientID               string
+	ClientSecret           string
+	TURNServerPublicKeyHex string
+	TURNKeyringBaseURL     string
+	ProjectID              string
+	ProjectEndpoint        string
 	// Deprecated: use TURNDomain and TURNRealm when the relay host and authentication realm may differ.
 	ClusterDomain       string
 	TURNDomain          string
@@ -51,14 +61,44 @@ type CreateTURNCredentialsOptions struct {
 }
 
 type turnTokenClaims struct {
-	Type          string `json:"type"`
-	TokenEndpoint string `json:"token_endpoint,omitempty"`
-	ExpiresAt     *int64 `json:"exp,omitempty"`
+	AllPermissions      bool     `json:"-"`
+	Type                string   `json:"type"`
+	TokenEndpoint       string   `json:"token_endpoint,omitempty"`
+	LegacyTokenEndpoint string   `json:"tokendpoint,omitempty"`
+	Permissions         []string `json:"permissions,omitempty"`
+	ExpiresAt           *int64   `json:"exp,omitempty"`
 }
 
 func CreateTURNCredentials(ctx context.Context, opts CreateTURNCredentialsOptions) (*TURNCredentials, error) {
+	if opts.Mode != nil && *opts.Mode == TURNCredentialModeAuto {
+		opts.Mode = nil
+	}
+	if ctx == nil {
+		return nil, errors.New("TURN request context is required")
+	}
+	if err := validateTURNTTL(opts.TTL); err != nil {
+		return nil, err
+	}
+	if opts.Client != nil {
+		return opts.Client.CreateTURNCredentials(ctx, opts)
+	}
 	if err := fipsprofile.Unavailable("TURN support"); err != nil {
 		return nil, err
+	}
+	if hasTURNAppCredentials(opts) {
+		if strings.TrimSpace(opts.Token) != "" {
+			return nil, errors.New("token and APP credentials cannot be used together")
+		}
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if opts.Mode != nil && *opts.Mode == TURNCredentialModeAPP || opts.Mode == nil && turnLocalTargetAvailable(opts) {
+			return createAPPTURNCredentials(ctx, opts)
+		}
+		token, err := createTURNAppToken(opts)
+		if err != nil {
+			return nil, err
+		}
+		opts.Token = token
 	}
 	token := strings.TrimSpace(opts.Token)
 	if token == "" {
@@ -68,7 +108,7 @@ func CreateTURNCredentials(ctx context.Context, opts CreateTURNCredentialsOption
 	if err != nil {
 		return nil, err
 	}
-	if mode == TURNCredentialModeAPI {
+	if mode == TURNCredentialModeAPI || opts.Mode == nil && !turnLocalTargetAvailable(opts) {
 		return createAPITURNCredentials(ctx, opts, token)
 	}
 	return createPATTURNCredentials(opts, token, claims)
@@ -108,13 +148,23 @@ func createAPITURNCredentials(ctx context.Context, opts CreateTURNCredentialsOpt
 	if err != nil {
 		return nil, err
 	}
+	if err := validateTURNCredentials(res); err != nil {
+		return nil, err
+	}
 	return &res, nil
 }
 
 func createPATTURNCredentials(opts CreateTURNCredentialsOptions, token string, claims turnTokenClaims) (*TURNCredentials, error) {
+	return createPATTURNCredentialsAt(opts, token, claims, time.Now())
+}
+
+func createPATTURNCredentialsAt(opts CreateTURNCredentialsOptions, token string, claims turnTokenClaims, now time.Time) (*TURNCredentials, error) {
 	projectEndpoint := strings.TrimSpace(opts.ProjectEndpoint)
 	if projectEndpoint == "" {
 		return nil, errors.New("project endpoint is required for TURN PAT mode")
+	}
+	if !validTURNComponent(projectEndpoint) || opts.TURNPort < 0 || opts.TURNPort > 65535 || opts.TURNSPort < 0 || opts.TURNSPort > 65535 {
+		return nil, errors.New("invalid TURN project or port")
 	}
 	legacyDomain := normalizeTURNClusterDomain(opts.ClusterDomain)
 	turnDomain := normalizeTURNClusterDomain(opts.TURNDomain)
@@ -131,7 +181,9 @@ func createPATTURNCredentials(opts CreateTURNCredentialsOptions, token string, c
 	if turnRealm == "" {
 		return nil, errors.New("TURN realm is required for TURN PAT mode")
 	}
-	now := time.Now()
+	if !validTURNDomain(turnDomain) || !validTURNDomain(turnRealm) {
+		return nil, errors.New("invalid TURN domain or realm")
+	}
 	ttl, err := normalizePATTURNCredentialTTL(opts.TTL, claims, now)
 	if err != nil {
 		return nil, err
@@ -180,9 +232,12 @@ func resolveTURNCredentialMode(token string, requested *TURNCredentialMode) (TUR
 	}
 	claims, err := parseTURNTokenClaims(token)
 	if err != nil {
+		if errors.Is(err, errTURNEndpointConflict) {
+			return "", turnTokenClaims{}, err
+		}
 		return TURNCredentialModeAPI, turnTokenClaims{}, nil
 	}
-	if claims.Type == "pat" && claims.TokenEndpoint != "" {
+	if claims.Type == "pat" && claims.TokenEndpoint != "" && claims.ExpiresAt != nil && (claims.AllPermissions || slices.Contains(claims.Permissions, "turn.relay.allocate")) {
 		return TURNCredentialModePAT, claims, nil
 	}
 	return TURNCredentialModeAPI, claims, nil
@@ -200,6 +255,22 @@ func parseTURNTokenClaims(token string) (turnTokenClaims, error) {
 	var claims turnTokenClaims
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return turnTokenClaims{}, errors.New("invalid token format")
+	}
+	var rawClaims struct {
+		Permissions json.RawMessage `json:"permissions"`
+	}
+	if err := json.Unmarshal(payload, &rawClaims); err != nil {
+		return turnTokenClaims{}, errors.New("invalid token format")
+	}
+	claims.AllPermissions = strings.TrimSpace(string(rawClaims.Permissions)) == "null"
+	if claims.TokenEndpoint != "" && claims.LegacyTokenEndpoint != "" && claims.TokenEndpoint != claims.LegacyTokenEndpoint {
+		return turnTokenClaims{}, errTURNEndpointConflict
+	}
+	if claims.TokenEndpoint == "" {
+		claims.TokenEndpoint = claims.LegacyTokenEndpoint
+	}
+	if claims.TokenEndpoint != "" && !validTURNComponent(claims.TokenEndpoint) {
+		return turnTokenClaims{}, errors.New("invalid TURN token endpoint")
 	}
 	if strings.TrimSpace(claims.Type) == "" {
 		return turnTokenClaims{}, errors.New("invalid token format")
@@ -224,11 +295,11 @@ func normalizeTURNCredentialTTL(ttl time.Duration) time.Duration {
 func normalizePATTURNCredentialTTL(ttl time.Duration, claims turnTokenClaims, now time.Time) (time.Duration, error) {
 	ttl = normalizeTURNCredentialTTL(ttl)
 	if claims.ExpiresAt == nil {
-		return ttl, nil
+		return 0, errors.New("TURN PAT mode requires an expiring PAT token")
 	}
 	remaining := time.Until(time.Unix(*claims.ExpiresAt, 0))
 	if !now.IsZero() {
-		remaining = time.Unix(*claims.ExpiresAt, 0).Sub(now)
+		remaining = time.Duration(*claims.ExpiresAt-now.Unix()) * time.Second
 	}
 	if remaining <= 0 {
 		return 0, errors.New("PAT token is expired")

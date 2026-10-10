@@ -20,3 +20,5 @@ Read these documents in order:
 - [External mTLS signers](012-external-mtls-signer.md): shared configuration, CLI setup, protocol v1, lifecycle, and provider integration.
 
 - [Go diagnostic API](013-doctor-api.md): reuse `doctor` diagnostics, structured results and cancellation inside Go applications.
+
+- [Engine HTTP mTLS and TURN](014-engine-mtls-turn.md): discovery, HTTP/3, credential renewal and CLI impact.

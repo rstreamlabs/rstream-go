@@ -81,10 +81,11 @@ func runFiles(cmd *cobra.Command, args []string) error {
 	if password == "" && cmd.Flags().Changed("username") {
 		return fmt.Errorf("--username requires --password or --password-file")
 	}
-	rtcConfig, err := filesystemRTCConfig(cmd, serviceConfig.Backend)
+	rtcConfig, closeRTC, err := filesystemRTCConfig(cmd, serviceConfig.Backend)
 	if err != nil {
 		return err
 	}
+	defer closeRTC()
 	props := &rstream.TunnelProperties{
 		Type:        rstream.TunnelTypePtr(rstream.TunnelTypeBytestream),
 		Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),

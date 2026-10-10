@@ -25,6 +25,15 @@ var (
 	ErrUnauthorized     = errors.New("not authenticated")
 )
 
+// APIError preserves the HTTP status and the existing authentication sentinels.
+type APIError struct {
+	StatusCode int
+	Err        error
+}
+
+func (e *APIError) Error() string { return e.Err.Error() }
+func (e *APIError) Unwrap() error { return e.Err }
+
 type apiErrorResponse struct {
 	Error string `json:"error"`
 }
@@ -763,6 +772,16 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 	}
 	defer resp.Body.Close()
 	responseBody := bufio.NewReader(resp.Body)
+	if strings.HasSuffix(path, "/turn-server/credentials") {
+		payload, readErr := io.ReadAll(io.LimitReader(responseBody, 16385))
+		if readErr != nil {
+			return resp.StatusCode, readErr
+		}
+		if len(payload) > 16384 {
+			return resp.StatusCode, errors.New("TURN response is too large")
+		}
+		responseBody = bufio.NewReader(bytes.NewReader(payload))
+	}
 	if (resp.StatusCode < 300 || resp.StatusCode >= 400) && controlPlaneResponseIsHTML(resp.Header.Get("Content-Type"), responseBody) {
 		return resp.StatusCode, ErrAccessProtection
 	}
@@ -770,13 +789,13 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 		payload, _ := io.ReadAll(responseBody)
 		message := controlPlaneErrorMessage(resp.Status, payload)
 		if resp.StatusCode == http.StatusUnauthorized {
-			return resp.StatusCode, fmt.Errorf("%w: %s", ErrUnauthorized, message)
+			return resp.StatusCode, &APIError{StatusCode: resp.StatusCode, Err: fmt.Errorf("%w: %s", ErrUnauthorized, message)}
 		}
 		if resp.StatusCode == http.StatusForbidden {
-			return resp.StatusCode, fmt.Errorf("%w: %s", ErrForbidden, message)
+			return resp.StatusCode, &APIError{StatusCode: resp.StatusCode, Err: fmt.Errorf("%w: %s", ErrForbidden, message)}
 		}
 		c.logger.Debug("control-plane response", "status", resp.StatusCode, "statusText", resp.Status)
-		return resp.StatusCode, errors.New(message)
+		return resp.StatusCode, &APIError{StatusCode: resp.StatusCode, Err: errors.New(message)}
 	}
 	c.logger.Debug("control-plane response", "status", resp.StatusCode)
 	if out == nil {
@@ -785,6 +804,9 @@ func (c *Client) doJSONBody(ctx context.Context, method, path string, query url.
 	dec := json.NewDecoder(responseBody)
 	if err := dec.Decode(out); err != nil {
 		return resp.StatusCode, err
+	}
+	if strings.HasSuffix(path, "/turn-server/credentials") && dec.Decode(new(any)) != io.EOF {
+		return resp.StatusCode, errors.New("invalid trailing TURN response data")
 	}
 	return resp.StatusCode, nil
 }

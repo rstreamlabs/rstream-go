@@ -25,22 +25,27 @@ import (
 )
 
 type Client struct {
-	Transport       Dialer
-	TLSClientConfig *tls.Config
-	EngineURL       *string
-	Token           *string
-	NoToken         *bool
-	ZeroRTT         *bool
-	transportMu     sync.Mutex
-	apiMu           sync.Mutex
-	apiTransport    *http.Transport
-	closeOnce       sync.Once
-	closeErr        error
-	closed          atomic.Bool
-	ownsTransport   bool
-	dialMu          sync.Mutex
-	dialCancels     map[uint64]context.CancelFunc
-	nextDialID      uint64
+	Transport          Dialer
+	TLSClientConfig    *tls.Config
+	EngineURL          *string
+	MTLSAPIURL         string
+	Token              *string
+	NoToken            *bool
+	ZeroRTT            *bool
+	transportMu        sync.Mutex
+	apiMu              sync.Mutex
+	apiTransport       *http.Transport
+	discoveryTransport *http.Transport
+	apiDiscovery       engineAPIDiscovery
+	apiHTTP3           *apiHTTP3Transport
+	discoveryHTTP3     *apiHTTP3Transport
+	closeOnce          sync.Once
+	closeErr           error
+	closed             atomic.Bool
+	ownsTransport      bool
+	dialMu             sync.Mutex
+	dialCancels        map[uint64]context.CancelFunc
+	nextDialID         uint64
 }
 
 type Config struct {
@@ -98,14 +103,14 @@ func (c *Client) getClientDetails(engine *string, token *string) (*ClientDetails
 		}
 	}
 	if token == nil {
-		if c.Token != nil && tlsConfigHasClientCertificate(c.TLSClientConfig) {
+		if c.Token != nil && *c.Token != "" && tlsConfigHasClientCertificate(c.TLSClientConfig) {
 			return nil, errors.New("token and mTLS authentication cannot be used together")
 		}
 		noToken := c.NoToken
 		if noToken == nil {
 			noToken = BoolPtr(false)
 		}
-		if !*noToken {
+		if !*noToken && !tlsConfigHasClientCertificate(c.TLSClientConfig) {
 			if c.Token != nil {
 				token = c.Token
 			} else {
@@ -167,7 +172,7 @@ func (c *Client) DialEngineHTTP1(ctx context.Context, addr string) (net.Conn, er
 		return nil, errors.New("engine address is required")
 	}
 	nextProtos := []string{"http/1.1"}
-	return c.dialEngineWithTransport(ctx, &addr, &nextProtos, c.apiDialer())
+	return c.dialEngineWithTransportConfig(ctx, &addr, &nextProtos, c.apiDialer(), c.apiTLSConfig(addr))
 }
 
 func (c *Client) dialEngineWithTransport(ctx context.Context, engine *string, nextProtos *[]string, override Dialer) (net.Conn, error) {
@@ -259,12 +264,13 @@ func (c *Client) Close() error {
 			cancel()
 		}
 		c.CloseIdleConnections()
+		c.closeErr = c.closeAPIHTTP3Transports()
 		c.transportMu.Lock()
 		transport := c.Transport
 		owned := c.ownsTransport
 		c.transportMu.Unlock()
 		if closer, ok := transport.(io.Closer); owned && ok {
-			c.closeErr = closer.Close()
+			c.closeErr = errors.Join(c.closeErr, closer.Close())
 		}
 	})
 	return c.closeErr
