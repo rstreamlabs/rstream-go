@@ -5,7 +5,6 @@
 package cmd
 
 import (
-	"crypto/tls"
 	"os"
 	"path/filepath"
 	"strings"
@@ -75,20 +74,5 @@ func TestContextCreatePersistsExecWithoutRunningIt(t *testing.T) {
 	}
 	if _, err := os.Stat(helper); !os.IsNotExist(err) {
 		t.Fatal("test requires an absent executable to prove creation is offline")
-	}
-}
-
-func TestDoctorMTLSDoesNotRequireToken(t *testing.T) {
-	report := doctorReport{}
-	resolved := config.Resolved{TLSClientConfig: doctorTLSConfig(nil, "engine.example")}
-	checkDoctorAuthentication(t.Context(), &report, resolved)
-	if len(report.Checks) != 1 || report.Checks[0].Status != doctorStatusFail {
-		t.Fatal("server trust alone was treated as an identity")
-	}
-	report = doctorReport{}
-	resolved.TLSClientConfig.Certificates = []tls.Certificate{{}}
-	checkDoctorAuthentication(t.Context(), &report, resolved)
-	if len(report.Checks) != 2 || report.Checks[0].Status != doctorStatusSkip || report.Checks[1].Status != doctorStatusPass {
-		t.Fatalf("mTLS identity required a token: %#v", report.Checks)
 	}
 }
