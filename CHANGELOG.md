@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.34.0](https://github.com/rstreamlabs/rstream-go/compare/v1.33.1...v1.34.0) (2026-10-10)
+
+
+### Features
+
+* **doctor:** expose reusable Go diagnostic API ([#149](https://github.com/rstreamlabs/rstream-go/issues/149)) ([1452575](https://github.com/rstreamlabs/rstream-go/commit/1452575d3fcef4fe30a2b76d53504eb85ded17bf))
+* **files:** add writable WebDAV and optional browser UI ([#147](https://github.com/rstreamlabs/rstream-go/issues/147)) ([b6e4d65](https://github.com/rstreamlabs/rstream-go/commit/b6e4d6518327a12a0dc9ca86557d45970b2e7ad3))
+* support Engine mTLS API discovery and managed TURN renewal ([e5c425e](https://github.com/rstreamlabs/rstream-go/commit/e5c425eea71fcb61dc2effb1b2d058b78973e036))
+* support Engine mTLS API discovery and managed TURN renewal ([4697cef](https://github.com/rstreamlabs/rstream-go/commit/4697cefa5343e76e4bae8943d18ccfe18a688b79))
+
+
+### Bug Fixes
+
+* **ci:** use configured token for release certification ([a289395](https://github.com/rstreamlabs/rstream-go/commit/a289395f71b91180a0081be0bf45b102a750fdc0))
+* **ci:** use configured token for release certification ([99b66a9](https://github.com/rstreamlabs/rstream-go/commit/99b66a9e989743ea9bdc1a9ac6ff8adde6f15bda))
+* use patched Go and HTTP dependencies for the release ([818be8a](https://github.com/rstreamlabs/rstream-go/commit/818be8ac11922bb08e8ed211cedc9c88603324da))
+
 ## [1.33.1](https://github.com/rstreamlabs/rstream-go/compare/v1.33.0...v1.33.1) (2026-10-10)
 
 
