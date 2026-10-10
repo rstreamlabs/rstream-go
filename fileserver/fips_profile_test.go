@@ -10,9 +10,13 @@ import (
 )
 
 func TestFIPSProfileRejectsFileSharingBackends(t *testing.T) {
-	for _, backend := range []string{"webdav", "webrtc"} {
+	for _, backend := range []string{"webdav", "webrtc", "webdav-write"} {
 		t.Run(backend, func(t *testing.T) {
-			server, err := New(Config{Root: t.TempDir(), Backend: backend})
+			cfg := Config{Root: t.TempDir(), Backend: backend}
+			if backend == "webdav-write" {
+				cfg.Backend, cfg.ReadWrite = "webdav", true
+			}
+			server, err := New(cfg)
 			if server != nil {
 				defer server.Close()
 			}

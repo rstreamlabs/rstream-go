@@ -1,6 +1,6 @@
 # File sharing
 
-`rstream files [path]` publishes a file or directory through one HTTPS tunnel. The path defaults to the current directory. It runs an embedded, read-only HTTP service directly on the tunnel listener; there is no Python process, local port, Node runtime, or runtime asset download.
+`rstream files [path]` publishes a file or directory through one HTTPS tunnel. The path defaults to the current directory. It runs an embedded HTTP service, read-only by default, directly on the tunnel listener; there is no Python process, local port, Node runtime, or runtime asset download.
 
 ```sh
 rstream files ./exports
@@ -18,6 +18,9 @@ File sharing is unavailable in the restricted FIPS build for both WebDAV and Web
 | Option | Behavior |
 | --- | --- |
 | `--backend webdav\|webrtc` | Select WebDAV (default) or read-only WebRTC using the current rstream project’s STUN/TURN. |
+| `--read-write` | Enable WebDAV uploads, replacement, directory creation, copy, move and deletion. Default: disabled. Rejected with WebRTC. |
+| `--max-upload-size <bytes>` | Per-request upload limit; requires `--read-write`. Default: 67108864 (64 MiB); must be greater than zero. |
+| `--no-ui` | Return 404 for the embedded page while keeping transfer, archive and discovery endpoints available. Works with both backends. |
 | `--include-hidden` | Include dotfiles and dot-directories; excluded by default for directory shares. |
 | `--exclude <glob>` | Repeatable, case-insensitive Go `path.Match` glob. Without `/`, matches basenames at any depth; with `/`, matches root-relative paths. Matching directories exclude descendants. `**` has no special recursive meaning. |
 | `--password` | Prompt without echo for a local HTTP Basic password. |
@@ -26,10 +29,10 @@ File sharing is unavailable in the restricted FIPS build for both WebDAV and Web
 | `--rstream-auth` | Request edge account authentication (Pro/Enterprise). |
 | `--token-auth` | Request edge token authentication, including on Basic; intended for authenticated HTTP/WebDAV clients. |
 | `--host`, `--name`, `--label` | Existing published tunnel domain/name/labels. |
-| `--output`, `-o` | `text`, `json`, `xterm`, `none`. JSON status contains `files` metadata and the normal forwarding URL. |
+| `--output`, `-o` | `text`, `json`, `xterm`, `none`. JSON status contains `files` metadata and the normal forwarding URL. `none` hides terminal output only; it does not disable the web page. |
 | `--retry`, `--no-retry`, `--retry-interval` | Existing reconnection controls; interval in milliseconds, default 5000. |
 
-Global configuration, context, region, transport and logging options continue to apply. A directly selected regular file explicitly shares that file, including a dotfile; hidden filters apply to directory shares. Explicit exclusions also apply to single-file shares; selecting an excluded file is an error. Its siblings are never listed or downloadable.
+Global configuration, context, region, transport and logging options continue to apply, including mTLS with an external signer. `files` is an imperative command: the shared context YAML supplies connection/authentication settings, but there is no declarative `files` YAML resource or Docker-label equivalent. A directly selected regular file explicitly shares that file, including a dotfile; hidden filters apply to directory shares. Explicit exclusions also apply to single-file shares; selecting an excluded file is an error. Its siblings are never listed or downloadable.
 
 ## Authentication
 
@@ -50,15 +53,32 @@ rstream webtty fs --url rstrm://exports download /report.csv ./report.csv
 
 The CLI resolves a WebTTY or HTTP tunnel through Engine inventory, then dials it privately even when it has a published URL. It discovers WebDAV or WebRTC over that connection. For a token restricted to stream access, add `--no-discovery` and supply the exact tunnel id or name; `--fs-path` selects a path other than `/fs`. This explicit path does not require inventory or control-plane access. Server authentication and read-only policy still apply.
 
-Local MCP filesystem tools accept the same `rstrm://` target and use private dialing without inventory discovery. Supply the advertised `fs_path` when it differs from `/fs`. Both surfaces retain the standalone share's read-only policy.
+Local MCP filesystem tools accept the same `rstrm://` target and use private dialing without inventory discovery. Supply the advertised `fs_path` when it differs from `/fs`. Both surfaces enforce the standalone share's configured write policy. Existing `webtty fs upload` and MCP write operations work when `--read-write` is enabled.
+
+## Read-write service without a web page
+
+```sh
+rstream files ./maintenance --read-write --no-ui --token-auth --host maintenance.example.com --name maintenance --max-upload-size 134217728
+rstream webtty fs --url rstrm://maintenance upload ./update.bin /update.bin
+```
+
+Use the tunnel's exact name or id with the filesystem client. The shared root must already exist. Read-only remains the default; `--read-write` is explicitly rejected with `--backend webrtc`. `--no-ui` is independent of terminal output, authentication and write access. Reconnection retains all these options and the existing filesystem service.
+
+Go embedders can use `fileserver.Config{Root: "./maintenance", ReadWrite: true, MaxUploadSize: 134217728}` with `fileserver.New`. A zero-valued `ReadWrite` stays read-only; omitting `UI` exposes only the API. `Config.Validate` checks transfer options without filesystem or network access.
+
+The browser UI still only browses and downloads, even on a writable share. Uploads and other mutations are available through WebDAV clients, the filesystem CLI and MCP. With public access, any client that can reach the share can use its enabled write operations. Authentication protects the same endpoints in either mode.
+
+Uploads are streamed directly to the destination, with bounded memory. The 64 MiB default limit can be increased with `--max-upload-size`; it limits each request body, not total disk usage or server-side copies. Both known-length and chunked oversized bodies return HTTP 413. An oversized announced length is rejected before opening the destination. A size violation detected while streaming, interrupted connection or disk error can leave a partial file and can truncate an existing file. Uploads are not atomic or resumable: retry the entire PUT. Partial PUT requests with `Content-Range` are rejected with HTTP 400 before modifying the file. For replacement workflows, upload under a temporary **visible, non-excluded** name and MOVE it into place only after success; clean up failed temporary uploads. HTTP `Range`/`If-Range` and the `resume` capability describe downloads only. ZIP downloads must still restart after interruption.
+
+The process needs OS permissions for the requested operation. Hidden paths and exclusions apply to writes as well as reads, including symlink targets. Removing, moving or replacing a directory that contains filtered children is rejected. Filtered subtree checks examine at most 10,000 entries and 64 levels; larger mutations must be split. A selected single-file share permits changes only to that file, never its siblings. Capabilities advertise enabled protocol operations; they do not override OS permissions or filters.
 
 ## HTTP and backend contract
 
 | Path | Contract |
 | --- | --- |
-| `/` | Embedded UI with same-origin assets and requests, no CDN. |
-| `/_rstream/files/v1/info` | GET/HEAD metadata: version, name (no absolute path), kind, backend, `fs_path`, optional `archive_path`, effective access, capabilities. Version is 1. |
-| `/fs/…` | WebDAV OPTIONS, PROPFIND Depth 0/1, GET and HEAD. Every write method is forbidden. |
+| `/` | Embedded UI with same-origin assets and requests, no CDN; 404 with `--no-ui`. |
+| `/_rstream/files/v1/info` | GET/HEAD metadata: version, name (no absolute path), kind, backend, `fs_path`, optional `archive_path`, effective access, capabilities, and `max_upload_size_bytes` when writable. `capabilities.write` reflects `--read-write`; `resume` means download resume. Version remains 1. |
+| `/fs/…` | WebDAV OPTIONS, PROPFIND Depth 0/1, GET and HEAD; writes are forbidden by default. `--read-write` enables WebDAV mutation methods including PUT, MKCOL, COPY, MOVE and DELETE. |
 | `/_rstream/files/v1/archive?path=/folder` | GET/HEAD streamed directory ZIP; identical exposure rules. |
 
 Paths passed to the JS backend are decoded logical paths; encode each URL segment once. Individual downloads support Range, ETag, Last-Modified and conditional requests. Use `curl -C - -o backup.tar.zst 'https://<share>/fs/backup.tar.zst'` to resume; use validators such as `If-Range` when the source may have changed. Downloads use attachment disposition and do not render shared HTML/SVG as trusted UI.
@@ -83,6 +103,6 @@ Commit HTML, gzip and manifest together. The manifest pins the contract version,
 
 ## Verification
 
-Run `go test ./...`, `go test -race ./...`, `go vet ./...`. Filesystem tests cover encoded names, exclusions, readonly methods, single files, concurrent symlink replacement, ranges, cancellation and a streamed sparse file over 4 GiB. Server tests cover auth on all surfaces, metadata, ZIP and concurrency. CLI tests cover password input, effective policy and handler shutdown. UI tests check gzip, integrity, CSP and negotiation. Run native filesystem tests on Linux/macOS/Windows in release CI; cross-compilation alone does not qualify native behavior.
+Run `go test ./...`, `go test -race ./...`, `go vet ./...`. Filesystem tests cover encoded names, exclusions, readonly methods, single files, concurrent symlink replacement, ranges, cancellation and a streamed sparse file over 4 GiB. Server tests cover auth on all surfaces, write capabilities, optional UI, upload limits, interrupted uploads, OS permissions, ZIP and concurrency. CLI tests cover password input, option validation, write-mode status, effective policy, CLI/MCP writes and handler shutdown. UI tests check gzip, integrity, CSP and negotiation. Run native filesystem tests on Linux/macOS/Windows in release CI; cross-compilation alone does not qualify native behavior.
 
 No Engine or Operator protocol/schema changes are needed. This is an imperative foreground share; it does not add a declarative filesystem resource or an MCP-specific share tool.

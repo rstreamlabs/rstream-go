@@ -27,7 +27,7 @@ import (
 func newFilesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		GroupID: "common", Use: "files [path]", Short: "Share a file or directory through an HTTPS tunnel",
-		Long:    "Share a file or directory in read-only mode. The default path is the current directory. Hidden files are excluded unless explicitly included. Access is public unless authentication is selected or required by the project.",
+		Long:    "Share a file or directory in read-only mode by default. Use --read-write to enable WebDAV writes and --no-ui to serve only transfer endpoints. The default path is the current directory. Hidden files are excluded unless explicitly included. Access is public unless authentication is selected or required by the project.",
 		Example: "  rstream files ./exports\n  rstream files ./backup.tar.zst --password\n  rstream files ./exports --rstream-auth",
 		Args:    cobra.MaximumNArgs(1), SilenceUsage: true, RunE: runFiles,
 	}
@@ -36,7 +36,10 @@ func newFilesCmd() *cobra.Command {
 	cmd.Flags().String("name", "", "tunnel name")
 	cmd.Flags().String("host", "", "Stable domain for publishing")
 	cmd.Flags().StringArray("label", nil, "set tunnel labels (key=value)")
-	cmd.Flags().String("backend", filesystem.BackendWebDAV, "file transfer backend (webdav, webrtc; both read-only)")
+	cmd.Flags().String("backend", filesystem.BackendWebDAV, "file transfer backend (webdav, webrtc; WebRTC is read-only)")
+	cmd.Flags().Bool("read-write", false, "allow WebDAV uploads and filesystem changes")
+	cmd.Flags().Int64("max-upload-size", fileserver.DefaultMaxUploadSize, "maximum WebDAV upload size in bytes (requires --read-write)")
+	cmd.Flags().Bool("no-ui", false, "disable the embedded web page; keep transfer and discovery endpoints")
 	cmd.Flags().Bool("include-hidden", false, "include hidden files and directories")
 	cmd.Flags().StringArray("exclude", nil, "exclude a basename or root-relative glob (repeatable)")
 	cmd.Flags().Bool("password", false, "prompt for an HTTP Basic password")
@@ -63,6 +66,10 @@ func runFiles(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	serviceConfig, err := filesConfig(cmd, root)
+	if err != nil {
+		return err
+	}
 	username, _ := cmd.Flags().GetString("username")
 	if strings.ContainsAny(username, ":\r\n") || username == "" {
 		return fmt.Errorf("--username must be nonempty and contain no colon or newline")
@@ -74,13 +81,7 @@ func runFiles(cmd *cobra.Command, args []string) error {
 	if password == "" && cmd.Flags().Changed("username") {
 		return fmt.Errorf("--username requires --password or --password-file")
 	}
-	hidden, _ := cmd.Flags().GetBool("include-hidden")
-	exclude, _ := cmd.Flags().GetStringArray("exclude")
-	backend, _ := cmd.Flags().GetString("backend")
-	if _, err := filesystem.ResolveBackend(backend); err != nil {
-		return err
-	}
-	rtcConfig, err := filesystemRTCConfig(cmd, backend)
+	rtcConfig, err := filesystemRTCConfig(cmd, serviceConfig.Backend)
 	if err != nil {
 		return err
 	}
@@ -105,7 +106,12 @@ func runFiles(cmd *cobra.Command, args []string) error {
 	if ui, ok := s.UI.(interface{ SetFilesMode() }); ok {
 		ui.SetFilesMode()
 	}
-	service, err := fileserver.New(fileserver.Config{Root: root, Backend: backend, RTC: rtcConfig, IncludeHidden: hidden, Exclude: exclude, Username: username, Password: password, UI: filesui.Handler(), Logger: s.Logger, OnActivity: s.addFileActivity})
+	serviceConfig.RTC = rtcConfig
+	serviceConfig.Username = username
+	serviceConfig.Password = password
+	serviceConfig.Logger = s.Logger
+	serviceConfig.OnActivity = s.addFileActivity
+	service, err := fileserver.New(serviceConfig)
 	if err != nil {
 		return err
 	}
@@ -115,6 +121,24 @@ func runFiles(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return nil
+}
+
+func filesConfig(cmd *cobra.Command, root string) (fileserver.Config, error) {
+	cfg := fileserver.Config{Root: root}
+	cfg.Backend, _ = cmd.Flags().GetString("backend")
+	cfg.ReadWrite, _ = cmd.Flags().GetBool("read-write")
+	cfg.IncludeHidden, _ = cmd.Flags().GetBool("include-hidden")
+	cfg.Exclude, _ = cmd.Flags().GetStringArray("exclude")
+	if cfg.ReadWrite || cmd.Flags().Changed("max-upload-size") {
+		cfg.MaxUploadSize, _ = cmd.Flags().GetInt64("max-upload-size")
+		if cfg.MaxUploadSize <= 0 {
+			return cfg, fmt.Errorf("--max-upload-size must be greater than zero")
+		}
+	}
+	if noUI, _ := cmd.Flags().GetBool("no-ui"); !noUI {
+		cfg.UI = filesui.Handler()
+	}
+	return cfg, cfg.Validate()
 }
 
 func filesPassword(cmd *cobra.Command, username string) (string, error) {
@@ -183,10 +207,11 @@ func (s *forwardCtx) serveLocalHTTP(ctx context.Context, tunnel rstream.Tunnel, 
 	status.Status = rstream.StringPtr("online")
 	status.TunnelID = props.ID
 	status.Forwarding = &address
-	description := s.LocalHTTP.Root + " (read-only; " + access + ")"
+	mode := filesMode(&info)
 	if access == "public" {
-		description = s.LocalHTTP.Root + " (read-only; public access without authentication)"
+		access = "public access without authentication"
 	}
+	description := s.LocalHTTP.Root + " (" + mode + "; " + access + ")"
 	status.Forwarded = &description
 	s.setStatus(status)
 	return serveFilesHTTP(ctx, listener, s.LocalHTTP.Server)
@@ -254,4 +279,11 @@ func serveFilesHTTP(ctx context.Context, listener net.Listener, handler http.Han
 		return ctx.Err()
 	}
 	return err
+}
+
+func filesMode(info *fileserver.Info) string {
+	if info.Capabilities.Write {
+		return "read-write"
+	}
+	return "read-only"
 }

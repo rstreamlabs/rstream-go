@@ -5,6 +5,7 @@ package filesystem
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"mime"
 	"net/http"
@@ -51,6 +52,10 @@ func NewWebDAV(local *Local, cfg WebDAVConfig) (http.Handler, error) {
 			http.Error(w, "Filesystem is read-only", http.StatusForbidden)
 			return
 		}
+		if r.Method == http.MethodPut && r.Header.Get("Content-Range") != "" {
+			http.Error(w, "Partial uploads are not supported; retry the complete PUT", http.StatusBadRequest)
+			return
+		}
 		if cfg.ReadOnly && r.Method == http.MethodOptions {
 			w.Header().Set("Allow", "OPTIONS, GET, HEAD, PROPFIND")
 			w.Header().Set("DAV", "1")
@@ -77,7 +82,9 @@ func NewWebDAV(local *Local, cfg WebDAVConfig) (http.Handler, error) {
 				http.Error(w, "Upload exceeds the size limit", http.StatusRequestEntityTooLarge)
 				return
 			}
-			r.Body = http.MaxBytesReader(w, r.Body, cfg.MaxUploadSize)
+			limited := &uploadLimit{ResponseWriter: w, body: http.MaxBytesReader(w, r.Body, cfg.MaxUploadSize)}
+			r.Body = limited
+			w = limited
 		}
 		if cfg.Download && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 			w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(r.URL.Path)}))
@@ -89,4 +96,39 @@ func NewWebDAV(local *Local, cfg WebDAVConfig) (http.Handler, error) {
 
 func readMethod(method string) bool {
 	return method == http.MethodGet || method == http.MethodHead || method == http.MethodOptions || method == "PROPFIND"
+}
+
+// WebDAV otherwise turns streaming body-limit errors into HTTP 405.
+type uploadLimit struct {
+	http.ResponseWriter
+	body     io.ReadCloser
+	exceeded bool
+}
+
+func (l *uploadLimit) Read(p []byte) (int, error) {
+	n, err := l.body.Read(p)
+	var limit *http.MaxBytesError
+	if errors.As(err, &limit) {
+		l.exceeded = true
+	}
+	return n, err
+}
+
+func (l *uploadLimit) Close() error { return l.body.Close() }
+
+func (l *uploadLimit) Unwrap() http.ResponseWriter { return l.ResponseWriter }
+
+func (l *uploadLimit) WriteHeader(status int) {
+	if l.exceeded {
+		status = http.StatusRequestEntityTooLarge
+	}
+	l.ResponseWriter.WriteHeader(status)
+}
+
+func (l *uploadLimit) Write(p []byte) (int, error) {
+	if l.exceeded {
+		_, err := io.WriteString(l.ResponseWriter, "Upload exceeds the size limit\n")
+		return len(p), err
+	}
+	return l.ResponseWriter.Write(p)
 }

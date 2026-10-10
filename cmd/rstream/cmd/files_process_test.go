@@ -158,8 +158,11 @@ func assertFilesystemDownload(t *testing.T, path string, payload []byte) {
 
 func TestFilesystemCLIAndMCPBackendMatrix(t *testing.T) {
 	clearRstreamTestEnv(t)
-	for _, mode := range []string{"files", "webtty"} {
+	for _, mode := range []string{"files", "files-write", "webtty"} {
 		for _, backend := range []string{"webdav", "webrtc"} {
+			if mode == "files-write" && backend == "webrtc" {
+				continue
+			}
 			t.Run(mode+"/"+backend, func(t *testing.T) {
 				root := t.TempDir()
 				payload := bytes.Repeat([]byte("file-transfer\x00\xff"), 120000)
@@ -171,8 +174,8 @@ func TestFilesystemCLIAndMCPBackendMatrix(t *testing.T) {
 					t.Fatal(err)
 				}
 				var handler http.Handler
-				if mode == "files" {
-					service, err := fileserver.New(fileserver.Config{Root: root, Backend: backend})
+				if mode == "files" || mode == "files-write" {
+					service, err := fileserver.New(fileserver.Config{Root: root, Backend: backend, ReadWrite: mode == "files-write"})
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -207,7 +210,7 @@ func TestFilesystemCLIAndMCPBackendMatrix(t *testing.T) {
 				}))
 				defer server.Close()
 				url := server.URL + "?rstream.token=fixture-reader"
-				writable := mode == "webtty" && backend == "webdav"
+				writable := mode != "files" && backend == "webdav"
 				t.Run("CLI", func(t *testing.T) {
 					destination := filepath.Join(t.TempDir(), name)
 					command := filesystemProcess(t, "webtty", "fs", "--url", url, "download", "/"+name, destination)

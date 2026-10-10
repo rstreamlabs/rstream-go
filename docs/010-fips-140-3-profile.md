@@ -81,7 +81,7 @@ The current phase excludes:
 
 | Operation | Standard build | FIPS build |
 | --- | --- | --- |
-| `rstream files --backend webdav` (default) | Read-only sharing with UI, downloads and ZIP | Rejected |
+| `rstream files --backend webdav` (default) | Read-only by default; optional WebDAV writes and UI, downloads and ZIP | Rejected |
 | `rstream files --backend webrtc` | Read-only transfers with rstream STUN/TURN | Rejected; DTLS and TURN are outside the profile |
 | WebTTY filesystem, WebDAV | Supported with WebSocket terminal transport and terminal E2E disabled | Rejected |
 | WebTTY filesystem, WebRTC | Read-only with WebSocket terminal transport and terminal E2E disabled | Rejected |

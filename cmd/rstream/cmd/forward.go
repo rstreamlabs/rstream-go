@@ -758,7 +758,7 @@ func (s *forwardCtx) renderStatusText(st forwardStatus) {
 		if st.Files.Username != "" {
 			lines = append(lines, kv{"username", st.Files.Username})
 		}
-		lines = append(lines, kv{"mode", "read-only"})
+		lines = append(lines, kv{"mode", filesMode(st.Files)})
 	}
 	maxw := 0
 	for _, kv := range lines {
