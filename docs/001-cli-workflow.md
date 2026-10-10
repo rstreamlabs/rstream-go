@@ -358,6 +358,8 @@ For local MCP servers running on devices or robots, pass `mcp_path=/mcp` to `rst
 
 Run `rstream doctor -o json` after setup changes or when troubleshooting. It checks local config, selected context, token claims, Control plane API authentication, project resolution, engine address, DNS, TLS and QUIC reachability, automatic transport selection, engine clients, and engine tunnels without printing token values.
 
+Go applications can call the shared [`doctor.Run` API](013-doctor-api.md) directly. The CLI retains configuration loading and presentation; diagnostics and their result types live in the public `doctor` package.
+
 ## Logout
 
 Logout deletes locally stored authentication material for the current rstream environment.
