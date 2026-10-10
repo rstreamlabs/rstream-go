@@ -5,6 +5,8 @@
 
 ### Bug Fixes
 
+* **webtty:** support custom hostnames with `--host` / `server.host`, retain them across reconnects, and select the filesystem backend with YAML `filesystem.backend` ([#141](https://github.com/rstreamlabs/rstream-go/pull/141))
+* **cli:** share strict configuration validation across CLI, YAML and Docker labels; preserve explicit overrides, align TLS options and IPv6 targets, and validate effective FIPS settings ([#141](https://github.com/rstreamlabs/rstream-go/pull/141))
 * **ci:** keep regression checks aligned with CLI validation ([#142](https://github.com/rstreamlabs/rstream-go/issues/142)) ([72216e9](https://github.com/rstreamlabs/rstream-go/commit/72216e925ff5211940e9b48e73929ae917909ec6))
 
 ## [1.33.0](https://github.com/rstreamlabs/rstream-go/compare/v1.32.10...v1.33.0) (2026-10-09)
