@@ -4,6 +4,8 @@
 // It iterates upstream variants (h1, h2c, h3), makes a GET /ping request to the
 // server over the corresponding rstream tunnel, and reports PASS or FAIL.
 
+//lint:file-ignore SA1019 Keep explicit x/net HTTP/2 fixtures for h2c and extended CONNECT compatibility.
+
 package main
 
 import (

@@ -8,6 +8,8 @@
 // Run: GODEBUG=http2xconnect=1 go run .
 // Client: use examples/http-ws-h1-client with -publish -tunnel ws-h2c-example.
 
+//lint:file-ignore SA1019 Keep explicit x/net HTTP/2 fixtures for h2c and extended CONNECT compatibility.
+
 package main
 
 import (

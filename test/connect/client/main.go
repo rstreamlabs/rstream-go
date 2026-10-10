@@ -3,6 +3,8 @@
 // connect-runtime-client opens a plain HTTP CONNECT tunnel through a published
 // rstream HTTP tunnel and verifies a bidirectional TCP echo exchange.
 
+//lint:file-ignore SA1019 Keep explicit x/net HTTP/2 fixtures for h2c and extended CONNECT compatibility.
+
 package main
 
 import (

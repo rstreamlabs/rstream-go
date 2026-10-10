@@ -75,7 +75,7 @@ jobs:
       - name: Vet
         run: go vet ./...
       - name: Install staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
+        run: go -C .github/tools install honnef.co/go/tools/cmd/staticcheck
       - name: Staticcheck
         run: staticcheck ./...
       - name: Build runtime test binaries
@@ -129,7 +129,7 @@ jobs:
       - name: Vet strict profile
         run: go vet -tags=rstream_fips ./...
       - name: Install staticcheck
-        run: go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
+        run: go -C .github/tools install honnef.co/go/tools/cmd/staticcheck
       - name: Staticcheck strict profile
         run: staticcheck -tags rstream_fips ./...
       - name: Run strict profile tests and build supported artifacts
