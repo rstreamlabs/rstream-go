@@ -172,7 +172,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go test -race -shuffle=on -count="${REPEAT}" ./...
+          # The timeout covers all repetitions, including race-instrumented helper processes.
+          go test -race -shuffle=on -count="${REPEAT}" -timeout=30m ./...
   windows-stdin-race:
     name: Windows stdin race and lifecycle tests
     runs-on: windows-2025
