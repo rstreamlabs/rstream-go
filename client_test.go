@@ -2702,7 +2702,11 @@ func (d *blockingProxyDialer) Dial(ctx context.Context, _ string, _ *tls.Config)
 			break
 		}
 	}
-	d.started <- struct{}{}
+	select {
+	case d.started <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
