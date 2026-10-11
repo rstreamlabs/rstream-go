@@ -308,6 +308,11 @@ func checkDoctorEngine(ctx context.Context, report *Report, resolved config.Reso
 	}
 	health, err := client.CheckHealth(runCtx)
 	if err != nil {
+		var apiError *rstream.APIError
+		if errors.As(err, &apiError) && apiError.StatusCode == http.StatusForbidden {
+			report.add("engine", StatusWarn, "credential permissions restrict engine health access; readiness could not be verified", nil)
+			return
+		}
 		report.add("engine", StatusFail, "engine health check failed", map[string]string{"error": err.Error()})
 		return
 	}

@@ -212,6 +212,41 @@ func TestDoctorEngineStopsWhenRuntimeIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestDoctorEngineDistinguishesDeniedHealthFromFailures(t *testing.T) {
+	for _, path := range []string{"/api/health/live", "/api/health/ready"} {
+		for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusInternalServerError} {
+			t.Run(path+"/"+http.StatusText(status), func(t *testing.T) {
+				var inventoryRequests atomic.Int32
+				server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == path {
+						http.Error(w, http.StatusText(status), status)
+						return
+					}
+					if r.URL.Path == "/api/health/live" {
+						_, _ = w.Write([]byte(`{"status":"live"}`))
+						return
+					}
+					inventoryRequests.Add(1)
+					http.NotFound(w, r)
+				}))
+				defer server.Close()
+				report := Report{}
+				checkDoctorEngine(t.Context(), &report, doctorTestResolved(server))
+				want := StatusFail
+				if status == http.StatusForbidden {
+					want = StatusWarn
+				}
+				if len(report.Checks) != 1 || report.Checks[0].Status != want || inventoryRequests.Load() != 0 {
+					t.Fatalf("health status %d: checks=%+v inventory requests=%d", status, report.Checks, inventoryRequests.Load())
+				}
+				if status == http.StatusForbidden && !strings.Contains(report.Checks[0].Message, "readiness could not be verified") {
+					t.Fatalf("denied health must not imply readiness: %+v", report.Checks[0])
+				}
+			})
+		}
+	}
+}
+
 func TestProbeDoctorTunnelCreationExercisesLifecycle(t *testing.T) {
 	tunnel := &doctorTestTunnel{props: rstream.TunnelProperties{ID: rstream.StringPtr("tunnel-1")}}
 	control := &doctorTestControlChannel{tunnel: tunnel}

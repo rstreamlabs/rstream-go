@@ -266,8 +266,17 @@ func TestRunPreservesDeadlineError(t *testing.T) {
 }
 
 func TestRunMTLSUsesDiscoveredAPIAndRespectsRestrictedPermissions(t *testing.T) {
-	for _, restricted := range []bool{false, true} {
-		t.Run(map[bool]string{false: "inventory", true: "restricted"}[restricted], func(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		deniedPath string
+		apiCalls   int32
+	}{
+		{name: "inventory", apiCalls: 4},
+		{name: "restricted-inventory", deniedPath: "/api/clients", apiCalls: 3},
+		{name: "restricted-liveness", deniedPath: "/api/health/live", apiCalls: 1},
+		{name: "restricted-readiness", deniedPath: "/api/health/ready", apiCalls: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			var discoveryCalls, apiCalls, controlPlaneCalls atomic.Int32
 			controlPlane := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				controlPlaneCalls.Add(1)
@@ -281,16 +290,16 @@ func TestRunMTLSUsesDiscoveredAPIAndRespectsRestrictedPermissions(t *testing.T) 
 					http.Error(w, "unauthorized", http.StatusUnauthorized)
 					return
 				}
+				if r.URL.Path == tc.deniedPath {
+					http.Error(w, "Forbidden", http.StatusForbidden)
+					return
+				}
 				switch r.URL.Path {
 				case "/api/health/live":
 					_, _ = io.WriteString(w, `{"status":"live"}`)
 				case "/api/health/ready":
 					_, _ = io.WriteString(w, `{"status":"ready"}`)
 				case "/api/clients", "/api/tunnels":
-					if restricted {
-						http.Error(w, "Forbidden", http.StatusForbidden)
-						return
-					}
 					_, _ = io.WriteString(w, `[]`)
 				default:
 					t.Error("doctor called an unexpected API", r.URL.Path)
@@ -317,13 +326,13 @@ func TestRunMTLSUsesDiscoveredAPIAndRespectsRestrictedPermissions(t *testing.T) 
 			report, _ := doctor.Run(t.Context(), resolved, doctor.Options{})
 			checks := checksByName(report)
 			want := doctor.StatusPass
-			if restricted {
+			if tc.deniedPath != "" {
 				want = doctor.StatusWarn
 			}
 			if checks["engine"].Status != want || checks["engine_api_discovery"].Status != doctor.StatusPass || checks["control_plane_auth"].Status != doctor.StatusSkip {
 				t.Fatalf("mTLS report: %+v", checks)
 			}
-			if discoveryCalls.Load() != 1 || controlPlaneCalls.Load() != 0 || apiCalls.Load() < 3 {
+			if discoveryCalls.Load() != 1 || controlPlaneCalls.Load() != 0 || apiCalls.Load() != tc.apiCalls {
 				t.Fatalf("discovery=%d control plane=%d API=%d", discoveryCalls.Load(), controlPlaneCalls.Load(), apiCalls.Load())
 			}
 		})

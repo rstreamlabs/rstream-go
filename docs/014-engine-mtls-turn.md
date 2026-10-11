@@ -69,7 +69,8 @@ Engine-backed `client list`, `tunnel list`, `events`, `ui`, WebTTY inventory and
 session methods now use the same certificate identity. Permissions still apply.
 The UI retains local contexts without optional Control plane enrichment.
 Doctor checks native admission, discovery and HTTP access without minting TURN;
-a denied inventory read is a restricted-rights warning.
+a denied health or inventory read is a restricted-rights warning. When health
+access is denied, Doctor reports that readiness could not be verified.
 
 Project/workspace administration, enrollment and managed WebTTY trust provisioning
 still require Control plane token access. Known local/runtime WebTTY targets can
