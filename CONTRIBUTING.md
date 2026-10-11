@@ -41,6 +41,8 @@ A release tag builds every supported target but does not publish packages. Publi
 
 Protocol releases are ordered. The Engine accepts clients on the same protocol minor version at its own patch level or below, and deliberately rejects a newer client patch. When `pb/rstream.proto` advances the protocol version, release and deploy the matching Engine to staging and then production first. Prove that a client built from the SDK tag opens a control channel against both environments before enabling stable publication. A green build or a published Engine image is not evidence that production has been promoted.
 
+npm publication waits for registry metadata to expose the retained archive's exact integrity before updating the package source repository. It allows 120 checks, five seconds apart, with each registry request limited to five seconds. An existing version with different bytes fails immediately. If metadata remains unavailable, rerun the failed promotion job with the same retained candidate; never rebuild or overwrite that version.
+
 ## Style
 
 Keep changes small, explicit, and idiomatic.
