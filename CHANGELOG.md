@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.34.1](https://github.com/rstreamlabs/rstream-go/compare/v1.34.0...v1.34.1) (2026-10-11)
+
+
+### Bug Fixes
+
+* **doctor:** report restricted health access as a warning ([d448c8b](https://github.com/rstreamlabs/rstream-go/commit/d448c8ba54c91776b77cf9179f4a36768e9f051b))
+* **doctor:** report restricted health access as a warning ([5b577a8](https://github.com/rstreamlabs/rstream-go/commit/5b577a81fe469a0cf9c12a97c2a83af6ca70814c))
+
 ## [1.34.0](https://github.com/rstreamlabs/rstream-go/compare/v1.33.1...v1.34.0) (2026-10-10)
 
 
