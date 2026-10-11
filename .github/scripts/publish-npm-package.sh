@@ -18,7 +18,10 @@ if [[ ! -f "$archive" ]]; then
 fi
 
 expected_integrity="sha512-$(openssl dgst -sha512 -binary "$archive" | openssl base64 -A)"
-published_integrity=$(npm view "${package_name}@${version}" dist.integrity 2>/dev/null || true)
+registry_integrity() {
+  npm view "${package_name}@${version}" dist.integrity --fetch-timeout=5000 --fetch-retries=0 2>/dev/null || true
+}
+published_integrity=$(registry_integrity)
 
 if [[ -n "$published_integrity" ]]; then
   if [[ "$published_integrity" != "$expected_integrity" ]]; then
@@ -30,16 +33,22 @@ else
   npm publish --access public "$archive"
 fi
 
-for _ in {1..12}; do
-  published_integrity=$(npm view "${package_name}@${version}" dist.integrity 2>/dev/null || true)
+for attempt in {1..120}; do
+  published_integrity=$(registry_integrity)
   if [[ "$published_integrity" == "$expected_integrity" ]]; then
     break
   fi
-  sleep 5
+  if [[ -n "$published_integrity" ]]; then
+    echo "immutable npm package conflict for ${package_name}@${version}" >&2
+    exit 1
+  fi
+  if [[ "$attempt" -lt 120 ]]; then
+    sleep 5
+  fi
 done
 
 if [[ "$published_integrity" != "$expected_integrity" ]]; then
-  echo "published npm package integrity mismatch for ${package_name}@${version}" >&2
+  echo "npm package ${package_name}@${version} metadata is still unavailable after 120 checks; retry promotion with the same retained candidate" >&2
   exit 1
 fi
 
