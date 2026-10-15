@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.35.0](https://github.com/rstreamlabs/rstream-go/compare/v1.34.1...v1.35.0) (2026-10-15)
+
+
+### Features
+
+* **http:** add tunnel CORS configuration and Files browser access ([#155](https://github.com/rstreamlabs/rstream-go/issues/155)) ([feb1750](https://github.com/rstreamlabs/rstream-go/commit/feb1750a6c48f673482c56e31bc189c75eebe12a))
+
 ## [1.34.1](https://github.com/rstreamlabs/rstream-go/compare/v1.34.0...v1.34.1) (2026-10-11)
 
 
