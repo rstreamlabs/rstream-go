@@ -205,6 +205,7 @@ func addForwardFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("token-auth", false, "enable token-based HTTP authentication")
 	cmd.Flags().Bool("rstream-auth", false, "require rstream account authentication (HTTP only)")
 	cmd.Flags().Bool("challenge-mode", false, "require an interactive challenge before access (HTTP only)")
+	addCORSFlags(cmd)
 	cmd.Flags().Bool("retry", true, "enable automatic reconnection on disconnect")
 	cmd.Flags().Bool("no-retry", false, "disable automatic reconnection on disconnect")
 	cmd.MarkFlagsMutuallyExclusive("retry", "no-retry")

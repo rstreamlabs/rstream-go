@@ -110,6 +110,7 @@ func newTunnelPropertiesFromFlags(cmd *cobra.Command) (*rstream.TunnelProperties
 		return nil, err
 	}
 	props := rstream.TunnelProperties{
+		HTTPCORS:                   corsFromFlags(cmd),
 		Name:                       getStringPtr(cmd, "name"),
 		Publish:                    publish,
 		Labels:                     getStringArrayMap(cmd, "label"),

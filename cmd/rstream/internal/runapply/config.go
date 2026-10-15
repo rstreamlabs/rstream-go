@@ -12,6 +12,7 @@ import (
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/tunnelconfig"
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/httpcors"
 	"gopkg.in/yaml.v3"
 )
 
@@ -45,9 +46,10 @@ type TunnelSpec struct {
 }
 
 type HTTPSpec struct {
-	Version *string       `yaml:"version,omitempty"`
-	Auth    *HTTPAuthSpec `yaml:"auth,omitempty"`
-	Gate    *HTTPGateSpec `yaml:"gate,omitempty"`
+	CORS    *httpcors.Config `yaml:"cors,omitempty"`
+	Version *string          `yaml:"version,omitempty"`
+	Auth    *HTTPAuthSpec    `yaml:"auth,omitempty"`
+	Gate    *HTTPGateSpec    `yaml:"gate,omitempty"`
 }
 
 type HTTPAuthSpec struct {
@@ -321,6 +323,7 @@ func tunnelPropertiesFromSpec(spec *TunnelSpec) (rstream.TunnelProperties, error
 		props.DatagramGuaranteedDelivery = spec.DatagramGuaranteedDelivery
 	}
 	if spec.HTTP != nil {
+		props.HTTPCORS = spec.HTTP.CORS.Clone()
 		if spec.HTTP.Version != nil {
 			val, err := tunnelconfig.ParseHTTPVersion(*spec.HTTP.Version)
 			if err != nil {

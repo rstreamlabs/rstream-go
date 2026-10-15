@@ -19,6 +19,7 @@ import (
 
 	"github.com/rstreamlabs/rstream-go/filesystem"
 	"github.com/rstreamlabs/rstream-go/filesystem/rtc"
+	"github.com/rstreamlabs/rstream-go/httpcors"
 	"github.com/rstreamlabs/rstream-go/internal/fipsprofile"
 )
 
@@ -28,6 +29,8 @@ const FSPath = "/fs"
 const DefaultMaxUploadSize int64 = 64 << 20
 
 type Config struct {
+	// CORS enables browser access from explicit origins; nil leaves CORS disabled.
+	CORS *httpcors.Config
 	// ReadWrite enables WebDAV mutations; the zero value keeps shares read-only.
 	ReadWrite bool
 	// MaxUploadSize defaults to DefaultMaxUploadSize when ReadWrite is enabled.
@@ -83,6 +86,12 @@ func (cfg Config) Validate() error {
 	if err != nil {
 		return err
 	}
+	if cfg.CORS != nil && backend != filesystem.BackendWebDAV {
+		return fmt.Errorf("CORS file sharing requires the webdav backend")
+	}
+	if _, err := NormalizeCORS(cfg.CORS); err != nil {
+		return err
+	}
 	if cfg.ReadWrite && backend != filesystem.BackendWebDAV {
 		return fmt.Errorf("read-write mode requires the webdav backend; WebRTC is read-only")
 	}
@@ -100,6 +109,14 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	corsConfig, err := NormalizeCORS(cfg.CORS)
+	if err != nil {
+		return nil, err
+	}
+	corsPolicy, err := httpcors.New(corsConfig)
+	if err != nil {
 		return nil, err
 	}
 	backend, _ := filesystem.ResolveBackend(cfg.Backend)
@@ -143,6 +160,7 @@ func New(cfg Config) (*Server, error) {
 		s.SetAccess("password")
 		s.info.Username = cfg.Username
 	}
+	s.handler = corsPolicy.Wrap(s.handler)
 	return s, nil
 }
 

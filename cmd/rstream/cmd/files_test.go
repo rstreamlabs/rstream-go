@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -289,5 +290,26 @@ func TestFilesReadWriteServiceSurvivesInterruptedUploadAndReconnect(t *testing.T
 	service.ServeHTTP(response, httptest.NewRequest("GET", "/", nil))
 	if response.Code != 404 || !service.Info().Capabilities.Write || service.Info().MaxUploadSize != 8 {
 		t.Fatal("reconnection changed write options or exposed the UI")
+	}
+}
+
+func TestFilesCORSHeadlessDefaults(t *testing.T) {
+	command := newFilesCmd()
+	if err := command.ParseFlags([]string{"--no-ui", "--read-write", "--token-auth", "--cors-allow-origin=https://dashboard.example"}); err != nil {
+		t.Fatal(err)
+	}
+	config, err := filesConfig(command, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.UI != nil || config.CORS == nil || !slices.Contains(config.CORS.AllowedMethods, "PROPFIND") || !slices.Contains(config.CORS.AllowedMethods, "PUT") || !slices.Contains(config.CORS.AllowedHeaders, "Range") || !slices.Contains(config.CORS.ExposedHeaders, "Content-Range") || config.CORS.AllowCredentials {
+		t.Fatalf("unexpected headless CORS policy: %+v", config.CORS)
+	}
+	webrtc := newFilesCmd()
+	if err := webrtc.ParseFlags([]string{"--backend=webrtc", "--cors-allow-origin=https://dashboard.example"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := filesConfig(webrtc, t.TempDir()); err == nil {
+		t.Fatal("WebRTC must not silently accept unsupported cross-origin signaling")
 	}
 }

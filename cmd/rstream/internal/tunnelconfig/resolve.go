@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/httpcors"
 )
 
 // Bool resolves the positive and inverse spellings of one explicit option.
@@ -72,6 +73,16 @@ func Resolve(props rstream.TunnelProperties) (rstream.TunnelProperties, error) {
 	}
 	if props.Protocol != nil && *props.Protocol != rstream.ProtocolHTTP && (props.HTTPVersion != nil || props.HTTPUseTLS != nil || props.TokenAuth != nil || props.RstreamAuth != nil || props.ChallengeMode != nil) {
 		return props, fmt.Errorf("http settings require protocol %q", rstream.ProtocolHTTP)
+	}
+	if props.HTTPCORS != nil {
+		if props.Publish != nil && !*props.Publish || props.Protocol != nil && *props.Protocol != rstream.ProtocolHTTP {
+			return props, fmt.Errorf("CORS requires a published HTTP tunnel")
+		}
+		var err error
+		props.HTTPCORS, err = httpcors.Normalize(props.HTTPCORS)
+		if err != nil {
+			return props, err
+		}
 	}
 	if err := normalizePublishedTCP(&props); err != nil {
 		return props, err

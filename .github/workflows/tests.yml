@@ -34,6 +34,18 @@ jobs:
         run: go test -count=1 ./filesystem/... ./fileserver/...
       - name: Actual CLI and MCP file transfers across both backends
         run: go test -count=1 ./cmd/rstream/cmd -run '^TestFilesystem(CLIAndMCPBackendMatrix|WebRTCThroughCLIAndMCP|WebRTCPreparedContextAvoidsControlPlane)$'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: runner.os == 'Linux'
+        with:
+          node-version: "24"
+      - name: Browser CORS and authenticated WebDAV operations
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          RSTREAM_CHROME_BIN="$(command -v google-chrome)"
+          export RSTREAM_CHROME_BIN
+          go test -tags browser -count=1 ./fileserver -run '^TestCORSBrowser$'
   fast:
     name: format, generate, vet, build, and unit tests
     runs-on: ubuntu-latest

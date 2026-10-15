@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/rstreamlabs/rstream-go/httpcors"
 	"github.com/rstreamlabs/rstream-go/pb"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
@@ -142,6 +143,7 @@ func toClientDetailsPb(details *ClientDetails) *pb.ClientDetails {
 
 func toTunnelProperties(msg *pb.TunnelProperties) TunnelProperties {
 	return TunnelProperties{
+		HTTPCORS:     httpCORSFromPb(msg.HttpCors),
 		ID:           stringPtrFromPbValue(msg.Id),
 		CreationDate: timePtrFromPbValue(msg.CreationDate),
 		Name:         stringPtrFromPbValue(msg.Name),
@@ -174,6 +176,7 @@ func toTunnelProperties(msg *pb.TunnelProperties) TunnelProperties {
 
 func toTunnelPropertiesPb(props TunnelProperties) *pb.TunnelProperties {
 	return &pb.TunnelProperties{
+		HttpCors:     httpCORSToPb(props.HTTPCORS),
 		Id:           stringPbValueOrNil(props.ID),
 		CreationDate: timestampPbValueOrNil(props.CreationDate),
 		Name:         stringPbValueOrNil(props.Name),
@@ -258,4 +261,19 @@ func getClientDetails(token *string) (*ClientDetails, error) {
 		Token:           token,
 		ProtocolVersion: protocolVersion,
 	}, nil
+}
+
+func httpCORSFromPb(value *pb.HttpCors) *httpcors.Config {
+	if value == nil {
+		return nil
+	}
+	return (&httpcors.Config{AllowedOrigins: value.AllowedOrigins, AllowedMethods: value.AllowedMethods, AllowedHeaders: value.AllowedHeaders, ExposedHeaders: value.ExposedHeaders, AllowCredentials: value.AllowCredentials, MaxAge: value.MaxAge}).Clone()
+}
+
+func httpCORSToPb(value *httpcors.Config) *pb.HttpCors {
+	if value == nil {
+		return nil
+	}
+	value = value.Clone()
+	return &pb.HttpCors{AllowedOrigins: value.AllowedOrigins, AllowedMethods: value.AllowedMethods, AllowedHeaders: value.AllowedHeaders, ExposedHeaders: value.ExposedHeaders, AllowCredentials: value.AllowCredentials, MaxAge: value.MaxAge}
 }

@@ -199,3 +199,29 @@ See the example folders:
 
 - `examples/run-docker`
 - `examples/run-yaml`
+
+## HTTP CORS
+
+`forward` uses the six `--cors-*` options documented in [Tunnel properties](003-tunnel-properties.md#cross-origin-browser-access-cors). The equivalent `run --apply` configuration is:
+
+```yaml
+version: 1
+tunnels:
+  - name: dashboard-api
+    forward: 8080
+    tunnel:
+      protocol: http
+      publish: true
+      http:
+        auth:
+          token: true
+        cors:
+          allowedOrigins: [https://dashboard.example]
+          allowedMethods: [GET, PUT]
+          allowedHeaders: [Authorization, Content-Type]
+          exposedHeaders: [ETag]
+          allowCredentials: false
+          maxAge: 600
+```
+
+Docker labels use `rstream.tunnel.<name>.http.cors.allowedOrigins`, `.allowedMethods`, `.allowedHeaders`, `.exposedHeaders` (comma-separated lists), `.allowCredentials` (boolean) and `.maxAge` (integer seconds). Lists omitted from the policy use the generic HTTP defaults. Omitting `cors` leaves upstream CORS unchanged; an empty policy is invalid. These options require a published HTTP tunnel. Unknown spellings are rejected.

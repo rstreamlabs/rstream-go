@@ -11,6 +11,7 @@ import (
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/tunnelconfig"
+	"github.com/rstreamlabs/rstream-go/httpcors"
 )
 
 type ContainerInfo struct {
@@ -199,6 +200,8 @@ func (l *labelSpec) applyHTTP(key, value string) error {
 		}
 		l.props.HTTPVersion = &val
 		return nil
+	case strings.HasPrefix(key, "cors."):
+		return l.applyHTTPCORS(strings.TrimPrefix(key, "cors."), value)
 	case strings.HasPrefix(key, "auth."):
 		return l.applyHTTPAuth(strings.TrimPrefix(key, "auth."), value)
 	case strings.HasPrefix(key, "gate."):
@@ -369,4 +372,36 @@ func parsePort(value string) (uint32, error) {
 		return 0, fmt.Errorf("invalid TCP port %q", value)
 	}
 	return uint32(port), nil
+}
+
+func (l *labelSpec) applyHTTPCORS(key, value string) error {
+	if l.props.HTTPCORS == nil {
+		l.props.HTTPCORS = &httpcors.Config{}
+	}
+	config := l.props.HTTPCORS
+	switch key {
+	case "allowedOrigins":
+		config.AllowedOrigins = splitCSV(value)
+	case "allowedMethods":
+		config.AllowedMethods = splitCSV(value)
+	case "allowedHeaders":
+		config.AllowedHeaders = splitCSV(value)
+	case "exposedHeaders":
+		config.ExposedHeaders = splitCSV(value)
+	case "allowCredentials":
+		parsed, err := parseBool(value)
+		if err != nil {
+			return err
+		}
+		config.AllowCredentials = parsed
+	case "maxAge":
+		parsed, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return fmt.Errorf("CORS maxAge must be an integer number of seconds")
+		}
+		config.MaxAge = parsed
+	default:
+		return fmt.Errorf("unknown http.cors label %q", key)
+	}
+	return nil
 }

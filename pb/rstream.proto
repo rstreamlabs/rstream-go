@@ -14,7 +14,7 @@ extend google.protobuf.FieldOptions {
   string access = 51234;
 }
 
-option (protocol_version) = "1.4.5";
+option (protocol_version) = "1.4.6";
 
 package rstream.io_rstrm.protobuf;
 
@@ -106,6 +106,16 @@ message ServerDetails {
   google.protobuf.StringValue update = 7;
 }
 
+// Optional browser access policy for a published HTTP tunnel.
+message HttpCors {
+  repeated string allowed_origins = 1;
+  repeated string allowed_methods = 2;
+  repeated string allowed_headers = 3;
+  repeated string exposed_headers = 4;
+  bool allow_credentials = 5;
+  int64 max_age = 6;
+}
+
 // Tunnel message structure used for creating and managing tunnels
 
 message TunnelProperties {
@@ -135,6 +145,7 @@ message TunnelProperties {
   google.protobuf.BoolValue upstream_tls = 24 [(access) = "read-write"];
   google.protobuf.BoolValue datagram_guaranteed_delivery = 25 [(access) = "read-write"];
   google.protobuf.BoolValue allow_cross_region_routing = 26 [(access) = "read-write"];
+  HttpCors http_cors = 27 [(access) = "read-write"];
 }
 
 // When a client opens a new control channel to the server
