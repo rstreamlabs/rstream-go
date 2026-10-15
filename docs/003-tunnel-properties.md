@@ -113,7 +113,7 @@ Published tunnel policy can allow more than one authentication method. Each inco
 
 ### Cross-origin browser access (CORS)
 
-CORS is optional and applies to published HTTP tunnels. Without a CORS configuration, rstream preserves the upstream application's existing CORS behavior. When configured, Engine owns the CORS response headers and applies the same policy to upstream responses and errors it produces after resolving the tunnel, including authentication failures. It preserves existing `Vary` values and adds `Vary: Origin`.
+CORS allows browser applications on another origin to access a published HTTP tunnel. Without a CORS configuration, the upstream application's CORS behavior is preserved. A configured policy applies to upstream responses and tunnel errors, including authentication failures. Responses preserve existing `Vary` values and add `Vary: Origin`.
 
 | Option | Meaning |
 | --- | --- |
@@ -133,11 +133,11 @@ rstream forward 8080 --http --token-auth \
 
 Each list option replaces that list's defaults. Origins must be explicit, such as `https://dashboard.example` or `http://localhost:3000`; `*` and opaque `null` origins are rejected. Configuration is limited to 128 entries per list and 16 KiB of strings in total. Same-origin requests continue to work. Cross-origin requests outside the configured policy are rejected; requests without an Origin header still follow the existing authentication rules.
 
-Engine answers valid CORS preflights (`OPTIONS` with `Origin` and `Access-Control-Request-Method`) after host and network admission checks, before request authentication. This response does not open an upstream stream. Every actual operation still requires the tunnel's authentication and authorization. An ordinary `OPTIONS` request remains authenticated. CORS does not grant access or make an authenticated tunnel public.
+Valid browser preflights are answered without a token and cannot access the upstream application. Actual requests, including ordinary `OPTIONS` requests, still follow the tunnel's authentication and authorization rules. CORS does not make an authenticated tunnel public.
 
-A browser can send a delegated tunnel token using `Authorization: Bearer …` with `credentials: "omit"`; the preflight does not need a token. Existing `rstream.token` query-token clients also work. `--cors-allow-credentials` is not needed for either of these token forms with `credentials: "omit"`. It is required when intentionally using browser-managed credentials and `credentials: "include"`. CONNECT protocols retain their existing authentication and are outside this HTTP CORS policy.
+A browser can send a delegated tunnel token using `Authorization: Bearer …` with `credentials: "omit"`; the preflight does not need a token. The token can also be passed in the `rstream.token` query parameter. `--cors-allow-credentials` is not needed for either of these token forms with `credentials: "omit"`. It is required when intentionally using browser-managed credentials and `credentials: "include"`.
 
-The Go API exposes `TunnelProperties.HTTPCORS` as `*httpcors.Config` from `github.com/rstreamlabs/rstream-go/httpcors`. Wire/JSON fields are `http_cors.allowed_origins`, `allowed_methods`, `allowed_headers`, `exposed_headers`, `allow_credentials` and `max_age` (seconds). A nil policy is omitted; a non-nil policy requires at least one origin. CORS requires protocol patch 1.4.6: deploy the updated Engine before the updated SDK/CLI. The new Engine continues accepting supported 1.4.x clients without this field.
+The Go API exposes `TunnelProperties.HTTPCORS` as `*httpcors.Config` from `github.com/rstreamlabs/rstream-go/httpcors`. Wire/JSON fields are `http_cors.allowed_origins`, `allowed_methods`, `allowed_headers`, `exposed_headers`, `allow_credentials` and `max_age` (seconds). A nil policy is omitted; a non-nil policy requires at least one origin.
 
 ## TLS tunnels
 
