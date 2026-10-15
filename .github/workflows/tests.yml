@@ -43,7 +43,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export RSTREAM_CHROME_BIN="$(command -v google-chrome)"
+          RSTREAM_CHROME_BIN="$(command -v google-chrome)"
+          export RSTREAM_CHROME_BIN
           go test -tags browser -count=1 ./fileserver -run '^TestCORSBrowser$'
   fast:
     name: format, generate, vet, build, and unit tests
