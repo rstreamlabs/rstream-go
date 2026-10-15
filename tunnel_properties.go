@@ -5,6 +5,8 @@ package rstream
 import (
 	"errors"
 	"time"
+
+	"github.com/rstreamlabs/rstream-go/httpcors"
 )
 
 type TunnelType string
@@ -59,6 +61,7 @@ type TunnelProperties struct {
 	TLSCiphers                 []string          `json:"tls_ciphers,omitempty"`
 	MTLSAuth                   *bool             `json:"mtls_auth,omitempty"`
 	HTTPVersion                *HTTPVersion      `json:"http_version,omitempty"`
+	HTTPCORS                   *httpcors.Config  `json:"http_cors,omitempty"`
 	HTTPUseTLS                 *bool             `json:"http_use_tls,omitempty"`
 	UpstreamTLS                *bool             `json:"upstream_tls,omitempty"`
 	DatagramGuaranteedDelivery *bool             `json:"datagram_guaranteed_delivery,omitempty"`
@@ -107,6 +110,7 @@ func clonePtr[T any](value *T) *T {
 
 func cloneTunnelProperties(props TunnelProperties) TunnelProperties {
 	return TunnelProperties{
+		HTTPCORS:                   props.HTTPCORS.Clone(),
 		ID:                         clonePtr(props.ID),
 		CreationDate:               clonePtr(props.CreationDate),
 		Name:                       clonePtr(props.Name),
@@ -147,6 +151,16 @@ func cloneStringMap(values map[string]string) map[string]string {
 }
 
 func normalizeCreateTunnelProperties(props TunnelProperties) (TunnelProperties, error) {
+	if props.HTTPCORS != nil {
+		if props.Publish != nil && !*props.Publish || props.Protocol != nil && *props.Protocol != ProtocolHTTP {
+			return props, errors.New("CORS requires a published HTTP tunnel")
+		}
+		var err error
+		props.HTTPCORS, err = httpcors.Normalize(props.HTTPCORS)
+		if err != nil {
+			return props, err
+		}
+	}
 	if props.Port != nil && (props.Protocol == nil || *props.Protocol != ProtocolTCP) {
 		return props, errors.New("a published port requires protocol tcp")
 	}

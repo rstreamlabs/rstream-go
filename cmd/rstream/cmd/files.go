@@ -39,6 +39,7 @@ func newFilesCmd() *cobra.Command {
 	cmd.Flags().String("backend", filesystem.BackendWebDAV, "file transfer backend (webdav, webrtc; WebRTC is read-only)")
 	cmd.Flags().Bool("read-write", false, "allow WebDAV uploads and filesystem changes")
 	cmd.Flags().Int64("max-upload-size", fileserver.DefaultMaxUploadSize, "maximum WebDAV upload size in bytes (requires --read-write)")
+	addCORSFlags(cmd)
 	cmd.Flags().Bool("no-ui", false, "disable the embedded web page; keep transfer and discovery endpoints")
 	cmd.Flags().Bool("include-hidden", false, "include hidden files and directories")
 	cmd.Flags().StringArray("exclude", nil, "exclude a basename or root-relative glob (repeatable)")
@@ -87,6 +88,7 @@ func runFiles(cmd *cobra.Command, args []string) error {
 	}
 	defer closeRTC()
 	props := &rstream.TunnelProperties{
+		HTTPCORS:    serviceConfig.CORS,
 		Type:        rstream.TunnelTypePtr(rstream.TunnelTypeBytestream),
 		Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
 		HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP1_1),
@@ -107,6 +109,8 @@ func runFiles(cmd *cobra.Command, args []string) error {
 	if ui, ok := s.UI.(interface{ SetFilesMode() }); ok {
 		ui.SetFilesMode()
 	}
+	// Engine owns the published policy, including authentication failures.
+	serviceConfig.CORS = nil
 	serviceConfig.RTC = rtcConfig
 	serviceConfig.Username = username
 	serviceConfig.Password = password
@@ -126,6 +130,11 @@ func runFiles(cmd *cobra.Command, args []string) error {
 
 func filesConfig(cmd *cobra.Command, root string) (fileserver.Config, error) {
 	cfg := fileserver.Config{Root: root}
+	var err error
+	cfg.CORS, err = fileserver.NormalizeCORS(corsFromFlags(cmd))
+	if err != nil {
+		return cfg, err
+	}
 	cfg.Backend, _ = cmd.Flags().GetString("backend")
 	cfg.ReadWrite, _ = cmd.Flags().GetBool("read-write")
 	cfg.IncludeHidden, _ = cmd.Flags().GetBool("include-hidden")

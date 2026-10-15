@@ -28,11 +28,31 @@ File sharing is unavailable in the restricted FIPS build for both WebDAV and Web
 | `--username <name>` | Basic username, default `rstream`; requires a password option. |
 | `--rstream-auth` | Request edge account authentication (Pro/Enterprise). |
 | `--token-auth` | Request edge token authentication, including on Basic; intended for authenticated HTTP/WebDAV clients. |
+| `--cors-allow-origin`, `--cors-allow-method`, `--cors-allow-header`, `--cors-expose-header`, `--cors-allow-credentials`, `--cors-max-age` | Explicit browser-origin policy; see below. |
 | `--host`, `--name`, `--label` | Existing published tunnel domain/name/labels. |
 | `--output`, `-o` | `text`, `json`, `xterm`, `none`. JSON status contains `files` metadata and the normal forwarding URL. `none` hides terminal output only; it does not disable the web page. |
 | `--retry`, `--no-retry`, `--retry-interval` | Existing reconnection controls; interval in milliseconds, default 5000. |
 
 Global configuration, context, region, transport and logging options continue to apply, including mTLS with an external signer. `files` is an imperative command: the shared context YAML supplies connection/authentication settings, but there is no declarative `files` YAML resource or Docker-label equivalent. A directly selected regular file explicitly shares that file, including a dotfile; hidden filters apply to directory shares. Explicit exclusions also apply to single-file shares; selecting an excluded file is an error. Its siblings are never listed or downloadable.
+
+## Use a dashboard from another origin
+
+Enable CORS explicitly for the dashboard's origin. It works with the WebDAV backend, including `--no-ui`:
+
+```bash
+rstream files ./exports --read-write --no-ui --token-auth \
+  --cors-allow-origin https://dashboard.example
+```
+
+The share remains authenticated. Use an authorized delegated tunnel token on each actual request, either in `Authorization: Bearer …` or in the existing `rstream.token` query parameter. A valid browser preflight can succeed without a token, but it cannot read or modify files. Token expiry, resource restrictions and permissions still apply to the subsequent operation.
+
+Files supplies WebDAV methods and request headers (including Authorization, Depth, Destination, Overwrite, conditional headers, Range and If-Range). It exposes download and resume metadata including Content-Disposition, Content-Range, Accept-Ranges, ETag, Last-Modified and Content-Length. The policy covers `/_rstream/files/v1/info`, `/fs/`, archives and errors. Write methods still require `--read-write`; CORS does not enable writes. Repeat `--cors-allow-origin` to add origins, and use the shared `--cors-allow-method`, `--cors-allow-header`, `--cors-expose-header`, `--cors-allow-credentials` and `--cors-max-age` options to customize the policy. An explicitly supplied list replaces that list's Files defaults.
+
+CORS is rejected with `--backend webrtc`: its signaling currently requires the same origin. Generic HTTP tunnel CORS remains available for other applications.
+
+For direct Go embedding, set `fileserver.Config.CORS` to `&httpcors.Config{AllowedOrigins: []string{"https://dashboard.example"}}`. `fileserver.New` applies WebDAV defaults and wraps every route, including password-authentication errors. `fileserver.NormalizeCORS` returns the same normalized policy for `TunnelProperties.HTTPCORS` when embedding a published server. The CLI configures the edge policy; direct embedding uses the local policy. Set `Password` when a directly exposed server requires password protection; CORS itself is not authentication.
+
+Run the browser regression with `go test -tags browser ./fileserver -run TestCORSBrowser`. It requires Node.js with built-in WebSocket support and Chrome; set `RSTREAM_CHROME_BIN` when Chrome is not installed at the default macOS path. Missing browser dependencies fail the test.
 
 ## Authentication
 

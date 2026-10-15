@@ -13,12 +13,14 @@ import (
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runapply"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/rundocker"
 	"github.com/rstreamlabs/rstream-go/cmd/rstream/internal/runmodel"
+	"github.com/rstreamlabs/rstream-go/httpcors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
 
 func TestForwardOptionsCoverRunYAML(t *testing.T) {
 	mappings := map[string]string{
+		"cors-allow-origin": "http.cors.allowedOrigins", "cors-allow-method": "http.cors.allowedMethods", "cors-allow-header": "http.cors.allowedHeaders", "cors-expose-header": "http.cors.exposedHeaders", "cors-allow-credentials": "http.cors.allowCredentials", "cors-max-age": "http.cors.maxAge",
 		"publish": "publish", "no-publish": "publish", "bytestream": "type", "datagram": "type",
 		"tls": "protocol", "tcp": "protocol", "dtls": "protocol", "quic": "protocol", "http": "protocol",
 		"tcp-port": "port", "allow-cross-region-routing": "allowCrossRegionRouting", "label": "labels",
@@ -81,6 +83,15 @@ tls: {mode: terminated, minVersion: tls1.3, alpns: [h2, http/1.1], ciphers: [TLS
 			docker: map[string]string{"publish": "true", "protocol": "http", "type": "bytestream", "host": "app.example.com", "upstream-tls": "false", "allow-cross-region-routing": "false", "label.tier": "edge", "geoip": "FR,US", "trusted-ips": "192.0.2.0/24", "http.version": "h2c", "http.auth.token": "true", "http.auth.rstream": "false", "http.gate.challenge": "true", "tls.mode": "terminated", "tls.minVersion": "tls1.3", "tls.alpns": "h2,http/1.1", "tls.ciphers": "TLS_AES_128_GCM_SHA256", "tls.mtls": "true"},
 			want:   rstream.TunnelProperties{Publish: rstream.BoolPtr(true), Protocol: rstream.ProtocolPtr(rstream.ProtocolHTTP), Type: rstream.TunnelTypePtr(rstream.TunnelTypeBytestream), Hostname: rstream.StringPtr("app.example.com"), UpstreamTLS: rstream.BoolPtr(false), AllowCrossRegionRouting: rstream.BoolPtr(false), Labels: map[string]string{"tier": "edge"}, GeoIP: []string{"FR", "US"}, TrustedIPs: []string{"192.0.2.0/24"}, HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP2), TokenAuth: rstream.BoolPtr(true), RstreamAuth: rstream.BoolPtr(false), ChallengeMode: rstream.BoolPtr(true), TLSMode: rstream.TLSModePtr(rstream.TLSModeTerminated), TLSMinVersion: rstream.StringPtr("tls1.3"), TLSALPNs: []string{"h2", "http/1.1"}, TLSCiphers: []string{"TLS_AES_128_GCM_SHA256"}, MTLSAuth: rstream.BoolPtr(true)},
 		},
+		{
+			name:   "CORS complete surface",
+			flags:  []string{"--http", "--publish", "--cors-allow-origin=https://dashboard.example", "--cors-allow-method=GET", "--cors-allow-method=PUT", "--cors-allow-header=Authorization", "--cors-expose-header=ETag", "--cors-allow-credentials=true", "--cors-max-age=600"},
+			yaml:   "protocol: http\npublish: true\nhttp: {cors: {allowedOrigins: [https://dashboard.example], allowedMethods: [GET, PUT], allowedHeaders: [Authorization], exposedHeaders: [ETag], allowCredentials: true, maxAge: 600}}",
+			docker: map[string]string{"protocol": "http", "publish": "true", "http.cors.allowedOrigins": "https://dashboard.example", "http.cors.allowedMethods": "GET,PUT", "http.cors.allowedHeaders": "Authorization", "http.cors.exposedHeaders": "ETag", "http.cors.allowCredentials": "true", "http.cors.maxAge": "600"},
+			want:   rstream.TunnelProperties{Protocol: rstream.ProtocolPtr(rstream.ProtocolHTTP), Publish: rstream.BoolPtr(true), HTTPCORS: &httpcors.Config{AllowedOrigins: []string{"https://dashboard.example"}, AllowedMethods: []string{"GET", "PUT"}, AllowedHeaders: []string{"Authorization"}, ExposedHeaders: []string{"Etag"}, AllowCredentials: true, MaxAge: 600}},
+		},
+		{name: "private CORS", flags: []string{"--http", "--no-publish", "--cors-allow-origin=https://dashboard.example"}, yaml: "protocol: http\npublish: false\nhttp: {cors: {allowedOrigins: [https://dashboard.example]}}", docker: map[string]string{"protocol": "http", "publish": "false", "http.cors.allowedOrigins": "https://dashboard.example"}, wantErr: "CORS requires a published HTTP tunnel"},
+		{name: "CORS missing origins", flags: []string{"--http", "--cors-max-age=0"}, yaml: "protocol: http\nhttp: {cors: {maxAge: 0}}", docker: map[string]string{"protocol": "http", "http.cors.maxAge": "0"}, wantErr: "CORS requires at least one allowed origin"},
 		{name: "explicit private HTTP", flags: []string{"--http", "--publish=false"}, yaml: "protocol: http\npublish: false", docker: map[string]string{"protocol": "http", "publish": "false"}, want: rstream.TunnelProperties{Protocol: rstream.ProtocolPtr(rstream.ProtocolHTTP), Publish: rstream.BoolPtr(false)}},
 		{name: "TCP reserved port", flags: []string{"--tcp", "--tcp-port=8080"}, yaml: "protocol: tcp\nport: 8080", docker: map[string]string{"protocol": "tcp", "port": "8080"}, want: rstream.TunnelProperties{Protocol: rstream.ProtocolPtr(rstream.ProtocolTCP), Type: rstream.TunnelTypePtr(rstream.TunnelTypeBytestream), Publish: rstream.BoolPtr(true), Port: rstream.Uint32Ptr(8080)}},
 		{name: "reliable datagram", flags: []string{"--quic", "--datagram", "--publish", "--datagram-guaranteed-delivery=false"}, yaml: "protocol: quic\ntype: datagram\npublish: true\ndatagramGuaranteedDelivery: false", docker: map[string]string{"protocol": "quic", "type": "datagram", "publish": "true", "datagram-guaranteed-delivery": "false"}, want: rstream.TunnelProperties{Protocol: rstream.ProtocolPtr(rstream.ProtocolQUIC), Type: rstream.TunnelTypePtr(rstream.TunnelTypeDatagram), Publish: rstream.BoolPtr(true), DatagramGuaranteedDelivery: rstream.BoolPtr(false)}},
