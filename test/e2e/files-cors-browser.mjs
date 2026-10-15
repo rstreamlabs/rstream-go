@@ -127,9 +127,13 @@ try {
   assert.equal(blocked, true);
   console.log("Browser CORS: discovery, WebDAV listing, upload, download, range, errors and rejected origin passed");
 } finally {
+  if (cdp) await Promise.race([cdp.send("Browser.close").catch(() => {}), delay(2000)]);
   cdp?.close();
-  child.kill("SIGTERM");
+  if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
   await Promise.race([exit.catch(() => {}), delay(2000)]);
-  if (child.exitCode === null) child.kill("SIGKILL");
-  await rm(profile, { recursive: true, force: true });
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill("SIGKILL");
+    await Promise.race([exit.catch(() => {}), delay(2000)]);
+  }
+  await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
