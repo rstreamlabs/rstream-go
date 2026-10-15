@@ -50,7 +50,7 @@ Files supplies WebDAV methods and request headers (including Authorization, Dept
 
 CORS is rejected with `--backend webrtc`: its signaling currently requires the same origin. Generic HTTP tunnel CORS remains available for other applications.
 
-For direct Go embedding, set `fileserver.Config.CORS` to `&httpcors.Config{AllowedOrigins: []string{"https://dashboard.example"}}`. `fileserver.New` applies WebDAV defaults and wraps every route, including password-authentication errors. `fileserver.NormalizeCORS` returns the same normalized policy for `TunnelProperties.HTTPCORS` when embedding a published server. The CLI configures the edge policy; direct embedding uses the local policy. Set `Password` when a directly exposed server requires password protection; CORS itself is not authentication.
+For a standalone Go HTTP server, set `fileserver.Config.CORS` to `&httpcors.Config{AllowedOrigins: []string{"https://dashboard.example"}}`. `fileserver.New` applies WebDAV defaults and wraps every route, including password-authentication errors. When publishing through an rstream tunnel, put the policy returned by `fileserver.NormalizeCORS` in `TunnelProperties.HTTPCORS` and leave the local `fileserver.Config.CORS` nil, as the CLI does. Engine then owns the policy, including edge-authentication errors. Set `Password` when a directly exposed server requires password protection; CORS itself is not authentication.
 
 Run the browser regression with `go test -tags browser ./fileserver -run TestCORSBrowser`. It requires Node.js with built-in WebSocket support and Chrome; set `RSTREAM_CHROME_BIN` when Chrome is not installed at the default macOS path. Missing browser dependencies fail the test.
 
