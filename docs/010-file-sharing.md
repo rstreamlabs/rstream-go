@@ -44,15 +44,13 @@ rstream files ./exports --read-write --no-ui --token-auth \
   --cors-allow-origin https://dashboard.example
 ```
 
-The share remains authenticated. Use an authorized delegated tunnel token on each actual request, either in `Authorization: Bearer …` or in the existing `rstream.token` query parameter. A valid browser preflight can succeed without a token, but it cannot read or modify files. Token expiry, resource restrictions and permissions still apply to the subsequent operation.
+The share remains authenticated. Use an authorized delegated tunnel token on each actual request, either in `Authorization: Bearer …` or in the `rstream.token` query parameter. A valid browser preflight can succeed without a token, but it cannot read or modify files. Token expiry, resource restrictions and permissions still apply to the subsequent operation.
 
 Files supplies WebDAV methods and request headers (including Authorization, Depth, Destination, Overwrite, conditional headers, Range and If-Range). It exposes download and resume metadata including Content-Disposition, Content-Range, Accept-Ranges, ETag, Last-Modified and Content-Length. The policy covers `/_rstream/files/v1/info`, `/fs/`, archives and errors. Write methods still require `--read-write`; CORS does not enable writes. Repeat `--cors-allow-origin` to add origins, and use the shared `--cors-allow-method`, `--cors-allow-header`, `--cors-expose-header`, `--cors-allow-credentials` and `--cors-max-age` options to customize the policy. An explicitly supplied list replaces that list's Files defaults.
 
-CORS is rejected with `--backend webrtc`: its signaling currently requires the same origin. Generic HTTP tunnel CORS remains available for other applications.
+CORS is available with the WebDAV backend. It cannot be combined with `--backend webrtc`, which requires same-origin access.
 
 For a standalone Go HTTP server, set `fileserver.Config.CORS` to `&httpcors.Config{AllowedOrigins: []string{"https://dashboard.example"}}`. `fileserver.New` applies WebDAV defaults and wraps every route, including password-authentication errors. When publishing through an rstream tunnel, put the policy returned by `fileserver.NormalizeCORS` in `TunnelProperties.HTTPCORS` and leave the local `fileserver.Config.CORS` nil, as the CLI does. Engine then owns the policy, including edge-authentication errors. Set `Password` when a directly exposed server requires password protection; CORS itself is not authentication.
-
-Run the browser regression with `go test -tags browser ./fileserver -run TestCORSBrowser`. It requires Node.js with built-in WebSocket support and Chrome; set `RSTREAM_CHROME_BIN` when Chrome is not installed at the default macOS path. Missing browser dependencies fail the test.
 
 ## Authentication
 
@@ -123,6 +121,6 @@ Commit HTML, gzip and manifest together. The manifest pins the contract version,
 
 ## Verification
 
-Run `go test ./...`, `go test -race ./...`, `go vet ./...`. Filesystem tests cover encoded names, exclusions, readonly methods, single files, concurrent symlink replacement, ranges, cancellation and a streamed sparse file over 4 GiB. Server tests cover auth on all surfaces, write capabilities, optional UI, upload limits, interrupted uploads, OS permissions, ZIP and concurrency. CLI tests cover password input, option validation, write-mode status, effective policy, CLI/MCP writes and handler shutdown. UI tests check gzip, integrity, CSP and negotiation. Run native filesystem tests on Linux/macOS/Windows in release CI; cross-compilation alone does not qualify native behavior.
+Run the browser regression with `go test -tags browser ./fileserver -run TestCORSBrowser`. It requires Node.js with built-in WebSocket support and Chrome; set `RSTREAM_CHROME_BIN` when Chrome is not installed at the default macOS path. Missing browser dependencies fail the test.
 
-No Engine or Operator protocol/schema changes are needed. This is an imperative foreground share; it does not add a declarative filesystem resource or an MCP-specific share tool.
+Run `go test ./...`, `go test -race ./...`, `go vet ./...`. Filesystem tests cover encoded names, exclusions, readonly methods, single files, concurrent symlink replacement, ranges, cancellation and a streamed sparse file over 4 GiB. Server tests cover auth on all surfaces, write capabilities, optional UI, upload limits, interrupted uploads, OS permissions, ZIP and concurrency. CLI tests cover password input, option validation, write-mode status, effective policy, CLI/MCP writes and handler shutdown. UI tests check gzip, integrity, CSP and negotiation. Run native filesystem tests on Linux/macOS/Windows in release CI; cross-compilation alone does not qualify native behavior.
