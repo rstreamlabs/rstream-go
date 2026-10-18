@@ -90,7 +90,10 @@ func (f *Local) checkConditions(ctx context.Context, name string, headers http.H
 	}
 	exists, revision := err == nil, ""
 	if exists {
-		revision = fileRevision(info)
+		revision, err = info.(revisionInfo).ETag(ctx)
+		if err != nil {
+			return http.StatusServiceUnavailable
+		}
 	}
 	if match != "" {
 		matched, valid := matchRevision(match, revision, exists, false)

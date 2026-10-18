@@ -251,7 +251,21 @@ func (f *Local) Stat(ctx context.Context, name string) (os.FileInfo, error) {
 	if !info.IsDir() && !info.Mode().IsRegular() {
 		return nil, os.ErrPermission
 	}
-	return info, nil
+	return revisionInfo{info, func(ctx context.Context) (string, error) {
+		file, err := f.root.OpenFile(relative, os.O_RDONLY|nonblockFlag, 0)
+		if err != nil {
+			return "", err
+		}
+		defer file.Close()
+		opened, err := file.Stat()
+		if err != nil {
+			return "", err
+		}
+		if !os.SameFile(info, opened) || opened.Size() != info.Size() || !opened.ModTime().Equal(info.ModTime()) {
+			return "", fmt.Errorf("file changed while reading its metadata")
+		}
+		return contentRevision(ctx, file, info)
+	}}, nil
 }
 
 func (f *Local) Mkdir(ctx context.Context, name string, perm os.FileMode) error {
@@ -428,3 +442,7 @@ type namedInfo struct {
 }
 
 func (i namedInfo) Name() string { return i.name }
+
+func (i namedInfo) ETag(ctx context.Context) (string, error) {
+	return i.FileInfo.(webdav.ETager).ETag(ctx)
+}
