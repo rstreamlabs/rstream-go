@@ -15,6 +15,10 @@ import (
 // aliases and ancestor MOVE/DELETE requests must not race a conditional mutation.
 // It is context-cancellable and shared by all WebDAV handlers using this Local.
 func (f *Local) serveMutation(w http.ResponseWriter, r *http.Request, next http.Handler, prefix string) {
+	if f.policy.ReadOnly {
+		http.Error(w, "Filesystem is read-only", http.StatusForbidden)
+		return
+	}
 	select {
 	case f.mutations <- struct{}{}:
 		defer func() { <-f.mutations }()
@@ -22,6 +26,16 @@ func (f *Local) serveMutation(w http.ResponseWriter, r *http.Request, next http.
 		http.Error(w, "Filesystem request cancelled", http.StatusRequestTimeout)
 		return
 	}
+	release, err := f.lockMutation(r.Context())
+	if err != nil {
+		status := http.StatusServiceUnavailable
+		if r.Context().Err() != nil {
+			status = http.StatusRequestTimeout
+		}
+		http.Error(w, "Filesystem mutation admission unavailable", status)
+		return
+	}
+	defer release()
 	if !strings.HasPrefix(r.URL.Path, prefix+"/") && r.URL.Path != prefix {
 		http.NotFound(w, r)
 		return

@@ -167,7 +167,13 @@ func TestUploadVerifiesDigestAndLengthBeforePublishing(t *testing.T) {
 				t.Fatalf("published contents: %q %v", data, err)
 			}
 			entries, err := os.ReadDir(root)
-			if err != nil || len(entries) != 1 {
+			count := 0
+			for _, entry := range entries {
+				if entry.Name() != mutationLockName {
+					count++
+				}
+			}
+			if err != nil || count != 1 {
 				t.Fatalf("staging file leaked: %v %v", entries, err)
 			}
 		})
