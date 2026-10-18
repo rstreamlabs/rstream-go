@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.0](https://github.com/rstreamlabs/rstream-go/compare/v1.35.0...v1.36.0) (2026-10-18)
+
+
+### Features
+
+* **filesystem:** add conditional atomic uploads and durable receipts ([#158](https://github.com/rstreamlabs/rstream-go/issues/158)) ([a7e457e](https://github.com/rstreamlabs/rstream-go/commit/a7e457ee149adcbe939cd3f4b095f6fc04d9f19e))
+
 ## [1.34.1](https://github.com/rstreamlabs/rstream-go/compare/v1.34.0...v1.34.1) (2026-10-11)
 
 
