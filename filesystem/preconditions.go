@@ -36,25 +36,112 @@ func (f *Local) serveMutation(w http.ResponseWriter, r *http.Request, next http.
 		return
 	}
 	defer release()
+	if err := f.recoverReceipt(r.Context()); err != nil {
+		http.Error(w, "Filesystem recovery unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	if !strings.HasPrefix(r.URL.Path, prefix+"/") && r.URL.Path != prefix {
 		http.NotFound(w, r)
 		return
 	}
-	if status := f.checkConditions(r.Context(), strings.TrimPrefix(r.URL.Path, prefix), r.Header); status != 0 {
-		http.Error(w, http.StatusText(status), status)
-		return
-	}
+	var body *uploadBody
+	var receipt *receiptRecord
 	if r.Method == http.MethodPut {
-		body, err := newUploadBody(r)
+		body, err = newUploadBody(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		if r.Header.Get("Upload-Id") != "" {
+			receipt, err = f.newReceipt(r, strings.TrimPrefix(r.URL.Path, prefix), body)
+			if err != nil {
+				http.Error(w, "Invalid durable upload request", http.StatusBadRequest)
+				return
+			}
+			prior, err := f.readReceiptFile(receiptName(receipt.ID))
+			if err == nil {
+				if _, err := f.lexical(prior.Target); err != nil {
+					http.NotFound(w, r)
+					return
+				}
+				if prior.Fingerprint != receipt.Fingerprint {
+					http.Error(w, "Upload identity has different parameters", http.StatusConflict)
+					return
+				}
+				writeUploadReceipt(w, prior)
+				return
+			}
+			if !os.IsNotExist(err) {
+				http.Error(w, "Upload receipt unavailable", 503)
+				return
+			}
+			if err := f.beginReceipt(receipt); err != nil {
+				http.Error(w, "Upload journal unavailable or full", 507)
+				return
+			}
+			body.receipt = receipt
+		}
 		r.Body = body
 		r = r.WithContext(context.WithValue(r.Context(), uploadKey{}, body))
-		w = &uploadResponse{ResponseWriter: w, body: body}
 	}
-	next.ServeHTTP(w, r)
+	if status := f.checkConditions(r.Context(), strings.TrimPrefix(r.URL.Path, prefix), r.Header); status != 0 {
+		if receipt != nil {
+			if err := f.completeReceipt(receipt, "rejected", status); err != nil {
+				http.Error(w, "Upload receipt unavailable", 503)
+				return
+			}
+			writeUploadReceipt(w, receipt)
+		} else {
+			http.Error(w, http.StatusText(status), status)
+		}
+		return
+	}
+	output := w
+	var captured *receiptResponse
+	if receipt != nil {
+		captured = &receiptResponse{ResponseWriter: w}
+		output = captured
+	}
+	if body != nil {
+		output = &uploadResponse{ResponseWriter: output, body: body}
+	}
+	next.ServeHTTP(output, r)
+	if receipt != nil {
+		if body.effectCommitted && body.status != 0 {
+			http.Error(w, "Upload result uncertain; retrieve its receipt", 503)
+			return
+		}
+		if !body.effectCommitted {
+			status := captured.status
+			if status == 0 {
+				status = http.StatusInternalServerError
+			}
+			if err := f.completeReceipt(receipt, "rejected", status); err != nil {
+				http.Error(w, "Upload receipt unavailable", 503)
+				return
+			}
+		}
+		writeUploadReceipt(w, receipt)
+	}
+}
+
+// Only used for PUT's small response. The durable receipt is published before
+// an HTTP success can escape; no response body from WebDAV is retained.
+type receiptResponse struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *receiptResponse) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+func (w *receiptResponse) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.status = 200
+	}
+	return len(p), nil
 }
 
 type uploadResponse struct {
@@ -116,7 +203,7 @@ func (f *Local) checkConditions(ctx context.Context, name string, headers http.H
 	return 0
 }
 
-// This matches the validator emitted by the existing WebDAV implementation.
+// Directories retain the WebDAV metadata validator. Regular files use SHA-256.
 func fileRevision(info os.FileInfo) string {
 	return fmt.Sprintf(`"%x%x"`, info.ModTime().UnixNano(), info.Size())
 }

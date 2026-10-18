@@ -133,18 +133,26 @@ func (f *Local) checkDirectoryLimit(ctx context.Context, name string) error {
 	if err != nil || !info.IsDir() {
 		return err
 	}
-	entries, err := file.(*localFile).File.Readdirnames(f.policy.MaxEntries + 2)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return err
-	}
 	count := 0
-	for _, entry := range entries {
-		if entry != mutationLockName {
-			count++
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-	}
-	if count > f.policy.MaxEntries {
-		return ErrListingLimit
+		entries, err := file.(*localFile).File.Readdirnames(128)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		for _, entry := range entries {
+			if !strings.HasPrefix(entry, uploadPrefix) {
+				count++
+			}
+		}
+		if count > f.policy.MaxEntries {
+			return ErrListingLimit
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
 	}
 	return ctx.Err()
 }
@@ -413,7 +421,7 @@ func (f *localFile) Readdir(count int) ([]os.FileInfo, error) {
 		if err != nil {
 			return nil, err
 		}
-		if items[0].Name() == mutationLockName {
+		if strings.HasPrefix(items[0].Name(), uploadPrefix) {
 			continue
 		}
 		f.seen++

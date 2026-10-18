@@ -48,6 +48,22 @@ func NewWebDAV(local *Local, cfg WebDAVConfig) (http.Handler, error) {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "private, no-cache")
+		w.Header().Set("Upload-Protocol", "atomic-sha256-v1")
+		if durableUploads {
+			w.Header().Set("Upload-Protocol", "durable-v1")
+		}
+		if r.Header.Get("Upload-Id") != "" && (r.Method != http.MethodPut || !durableUploads) {
+			http.Error(w, "Durable upload is not supported for this request", http.StatusNotImplemented)
+			return
+		}
+		if r.URL.Query().Has("upload-receipt") {
+			if r.Method != http.MethodGet || !durableUploads {
+				http.Error(w, "Receipt lookup is not supported for this request", 501)
+				return
+			}
+			local.serveReceipt(w, r, cfg.Prefix)
+			return
+		}
 		if cfg.ReadOnly && !readMethod(r.Method) {
 			http.Error(w, "Filesystem is read-only", http.StatusForbidden)
 			return

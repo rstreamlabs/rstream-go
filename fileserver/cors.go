@@ -15,10 +15,10 @@ func NormalizeCORS(config *httpcors.Config) (*httpcors.Config, error) {
 		config.AllowedMethods = []string{"GET", "HEAD", "OPTIONS", "PROPFIND", "PUT", "DELETE", "MKCOL", "COPY", "MOVE", "PROPPATCH", "LOCK", "UNLOCK"}
 	}
 	if len(config.AllowedHeaders) == 0 {
-		config.AllowedHeaders = []string{"Authorization", "Content-Type", "Content-Digest", "Range", "If-Range", "Depth", "Destination", "Overwrite", "If", "If-Match", "If-None-Match", "If-Modified-Since", "If-Unmodified-Since", "Lock-Token", "Timeout"}
+		config.AllowedHeaders = []string{"Authorization", "Content-Type", "Content-Digest", "Upload-Id", "Upload-Length", "Range", "If-Range", "Depth", "Destination", "Overwrite", "If", "If-Match", "If-None-Match", "If-Modified-Since", "If-Unmodified-Since", "Lock-Token", "Timeout"}
 	}
 	if len(config.ExposedHeaders) == 0 {
-		config.ExposedHeaders = []string{"ETag", "Content-Disposition", "Content-Range", "Accept-Ranges", "Last-Modified", "Content-Length", "Allow", "DAV", "Lock-Token", "Location", "Retry-After", "WWW-Authenticate"}
+		config.ExposedHeaders = []string{"ETag", "Upload-Id", "Upload-Protocol", "Content-Disposition", "Content-Range", "Accept-Ranges", "Last-Modified", "Content-Length", "Allow", "DAV", "Lock-Token", "Location", "Retry-After", "WWW-Authenticate"}
 	}
 	return httpcors.Normalize(config)
 }

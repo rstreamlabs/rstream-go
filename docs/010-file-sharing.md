@@ -88,13 +88,39 @@ The browser UI still only browses and downloads, even on a writable share. Uploa
 
 Uploads stream to a private sibling file with bounded memory. A successful PUT publishes the complete file by renaming it into place. Readers retain the previous file until that commit. An interrupted request, upload limit, failed write or digest mismatch preserves the original; creating a new file does not expose a fragment. The destination must be writable, and replacement preserves its permission bits. Replacement changes the inode, so existing open handles and hard links still refer to the previous file. Staging names beginning with `.rstream-upload-` are reserved and unavailable through the share.
 
-The 64 MiB default limit can be increased with `--max-upload-size`; it limits each request body, not total disk usage or server-side copies. Both known-length and chunked oversized bodies return HTTP 413. Partial PUT requests with `Content-Range` return HTTP 400. Uploads are not resumable: retry the entire PUT. An optional `Content-Digest: sha-256=:BASE64_DIGEST:` validates the content before publication; malformed digests return 400 and mismatches return 422. A missing response does not establish whether the rename happened; this interface does not yet provide durable mutation receipts.
+The 64 MiB default limit can be increased with `--max-upload-size`; it limits each request body, not total disk usage or server-side copies. Both known-length and chunked oversized bodies return HTTP 413. Partial PUT requests with `Content-Range` return HTTP 400. Uploads are not resumable. An optional `Content-Digest: sha-256=:BASE64_DIGEST:` validates the content before publication; malformed digests return 400 and mismatches return 422. Without a durable upload identity, a missing response does not establish whether the rename happened.
 
 WebDAV mutations honor `If-Match` and `If-None-Match` against the resource's ETag. A stale revision or failed create-only condition returns 412 without changing the resource. Mutation admission covers all handlers and independently opened services for the same exported root, including aliases within that root and ancestor moves/deletions. A cancellable OS lock holds the precondition and mutation together; process exit releases it. Unix locks the rooted directory inode. Windows retains a reserved `.rstream-upload-mutation-lock` file, which is never listed or remotely accessible. Waiting requests respect cancellation; reads continue while an upload is staged. An unavailable OS lock refuses mutation rather than proceeding without coordination.
 
 Regular-file ETags identify the SHA-256 of the content. GET, PUT, PROPFIND and conditional mutations use the same revision; equal sizes and timestamps do not mask changed bytes. Hashing uses bounded memory and respects request cancellation. GET hashes its open descriptor, keeping its revision and bytes together during an atomic replacement. Directory ETags still use modification time and size. A revision is not a persistent identifier for the file or its name.
 
-The namespace lock coordinates these services, not arbitrary local writers or separately exported overlapping roots. Keep writable export namespaces under one ownership discipline; application writers must not concurrently modify them when relying on conditional writes. COPY still uses the existing WebDAV copy behavior and is not an atomic PUT. Crash recovery and durable receipts are separate from these request-lifetime guarantees.
+The namespace lock coordinates these services, not arbitrary local writers or separately exported overlapping roots. Keep writable export namespaces under one ownership discipline; application writers must not concurrently modify them when relying on conditional writes. COPY still uses the existing WebDAV copy behavior and is not an atomic PUT.
+
+### Recoverable uploads
+
+The info response exposes `content_revision`, `conditional_write` and `upload_receipts` separately from write permission. WebDAV also returns `Upload-Protocol: durable-v1` when durable uploads are supported. Windows currently advertises `atomic-sha256-v1` and refuses a durable upload with 501: directory-journal synchronization is not implemented there. Never infer support from an older server's generic PUT success.
+
+For a durable PUT, send `Upload-Id` (a new 16–128 character identifier containing ASCII letters, digits, `_` or `-`), `Upload-Length` (decimal complete byte count), `Content-Digest` (SHA-256), and the intended `If-Match` or `If-None-Match` precondition. `Upload-Length` supports streaming browser requests where the application cannot set Content-Length. The streamed body is checked before publication. The JSON response has the same shape as `GET /fs/path?upload-receipt=ID`:
+
+```json
+{
+  "id": "upload-example-0001",
+  "path": "path",
+  "state": "committed",
+  "status": 201,
+  "size_bytes": "3",
+  "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+  "revision": "\"sha256-ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\"",
+  "started_at": "2026-01-01T00:00:00Z",
+  "completed_at": "2026-01-01T00:00:01Z"
+}
+```
+
+A 200 receipt response means the attempt was found; inspect `state` and its recorded `status` to determine the outcome. `receiving` and `prepared` are in progress; `committed`, `rejected`, `interrupted` and `uncertain` are terminal. The UTC timestamps are the owner's wall clock, not synchronized acquisition timestamps. The receipt retains its original revision after later replacement or removal of the file. An identical PUT with the same ID returns that receipt without writing again; changed parameters return 409. An interrupted attempt requires a new explicit ID to start another transfer. Looking up an ID never replays its request.
+
+The owner synchronizes staging data, a private preparation journal, the renamed directory and the final receipt before acknowledging success. On restart, the next lookup or mutation reconciles unfinished preparation before any later write can replace its evidence. Staging inode identity, size and digest establish a committed rename; missing or contradictory evidence becomes `uncertain`. Uploads interrupted before publication leave the original intact. This is process-restart recovery under the same filesystem ownership discipline, not coordination with arbitrary external writers.
+
+Receipts use the same authenticated export and current path policy as file reads; the ID grants no access. The metadata is hidden and cannot be downloaded through WebDAV or ZIP. It is retained without automatic expiry, bounded to 4,096 receipts per export; a full or unavailable journal refuses new durable uploads with 507. Existing receipt reads and ordinary file operations remain available. Do not remove this journal while its identities must remain recoverable. Journal retention and any higher-level operation retention must be coordinated by the owning application. The receipt does not by itself supply a cross-service operations catalogue or an audit identity.
 
 HTTP `Range`/`If-Range` and the `resume` capability describe downloads only. ZIP downloads must still restart after interruption.
 

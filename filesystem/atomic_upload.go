@@ -25,14 +25,16 @@ type uploadKey struct{}
 
 type uploadBody struct {
 	io.ReadCloser
-	ctx          context.Context
-	hash         hash.Hash
-	expectedHash []byte
-	expectedSize int64
-	size         int64
-	complete     bool
-	err          error
-	status       int
+	ctx             context.Context
+	hash            hash.Hash
+	expectedHash    []byte
+	expectedSize    int64
+	size            int64
+	complete        bool
+	err             error
+	status          int
+	receipt         *receiptRecord
+	effectCommitted bool
 }
 
 func newUploadBody(r *http.Request) (*uploadBody, error) {
@@ -73,6 +75,10 @@ func (b *uploadBody) validate() error {
 	}
 	if b.err != nil {
 		b.status = http.StatusBadRequest
+		var limit *http.MaxBytesError
+		if errors.As(b.err, &limit) {
+			b.status = http.StatusRequestEntityTooLarge
+		}
 		return b.err
 	}
 	if !b.complete || b.expectedSize >= 0 && b.size != b.expectedSize {
@@ -129,6 +135,13 @@ func (f atomicWebDAV) OpenFile(ctx context.Context, name string, flag int, perm 
 			return nil, errors.Join(err, file.Close(), f.root.Remove(temporary))
 		}
 	}
+	if body.receipt != nil {
+		body.receipt.Temporary = temporary
+		if err := f.writeReceiptFile(pendingReceipt, body.receipt); err != nil {
+			body.status = http.StatusServiceUnavailable
+			return nil, errors.Join(err, file.Close(), f.root.Remove(temporary))
+		}
+	}
 	return &atomicUpload{File: file, local: f.Local, body: body, target: target, temporary: temporary}, nil
 }
 
@@ -173,13 +186,42 @@ func (f *atomicUpload) Close() error {
 		f.body.status = http.StatusInternalServerError
 		return errors.Join(err, f.File.Close(), f.local.root.Remove(f.temporary))
 	}
+	if f.body.receipt != nil {
+		info, err := f.File.Stat()
+		if err == nil {
+			f.body.receipt.FileIdentity, err = uploadFileIdentity(info)
+		}
+		if err != nil {
+			f.body.status = http.StatusServiceUnavailable
+			return errors.Join(err, f.File.Close(), f.local.root.Remove(f.temporary))
+		}
+	}
 	if err := f.File.Close(); err != nil {
 		f.body.status = http.StatusInternalServerError
 		return errors.Join(err, f.local.root.Remove(f.temporary))
 	}
+	if f.body.receipt != nil {
+		f.body.receipt.State = "prepared"
+		f.body.receipt.Target, f.body.receipt.Temporary = f.target, f.temporary
+		if err := f.local.writeReceiptFile(pendingReceipt, f.body.receipt); err != nil {
+			f.body.status = http.StatusServiceUnavailable
+			return errors.Join(err, f.local.root.Remove(f.temporary))
+		}
+	}
 	if err := f.local.root.Rename(f.temporary, f.target); err != nil {
 		f.body.status = http.StatusInternalServerError
 		return errors.Join(err, f.local.root.Remove(f.temporary))
+	}
+	f.body.effectCommitted = true
+	if f.body.receipt != nil {
+		if err := f.local.syncDirectory(filepath.Dir(f.target)); err != nil {
+			f.body.status = http.StatusServiceUnavailable
+			return err
+		}
+		if err := f.local.completeReceipt(f.body.receipt, "committed", http.StatusCreated); err != nil {
+			f.body.status = http.StatusServiceUnavailable
+			return err
+		}
 	}
 	return nil
 }
