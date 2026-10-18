@@ -28,6 +28,31 @@ func fileRequest(handler http.Handler, method, name, body, condition, revision s
 	return response
 }
 
+func TestGuardedMutationProtocolRefusesUnconditionalOrStaleActions(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "file", "original")
+	_, handler := testLocal(t, root, Policy{})
+	for _, action := range []string{"put", "delete"} {
+		for _, condition := range []string{"", `"stale"`} {
+			r := httptest.NewRequest("PATCH", "/fs/file", strings.NewReader("changed"))
+			r.Header.Set("File-System-Action", action)
+			r.Header.Set("If-Match", condition)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			expected := 412
+			if condition == "" {
+				expected = 400
+			}
+			if w.Code != expected {
+				t.Fatalf("%s %q: %d", action, condition, w.Code)
+			}
+		}
+	}
+	if read := fileRequest(handler, "GET", "file", "", "", ""); read.Body.String() != "original" {
+		t.Fatal("guarded protocol changed a conflicting resource")
+	}
+}
+
 func TestConditionalMutationsPreserveConflictingContent(t *testing.T) {
 	for _, method := range []string{http.MethodPut, http.MethodDelete} {
 		t.Run(method, func(t *testing.T) {

@@ -100,6 +100,8 @@ The namespace lock coordinates these services, not arbitrary local writers or se
 
 The info response exposes `content_revision`, `conditional_write` and `upload_receipts` separately from write permission. WebDAV also returns `Upload-Protocol: durable-v1` when durable uploads are supported. Windows currently advertises `atomic-sha256-v1` and refuses a durable upload with 501: directory-journal synchronization is not implemented there. Never infer support from an older server's generic PUT success.
 
+Clients requiring these guarantees use `PATCH /fs/path` with `File-System-Action: put` or `delete` and an explicit revision precondition. The handler admits the existing PUT/DELETE implementation under the namespace lock. Older WebDAV owners reject PATCH rather than ignoring unfamiliar headers and performing an unconditional mutation. There is no fallback to ordinary PUT/DELETE after an unsupported response. Ordinary WebDAV methods remain available for existing callers.
+
 For a durable PUT, send `Upload-Id` (a new 16–128 character identifier containing ASCII letters, digits, `_` or `-`), `Upload-Length` (decimal complete byte count), `Content-Digest` (SHA-256), and the intended `If-Match` or `If-None-Match` precondition. `Upload-Length` supports streaming browser requests where the application cannot set Content-Length. The streamed body is checked before publication. The JSON response has the same shape as `GET /fs/path?upload-receipt=ID`:
 
 ```json

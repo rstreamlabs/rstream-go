@@ -46,6 +46,22 @@ func NewWebDAV(local *Local, cfg WebDAVConfig) (http.Handler, error) {
 		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Older WebDAV owners may ignore conditional headers on PUT/DELETE.
+		// PATCH is an explicit protocol opt-in that those owners refuse, so
+		// clients never silently downgrade a guarded mutation during rollout.
+		if r.Method == http.MethodPatch {
+			if cfg.ReadOnly || local.policy.ReadOnly {
+				http.Error(w, "Filesystem is read-only", http.StatusForbidden)
+				return
+			}
+			method := r.Header.Get("File-System-Action")
+			if (method != "put" && method != "delete") || (r.Header.Get("If-Match") == "" && r.Header.Get("If-None-Match") == "") {
+				http.Error(w, "A guarded filesystem action and precondition are required", http.StatusBadRequest)
+				return
+			}
+			r = r.Clone(r.Context())
+			r.Method = strings.ToUpper(method)
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "private, no-cache")
 		w.Header().Set("Upload-Protocol", "atomic-sha256-v1")

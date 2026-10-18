@@ -24,6 +24,8 @@ const testReceiptID = "upload-recovery-attempt-0001"
 
 func durableRequest(id, contents string) *http.Request {
 	r := httptest.NewRequest("PUT", "/fs/file", strings.NewReader(contents))
+	r.Method = http.MethodPatch
+	r.Header.Set("File-System-Action", "put")
 	digest := sha256.Sum256([]byte(contents))
 	r.Header.Set("Upload-Id", id)
 	r.Header.Set("Upload-Length", strconv.Itoa(len(contents)))
