@@ -37,7 +37,7 @@ func TestCORSHeadlessAuthenticatedWebDAV(t *testing.T) {
 		req := httptest.NewRequest("OPTIONS", FSPath+"/hello.txt", nil)
 		req.Header.Set("Origin", "https://dashboard.example")
 		req.Header.Set("Access-Control-Request-Method", method)
-		req.Header.Set("Access-Control-Request-Headers", "authorization, depth, range, if-range")
+		req.Header.Set("Access-Control-Request-Headers", "authorization, depth, range, if-range, if-match, if-none-match, content-digest")
 		res := httptest.NewRecorder()
 		server.ServeHTTP(res, req)
 		if res.Code != 204 {

@@ -49,12 +49,15 @@ type Config struct {
 }
 
 type Capabilities struct {
-	List    bool `json:"list"`
-	Read    bool `json:"read"`
-	Write   bool `json:"write"`
-	Resume  bool `json:"resume"`
-	Archive bool `json:"archive"`
-	E2EE    bool `json:"e2ee"`
+	ContentRevision  bool `json:"content_revision"`
+	ConditionalWrite bool `json:"conditional_write"`
+	UploadReceipts   bool `json:"upload_receipts"`
+	List             bool `json:"list"`
+	Read             bool `json:"read"`
+	Write            bool `json:"write"`
+	Resume           bool `json:"resume"`
+	Archive          bool `json:"archive"`
+	E2EE             bool `json:"e2ee"`
 }
 
 type Info struct {
@@ -137,7 +140,7 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s.backend = dav
-	s.info = Info{Version: 1, Name: local.Name(), Kind: "directory", Backend: backend, FSPath: FSPath, ArchivePath: ArchivePath, MaxUploadSize: cfg.MaxUploadSize, Capabilities: Capabilities{List: true, Read: true, Write: cfg.ReadWrite, Resume: true, Archive: !local.IsFile()}}
+	s.info = Info{Version: 1, Name: local.Name(), Kind: "directory", Backend: backend, FSPath: FSPath, ArchivePath: ArchivePath, MaxUploadSize: cfg.MaxUploadSize, Capabilities: Capabilities{List: true, Read: true, Write: cfg.ReadWrite, Resume: true, Archive: !local.IsFile(), ContentRevision: true, ConditionalWrite: cfg.ReadWrite, UploadReceipts: filesystem.DurableUploadsSupported() && backend == filesystem.BackendWebDAV}}
 	if local.IsFile() {
 		s.info.Kind = "file"
 		s.info.ArchivePath = ""

@@ -144,12 +144,11 @@ func TestUploadLimitsAndInterruption(t *testing.T) {
 			wantStatus, wantContents := 413, "original"
 			if mode == "unknown-size" {
 				request.ContentLength = -1
-				wantContents = "1234"
 			}
 			if mode == "interrupted" {
 				request.ContentLength = -1
 				request.Body = io.NopCloser(io.MultiReader(strings.NewReader("12"), failedUpload{}))
-				wantStatus, wantContents = 405, "12"
+				wantStatus = 400
 			}
 			response := httptest.NewRecorder()
 			s.ServeHTTP(response, request)
@@ -157,7 +156,7 @@ func TestUploadLimitsAndInterruption(t *testing.T) {
 				t.Fatalf("upload: %d %s", response.Code, response.Body.String())
 			}
 			if data, err := os.ReadFile(filepath.Join(root, "file")); err != nil || string(data) != wantContents {
-				t.Fatalf("partial upload: %q %v", data, err)
+				t.Fatalf("failed upload changed the original: %q %v", data, err)
 			}
 			if response := shareRequest(s, "PUT", "/fs/file", "1234"); response.Code != 201 {
 				t.Fatalf("retry: %d %s", response.Code, response.Body.String())

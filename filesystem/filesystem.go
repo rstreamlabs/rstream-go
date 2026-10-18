@@ -28,10 +28,12 @@ type Policy struct {
 
 // Local owns a directory handle. Close it after all users have stopped.
 type Local struct {
-	root   *os.Root
-	path   string
-	file   string
-	policy Policy
+	root      *os.Root
+	path      string
+	file      string
+	policy    Policy
+	mutations chan struct{}
+	locks     webdav.LockSystem
 }
 
 func Open(name string, policy Policy) (*Local, error) {
@@ -68,7 +70,7 @@ func Open(name string, policy Policy) (*Local, error) {
 		return nil, err
 	}
 	policy.Exclude = append([]string(nil), policy.Exclude...)
-	local := &Local{root: root, path: resolved, file: file, policy: policy}
+	local := &Local{root: root, path: resolved, file: file, policy: policy, mutations: make(chan struct{}, 1), locks: webdav.NewMemLS()}
 	if file != "" && !local.allowed(file) {
 		_ = root.Close()
 		return nil, fmt.Errorf("selected file matches an exclusion")
@@ -97,6 +99,9 @@ func (f *Local) allowed(name string) bool {
 		}
 	}
 	for _, part := range strings.Split(filepath.ToSlash(name), "/") {
+		if strings.HasPrefix(strings.ToLower(part), uploadPrefix) {
+			return false
+		}
 		if f.file == "" && f.policy.HideHidden && part != "." && strings.HasPrefix(part, ".") {
 			return false
 		}
@@ -128,12 +133,26 @@ func (f *Local) checkDirectoryLimit(ctx context.Context, name string) error {
 	if err != nil || !info.IsDir() {
 		return err
 	}
-	entries, err := file.(*localFile).File.Readdirnames(f.policy.MaxEntries + 1)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return err
-	}
-	if len(entries) > f.policy.MaxEntries {
-		return ErrListingLimit
+	count := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		entries, err := file.(*localFile).File.Readdirnames(128)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		for _, entry := range entries {
+			if !strings.HasPrefix(entry, uploadPrefix) {
+				count++
+			}
+		}
+		if count > f.policy.MaxEntries {
+			return ErrListingLimit
+		}
+		if errors.Is(err, io.EOF) {
+			break
+		}
 	}
 	return ctx.Err()
 }
@@ -240,7 +259,21 @@ func (f *Local) Stat(ctx context.Context, name string) (os.FileInfo, error) {
 	if !info.IsDir() && !info.Mode().IsRegular() {
 		return nil, os.ErrPermission
 	}
-	return info, nil
+	return revisionInfo{info, func(ctx context.Context) (string, error) {
+		file, err := f.root.OpenFile(relative, os.O_RDONLY|nonblockFlag, 0)
+		if err != nil {
+			return "", err
+		}
+		defer file.Close()
+		opened, err := file.Stat()
+		if err != nil {
+			return "", err
+		}
+		if !os.SameFile(info, opened) || opened.Size() != info.Size() || !opened.ModTime().Equal(info.ModTime()) {
+			return "", fmt.Errorf("file changed while reading its metadata")
+		}
+		return contentRevision(ctx, file, info)
+	}}, nil
 }
 
 func (f *Local) Mkdir(ctx context.Context, name string, perm os.FileMode) error {
@@ -388,6 +421,9 @@ func (f *localFile) Readdir(count int) ([]os.FileInfo, error) {
 		if err != nil {
 			return nil, err
 		}
+		if strings.HasPrefix(items[0].Name(), uploadPrefix) {
+			continue
+		}
 		f.seen++
 		if f.local.policy.MaxEntries > 0 && f.seen > f.local.policy.MaxEntries {
 			return nil, ErrListingLimit
@@ -414,3 +450,7 @@ type namedInfo struct {
 }
 
 func (i namedInfo) Name() string { return i.name }
+
+func (i namedInfo) ETag(ctx context.Context) (string, error) {
+	return i.FileInfo.(webdav.ETager).ETag(ctx)
+}

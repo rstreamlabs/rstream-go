@@ -55,7 +55,7 @@ func (a *archiveState) walk(ctx context.Context, source, destination string, par
 	a.count++
 	if info.IsDir() {
 		for _, parent := range parents {
-			if os.SameFile(info, parent) {
+			if os.SameFile(systemFileInfo(info), systemFileInfo(parent)) {
 				return fmt.Errorf("archive contains a directory cycle")
 			}
 		}

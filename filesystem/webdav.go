@@ -38,7 +38,7 @@ func NewWebDAV(local *Local, cfg WebDAVConfig) (http.Handler, error) {
 		cfg.Logger = slog.Default()
 	}
 	dav := &webdav.Handler{
-		Prefix: cfg.Prefix, FileSystem: local, LockSystem: webdav.NewMemLS(),
+		Prefix: cfg.Prefix, FileSystem: atomicWebDAV{local}, LockSystem: local.locks,
 		Logger: func(r *http.Request, err error) {
 			if err != nil {
 				cfg.Logger.Debug("filesystem request failed", "method", r.Method, "path", r.URL.Path, "error", err)
@@ -46,8 +46,40 @@ func NewWebDAV(local *Local, cfg WebDAVConfig) (http.Handler, error) {
 		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Older WebDAV owners may ignore conditional headers on PUT/DELETE.
+		// PATCH is an explicit protocol opt-in that those owners refuse, so
+		// clients never silently downgrade a guarded mutation during rollout.
+		if r.Method == http.MethodPatch {
+			if cfg.ReadOnly || local.policy.ReadOnly {
+				http.Error(w, "Filesystem is read-only", http.StatusForbidden)
+				return
+			}
+			method := r.Header.Get("File-System-Action")
+			if (method != "put" && method != "delete") || (r.Header.Get("If-Match") == "" && r.Header.Get("If-None-Match") == "") {
+				http.Error(w, "A guarded filesystem action and precondition are required", http.StatusBadRequest)
+				return
+			}
+			r = r.Clone(r.Context())
+			r.Method = strings.ToUpper(method)
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "private, no-cache")
+		w.Header().Set("Upload-Protocol", "atomic-sha256-v1")
+		if durableUploads {
+			w.Header().Set("Upload-Protocol", "durable-v1")
+		}
+		if r.Header.Get("Upload-Id") != "" && (r.Method != http.MethodPut || !durableUploads) {
+			http.Error(w, "Durable upload is not supported for this request", http.StatusNotImplemented)
+			return
+		}
+		if r.URL.Query().Has("upload-receipt") {
+			if r.Method != http.MethodGet || !durableUploads {
+				http.Error(w, "Receipt lookup is not supported for this request", http.StatusNotImplemented)
+				return
+			}
+			local.serveReceipt(w, r, cfg.Prefix)
+			return
+		}
 		if cfg.ReadOnly && !readMethod(r.Method) {
 			http.Error(w, "Filesystem is read-only", http.StatusForbidden)
 			return
@@ -89,6 +121,10 @@ func NewWebDAV(local *Local, cfg WebDAVConfig) (http.Handler, error) {
 		if cfg.Download && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 			w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(r.URL.Path)}))
 			w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
+		}
+		if !readMethod(r.Method) {
+			local.serveMutation(w, r, dav, cfg.Prefix)
+			return
 		}
 		dav.ServeHTTP(w, r)
 	}), nil
