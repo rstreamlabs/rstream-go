@@ -53,6 +53,15 @@ func TestGuardedMutationProtocolRefusesUnconditionalOrStaleActions(t *testing.T)
 	}
 }
 
+func TestReservedUploadNamesAreRejectedRegardlessOfCase(t *testing.T) {
+	local, _ := testLocal(t, t.TempDir(), Policy{})
+	for _, name := range []string{receiptDirectory, ".RSTREAM-UPLOAD-RECEIPTS/record.json", "nested/.RsTrEaM-UpLoAd-Temporary"} {
+		if _, err := local.lexical(name); err == nil {
+			t.Fatalf("private upload metadata path admitted: %s", name)
+		}
+	}
+}
+
 func TestConditionalMutationsPreserveConflictingContent(t *testing.T) {
 	for _, method := range []string{http.MethodPut, http.MethodDelete} {
 		t.Run(method, func(t *testing.T) {

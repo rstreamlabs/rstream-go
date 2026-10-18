@@ -99,7 +99,7 @@ func (f *Local) allowed(name string) bool {
 		}
 	}
 	for _, part := range strings.Split(filepath.ToSlash(name), "/") {
-		if strings.HasPrefix(part, uploadPrefix) {
+		if strings.HasPrefix(strings.ToLower(part), uploadPrefix) {
 			return false
 		}
 		if f.file == "" && f.policy.HideHidden && part != "." && strings.HasPrefix(part, ".") {
