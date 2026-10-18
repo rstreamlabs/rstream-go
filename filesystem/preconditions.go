@@ -72,11 +72,11 @@ func (f *Local) serveMutation(w http.ResponseWriter, r *http.Request, next http.
 				return
 			}
 			if !os.IsNotExist(err) {
-				http.Error(w, "Upload receipt unavailable", 503)
+				http.Error(w, "Upload receipt unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			if err := f.beginReceipt(receipt); err != nil {
-				http.Error(w, "Upload journal unavailable or full", 507)
+				http.Error(w, "Upload journal unavailable or full", http.StatusInsufficientStorage)
 				return
 			}
 			body.receipt = receipt
@@ -87,7 +87,7 @@ func (f *Local) serveMutation(w http.ResponseWriter, r *http.Request, next http.
 	if status := f.checkConditions(r.Context(), strings.TrimPrefix(r.URL.Path, prefix), r.Header); status != 0 {
 		if receipt != nil {
 			if err := f.completeReceipt(receipt, "rejected", status); err != nil {
-				http.Error(w, "Upload receipt unavailable", 503)
+				http.Error(w, "Upload receipt unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			writeUploadReceipt(w, receipt)
@@ -108,7 +108,7 @@ func (f *Local) serveMutation(w http.ResponseWriter, r *http.Request, next http.
 	next.ServeHTTP(output, r)
 	if receipt != nil {
 		if body.effectCommitted && body.status != 0 {
-			http.Error(w, "Upload result uncertain; retrieve its receipt", 503)
+			http.Error(w, "Upload result uncertain; retrieve its receipt", http.StatusServiceUnavailable)
 			return
 		}
 		if !body.effectCommitted {
@@ -117,7 +117,7 @@ func (f *Local) serveMutation(w http.ResponseWriter, r *http.Request, next http.
 				status = http.StatusInternalServerError
 			}
 			if err := f.completeReceipt(receipt, "rejected", status); err != nil {
-				http.Error(w, "Upload receipt unavailable", 503)
+				http.Error(w, "Upload receipt unavailable", http.StatusServiceUnavailable)
 				return
 			}
 		}

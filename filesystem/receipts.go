@@ -295,7 +295,7 @@ func (f *Local) serveReceipt(w http.ResponseWriter, r *http.Request, prefix stri
 	}
 	id := r.URL.Query().Get("upload-receipt")
 	if !validUploadID(id) {
-		http.Error(w, "Invalid upload receipt identity", 400)
+		http.Error(w, "Invalid upload receipt identity", http.StatusBadRequest)
 		return
 	}
 	name, err := f.lexical(strings.TrimPrefix(r.URL.Path, prefix))
@@ -307,19 +307,19 @@ func (f *Local) serveReceipt(w http.ResponseWriter, r *http.Request, prefix stri
 	// replaced journal is safe; only a lock owner may reconcile an old attempt.
 	lock, err := f.openMutationLock()
 	if err != nil {
-		http.Error(w, "Receipt recovery unavailable", 503)
+		http.Error(w, "Receipt recovery unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	defer lock.Close()
 	acquired, err := tryMutationLock(lock)
 	if err != nil {
-		http.Error(w, "Receipt recovery unavailable", 503)
+		http.Error(w, "Receipt recovery unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	if acquired {
 		defer unlockMutation(lock)
 		if err := f.recoverReceipt(r.Context()); err != nil {
-			http.Error(w, "Receipt recovery unavailable", 503)
+			http.Error(w, "Receipt recovery unavailable", http.StatusServiceUnavailable)
 			return
 		}
 	}
@@ -338,7 +338,7 @@ func (f *Local) serveReceipt(w http.ResponseWriter, r *http.Request, prefix stri
 		return
 	}
 	if err != nil {
-		http.Error(w, "Receipt unavailable", 503)
+		http.Error(w, "Receipt unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	if record.Path != filepath.ToSlash(name) {

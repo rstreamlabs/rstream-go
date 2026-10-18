@@ -8,7 +8,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -253,7 +252,7 @@ func TestPreparedReceiptCrashBoundaries(t *testing.T) {
 				t.Fatal("recovery replayed an earlier write")
 			}
 			if _, err := os.Stat(filepath.Join(root, record.Temporary)); !os.IsNotExist(err) {
-				t.Fatal(fmt.Sprintf("staging file remains: %v", err))
+				t.Fatalf("staging file remains: %v", err)
 			}
 		})
 	}

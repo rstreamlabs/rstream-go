@@ -45,7 +45,7 @@ func newUploadBody(r *http.Request) (*uploadBody, error) {
 		}
 		decoded, err := base64.StdEncoding.DecodeString(digest[len("sha-256=:") : len(digest)-1])
 		if err != nil || len(decoded) != sha256.Size {
-			return nil, errors.New("Invalid sha-256 Content-Digest")
+			return nil, errors.New("invalid sha-256 Content-Digest")
 		}
 		expected = decoded
 	}
@@ -87,7 +87,7 @@ func (b *uploadBody) validate() error {
 	}
 	if b.expectedHash != nil && !bytes.Equal(b.expectedHash, b.hash.Sum(nil)) {
 		b.status = http.StatusUnprocessableEntity
-		return errors.New("Upload content digest does not match")
+		return errors.New("upload content digest does not match")
 	}
 	return nil
 }
