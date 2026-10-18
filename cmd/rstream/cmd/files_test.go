@@ -273,8 +273,12 @@ func TestFilesReadWriteServiceSurvivesInterruptedUploadAndReconnect(t *testing.T
 		case <-time.After(3 * time.Second):
 			t.Fatal("upload did not release its handler")
 		}
-		if data, err := os.ReadFile(filepath.Join(root, "file")); err != nil || string(data) != body {
-			t.Fatalf("upload contents: %q %v", data, err)
+		data, readErr := os.ReadFile(filepath.Join(root, "file"))
+		if attempt == 0 && !errors.Is(readErr, os.ErrNotExist) {
+			t.Fatalf("interrupted upload published a file: %q %v", data, readErr)
+		}
+		if attempt == 1 && (readErr != nil || string(data) != body) {
+			t.Fatalf("completed upload contents: %q %v", data, readErr)
 		}
 		cancel()
 		select {

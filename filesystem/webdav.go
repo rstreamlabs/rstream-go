@@ -38,7 +38,7 @@ func NewWebDAV(local *Local, cfg WebDAVConfig) (http.Handler, error) {
 		cfg.Logger = slog.Default()
 	}
 	dav := &webdav.Handler{
-		Prefix: cfg.Prefix, FileSystem: local, LockSystem: webdav.NewMemLS(),
+		Prefix: cfg.Prefix, FileSystem: atomicWebDAV{local}, LockSystem: local.locks,
 		Logger: func(r *http.Request, err error) {
 			if err != nil {
 				cfg.Logger.Debug("filesystem request failed", "method", r.Method, "path", r.URL.Path, "error", err)
@@ -89,6 +89,10 @@ func NewWebDAV(local *Local, cfg WebDAVConfig) (http.Handler, error) {
 		if cfg.Download && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 			w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(r.URL.Path)}))
 			w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
+		}
+		if !readMethod(r.Method) {
+			local.serveMutation(w, r, dav, cfg.Prefix)
+			return
 		}
 		dav.ServeHTTP(w, r)
 	}), nil

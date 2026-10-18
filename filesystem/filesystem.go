@@ -28,10 +28,12 @@ type Policy struct {
 
 // Local owns a directory handle. Close it after all users have stopped.
 type Local struct {
-	root   *os.Root
-	path   string
-	file   string
-	policy Policy
+	root      *os.Root
+	path      string
+	file      string
+	policy    Policy
+	mutations chan struct{}
+	locks     webdav.LockSystem
 }
 
 func Open(name string, policy Policy) (*Local, error) {
@@ -68,7 +70,7 @@ func Open(name string, policy Policy) (*Local, error) {
 		return nil, err
 	}
 	policy.Exclude = append([]string(nil), policy.Exclude...)
-	local := &Local{root: root, path: resolved, file: file, policy: policy}
+	local := &Local{root: root, path: resolved, file: file, policy: policy, mutations: make(chan struct{}, 1), locks: webdav.NewMemLS()}
 	if file != "" && !local.allowed(file) {
 		_ = root.Close()
 		return nil, fmt.Errorf("selected file matches an exclusion")
@@ -97,6 +99,9 @@ func (f *Local) allowed(name string) bool {
 		}
 	}
 	for _, part := range strings.Split(filepath.ToSlash(name), "/") {
+		if strings.HasPrefix(part, uploadPrefix) {
+			return false
+		}
 		if f.file == "" && f.policy.HideHidden && part != "." && strings.HasPrefix(part, ".") {
 			return false
 		}
