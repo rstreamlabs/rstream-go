@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.1](https://github.com/rstreamlabs/rstream-go/compare/v1.36.0...v1.36.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* **filesystem:** avoid hashing existence-only preconditions ([#160](https://github.com/rstreamlabs/rstream-go/issues/160)) ([0981a74](https://github.com/rstreamlabs/rstream-go/commit/0981a74607911e65d84a8837a1529847b44e92c2))
+
 ## [1.36.0](https://github.com/rstreamlabs/rstream-go/compare/v1.35.0...v1.36.0) (2026-10-18)
 
 
