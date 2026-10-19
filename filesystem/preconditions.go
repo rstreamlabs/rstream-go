@@ -175,9 +175,28 @@ func (f *Local) checkConditions(ctx context.Context, name string, headers http.H
 	if err != nil && !os.IsNotExist(err) {
 		return http.StatusForbidden
 	}
-	exists, revision := err == nil, ""
-	if exists {
-		revision, err = info.(revisionInfo).ETag(ctx)
+	return checkRevisionConditions(err == nil, match, none, func() (string, error) {
+		return info.(revisionInfo).ETag(ctx)
+	})
+}
+
+func checkRevisionConditions(exists bool, match, none string, loadRevision func() (string, error)) int {
+	needsRevision := false
+	for _, condition := range []string{match, none} {
+		if condition == "" {
+			continue
+		}
+		if _, valid := matchRevision(condition, "", exists, true); !valid {
+			return http.StatusBadRequest
+		}
+		needsRevision = needsRevision || strings.TrimSpace(condition) != "*"
+	}
+	// Existence conditions need only Stat. Hash content once, and only when
+	// a valid condition actually compares an entity tag.
+	revision := ""
+	if exists && needsRevision {
+		var err error
+		revision, err = loadRevision()
 		if err != nil {
 			return http.StatusServiceUnavailable
 		}

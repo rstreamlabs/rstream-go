@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -285,5 +286,42 @@ func TestConditionSyntaxAndComparison(t *testing.T) {
 		if response.Code != scenario.status {
 			t.Fatalf("%s %q: %d", scenario.condition, scenario.value, response.Code)
 		}
+	}
+}
+
+func TestConditionRevisionReadsAreNecessaryAndBounded(t *testing.T) {
+	for _, scenario := range []struct {
+		name, match, none string
+		exists            bool
+		loadError         bool
+		status, reads     int
+	}{
+		{"create conflict", "", "*", true, true, 412, 0},
+		{"replace existing", " * ", "", true, true, 0, 0},
+		{"create missing", "", "*", false, true, 0, 0},
+		{"replace missing", "*", "", false, true, 412, 0},
+		{"both wildcards", "*", "*", true, true, 412, 0},
+		{"malformed tag", `"unterminated`, "", true, true, 400, 0},
+		{"malformed second condition", `"current"`, "*,", true, true, 400, 0},
+		{"missing tagged resource", `"current"`, "", false, true, 412, 0},
+		{"exact tag", `"current"`, "", true, false, 0, 1},
+		{"two tag conditions", `"current"`, `"other"`, true, false, 0, 1},
+		{"wildcard and tag", "*", `"current"`, true, false, 412, 1},
+		{"tag and wildcard", `"current"`, "*", true, false, 412, 1},
+		{"content unavailable", `"current"`, "", true, true, 503, 1},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			reads := 0
+			status := checkRevisionConditions(scenario.exists, scenario.match, scenario.none, func() (string, error) {
+				reads++
+				if scenario.loadError {
+					return "", errors.New("content unavailable")
+				}
+				return `"current"`, nil
+			})
+			if status != scenario.status || reads != scenario.reads {
+				t.Fatalf("status=%d reads=%d, want status=%d reads=%d", status, reads, scenario.status, scenario.reads)
+			}
+		})
 	}
 }

@@ -259,3 +259,45 @@ func TestPreparedReceiptCrashBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestReceiptCapacityPreservesPriorResultsAndNeverEvicts(t *testing.T) {
+	root := t.TempDir()
+	_, handler := testLocal(t, root, Policy{})
+	created := httptest.NewRecorder()
+	handler.ServeHTTP(created, durableRequest(testReceiptID, "first"))
+	first := readReceipt(t, handler, testReceiptID)
+	if created.Code != 200 || first.State != "committed" {
+		t.Fatal("initial upload did not commit")
+	}
+	// Fill the actual journal to its documented bound without 4096 fsyncs.
+	for i := 1; i < receiptLimit; i++ {
+		name := filepath.Join(root, receiptDirectory, "retained-"+strconv.Itoa(i))
+		if err := os.WriteFile(name, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, reopened := testLocal(t, root, Policy{})
+	if changed := fileRequest(reopened, "PUT", "file", "second", "If-Match", first.Revision); changed.Code != 201 {
+		t.Fatalf("ordinary guarded replacement at capacity: %d", changed.Code)
+	}
+	newAttempt := httptest.NewRecorder()
+	reopened.ServeHTTP(newAttempt, durableRequest("new-upload-at-capacity", "third"))
+	if newAttempt.Code != http.StatusInsufficientStorage {
+		t.Fatalf("new durable attempt at capacity: %d", newAttempt.Code)
+	}
+	if got := readReceipt(t, reopened, testReceiptID); got != first {
+		t.Fatalf("capacity changed retained evidence: %+v", got)
+	}
+	repeated := httptest.NewRecorder()
+	reopened.ServeHTTP(repeated, durableRequest(testReceiptID, "first"))
+	if repeated.Code != 200 {
+		t.Fatalf("recovering existing identity at capacity: %d", repeated.Code)
+	}
+	if read := fileRequest(reopened, "GET", "file", "", "", ""); read.Body.String() != "second" {
+		t.Fatal("capacity evicted an identity and allowed replay")
+	}
+	entries, err := os.ReadDir(filepath.Join(root, receiptDirectory))
+	if err != nil || len(entries) != receiptLimit {
+		t.Fatalf("journal was purged or exceeded its bound: %d %v", len(entries), err)
+	}
+}
