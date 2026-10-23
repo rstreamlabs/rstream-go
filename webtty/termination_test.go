@@ -3,6 +3,7 @@
 package webtty
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -22,6 +23,17 @@ import (
 )
 
 func TestWebTTYTerminationProcess(t *testing.T) {
+	if os.Getenv("RSTREAM_WEBTTY_TERMINATION_HELPER") == "probe" {
+		fmt.Fprint(os.Stdout, "ready\n")
+		input := bufio.NewScanner(os.Stdin)
+		for input.Scan() {
+			if input.Text() == "finish" {
+				os.Exit(23)
+			}
+			fmt.Fprintln(os.Stdout, input.Text())
+		}
+		os.Exit(1)
+	}
 	if os.Getenv("RSTREAM_WEBTTY_TERMINATION_HELPER") == "descendant" {
 		signal.Ignore(os.Interrupt)
 		if address := os.Getenv("RSTREAM_WEBTTY_DESCENDANT_MONITOR"); address != "" {
