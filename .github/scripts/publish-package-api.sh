@@ -35,16 +35,70 @@ verify_download() {
   local expected_checksum=$2
   local actual_checksum
 
-  actual_checksum="$(
+  if ! actual_checksum="$(
     curl --fail --silent --show-error --location "${retry_flags[@]}" \
       "${base_url}/api/packages/${package_id}/download" \
       | shasum -a 256 \
       | awk '{print $1}'
-  )"
+  )"; then
+    return 1
+  fi
   if [[ "$actual_checksum" != "$expected_checksum" ]]; then
     echo "published package checksum mismatch for ${package_id}" >&2
-    exit 1
+    return 2
   fi
+}
+
+upload_archive() {
+  local expected_id=$1
+  local headers response_body signed_url upload_status
+
+  headers=$(mktemp)
+  response_body=$(mktemp)
+  if ! curl --fail --silent --show-error "${retry_flags[@]}" \
+    --header "Authorization: Bearer ${token}" \
+    --dump-header "$headers" \
+    --output "$response_body" \
+    --request PUT \
+    --get \
+    --data-urlencode "name=${package_name}" \
+    --data-urlencode "version=${version}" \
+    --data-urlencode "channel=${channel}" \
+    --data-urlencode "os=${os}" \
+    --data-urlencode "arch=${arch}" \
+    --data-urlencode "filename=${filename}" \
+    --data-urlencode "checksum=${checksum}" \
+    --data-urlencode "storageType=s3" \
+    "${base_url}/api/packages"; then
+    rm -f "$headers" "$response_body"
+    return 1
+  fi
+  package_id=$(awk 'tolower($1) == "x-package-id:" { gsub("\\r", "", $2); print $2 }' "$headers")
+  signed_url=$(awk 'tolower($1) == "location:" { gsub("\\r", "", $2); print $2 }' "$headers")
+  rm -f "$headers"
+  if [[ -z "$package_id" || -z "$signed_url" ||
+    ( -n "$expected_id" && "$package_id" != "$expected_id" ) ]]; then
+    echo "package API returned an unexpected upload target for ${filename}" >&2
+    rm -f "$response_body"
+    return 1
+  fi
+  # A failed download can mean an interrupted upload, denied access, or an
+  # outage. Only create a missing object; never overwrite one based on that
+  # ambiguous failure. A concurrent upload must still pass download verification.
+  if ! upload_status=$(curl --fail --silent --show-error "${retry_flags[@]}" \
+    --header "Content-Type: application/octet-stream" \
+    --header "If-None-Match: *" \
+    --output "$response_body" \
+    --write-out '%{http_code}' \
+    --upload-file "$archive" \
+    --request PUT \
+    "$signed_url"); then
+    if [[ "$upload_status" != 412 ]]; then
+      rm -f "$response_body"
+      return 1
+    fi
+  fi
+  rm -f "$response_body"
 }
 
 mapfile -d '' archives < <(
@@ -78,36 +132,17 @@ for archive in "${archives[@]}"; do
       exit 1
     fi
     echo "Package ${filename} already exists with the expected checksum"
-  elif [[ "$total" == 0 ]]; then
-    headers=$(mktemp)
-    response_body=$(mktemp)
-    curl --fail --silent --show-error "${retry_flags[@]}" \
-      --header "Authorization: Bearer ${token}" \
-      --dump-header "$headers" \
-      --output "$response_body" \
-      --request PUT \
-      --get \
-      --data-urlencode "name=${package_name}" \
-      --data-urlencode "version=${version}" \
-      --data-urlencode "channel=${channel}" \
-      --data-urlencode "os=${os}" \
-      --data-urlencode "arch=${arch}" \
-      --data-urlencode "filename=${filename}" \
-      --data-urlencode "checksum=${checksum}" \
-      --data-urlencode "storageType=s3" \
-      "${base_url}/api/packages"
-    package_id=$(awk 'tolower($1) == "x-package-id:" { gsub("\\r", "", $2); print $2 }' "$headers")
-    signed_url=$(awk 'tolower($1) == "location:" { gsub("\\r", "", $2); print $2 }' "$headers")
-    rm -f "$headers" "$response_body"
-    if [[ -z "$package_id" || -z "$signed_url" ]]; then
-      echo "package API did not return an id and upload location for ${filename}" >&2
-      exit 1
+    if verify_download "$package_id" "$checksum"; then
+      :
+    else
+      download_status=$?
+      if [[ "$download_status" == 2 ]]; then
+        exit 1
+      fi
+      upload_archive "$package_id"
     fi
-    curl --fail --show-error "${retry_flags[@]}" \
-      --header "Content-Type: application/octet-stream" \
-      --upload-file "$archive" \
-      --request PUT \
-      "$signed_url"
+  elif [[ "$total" == 0 ]]; then
+    upload_archive ""
   else
     echo "package query returned ${total} records for ${filename}" >&2
     exit 1
