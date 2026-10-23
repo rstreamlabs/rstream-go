@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.36.2](https://github.com/rstreamlabs/rstream-go/compare/v1.36.1...v1.36.2) (2026-10-23)
+
+
+### Bug Fixes
+
+* bound connection setup and try alternate IP addresses ([#164](https://github.com/rstreamlabs/rstream-go/issues/164)) ([7e67fe2](https://github.com/rstreamlabs/rstream-go/commit/7e67fe2af37e014fd95433514c2c9879c8949f3f))
+* **dns:** decouple destination family from resolver connectivity ([dd9f439](https://github.com/rstreamlabs/rstream-go/commit/dd9f439776e18f1626c7fa708b1e1b7bcba19f63))
+* **dns:** separate destination family from resolver transport ([46f9d28](https://github.com/rstreamlabs/rstream-go/commit/46f9d286c29e6c05e9574b9fb55e09de7f04fb21))
+
 ## [1.36.1](https://github.com/rstreamlabs/rstream-go/compare/v1.36.0...v1.36.1) (2026-10-19)
 
 
