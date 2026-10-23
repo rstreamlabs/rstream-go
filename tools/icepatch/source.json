@@ -1,0 +1,9 @@
+{
+  "module": "github.com/pion/ice/v4",
+  "version": "v4.4.2",
+  "sum": "h1:asS17nbHJrzlVQl8fiSJaipxrxSY3Dq6DWgmB+0VwpI=",
+  "file": "gather.go",
+  "original_sha256": "7347acf4562ea983103cb88d26cd1061cdf6adbf5771534bd872b5c7ea47f274",
+  "patched_sha256": "8c2e22d79148b1d02018a23608224b669a83705c7cb1a1e7d59bc8c496140719",
+  "patch_sha256": "6cb516acf7b2f63f5527bc406ed08aec5559056051fcdda9bd381b9e29ae9641"
+}

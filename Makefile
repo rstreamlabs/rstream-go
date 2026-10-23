@@ -22,6 +22,13 @@ VERSION ?= $(if $(GIT_TAG),$(GIT_TAG),$(GIT_BRANCH))
 
 # Output directory
 OUT_DIR := out
+ICE_MODFILE := $(OUT_DIR)/ice-patch/go.mod
+ICE_GOFLAGS = $(filter-out -modfile=%,$(GOFLAGS)) -modfile=$(abspath $(ICE_MODFILE))
+
+.PHONY: ice-patch
+
+ice-patch:
+	@GOFLAGS= GOOS=$(shell go env GOHOSTOS) GOARCH=$(shell go env GOHOSTARCH) go run ./tools/icepatch -output $(OUT_DIR)/ice-patch
 
 # FIPS 140-3 profile
 override FIPS_GO_MODULE := v1.0.0-c2097c7c
@@ -158,15 +165,15 @@ $(if $(filter $1,x86_i686),i386, \
 $1))))))))))))
 endef
 
-PROTO_SOURCES := $(shell find . -name '*.proto' ! -path './cmd/*' ! -path './examples/*')
+PROTO_SOURCES := $(shell find . -name '*.proto' ! -path './cmd/*' ! -path './examples/*' ! -path './out/*')
 PB_GO_SOURCES := $(PROTO_SOURCES:.proto=.pb.go)
-COMMON_GO_SOURCES := $(shell find . -name '*.go' ! -path './cmd/*' ! -path './examples/*' ! -name '*.pb.go')
+COMMON_GO_SOURCES := $(shell find . -name '*.go' ! -path './cmd/*' ! -path './examples/*' ! -path './out/*' ! -name '*.pb.go')
 
 $(foreach bin,$(BINARIES),$(eval SOURCES_cmd_$(bin) := $(shell find ./cmd/$(bin) -name '*.go' 2>/dev/null)))
 $(foreach example,$(EXAMPLES),$(eval SOURCES_examples_$(example) := $(shell find ./examples/$(example) -name '*.go' 2>/dev/null)))
 
 define sources
-$(COMMON_GO_SOURCES) $(PB_GO_SOURCES) $(SOURCES_$1_$2)
+$(COMMON_GO_SOURCES) $(wildcard tools/icepatch/*) $(PB_GO_SOURCES) $(SOURCES_$1_$2)
 endef
 
 define base_dir_cmd
@@ -226,7 +233,7 @@ set -e ;\
 echo "Building $1/$2 for $3/$4" ;\
 $(eval GOARCH=$(if $(findstring armv,$(word 1,$(subst /, ,$4))),arm,$(if $(findstring x86_i,$4),386,$(if $(findstring x86_64,$4),amd64,$(word 1,$(subst /, ,$4)))))) \
 $(eval GOAMD64=$(if $(findstring x86_64,$4),$(if $(findstring _v,$4),$(lastword $(subst _, ,$4)),v1),)) \
-CGO_ENABLED=$(call target_cgo_enabled,$3,$(GOARCH)) GOPRIVATE=github.com/rstreamlabs GOOS=$(subst macos,darwin,$3) GOARCH=$(GOARCH) $(if $(filter $(GOARCH),arm),GOARM=$(word 1,$(subst armv, ,$(word 1,$(subst hf, ,$4))))$(comma)$(if $(findstring hf,$4),hardfloat,softfloat),) $(if $(filter amd64,$(GOARCH)),GOAMD64=$(GOAMD64),) $(if $(findstring x86_i386,$4),GO386=softfloat,) go build -buildvcs=false -v $(if $(filter cmd,$1),$(call go_build_tags,$2),) -ldflags="-X '$(GO_MODULE).Agent=$(AGENT)' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).Commit=$(GIT_COMMIT)' -X '$(GO_MODULE).OS=$3' -X '$(GO_MODULE).Arch=$4'" -o $$@ ./$1/$2
+CGO_ENABLED=$(call target_cgo_enabled,$3,$(GOARCH)) GOPRIVATE=github.com/rstreamlabs GOOS=$(subst macos,darwin,$3) GOARCH=$(GOARCH) $(if $(filter $(GOARCH),arm),GOARM=$(word 1,$(subst armv, ,$(word 1,$(subst hf, ,$4))))$(comma)$(if $(findstring hf,$4),hardfloat,softfloat),) $(if $(filter amd64,$(GOARCH)),GOAMD64=$(GOAMD64),) $(if $(findstring x86_i386,$4),GO386=softfloat,) go build -modfile=$(ICE_MODFILE) -buildvcs=false -v $(if $(filter cmd,$1),$(call go_build_tags,$2),) -ldflags="-X '$(GO_MODULE).Agent=$(AGENT)' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).Commit=$(GIT_COMMIT)' -X '$(GO_MODULE).OS=$3' -X '$(GO_MODULE).Arch=$4'" -o $$@ ./$1/$2
 endef
 
 define build_pkg
@@ -471,11 +478,11 @@ $(foreach role,$(TEST_ROLES),$(eval TEST_TAGS_$(subst /,_,$(role)) := $(call tes
 test-bins: $(foreach r,$(TEST_ROLES),$(TEST_OUT)/$(r)) $(call base_dir_examples)/tcp-ssh-client $(call base_dir_examples)/tcp-ssh-server
 
 define template_test_bin
-$(TEST_OUT)/$1: $$(TEST_SOURCES_$(subst /,_,$1)) $(TEST_COMMON_SOURCES)
+$(TEST_OUT)/$1: $$(TEST_SOURCES_$(subst /,_,$1)) $(TEST_COMMON_SOURCES) | ice-patch
 	@set -e; echo "Building test/$1 for $(CURRENT_OS)/$(CURRENT_ARCH)"; \
 	CGO_ENABLED=$(call target_cgo_enabled,$(CURRENT_OS),$(TEST_GOARCH)) GOPRIVATE=github.com/rstreamlabs \
 	GOOS=$(TEST_GOOS) GOARCH=$(TEST_GOARCH) $(if $(filter amd64,$(TEST_GOARCH)),GOAMD64=$(TEST_GOAMD64),) \
-	go build -buildvcs=false $(if $(TEST_TAGS_$(subst /,_,$1)),-tags=$(TEST_TAGS_$(subst /,_,$1))) \
+	go build -modfile=$(ICE_MODFILE) -buildvcs=false $(if $(TEST_TAGS_$(subst /,_,$1)),-tags=$(TEST_TAGS_$(subst /,_,$1))) \
 	  -ldflags="-X '$(GO_MODULE).Agent=$(AGENT)' -X '$(GO_MODULE).Channel=$(CHANNEL)' -X '$(GO_MODULE).Version=$(VERSION)' -X '$(GO_MODULE).Commit=$(GIT_COMMIT)' -X '$(GO_MODULE).OS=$(CURRENT_OS)' -X '$(GO_MODULE).Arch=$(CURRENT_ARCH)'" \
 	  -o $(TEST_OUT)/$1 ./test/$1
 endef
@@ -489,16 +496,16 @@ clean:
 
 .PHONY: tests
 
-tests:
+tests: ice-patch
 	@echo "==> Running tests..."
-	go test -v ./...
+	GOFLAGS="$(ICE_GOFLAGS)" go test -v ./...
 	@echo "==> All tests passed"
 
 .PHONY: fips-test
 
-fips-test:
+fips-test: ice-patch
 	@echo "==> Running FIPS profile tests with $(FIPS_GO_MODULE)..."
-	GOFIPS140=$(FIPS_GO_MODULE) GODEBUG=fips140=only go test -tags=$(FIPS_BUILD_TAG) -run 'Test(CurrentFIPS|FIPSProfile|.*FIPSCompatible)' ./...
+	GOFIPS140=$(FIPS_GO_MODULE) GODEBUG=fips140=only GOFLAGS="$(ICE_GOFLAGS)" go test -tags=$(FIPS_BUILD_TAG) -run 'Test(CurrentFIPS|FIPSProfile|.*FIPSCompatible)' ./...
 	@echo "==> FIPS profile tests passed"
 
 .PHONY: fips-build
@@ -510,22 +517,22 @@ fips-build: $(FIPS_AMD64_BINARY) $(FIPS_ARM64_BINARY)
 fips-release-assets: fips-build
 	./.github/scripts/create-fips-release-assets.sh "$(VERSION)"
 
-$(FIPS_AMD64_BINARY): $(call sources,cmd,rstream)
+$(FIPS_AMD64_BINARY): $(call sources,cmd,rstream) | ice-patch
 	@echo "==> Building FIPS profile for linux/x86_64..."
 	@mkdir -p $(dir $@)
 	GOFIPS140=$(FIPS_GO_MODULE) CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=v1 \
-		go build -buildvcs=false -trimpath -tags=$(FIPS_BUILD_TAG) \
+		go build -modfile=$(ICE_MODFILE) -buildvcs=false -trimpath -tags=$(FIPS_BUILD_TAG) \
 		-ldflags="$(FIPS_LDFLAGS) -X '$(GO_MODULE).OS=linux' -X '$(GO_MODULE).Arch=x86_64'" \
 		-o $@ ./cmd/rstream
 	@go version -m $@ | grep -F 'GOFIPS140=$(FIPS_GO_MODULE)' >/dev/null
 	@go version -m $@ | awk '$$1 == "dep" && $$2 == "github.com/quic-go/quic-go" && $$3 == "$(FIPS_QUIC_MODULE)" { found=1 } END { exit !found }'
 	@go version -m $@ | awk '$$1 == "dep" && $$2 == "github.com/quic-go/webtransport-go" && $$3 == "$(FIPS_WEBTRANSPORT_MODULE)" { found=1 } END { exit !found }'
 
-$(FIPS_ARM64_BINARY): $(call sources,cmd,rstream)
+$(FIPS_ARM64_BINARY): $(call sources,cmd,rstream) | ice-patch
 	@echo "==> Building FIPS profile for linux/arm64..."
 	@mkdir -p $(dir $@)
 	GOFIPS140=$(FIPS_GO_MODULE) CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
-		go build -buildvcs=false -trimpath -tags=$(FIPS_BUILD_TAG) \
+		go build -modfile=$(ICE_MODFILE) -buildvcs=false -trimpath -tags=$(FIPS_BUILD_TAG) \
 		-ldflags="$(FIPS_LDFLAGS) -X '$(GO_MODULE).OS=linux' -X '$(GO_MODULE).Arch=arm64'" \
 		-o $@ ./cmd/rstream
 	@go version -m $@ | grep -F 'GOFIPS140=$(FIPS_GO_MODULE)' >/dev/null
@@ -552,7 +559,7 @@ $(foreach bin,$(BINARIES),$(eval .PHONY: $(bin)))
 $(foreach bin,$(BINARIES),$(eval $(bin): $(call binary_path,$(bin),$(CURRENT_OS),$(CURRENT_ARCH))))
 
 define template_target_build_cmd
-$(call binary_path,$1,$2,$3): $(call sources,cmd,$1)
+$(call binary_path,$1,$2,$3): $(call sources,cmd,$1) | ice-patch
 	@$(call build,cmd,$1,$2,$3)
 endef
 
@@ -742,7 +749,7 @@ $(foreach bin,$(EXAMPLES),$(eval .PHONY: $(bin)))
 $(foreach bin,$(EXAMPLES),$(eval $(bin): $(call base_dir_examples)/$(bin)))
 
 define template_target_build_examples
-$(call base_dir_examples)/$1: $(call sources,examples,$1)
+$(call base_dir_examples)/$1: $(call sources,examples,$1) | ice-patch
 	@mkdir -p $(call base_dir_examples)
 	@$(call build,examples,$1,$(CURRENT_OS),$(CURRENT_ARCH))
 endef
