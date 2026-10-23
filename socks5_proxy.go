@@ -132,18 +132,6 @@ func socks5ProxyConfigFromRaw(raw string, username, password *string) (socks5Pro
 	return cfg, nil
 }
 
-func socks5TargetAddress(ctx context.Context, target string, dnsOpts dnsResolverConfig) (socks5Address, error) {
-	addr := target
-	var err error
-	if dnsOpts.enabled() {
-		addr, err = resolveDialAddress(ctx, target, dnsOpts)
-		if err != nil {
-			return socks5Address{}, fmt.Errorf("failed to resolve SOCKS5 target address: %w", err)
-		}
-	}
-	return parseSOCKS5TargetAddress(addr)
-}
-
 func parseSOCKS5TargetAddress(addr string) (socks5Address, error) {
 	host, portRaw, err := net.SplitHostPort(addr)
 	if err != nil {
