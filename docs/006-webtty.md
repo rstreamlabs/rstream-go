@@ -192,6 +192,13 @@ rstream webtty exec --url rstrm://prod-shell -- whoami
 rstream ui
 ```
 
+The UI uses one inventory watch and can discover permitted tunnels and WebTTY
+servers when client listing is denied. A denied or empty category shows “No
+visible clients” or “No visible tunnels”; an empty result alone does not prove
+permission denial. If list scopes select fields, include `id` for UI rows and
+the protocol, connection fields and discovery labels needed by WebTTY. Objects
+without an exposed ID are omitted from actionable UI rows.
+
 In `rstream ui`, press `c` from the inventory to select another configured
 context or a project discovered through the active Control Plane API. The
 picker separates contexts (`1`) from projects (`2`); `Tab` toggles the views,
