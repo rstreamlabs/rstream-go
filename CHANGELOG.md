@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.36.4](https://github.com/rstreamlabs/rstream-go/compare/v1.36.3...v1.36.4) (2026-10-23)
+
+
+### Bug Fixes
+
+* apply verified ICE URL snapshot patch to builds ([71dd8d1](https://github.com/rstreamlabs/rstream-go/commit/71dd8d1da7ea8c656217eb28f06f8c90f9ebd50c))
+* apply verified ICE URL snapshot patch to builds ([8f807d7](https://github.com/rstreamlabs/rstream-go/commit/8f807d70319a14649c38d3a2f60499f0f9b53e4e))
+* keep UI usable with restricted client and tunnel inventory ([891a8de](https://github.com/rstreamlabs/rstream-go/commit/891a8de253252e37146e7b57a3bafe44a11be783))
+* keep UI usable with restricted inventory ([ea46c9f](https://github.com/rstreamlabs/rstream-go/commit/ea46c9f5af7aa733cb93d20c6a2e492bdbf1278d))
+* preserve verified patch bytes on Windows ([5459ed9](https://github.com/rstreamlabs/rstream-go/commit/5459ed94fa4db61edc4d964aceb867a936de6774))
+* **release:** resume interrupted package uploads without overwriting objects ([#167](https://github.com/rstreamlabs/rstream-go/issues/167)) ([8f9b498](https://github.com/rstreamlabs/rstream-go/commit/8f9b498f4d108863eeedcd4cde02e440d605dec8))
+
 ## [1.36.3](https://github.com/rstreamlabs/rstream-go/compare/v1.36.2...v1.36.3) (2026-10-23)
 
 
