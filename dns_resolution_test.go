@@ -4,11 +4,16 @@ package rstream
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/miekg/dns"
 )
@@ -158,4 +163,149 @@ func dnsAnswerAllA(ip string) dns.HandlerFunc {
 		}
 		_ = w.WriteMsg(resp)
 	}
+}
+
+func TestDestinationFamilyDoesNotSelectDNSFamily(t *testing.T) {
+	for _, targetIPv6 := range []bool{false, true} {
+		for _, truncate := range []bool{false, true} {
+			t.Run(fmt.Sprintf("ipv6-%t/truncate-%t", targetIPv6, truncate), func(t *testing.T) {
+				resolver := startOppositeFamilyDNS(t, targetIPv6, truncate)
+				destination := "127.0.0.1"
+				if targetIPv6 {
+					destination = "::1"
+				}
+				for _, protocol := range []string{"tcp", "quic"} {
+					t.Run(protocol, func(t *testing.T) {
+						ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+						defer cancel()
+						var conn net.Conn
+						var err error
+						if protocol == "quic" {
+							server := newTestQUICEchoServerAt(t, net.JoinHostPort(destination, "0"))
+							defer server.close()
+							_, port, splitErr := net.SplitHostPort(server.addr)
+							if splitErr != nil {
+								t.Fatal(splitErr)
+							}
+							transport := &QUICTransport{DNSOverride: StringPtr(resolver), ForceIPv4: BoolPtr(!targetIPv6), ForceIPv6: BoolPtr(targetIPv6)}
+							defer transport.Close()
+							conn, err = transport.Dial(ctx, net.JoinHostPort("target.example.test", port), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{testQUICALPN}})
+						} else {
+							listener, listenErr := net.Listen("tcp", net.JoinHostPort(destination, "0"))
+							if listenErr != nil {
+								t.Fatal(listenErr)
+							}
+							defer listener.Close()
+							done := make(chan struct{})
+							go func() {
+								defer close(done)
+								accepted, acceptErr := listener.Accept()
+								if acceptErr != nil {
+									return
+								}
+								defer accepted.Close()
+								_ = accepted.SetDeadline(time.Now().Add(3 * time.Second))
+								_, _ = io.Copy(accepted, accepted)
+							}()
+							defer func() {
+								_ = listener.Close()
+								select {
+								case <-done:
+								case <-time.After(4 * time.Second):
+									t.Error("TCP echo did not stop")
+								}
+							}()
+							_, port, splitErr := net.SplitHostPort(listener.Addr().String())
+							if splitErr != nil {
+								t.Fatal(splitErr)
+							}
+							conn, err = (&Transport{DNSOverride: StringPtr(resolver), ForceIPv4: BoolPtr(!targetIPv6), ForceIPv6: BoolPtr(targetIPv6)}).Dial(ctx, net.JoinHostPort("target.example.test", port), nil)
+						}
+						if err != nil {
+							t.Fatal(err)
+						}
+						defer conn.Close()
+						if err := conn.SetDeadline(time.Now().Add(time.Second)); err != nil {
+							t.Fatal(err)
+						}
+						payload := []byte("opposite-family-dns")
+						if _, err := conn.Write(payload); err != nil {
+							t.Fatal(err)
+						}
+						result := make([]byte, len(payload))
+						if _, err := io.ReadFull(conn, result); err != nil {
+							t.Fatal(err)
+						}
+						if string(result) != string(payload) {
+							t.Fatalf("echo=%q", result)
+						}
+					})
+				}
+			})
+		}
+	}
+}
+
+func startOppositeFamilyDNS(t *testing.T, targetIPv6, truncate bool) string {
+	t.Helper()
+	network, address, target := "tcp6", "[::1]:0", "127.0.0.1"
+	queryType := uint16(dns.TypeA)
+	if targetIPv6 {
+		network, address, target, queryType = "tcp4", "127.0.0.1:0", "::1", dns.TypeAAAA
+	}
+	listener, err := net.Listen(network, address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet, err := net.ListenPacket(strings.Replace(network, "tcp", "udp", 1), listener.Addr().String())
+	if err != nil {
+		_ = listener.Close()
+		t.Fatal(err)
+	}
+	var tcpQueries atomic.Int32
+	handler := dns.HandlerFunc(func(w dns.ResponseWriter, req *dns.Msg) {
+		reply := new(dns.Msg)
+		reply.SetReply(req)
+		for _, q := range req.Question {
+			if q.Qtype != queryType {
+				t.Errorf("forced destination family queried record type %d, want %d", q.Qtype, queryType)
+			}
+		}
+		if truncate && w.LocalAddr().Network() == "udp" {
+			reply.Truncated = true
+		} else {
+			if w.LocalAddr().Network() == "tcp" {
+				tcpQueries.Add(1)
+			}
+			for _, q := range req.Question {
+				header := dns.RR_Header{Name: q.Name, Rrtype: queryType, Class: dns.ClassINET}
+				if targetIPv6 {
+					reply.Answer = append(reply.Answer, &dns.AAAA{Hdr: header, AAAA: net.ParseIP(target)})
+				} else {
+					reply.Answer = append(reply.Answer, &dns.A{Hdr: header, A: net.ParseIP(target)})
+				}
+			}
+		}
+		_ = w.WriteMsg(reply)
+	})
+	udp := &dns.Server{PacketConn: packet, Handler: handler}
+	tcp := &dns.Server{Listener: listener, Handler: handler}
+	done := make(chan struct{}, 2)
+	go func() { _ = udp.ActivateAndServe(); done <- struct{}{} }()
+	go func() { _ = tcp.ActivateAndServe(); done <- struct{}{} }()
+	t.Cleanup(func() {
+		_ = udp.Shutdown()
+		_ = tcp.Shutdown()
+		for range 2 {
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Error("DNS fixture did not stop")
+			}
+		}
+		if truncate && tcpQueries.Load() != 2 {
+			t.Errorf("TCP fallback requests=%d, want 2", tcpQueries.Load())
+		}
+	})
+	return listener.Addr().String()
 }
