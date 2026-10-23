@@ -72,7 +72,8 @@ jobs:
     name: ${{ github.ref_type == 'tag' && 'build and sign stable release candidate' || 'build development targets' }}
     needs: build-macos
     if: ${{ always() && github.actor == vars.CI_ALLOWED_ACTOR && (github.ref_type == 'tag' || github.ref_name == 'main') && (github.ref_type != 'tag' || needs.build-macos.result == 'success') }}
-    runs-on: ubuntu-latest
+    # Keep the legacy Mono/NuGet packaging runtime on its qualified LTS.
+    runs-on: ubuntu-24.04
     steps:
       - shell: bash
         if: ${{ github.ref_type == 'tag' }}
@@ -99,12 +100,11 @@ jobs:
             tar               \
             wget              \
             zip
-          sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 3FA7E0328081BFF6A14DA29AA6A19B38D3D831EF
-          echo "deb https://download.mono-project.com/repo/ubuntu stable-focal main" | sudo tee /etc/apt/sources.list.d/mono-official-stable.list
-          sudo apt update && sudo apt-get install -y nuget
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install NuGet packaging runtime
+        run: ./.github/scripts/install-nuget.sh
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
