@@ -1081,11 +1081,11 @@ func newTestQUICEchoServer(t *testing.T) testQUICEchoServer {
 
 func newTestQUICEchoServerAt(t *testing.T, addr string) testQUICEchoServer {
 	t.Helper()
-	udpAddr, err := net.ResolveUDPAddr("udp4", addr)
+	udpAddr, err := net.ResolveUDPAddr("udp", addr)
 	if err != nil {
 		t.Fatalf("resolve QUIC UDP address: %v", err)
 	}
-	udpConn, err := net.ListenUDP("udp4", udpAddr)
+	udpConn, err := net.ListenUDP("udp", udpAddr)
 	if err != nil {
 		t.Fatalf("listen QUIC UDP: %v", err)
 	}

@@ -504,38 +504,14 @@ func boolKey(v bool) string {
 
 func dnsNetwork(opts ResolverOptions) string {
 	if opts.DNSOverTLS {
-		if opts.ForceIPv4 {
-			return "tcp4-tls"
-		}
-		if opts.ForceIPv6 {
-			return "tcp6-tls"
-		}
 		return "tcp-tls"
-	}
-	if opts.ForceIPv4 {
-		return "udp4"
-	}
-	if opts.ForceIPv6 {
-		return "udp6"
 	}
 	return "udp"
 }
 
 func tcpNetwork(opts ResolverOptions) string {
 	if opts.DNSOverTLS {
-		if opts.ForceIPv4 {
-			return "tcp4-tls"
-		}
-		if opts.ForceIPv6 {
-			return "tcp6-tls"
-		}
 		return "tcp-tls"
-	}
-	if opts.ForceIPv4 {
-		return "tcp4"
-	}
-	if opts.ForceIPv6 {
-		return "tcp6"
 	}
 	return "tcp"
 }

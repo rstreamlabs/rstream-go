@@ -128,7 +128,7 @@ The SDK does not read macOS System Settings, Windows Internet Options, or deskto
 
 Transport settings can bind the outbound connection to a specific local IP address or select an address from a specific network interface. This is useful on multi-homed hosts, split-routing setups, and environments where the default route is not the route you want for reaching the edge.
 
-IPv4-only or IPv6-only dialing can be enforced when one address family is filtered, unstable, or operationally undesirable. This is an address-selection constraint; it does not change the security model.
+IPv4-only or IPv6-only dialing can be enforced when one address family is filtered, unstable, or operationally undesirable. This is an address-selection constraint; it does not change the security model. The constraint applies to destination records (A or AAAA), independently of the DNS server connection: an IPv6 destination can be resolved through an IPv4 DNS server, or vice versa. The same separation applies to UDP queries, TCP fallback and DNS over TLS. DNS-over-TLS certificate verification still uses `dns.serverName`.
 
 ## DNS Resolution
 

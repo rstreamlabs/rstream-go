@@ -336,7 +336,7 @@ func TestDNSClientOptionsAndNameHelpers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newDNSClient(DoT) error = %v", err)
 	}
-	if client.Net != "tcp6-tls" || client.TLSConfig == nil || client.TLSConfig.ServerName != "dns.example.com" {
+	if client.Net != "tcp-tls" || client.TLSConfig == nil || client.TLSConfig.ServerName != "dns.example.com" {
 		t.Fatalf("DoT client not configured correctly: %#v", client)
 	}
 	if _, err := newDNSClient(ResolverOptions{DNSOverTLS: true, DNSOverride: "1.1.1.1"}, false); err == nil || !strings.Contains(err.Error(), "dns.serverName") {
@@ -527,4 +527,31 @@ func startECHTestDNSServers(t *testing.T, handler dns.Handler) string {
 		_ = tcpServer.Shutdown()
 	})
 	return tcpListener.Addr().String()
+}
+
+func TestDNSClientNetworkIndependentOfDestinationFamily(t *testing.T) {
+	for _, forceIPv6 := range []bool{false, true} {
+		for _, overTLS := range []bool{false, true} {
+			for _, forceTCP := range []bool{false, true} {
+				opts := ResolverOptions{ForceIPv4: !forceIPv6, ForceIPv6: forceIPv6, DNSOverTLS: overTLS, DNSOverride: "dns.example.test"}
+				client, err := newDNSClient(opts, forceTCP)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := "udp"
+				if forceTCP {
+					want = "tcp"
+				}
+				if overTLS {
+					want = "tcp-tls"
+				}
+				if client.Net != want {
+					t.Fatalf("client network=%s, want %s (options=%+v, tcp=%t)", client.Net, want, opts, forceTCP)
+				}
+				if overTLS && (client.TLSConfig.ServerName != "dns.example.test" || client.TLSConfig.InsecureSkipVerify) {
+					t.Fatal("DNS TLS identity verification changed")
+				}
+			}
+		}
+	}
 }
