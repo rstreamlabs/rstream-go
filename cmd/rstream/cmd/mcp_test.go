@@ -1498,6 +1498,8 @@ func TestMCPWebTTYExecResultPreservesCapturedOutput(t *testing.T) {
 	nonzero.ExitCode = new(7)
 	unknown := base
 	unknown.ExitCode = nil
+	truncated := nonzero
+	truncated.Truncated = true
 	tests := []struct {
 		name      string
 		result    webTTYClientResult
@@ -1512,6 +1514,7 @@ func TestMCPWebTTYExecResultPreservesCapturedOutput(t *testing.T) {
 		{name: "session failure", result: base, runErr: errors.New("connection closed"), errorKind: "session", wantError: true},
 		{name: "cancelled", result: base, runErr: context.Canceled, errorKind: "cancelled", wantError: true},
 		{name: "timeout", result: base, runErr: context.DeadlineExceeded, errorKind: "timeout", wantError: true},
+		{name: "output limit with confirmed exit", result: truncated, runErr: webtty.ErrCommandOutputLimit, errorKind: "output_limit", wantError: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1530,7 +1533,7 @@ func TestMCPWebTTYExecResultPreservesCapturedOutput(t *testing.T) {
 			if (structured["exit_code"] == nil) != (test.result.ExitCode == nil) || (test.result.ExitCode != nil && structured["exit_code"] != float64(*test.result.ExitCode)) {
 				t.Fatalf("native result changed: %#v", structured)
 			}
-			if structured["surface"] != "cli" || structured["url"] != base.URL || !commandOK || len(command) != len(base.Command) || structured["stdout"] != base.Stdout || structured["stderr"] != base.Stderr || structured["duration_ms"] != float64(base.DurationMS) || structured["truncated"] != false {
+			if structured["surface"] != "cli" || structured["url"] != base.URL || !commandOK || len(command) != len(base.Command) || structured["stdout"] != base.Stdout || structured["stderr"] != base.Stderr || structured["duration_ms"] != float64(base.DurationMS) || structured["truncated"] != test.result.Truncated {
 				t.Fatalf("captured output was not preserved: %#v", structured)
 			}
 			if test.runErr == nil {

@@ -13,6 +13,10 @@ explicitly selected a bounded detached lifetime continues after this disconnect;
 ordinary sessions keep their connection-bound lifetime. Rejoin a live managed
 execution with `Attach`, without sending a new `Open` or repeating the command.
 The session API retains its confirmed result under the existing retention policy.
+After a local close without native completion, `Wait()` now returns
+`ErrSessionDisconnected`. The older `(-1, nil)` local-close result could be
+mistaken for a confirmed process result. `Close()` itself remains idempotent
+and returns nil; a previously confirmed native result is preserved.
 
 `ClientSession.CanTerminate()` reports native protocol support.
 `RequestTermination(ctx)` sends a separate stop request and leaves the reader
@@ -32,6 +36,15 @@ JSON command capture and MCP execution return `exit_code: null` when no native
 result was confirmed, including transport loss and local cancellation. Confirmed
 nonzero or negative native codes remain unchanged. Partial stdout and stderr
 remain separate from the local execution error.
+
+`CaptureCommand(ctx, config, maxOutputBytes)` retains stdout and stderr within
+one combined byte limit (zero selects 8 MiB). It accepts non-interactive pipe
+commands and returns `CommandResult` alongside any local error. Overflow sets
+`OutputTruncated`, returns `ErrCommandOutputLimit`, requests explicit termination
+when supported, and keeps draining for at most 65 seconds or until caller
+cancellation. Its `ExitCode` remains nil until native completion is confirmed.
+The CLI JSON and MCP collectors use the 8 MiB default and report `truncated`
+and the MCP `output_limit` error kind. Streaming CLI output is not retained.
 
 ## User Journeys
 

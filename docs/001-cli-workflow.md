@@ -344,6 +344,19 @@ For non-MCP published remote services, set `token_auth=true` or `rstream_auth=tr
 
 The remote host must have a usable `rstream` binary and context, or the MCP call must pass the required environment with the `env` argument. The persistent remote runner currently expects a POSIX shell on the WebTTY host. The remote expose process is tracked under `$HOME/.rstream/remote-exposes` on the remote host and can be stopped with `rstream_remote_expose_stop`.
 
+Remote expose launches its forwarder with `forward --new-process-group`. This
+Unix option gives a deliberately independent forwarder its own process group,
+so WebTTY can clean up the launch command's group without stopping that service.
+The remote CLI must support this option; an older binary fails the launch
+explicitly. It does not change tunnel authorization or publication settings.
+
+For other independently managed Unix forwarders, the same option can be used
+with a service manager or a shell that owns the PID, redirects standard streams
+and handles shutdown. The option creates neither a background job nor a new
+service manager. `rstream run` already owns its tunnel lifecycles and does not
+expose this process option through tunnel YAML. Windows does not support this
+option; it does not permit escaping a WebTTY Job Object.
+
 When `webtty_url` is a direct authenticated-E2E URL, pass `known_server=<name>`
 to `rstream_remote_expose` and `rstream_remote_expose_stop`. The local MCP
 server then uses the same known-server store as `rstream webtty exec`: it

@@ -322,7 +322,7 @@ func remoteExposeLabels(labels map[string]string, port string, mcpPath string) m
 }
 
 func remoteExposeForwardArgs(expose remoteExposeArgs) ([]string, error) {
-	args := []string{expose.RstreamCmd, "forward", net.JoinHostPort(expose.Host, expose.Port), "--output", "json", "--name", expose.Name}
+	args := []string{expose.RstreamCmd, "forward", net.JoinHostPort(expose.Host, expose.Port), "--new-process-group", "--output", "json", "--name", expose.Name}
 	if expose.Publish {
 		args = append(args, "--publish")
 	} else {

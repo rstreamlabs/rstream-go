@@ -1288,7 +1288,7 @@ func mcpWebTTYExecResult(result *webTTYClientResult, runErr error) (map[string]a
 		"stdout":      result.Stdout,
 		"stderr":      result.Stderr,
 		"duration_ms": result.DurationMS,
-		"truncated":   false,
+		"truncated":   result.Truncated,
 	}
 	if runErr != nil {
 		payload["error"] = "WebTTY command execution failed."
@@ -1299,6 +1299,8 @@ func mcpWebTTYExecResult(result *webTTYClientResult, runErr error) (map[string]a
 
 func mcpWebTTYExecErrorKind(err error) string {
 	switch {
+	case errors.Is(err, webtty.ErrCommandOutputLimit):
+		return "output_limit"
 	case errors.Is(err, context.Canceled):
 		return "cancelled"
 	case errors.Is(err, context.DeadlineExceeded):

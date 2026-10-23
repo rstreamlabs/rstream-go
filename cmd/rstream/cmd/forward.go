@@ -118,6 +118,11 @@ var forwardCmd = &cobra.Command{
 	Args:         cobra.MaximumNArgs(1),
 	SilenceUsage: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if independent, _ := cmd.Flags().GetBool("new-process-group"); independent {
+			if err := newForwardProcessGroup(); err != nil {
+				return fmt.Errorf("create forward process group: %w", err)
+			}
+		}
 		host := "localhost"
 		port := "8080"
 		if len(args) == 1 {
@@ -175,6 +180,7 @@ func addForwardFlags(cmd *cobra.Command) {
 	cmd.Flags().SortFlags = false
 	cmd.PersistentFlags().SortFlags = false
 	cmd.Flags().StringP("output", "o", "", "output mode (text, json, xterm, none)")
+	cmd.Flags().Bool("new-process-group", false, "own a separate Unix process group for an independently managed forwarder")
 	cmd.Flags().String("name", "", "tunnel name")
 	cmd.Flags().Bool("bytestream", false, "create a bytestream tunnel")
 	cmd.Flags().Bool("datagram", false, "create a raw private datagram tunnel")

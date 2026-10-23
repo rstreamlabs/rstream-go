@@ -70,6 +70,7 @@ type webTTYClientResult struct {
 	Stdout     string   `json:"stdout"`
 	Stderr     string   `json:"stderr"`
 	DurationMS int64    `json:"duration_ms"`
+	Truncated  bool     `json:"truncated"`
 }
 
 type webTTYClientRuntimeE2EContext struct {
@@ -3072,16 +3073,8 @@ func webTTYPublishedServerName(host string) string {
 
 func runWebTTYClientCapture(ctx context.Context, cfg *webtty.ClientConfig) (*webTTYClientResult, error) {
 	start := time.Now()
-	stdout := bytes.Buffer{}
-	stderr := bytes.Buffer{}
-	resolved := *cfg
-	resolved.Stdout = &stdout
-	resolved.Stderr = &stderr
-	exitCode, err := webtty.RunClient(ctx, &resolved)
-	result := &webTTYClientResult{URL: cfg.URL, Command: append([]string(nil), cfg.CmdArgs...), Stdout: stdout.String(), Stderr: stderr.String(), DurationMS: time.Since(start).Milliseconds()}
-	if err == nil {
-		result.ExitCode = &exitCode
-	}
+	captured, err := webtty.CaptureCommand(ctx, cfg, 0)
+	result := &webTTYClientResult{URL: cfg.URL, Command: append([]string(nil), cfg.CmdArgs...), ExitCode: captured.ExitCode, Stdout: captured.Stdout, Stderr: captured.Stderr, Truncated: captured.OutputTruncated, DurationMS: time.Since(start).Milliseconds()}
 	return result, err
 }
 

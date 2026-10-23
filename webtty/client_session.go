@@ -5,6 +5,7 @@ package webtty
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,6 +26,8 @@ import (
 )
 
 const tunneledWebTransportInitialPacketSize = 1200
+
+var ErrSessionDisconnected = errors.New("WebTTY reader disconnected before native completion")
 
 type SessionConfig struct {
 	URL                    string
@@ -810,6 +813,9 @@ func (s *ClientSession) decodeEvent(ctx context.Context, data *pb.Data) (ClientS
 }
 
 func (s *ClientSession) requestClose(exitCode int, err error, sendError bool) {
+	if err == nil {
+		err = ErrSessionDisconnected
+	}
 	s.closeTransportOnce.Do(func() {
 		s.resultMu.Lock()
 		s.closeResult = &clientSessionResult{exitCode: exitCode, err: err}

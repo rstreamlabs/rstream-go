@@ -213,8 +213,9 @@ func TestNativeTerminatePreservesProcessResultAndFinalOutput(t *testing.T) {
 				t.Fatal("process completed before the termination request")
 			}
 			if runtime.GOOS == "windows" {
-				if result.ReturnCode == 0 {
-					t.Fatal("terminated process returned a successful exit code")
+				// Windows reports STATUS_CONTROL_C_EXIT from the owned Job Object.
+				if result.ReturnCode != -1073741510 || stdout.String() != "ready\n" || stderr.Len() != 0 {
+					t.Fatalf("native Windows stop result/output changed: code=%d stdout=%q stderr=%q", result.ReturnCode, stdout.String(), stderr.String())
 				}
 			} else if result.ReturnCode != 23 || stdout.String() != "ready\nfinal stdout\n" || stderr.String() != "final stderr\n" {
 				t.Fatalf("native result/output lost: code=%d stdout=%q stderr=%q", result.ReturnCode, stdout.String(), stderr.String())
