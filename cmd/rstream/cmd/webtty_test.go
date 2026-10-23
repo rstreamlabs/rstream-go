@@ -314,7 +314,7 @@ func TestRunWebTTYClientCaptureForwardsPipedStdin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runWebTTYClientCapture() error = %v", err)
 	}
-	if result.ExitCode != 0 || result.Stdout != "capture-pipe\n" || result.Stderr != "" {
+	if result.ExitCode == nil || *result.ExitCode != 0 || result.Stdout != "capture-pipe\n" || result.Stderr != "" {
 		t.Fatalf("runWebTTYClientCapture() = %#v", result)
 	}
 }

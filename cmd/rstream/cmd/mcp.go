@@ -974,7 +974,7 @@ func mcpToolOutputSchema(name string) map[string]any {
 	case "rstream_remote_expose":
 		return mcpObjectOutputSchema(map[string]any{"id": mcpStringSchema("Remote exposure ID."), "status": mcpStringSchema("Remote exposure status."), "command": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "webtty": map[string]any{"type": "object"}}, "id", "status", "command", "webtty")
 	case "rstream_remote_expose_stop":
-		return mcpObjectOutputSchema(map[string]any{"id": mcpStringSchema("Remote exposure ID."), "exit_code": map[string]any{"type": "number"}, "stdout": mcpStringSchema("Captured stdout."), "stderr": mcpStringSchema("Captured stderr.")}, "id", "exit_code", "stdout", "stderr")
+		return mcpObjectOutputSchema(map[string]any{"id": mcpStringSchema("Remote exposure ID."), "exit_code": map[string]any{"type": []string{"integer", "null"}}, "stdout": mcpStringSchema("Captured stdout."), "stderr": mcpStringSchema("Captured stderr.")}, "id", "exit_code", "stdout", "stderr")
 	case "rstream_remote_mcp_discover":
 		return mcpListOutputSchema("endpoints", "Discovered remote MCP endpoints.")
 	case "rstream_remote_mcp_tools", "rstream_remote_mcp_call":
@@ -996,7 +996,7 @@ func mcpToolOutputSchema(name string) map[string]any {
 	case "rstream_webtty_server_delete":
 		return map[string]any{"type": "object", "properties": map[string]any{"surface": mcpStringSchema("MCP surface name."), "deleted": map[string]any{"type": "boolean"}, "server_id": mcpStringSchema("Deleted registered WebTTY server ID.")}, "required": []string{"surface", "deleted", "server_id"}, "additionalProperties": true}
 	case "rstream_webtty_exec":
-		return map[string]any{"type": "object", "properties": map[string]any{"surface": mcpStringSchema("MCP surface name."), "url": mcpStringSchema("Resolved WebTTY URL."), "command": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "exit_code": map[string]any{"type": "number"}, "stdout": mcpStringSchema("Captured stdout, including partial output on session failure."), "stderr": mcpStringSchema("Captured stderr, including partial output on session failure."), "duration_ms": map[string]any{"type": "number"}, "truncated": map[string]any{"type": "boolean"}, "error": mcpStringSchema("Safe execution error summary."), "error_kind": map[string]any{"type": "string", "enum": []string{"cancelled", "timeout", "session"}}}, "required": []string{"surface", "url", "command", "exit_code", "stdout", "stderr", "duration_ms", "truncated"}, "additionalProperties": true}
+		return map[string]any{"type": "object", "properties": map[string]any{"surface": mcpStringSchema("MCP surface name."), "url": mcpStringSchema("Resolved WebTTY URL."), "command": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "exit_code": map[string]any{"type": []string{"integer", "null"}}, "stdout": mcpStringSchema("Captured stdout, including partial output on session failure."), "stderr": mcpStringSchema("Captured stderr, including partial output on session failure."), "duration_ms": map[string]any{"type": "number"}, "truncated": map[string]any{"type": "boolean"}, "error": mcpStringSchema("Safe execution error summary."), "error_kind": map[string]any{"type": "string", "enum": []string{"cancelled", "timeout", "session"}}}, "required": []string{"surface", "url", "command", "exit_code", "stdout", "stderr", "duration_ms", "truncated"}, "additionalProperties": true}
 	case "rstream_webtty_sessions_list":
 		return map[string]any{"type": "object", "properties": map[string]any{"surface": mcpStringSchema("MCP surface name."), "sessions": map[string]any{"type": "array", "items": map[string]any{"type": "object"}}}, "required": []string{"surface", "sessions"}, "additionalProperties": true}
 	case "rstream_webtty_session_get":
@@ -1294,7 +1294,7 @@ func mcpWebTTYExecResult(result *webTTYClientResult, runErr error) (map[string]a
 		payload["error"] = "WebTTY command execution failed."
 		payload["error_kind"] = mcpWebTTYExecErrorKind(runErr)
 	}
-	return mcpJSONResult(payload, runErr != nil || result.ExitCode != 0)
+	return mcpJSONResult(payload, runErr != nil || result.ExitCode == nil || *result.ExitCode != 0)
 }
 
 func mcpWebTTYExecErrorKind(err error) string {

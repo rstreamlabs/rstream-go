@@ -15,6 +15,13 @@ import (
 )
 
 const windowsProcessStillActive = 259
+const windowsInterruptedExitCode = 0xc000013a
+
+func prepareChildProcess(_ *exec.Cmd, _ bool) {}
+
+func killChildProcess(cmd *exec.Cmd) error {
+	return cmd.Process.Kill()
+}
 
 func SetupCredential(cmd *exec.Cmd, ui *UserInfo) error {
 	return fmt.Errorf("user switching is not supported on %s", runtime.GOOS)
@@ -29,7 +36,7 @@ func interruptChildProcess(cmd *exec.Cmd) error {
 		return err
 	}
 	defer windows.CloseHandle(handle)
-	err = windows.TerminateProcess(handle, windows.CTRL_C_EVENT)
+	err = windows.TerminateProcess(handle, windowsInterruptedExitCode)
 	if err != nil && errors.Is(err, windows.ERROR_ACCESS_DENIED) {
 		var exitCode uint32
 		if exitErr := windows.GetExitCodeProcess(handle, &exitCode); exitErr == nil && exitCode != windowsProcessStillActive {

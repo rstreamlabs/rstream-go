@@ -128,6 +128,10 @@ type WebTTYCapabilities struct {
 	Replay                bool                   `json:"replay"`
 	LiveAttach            bool                   `json:"live_attach"`
 	ControlTransfer       bool                   `json:"control_transfer"`
+	DetachedExecution     bool                   `json:"detached_execution"`
+	ExplicitTermination   bool                   `json:"explicit_termination"`
+	ExecutionTransports   []WebTTYTransport      `json:"execution_transports"`
+	MaxExecutionSeconds   int                    `json:"max_execution_seconds,omitempty"`
 	E2E                   bool                   `json:"e2e"`
 	ImplementedTransports []WebTTYTransport      `json:"implemented_transports"`
 	RecordingModes        []WebTTYRecordingMode  `json:"recording_modes"`
@@ -146,14 +150,15 @@ type WebTTYCryptoMetadata struct {
 }
 
 type WebTTYContextMetadata struct {
-	Origin        WebTTYOrigin        `json:"origin,omitempty"`
-	OriginID      string              `json:"origin_id,omitempty"`
-	Purpose       string              `json:"purpose,omitempty"`
-	InitiatorKind WebTTYInitiatorKind `json:"initiator_kind,omitempty"`
-	AgentName     string              `json:"agent_name,omitempty"`
-	AgentVersion  string              `json:"agent_version,omitempty"`
-	RequestID     string              `json:"request_id,omitempty"`
-	Labels        map[string]string   `json:"labels,omitempty"`
+	ExecutionDeadline *time.Time          `json:"execution_deadline,omitempty"`
+	Origin            WebTTYOrigin        `json:"origin,omitempty"`
+	OriginID          string              `json:"origin_id,omitempty"`
+	Purpose           string              `json:"purpose,omitempty"`
+	InitiatorKind     WebTTYInitiatorKind `json:"initiator_kind,omitempty"`
+	AgentName         string              `json:"agent_name,omitempty"`
+	AgentVersion      string              `json:"agent_version,omitempty"`
+	RequestID         string              `json:"request_id,omitempty"`
+	Labels            map[string]string   `json:"labels,omitempty"`
 }
 
 type WebTTYSessionLive struct {

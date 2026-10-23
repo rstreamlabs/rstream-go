@@ -174,7 +174,7 @@ func TestMCPRemoteExposeWebTTYCommandUsesSharedTrustConfig(t *testing.T) {
 
 func TestParseRemoteExposeResult(t *testing.T) {
 	stdout := "RSTREAM_REMOTE_EXPOSE_STATUS=online\nRSTREAM_REMOTE_EXPOSE_ID=robot\nRSTREAM_REMOTE_EXPOSE_PID=42\nRSTREAM_REMOTE_EXPOSE_LOG=/tmp/robot.log\nRSTREAM_REMOTE_EXPOSE_JSON_LINE={\"status\":\"online\",\"tunnel_id\":\"abc\",\"forwarding\":\"https://robot.example.com\"}\n"
-	parsed, err := parseRemoteExposeResult(remoteExposeArgs{ID: "robot"}, []string{"rstream"}, &webTTYClientResult{ExitCode: 0, Stdout: stdout})
+	parsed, err := parseRemoteExposeResult(remoteExposeArgs{ID: "robot"}, []string{"rstream"}, &webTTYClientResult{ExitCode: new(0), Stdout: stdout})
 	if err != nil {
 		t.Fatalf("parseRemoteExposeResult returned error: %v", err)
 	}

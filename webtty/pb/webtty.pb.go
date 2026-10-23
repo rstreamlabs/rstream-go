@@ -568,6 +568,53 @@ func (AttachCapability) EnumDescriptor() ([]byte, []int) {
 	return file_pb_webtty_proto_rawDescGZIP(), []int{9}
 }
 
+type SessionCapability int32
+
+const (
+	SessionCapability_SESSION_CAPABILITY_UNSPECIFIED SessionCapability = 0
+	// Terminate requests process termination; only a native Close reports its result.
+	SessionCapability_SESSION_CAPABILITY_TERMINATE SessionCapability = 1
+)
+
+// Enum value maps for SessionCapability.
+var (
+	SessionCapability_name = map[int32]string{
+		0: "SESSION_CAPABILITY_UNSPECIFIED",
+		1: "SESSION_CAPABILITY_TERMINATE",
+	}
+	SessionCapability_value = map[string]int32{
+		"SESSION_CAPABILITY_UNSPECIFIED": 0,
+		"SESSION_CAPABILITY_TERMINATE":   1,
+	}
+)
+
+func (x SessionCapability) Enum() *SessionCapability {
+	p := new(SessionCapability)
+	*p = x
+	return p
+}
+
+func (x SessionCapability) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SessionCapability) Descriptor() protoreflect.EnumDescriptor {
+	return file_pb_webtty_proto_enumTypes[10].Descriptor()
+}
+
+func (SessionCapability) Type() protoreflect.EnumType {
+	return &file_pb_webtty_proto_enumTypes[10]
+}
+
+func (x SessionCapability) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SessionCapability.Descriptor instead.
+func (SessionCapability) EnumDescriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{10}
+}
+
 type Data_Type int32
 
 const (
@@ -601,11 +648,11 @@ func (x Data_Type) String() string {
 }
 
 func (Data_Type) Descriptor() protoreflect.EnumDescriptor {
-	return file_pb_webtty_proto_enumTypes[10].Descriptor()
+	return file_pb_webtty_proto_enumTypes[11].Descriptor()
 }
 
 func (Data_Type) Type() protoreflect.EnumType {
-	return &file_pb_webtty_proto_enumTypes[10]
+	return &file_pb_webtty_proto_enumTypes[11]
 }
 
 func (x Data_Type) Number() protoreflect.EnumNumber {
@@ -614,7 +661,7 @@ func (x Data_Type) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Data_Type.Descriptor instead.
 func (Data_Type) EnumDescriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{21, 0}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{22, 0}
 }
 
 type Options struct {
@@ -1835,6 +1882,7 @@ func (x *Attach) GetClientProof() *ClientProof {
 
 type Ack struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Capabilities  []SessionCapability    `protobuf:"varint,1,rep,packed,name=capabilities,proto3,enum=SessionCapability" json:"capabilities,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1869,6 +1917,51 @@ func (*Ack) Descriptor() ([]byte, []int) {
 	return file_pb_webtty_proto_rawDescGZIP(), []int{16}
 }
 
+func (x *Ack) GetCapabilities() []SessionCapability {
+	if x != nil {
+		return x.Capabilities
+	}
+	return nil
+}
+
+// Terminate is an idempotent request from the authorized session controller.
+// It carries no exit status and does not close the reader's transport.
+type Terminate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Terminate) Reset() {
+	*x = Terminate{}
+	mi := &file_pb_webtty_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Terminate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Terminate) ProtoMessage() {}
+
+func (x *Terminate) ProtoReflect() protoreflect.Message {
+	mi := &file_pb_webtty_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Terminate.ProtoReflect.Descriptor instead.
+func (*Terminate) Descriptor() ([]byte, []int) {
+	return file_pb_webtty_proto_rawDescGZIP(), []int{17}
+}
+
 type Error struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Msg           string                 `protobuf:"bytes,1,opt,name=msg,proto3" json:"msg,omitempty"`
@@ -1878,7 +1971,7 @@ type Error struct {
 
 func (x *Error) Reset() {
 	*x = Error{}
-	mi := &file_pb_webtty_proto_msgTypes[17]
+	mi := &file_pb_webtty_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1890,7 +1983,7 @@ func (x *Error) String() string {
 func (*Error) ProtoMessage() {}
 
 func (x *Error) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[17]
+	mi := &file_pb_webtty_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1903,7 +1996,7 @@ func (x *Error) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Error.ProtoReflect.Descriptor instead.
 func (*Error) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{17}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Error) GetMsg() string {
@@ -1922,7 +2015,7 @@ type Close struct {
 
 func (x *Close) Reset() {
 	*x = Close{}
-	mi := &file_pb_webtty_proto_msgTypes[18]
+	mi := &file_pb_webtty_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1934,7 +2027,7 @@ func (x *Close) String() string {
 func (*Close) ProtoMessage() {}
 
 func (x *Close) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[18]
+	mi := &file_pb_webtty_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1947,7 +2040,7 @@ func (x *Close) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Close.ProtoReflect.Descriptor instead.
 func (*Close) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{18}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *Close) GetReturnCode() int32 {
@@ -1965,7 +2058,7 @@ type EndOfStream struct {
 
 func (x *EndOfStream) Reset() {
 	*x = EndOfStream{}
-	mi := &file_pb_webtty_proto_msgTypes[19]
+	mi := &file_pb_webtty_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1977,7 +2070,7 @@ func (x *EndOfStream) String() string {
 func (*EndOfStream) ProtoMessage() {}
 
 func (x *EndOfStream) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[19]
+	mi := &file_pb_webtty_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1990,7 +2083,7 @@ func (x *EndOfStream) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EndOfStream.ProtoReflect.Descriptor instead.
 func (*EndOfStream) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{19}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{20}
 }
 
 type EncryptedPayload struct {
@@ -2004,7 +2097,7 @@ type EncryptedPayload struct {
 
 func (x *EncryptedPayload) Reset() {
 	*x = EncryptedPayload{}
-	mi := &file_pb_webtty_proto_msgTypes[20]
+	mi := &file_pb_webtty_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2016,7 +2109,7 @@ func (x *EncryptedPayload) String() string {
 func (*EncryptedPayload) ProtoMessage() {}
 
 func (x *EncryptedPayload) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[20]
+	mi := &file_pb_webtty_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2029,7 +2122,7 @@ func (x *EncryptedPayload) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EncryptedPayload.ProtoReflect.Descriptor instead.
 func (*EncryptedPayload) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{20}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *EncryptedPayload) GetCiphertext() []byte {
@@ -2068,7 +2161,7 @@ type Data struct {
 
 func (x *Data) Reset() {
 	*x = Data{}
-	mi := &file_pb_webtty_proto_msgTypes[21]
+	mi := &file_pb_webtty_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2080,7 +2173,7 @@ func (x *Data) String() string {
 func (*Data) ProtoMessage() {}
 
 func (x *Data) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[21]
+	mi := &file_pb_webtty_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2093,7 +2186,7 @@ func (x *Data) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Data.ProtoReflect.Descriptor instead.
 func (*Data) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{21}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *Data) GetType() Data_Type {
@@ -2171,7 +2264,7 @@ type TerminalSize struct {
 
 func (x *TerminalSize) Reset() {
 	*x = TerminalSize{}
-	mi := &file_pb_webtty_proto_msgTypes[22]
+	mi := &file_pb_webtty_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2183,7 +2276,7 @@ func (x *TerminalSize) String() string {
 func (*TerminalSize) ProtoMessage() {}
 
 func (x *TerminalSize) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[22]
+	mi := &file_pb_webtty_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2196,7 +2289,7 @@ func (x *TerminalSize) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TerminalSize.ProtoReflect.Descriptor instead.
 func (*TerminalSize) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{22}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *TerminalSize) GetRow() uint32 {
@@ -2239,7 +2332,7 @@ type Parameter struct {
 
 func (x *Parameter) Reset() {
 	*x = Parameter{}
-	mi := &file_pb_webtty_proto_msgTypes[23]
+	mi := &file_pb_webtty_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2251,7 +2344,7 @@ func (x *Parameter) String() string {
 func (*Parameter) ProtoMessage() {}
 
 func (x *Parameter) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[23]
+	mi := &file_pb_webtty_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2264,7 +2357,7 @@ func (x *Parameter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Parameter.ProtoReflect.Descriptor instead.
 func (*Parameter) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{23}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *Parameter) GetParameter() isParameter_Parameter {
@@ -2301,7 +2394,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_pb_webtty_proto_msgTypes[24]
+	mi := &file_pb_webtty_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2313,7 +2406,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[24]
+	mi := &file_pb_webtty_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2326,7 +2419,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{24}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{25}
 }
 
 type Message struct {
@@ -2344,6 +2437,7 @@ type Message struct {
 	//	*Message_ServerHello
 	//	*Message_ProtocolError
 	//	*Message_ClientHello
+	//	*Message_Terminate
 	Payload       isMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2351,7 +2445,7 @@ type Message struct {
 
 func (x *Message) Reset() {
 	*x = Message{}
-	mi := &file_pb_webtty_proto_msgTypes[25]
+	mi := &file_pb_webtty_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2363,7 +2457,7 @@ func (x *Message) String() string {
 func (*Message) ProtoMessage() {}
 
 func (x *Message) ProtoReflect() protoreflect.Message {
-	mi := &file_pb_webtty_proto_msgTypes[25]
+	mi := &file_pb_webtty_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2376,7 +2470,7 @@ func (x *Message) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Message.ProtoReflect.Descriptor instead.
 func (*Message) Descriptor() ([]byte, []int) {
-	return file_pb_webtty_proto_rawDescGZIP(), []int{25}
+	return file_pb_webtty_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *Message) GetPayload() isMessage_Payload {
@@ -2485,6 +2579,15 @@ func (x *Message) GetClientHello() *ClientHello {
 	return nil
 }
 
+func (x *Message) GetTerminate() *Terminate {
+	if x != nil {
+		if x, ok := x.Payload.(*Message_Terminate); ok {
+			return x.Terminate
+		}
+	}
+	return nil
+}
+
 type isMessage_Payload interface {
 	isMessage_Payload()
 }
@@ -2533,6 +2636,10 @@ type Message_ClientHello struct {
 	ClientHello *ClientHello `protobuf:"bytes,11,opt,name=client_hello,json=clientHello,proto3,oneof"`
 }
 
+type Message_Terminate struct {
+	Terminate *Terminate `protobuf:"bytes,12,opt,name=terminate,proto3,oneof"`
+}
+
 func (*Message_Open) isMessage_Payload() {}
 
 func (*Message_Ack) isMessage_Payload() {}
@@ -2554,6 +2661,8 @@ func (*Message_ServerHello) isMessage_Payload() {}
 func (*Message_ProtocolError) isMessage_Payload() {}
 
 func (*Message_ClientHello) isMessage_Payload() {}
+
+func (*Message_Terminate) isMessage_Payload() {}
 
 var File_pb_webtty_proto protoreflect.FileDescriptor
 
@@ -2663,8 +2772,10 @@ const file_pb_webtty_proto_rawDesc = "" +
 	"\tdevice_id\x18\a \x01(\v2\x1c.google.protobuf.StringValueR\bdeviceId\x12;\n" +
 	"\n" +
 	"browser_id\x18\b \x01(\v2\x1c.google.protobuf.StringValueR\tbrowserId\x12/\n" +
-	"\fclient_proof\x18\t \x01(\v2\f.ClientProofR\vclientProof\"\x05\n" +
-	"\x03Ack\"\x19\n" +
+	"\fclient_proof\x18\t \x01(\v2\f.ClientProofR\vclientProof\"=\n" +
+	"\x03Ack\x126\n" +
+	"\fcapabilities\x18\x01 \x03(\x0e2\x12.SessionCapabilityR\fcapabilities\"\v\n" +
+	"\tTerminate\"\x19\n" +
 	"\x05Error\x12\x10\n" +
 	"\x03msg\x18\x01 \x01(\tR\x03msg\"(\n" +
 	"\x05Close\x12\x1f\n" +
@@ -2697,7 +2808,7 @@ const file_pb_webtty_proto_rawDesc = "" +
 	"\tParameter\x124\n" +
 	"\rterminal_size\x18\x01 \x01(\v2\r.TerminalSizeH\x00R\fterminalSizeB\v\n" +
 	"\tparameter\"\v\n" +
-	"\tHeartbeat\"\xc2\x03\n" +
+	"\tHeartbeat\"\xee\x03\n" +
 	"\aMessage\x12\x1b\n" +
 	"\x04open\x18\x01 \x01(\v2\x05.OpenH\x00R\x04open\x12\x18\n" +
 	"\x03ack\x18\x02 \x01(\v2\x04.AckH\x00R\x03ack\x12\x1e\n" +
@@ -2712,7 +2823,9 @@ const file_pb_webtty_proto_rawDesc = "" +
 	"\fserver_hello\x18\t \x01(\v2\f.ServerHelloH\x00R\vserverHello\x127\n" +
 	"\x0eprotocol_error\x18\n" +
 	" \x01(\v2\x0e.ProtocolErrorH\x00R\rprotocolError\x121\n" +
-	"\fclient_hello\x18\v \x01(\v2\f.ClientHelloH\x00R\vclientHelloB\t\n" +
+	"\fclient_hello\x18\v \x01(\v2\f.ClientHelloH\x00R\vclientHello\x12*\n" +
+	"\tterminate\x18\f \x01(\v2\n" +
+	".TerminateH\x00R\tterminateB\t\n" +
 	"\apayload*|\n" +
 	"\x0eOpenCapability\x12\x1f\n" +
 	"\x1bOPEN_CAPABILITY_UNSPECIFIED\x10\x00\x12%\n" +
@@ -2769,7 +2882,10 @@ const file_pb_webtty_proto_rawDesc = "" +
 	"\x1dATTACH_CAPABILITY_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dATTACH_CAPABILITY_READ_STREAM\x10\x01\x12%\n" +
 	"!ATTACH_CAPABILITY_REQUEST_CONTROL\x10\x02\x12%\n" +
-	"!ATTACH_CAPABILITY_RECEIVE_CONTROL\x10\x03B\x06Z\x04./pbb\x06proto3"
+	"!ATTACH_CAPABILITY_RECEIVE_CONTROL\x10\x03*Y\n" +
+	"\x11SessionCapability\x12\"\n" +
+	"\x1eSESSION_CAPABILITY_UNSPECIFIED\x10\x00\x12 \n" +
+	"\x1cSESSION_CAPABILITY_TERMINATE\x10\x01B\x06Z\x04./pbb\x06proto3"
 
 var (
 	file_pb_webtty_proto_rawDescOnce sync.Once
@@ -2783,8 +2899,8 @@ func file_pb_webtty_proto_rawDescGZIP() []byte {
 	return file_pb_webtty_proto_rawDescData
 }
 
-var file_pb_webtty_proto_enumTypes = make([]protoimpl.EnumInfo, 11)
-var file_pb_webtty_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_pb_webtty_proto_enumTypes = make([]protoimpl.EnumInfo, 12)
+var file_pb_webtty_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_pb_webtty_proto_goTypes = []any{
 	(OpenCapability)(0),            // 0: OpenCapability
 	(PayloadCipherSuite)(0),        // 1: PayloadCipherSuite
@@ -2796,96 +2912,100 @@ var file_pb_webtty_proto_goTypes = []any{
 	(AttachRole)(0),                // 7: AttachRole
 	(AttachTransport)(0),           // 8: AttachTransport
 	(AttachCapability)(0),          // 9: AttachCapability
-	(Data_Type)(0),                 // 10: Data.Type
-	(*Options)(nil),                // 11: Options
-	(*Environment)(nil),            // 12: Environment
-	(*Username)(nil),               // 13: Username
-	(*Workdir)(nil),                // 14: Workdir
-	(*Config)(nil),                 // 15: Config
-	(*KeyEnvelope)(nil),            // 16: KeyEnvelope
-	(*EndpointIdentity)(nil),       // 17: EndpointIdentity
-	(*ServerProof)(nil),            // 18: ServerProof
-	(*ServerHello)(nil),            // 19: ServerHello
-	(*ClientHello)(nil),            // 20: ClientHello
-	(*SessionKeyGrant)(nil),        // 21: SessionKeyGrant
-	(*PayloadCrypto)(nil),          // 22: PayloadCrypto
-	(*ClientProof)(nil),            // 23: ClientProof
-	(*ProtocolError)(nil),          // 24: ProtocolError
-	(*Open)(nil),                   // 25: Open
-	(*Attach)(nil),                 // 26: Attach
-	(*Ack)(nil),                    // 27: Ack
-	(*Error)(nil),                  // 28: Error
-	(*Close)(nil),                  // 29: Close
-	(*EndOfStream)(nil),            // 30: EndOfStream
-	(*EncryptedPayload)(nil),       // 31: EncryptedPayload
-	(*Data)(nil),                   // 32: Data
-	(*TerminalSize)(nil),           // 33: TerminalSize
-	(*Parameter)(nil),              // 34: Parameter
-	(*Heartbeat)(nil),              // 35: Heartbeat
-	(*Message)(nil),                // 36: Message
-	(*wrapperspb.StringValue)(nil), // 37: google.protobuf.StringValue
-	(*wrapperspb.BytesValue)(nil),  // 38: google.protobuf.BytesValue
+	(SessionCapability)(0),         // 10: SessionCapability
+	(Data_Type)(0),                 // 11: Data.Type
+	(*Options)(nil),                // 12: Options
+	(*Environment)(nil),            // 13: Environment
+	(*Username)(nil),               // 14: Username
+	(*Workdir)(nil),                // 15: Workdir
+	(*Config)(nil),                 // 16: Config
+	(*KeyEnvelope)(nil),            // 17: KeyEnvelope
+	(*EndpointIdentity)(nil),       // 18: EndpointIdentity
+	(*ServerProof)(nil),            // 19: ServerProof
+	(*ServerHello)(nil),            // 20: ServerHello
+	(*ClientHello)(nil),            // 21: ClientHello
+	(*SessionKeyGrant)(nil),        // 22: SessionKeyGrant
+	(*PayloadCrypto)(nil),          // 23: PayloadCrypto
+	(*ClientProof)(nil),            // 24: ClientProof
+	(*ProtocolError)(nil),          // 25: ProtocolError
+	(*Open)(nil),                   // 26: Open
+	(*Attach)(nil),                 // 27: Attach
+	(*Ack)(nil),                    // 28: Ack
+	(*Terminate)(nil),              // 29: Terminate
+	(*Error)(nil),                  // 30: Error
+	(*Close)(nil),                  // 31: Close
+	(*EndOfStream)(nil),            // 32: EndOfStream
+	(*EncryptedPayload)(nil),       // 33: EncryptedPayload
+	(*Data)(nil),                   // 34: Data
+	(*TerminalSize)(nil),           // 35: TerminalSize
+	(*Parameter)(nil),              // 36: Parameter
+	(*Heartbeat)(nil),              // 37: Heartbeat
+	(*Message)(nil),                // 38: Message
+	(*wrapperspb.StringValue)(nil), // 39: google.protobuf.StringValue
+	(*wrapperspb.BytesValue)(nil),  // 40: google.protobuf.BytesValue
 }
 var file_pb_webtty_proto_depIdxs = []int32{
-	11, // 0: Config.options:type_name -> Options
-	12, // 1: Config.env_vars:type_name -> Environment
-	14, // 2: Config.workdir:type_name -> Workdir
-	13, // 3: Config.username:type_name -> Username
+	12, // 0: Config.options:type_name -> Options
+	13, // 1: Config.env_vars:type_name -> Environment
+	15, // 2: Config.workdir:type_name -> Workdir
+	14, // 3: Config.username:type_name -> Username
 	4,  // 4: EndpointIdentity.signature_suite:type_name -> SignatureSuite
 	2,  // 5: EndpointIdentity.key_envelope_suite:type_name -> KeyEnvelopeSuite
 	4,  // 6: ServerProof.signature_suite:type_name -> SignatureSuite
 	3,  // 7: ServerHello.protocol_version:type_name -> ProtocolVersion
-	17, // 8: ServerHello.server_identity:type_name -> EndpointIdentity
+	18, // 8: ServerHello.server_identity:type_name -> EndpointIdentity
 	1,  // 9: ServerHello.payload_suites:type_name -> PayloadCipherSuite
 	2,  // 10: ServerHello.key_envelope_suites:type_name -> KeyEnvelopeSuite
 	4,  // 11: ServerHello.signature_suites:type_name -> SignatureSuite
 	5,  // 12: ServerHello.auth_requirement:type_name -> AuthRequirement
-	37, // 13: ServerHello.workspace_id:type_name -> google.protobuf.StringValue
-	37, // 14: ServerHello.project_id:type_name -> google.protobuf.StringValue
-	37, // 15: ServerHello.server_id:type_name -> google.protobuf.StringValue
-	18, // 16: ServerHello.server_proof:type_name -> ServerProof
+	39, // 13: ServerHello.workspace_id:type_name -> google.protobuf.StringValue
+	39, // 14: ServerHello.project_id:type_name -> google.protobuf.StringValue
+	39, // 15: ServerHello.server_id:type_name -> google.protobuf.StringValue
+	19, // 16: ServerHello.server_proof:type_name -> ServerProof
 	3,  // 17: ClientHello.protocol_version:type_name -> ProtocolVersion
 	1,  // 18: SessionKeyGrant.payload_suite:type_name -> PayloadCipherSuite
-	16, // 19: SessionKeyGrant.key_envelopes:type_name -> KeyEnvelope
+	17, // 19: SessionKeyGrant.key_envelopes:type_name -> KeyEnvelope
 	2,  // 20: SessionKeyGrant.key_envelope_suite:type_name -> KeyEnvelopeSuite
 	1,  // 21: PayloadCrypto.payload_suite:type_name -> PayloadCipherSuite
-	37, // 22: ClientProof.principal_id:type_name -> google.protobuf.StringValue
+	39, // 22: ClientProof.principal_id:type_name -> google.protobuf.StringValue
 	4,  // 23: ClientProof.signature_suite:type_name -> SignatureSuite
-	37, // 24: ClientProof.device_id:type_name -> google.protobuf.StringValue
-	37, // 25: ClientProof.browser_id:type_name -> google.protobuf.StringValue
-	38, // 26: ClientProof.credential:type_name -> google.protobuf.BytesValue
+	39, // 24: ClientProof.device_id:type_name -> google.protobuf.StringValue
+	39, // 25: ClientProof.browser_id:type_name -> google.protobuf.StringValue
+	40, // 26: ClientProof.credential:type_name -> google.protobuf.BytesValue
 	6,  // 27: ProtocolError.code:type_name -> ProtocolErrorCode
-	15, // 28: Open.config:type_name -> Config
+	16, // 28: Open.config:type_name -> Config
 	0,  // 29: Open.capabilities:type_name -> OpenCapability
-	21, // 30: Open.session_key_grant:type_name -> SessionKeyGrant
-	23, // 31: Open.client_proof:type_name -> ClientProof
+	22, // 30: Open.session_key_grant:type_name -> SessionKeyGrant
+	24, // 31: Open.client_proof:type_name -> ClientProof
 	7,  // 32: Attach.requested_role:type_name -> AttachRole
 	8,  // 33: Attach.transport:type_name -> AttachTransport
 	9,  // 34: Attach.capabilities:type_name -> AttachCapability
-	37, // 35: Attach.device_id:type_name -> google.protobuf.StringValue
-	37, // 36: Attach.browser_id:type_name -> google.protobuf.StringValue
-	23, // 37: Attach.client_proof:type_name -> ClientProof
-	22, // 38: EncryptedPayload.payload_crypto:type_name -> PayloadCrypto
-	10, // 39: Data.type:type_name -> Data.Type
-	30, // 40: Data.eos:type_name -> EndOfStream
-	31, // 41: Data.encrypted_data:type_name -> EncryptedPayload
-	33, // 42: Parameter.terminal_size:type_name -> TerminalSize
-	25, // 43: Message.open:type_name -> Open
-	27, // 44: Message.ack:type_name -> Ack
-	28, // 45: Message.error:type_name -> Error
-	29, // 46: Message.close:type_name -> Close
-	32, // 47: Message.data:type_name -> Data
-	34, // 48: Message.parameter:type_name -> Parameter
-	35, // 49: Message.heartbeat:type_name -> Heartbeat
-	26, // 50: Message.attach:type_name -> Attach
-	19, // 51: Message.server_hello:type_name -> ServerHello
-	24, // 52: Message.protocol_error:type_name -> ProtocolError
-	20, // 53: Message.client_hello:type_name -> ClientHello
-	54, // [54:54] is the sub-list for method output_type
-	54, // [54:54] is the sub-list for method input_type
-	54, // [54:54] is the sub-list for extension type_name
-	54, // [54:54] is the sub-list for extension extendee
-	0,  // [0:54] is the sub-list for field type_name
+	39, // 35: Attach.device_id:type_name -> google.protobuf.StringValue
+	39, // 36: Attach.browser_id:type_name -> google.protobuf.StringValue
+	24, // 37: Attach.client_proof:type_name -> ClientProof
+	10, // 38: Ack.capabilities:type_name -> SessionCapability
+	23, // 39: EncryptedPayload.payload_crypto:type_name -> PayloadCrypto
+	11, // 40: Data.type:type_name -> Data.Type
+	32, // 41: Data.eos:type_name -> EndOfStream
+	33, // 42: Data.encrypted_data:type_name -> EncryptedPayload
+	35, // 43: Parameter.terminal_size:type_name -> TerminalSize
+	26, // 44: Message.open:type_name -> Open
+	28, // 45: Message.ack:type_name -> Ack
+	30, // 46: Message.error:type_name -> Error
+	31, // 47: Message.close:type_name -> Close
+	34, // 48: Message.data:type_name -> Data
+	36, // 49: Message.parameter:type_name -> Parameter
+	37, // 50: Message.heartbeat:type_name -> Heartbeat
+	27, // 51: Message.attach:type_name -> Attach
+	20, // 52: Message.server_hello:type_name -> ServerHello
+	25, // 53: Message.protocol_error:type_name -> ProtocolError
+	21, // 54: Message.client_hello:type_name -> ClientHello
+	29, // 55: Message.terminate:type_name -> Terminate
+	56, // [56:56] is the sub-list for method output_type
+	56, // [56:56] is the sub-list for method input_type
+	56, // [56:56] is the sub-list for extension type_name
+	56, // [56:56] is the sub-list for extension extendee
+	0,  // [0:56] is the sub-list for field type_name
 }
 
 func init() { file_pb_webtty_proto_init() }
@@ -2897,15 +3017,15 @@ func file_pb_webtty_proto_init() {
 		(*Username_Name)(nil),
 		(*Username_Id)(nil),
 	}
-	file_pb_webtty_proto_msgTypes[21].OneofWrappers = []any{
+	file_pb_webtty_proto_msgTypes[22].OneofWrappers = []any{
 		(*Data_Data)(nil),
 		(*Data_Eos)(nil),
 		(*Data_EncryptedData)(nil),
 	}
-	file_pb_webtty_proto_msgTypes[23].OneofWrappers = []any{
+	file_pb_webtty_proto_msgTypes[24].OneofWrappers = []any{
 		(*Parameter_TerminalSize)(nil),
 	}
-	file_pb_webtty_proto_msgTypes[25].OneofWrappers = []any{
+	file_pb_webtty_proto_msgTypes[26].OneofWrappers = []any{
 		(*Message_Open)(nil),
 		(*Message_Ack)(nil),
 		(*Message_Error)(nil),
@@ -2917,14 +3037,15 @@ func file_pb_webtty_proto_init() {
 		(*Message_ServerHello)(nil),
 		(*Message_ProtocolError)(nil),
 		(*Message_ClientHello)(nil),
+		(*Message_Terminate)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pb_webtty_proto_rawDesc), len(file_pb_webtty_proto_rawDesc)),
-			NumEnums:      11,
-			NumMessages:   26,
+			NumEnums:      12,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

@@ -129,7 +129,7 @@ func mcpRemoteExposeStop(ctx context.Context, args map[string]json.RawMessage) (
 	if err != nil {
 		return nil, err
 	}
-	return mcpJSONResult(map[string]any{"id": id, "stdout": result.Stdout, "stderr": result.Stderr, "exit_code": result.ExitCode}, result.ExitCode != 0)
+	return mcpJSONResult(map[string]any{"id": id, "stdout": result.Stdout, "stderr": result.Stderr, "exit_code": result.ExitCode}, result.ExitCode == nil || *result.ExitCode != 0)
 }
 
 func mcpRemoteMCPDiscover(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
@@ -496,7 +496,7 @@ func parseRemoteExposeResult(expose remoteExposeArgs, command []string, result *
 			parsed.Forward = &status
 		}
 	}
-	if result.ExitCode != 0 && parsed.Status == "unknown" {
+	if result.ExitCode != nil && *result.ExitCode != 0 && parsed.Status == "unknown" {
 		parsed.Status = "failed"
 	}
 	return parsed, nil
