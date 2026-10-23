@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.36.3](https://github.com/rstreamlabs/rstream-go/compare/v1.36.2...v1.36.3) (2026-10-23)
+
+
+### Bug Fixes
+
+* **release:** replace obsolete NuGet installation commands ([#165](https://github.com/rstreamlabs/rstream-go/issues/165)) ([1447681](https://github.com/rstreamlabs/rstream-go/commit/1447681151017e0a729e709634ea9bb0a36927d7))
+
 ## [1.36.2](https://github.com/rstreamlabs/rstream-go/compare/v1.36.1...v1.36.2) (2026-10-23)
 
 
