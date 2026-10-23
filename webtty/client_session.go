@@ -5,6 +5,7 @@ package webtty
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,6 +26,8 @@ import (
 )
 
 const tunneledWebTransportInitialPacketSize = 1200
+
+var ErrSessionDisconnected = errors.New("WebTTY reader disconnected before native completion")
 
 type SessionConfig struct {
 	URL                    string
@@ -602,6 +605,27 @@ func ensureTLSNextProto(values []string, proto string) []string {
 
 func (s *ClientSession) Events() <-chan ClientSessionEvent { return s.events }
 
+// CanTerminate reports native protocol support, not current managed control authority.
+func (s *ClientSession) CanTerminate() bool {
+	return s != nil && s.runtime != nil && s.runtime.canTerminate
+}
+
+// RequestTermination sends an explicit stop request without disconnecting.
+// Only Wait returning a native result confirms process completion. Keep draining Events.
+// Cancelling an in-flight write closes the transport because a partial frame cannot be retried.
+func (s *ClientSession) RequestTermination(ctx context.Context) error {
+	if !s.CanTerminate() {
+		return ErrTerminationUnsupported
+	}
+	select {
+	case <-s.done:
+		_, err := s.Wait()
+		return err
+	default:
+	}
+	return s.runtime.writeTermination(ctx)
+}
+
 func (s *ClientSession) Wait() (int, error) {
 	if s == nil || s.done == nil {
 		return -1, io.EOF
@@ -789,6 +813,9 @@ func (s *ClientSession) decodeEvent(ctx context.Context, data *pb.Data) (ClientS
 }
 
 func (s *ClientSession) requestClose(exitCode int, err error, sendError bool) {
+	if err == nil {
+		err = ErrSessionDisconnected
+	}
 	s.closeTransportOnce.Do(func() {
 		s.resultMu.Lock()
 		s.closeResult = &clientSessionResult{exitCode: exitCode, err: err}
@@ -810,7 +837,7 @@ func (s *ClientSession) finalize(exitCode int, err error) {
 		}
 		result := clientSessionResult{exitCode: exitCode, err: err}
 		s.resultMu.Lock()
-		if s.closeResult != nil {
+		if err != nil && s.closeResult != nil {
 			result = *s.closeResult
 		}
 		s.result = result

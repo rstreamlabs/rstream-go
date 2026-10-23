@@ -29,7 +29,42 @@ func SetupCredential(cmd *exec.Cmd, ui *UserInfo) error {
 }
 
 func interruptChildProcess(cmd *exec.Cmd) error {
-	err := cmd.Process.Signal(os.Interrupt)
+	return signalOwnedChild(cmd, syscall.SIGINT)
+}
+
+func prepareChildProcess(cmd *exec.Cmd, allocateTTY bool) {
+	if allocateTTY || !processGroupSupported {
+		return
+	}
+	if cmd.SysProcAttr == nil {
+		cmd.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	cmd.SysProcAttr.Setpgid = true
+}
+
+func startChildProcess(cmd *exec.Cmd) (childProcessGroup, error) {
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return ownChildProcess(cmd), nil
+}
+
+func killChildProcess(cmd *exec.Cmd) error {
+	return signalOwnedChild(cmd, syscall.SIGKILL)
+}
+
+func signalOwnedChild(cmd *exec.Cmd, signal syscall.Signal) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+	if cmd.SysProcAttr != nil && ((cmd.SysProcAttr.Setpgid && cmd.SysProcAttr.Pgid == 0) || cmd.SysProcAttr.Setsid) {
+		err := syscall.Kill(-cmd.Process.Pid, signal)
+		if errors.Is(err, syscall.ESRCH) || processGroupIsEmpty(cmd.Process.Pid, err) {
+			return nil
+		}
+		return err
+	}
+	err := cmd.Process.Signal(signal)
 	if err != nil && errors.Is(err, os.ErrProcessDone) {
 		return nil
 	}
@@ -37,11 +72,7 @@ func interruptChildProcess(cmd *exec.Cmd) error {
 }
 
 func hangupChildProcess(cmd *exec.Cmd) error {
-	err := cmd.Process.Signal(syscall.SIGHUP)
-	if err != nil && errors.Is(err, os.ErrProcessDone) {
-		return nil
-	}
-	return err
+	return signalOwnedChild(cmd, syscall.SIGHUP)
 }
 
 func isStreamEOS(err error, usingPTY bool) bool {

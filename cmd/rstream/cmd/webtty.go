@@ -66,10 +66,11 @@ type webTTYClientRunOptions struct {
 type webTTYClientResult struct {
 	URL        string   `json:"url"`
 	Command    []string `json:"command,omitempty"`
-	ExitCode   int      `json:"exit_code"`
+	ExitCode   *int     `json:"exit_code"`
 	Stdout     string   `json:"stdout"`
 	Stderr     string   `json:"stderr"`
 	DurationMS int64    `json:"duration_ms"`
+	Truncated  bool     `json:"truncated"`
 }
 
 type webTTYClientRuntimeE2EContext struct {
@@ -3041,8 +3042,11 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 		if err != nil {
 			return err
 		}
-		if result.ExitCode != 0 {
-			return &commandExitError{code: result.ExitCode}
+		if result.ExitCode == nil {
+			return errors.New("WebTTY command result is unknown")
+		}
+		if *result.ExitCode != 0 {
+			return &commandExitError{code: *result.ExitCode}
 		}
 		return nil
 	}
@@ -3069,13 +3073,9 @@ func webTTYPublishedServerName(host string) string {
 
 func runWebTTYClientCapture(ctx context.Context, cfg *webtty.ClientConfig) (*webTTYClientResult, error) {
 	start := time.Now()
-	stdout := bytes.Buffer{}
-	stderr := bytes.Buffer{}
-	resolved := *cfg
-	resolved.Stdout = &stdout
-	resolved.Stderr = &stderr
-	exitCode, err := webtty.RunClient(ctx, &resolved)
-	return &webTTYClientResult{URL: cfg.URL, Command: append([]string(nil), cfg.CmdArgs...), ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String(), DurationMS: time.Since(start).Milliseconds()}, err
+	captured, err := webtty.CaptureCommand(ctx, cfg, 0)
+	result := &webTTYClientResult{URL: cfg.URL, Command: append([]string(nil), cfg.CmdArgs...), ExitCode: captured.ExitCode, Stdout: captured.Stdout, Stderr: captured.Stderr, Truncated: captured.OutputTruncated, DurationMS: time.Since(start).Milliseconds()}
+	return result, err
 }
 
 func webTTYSessionConfigFromClientConfig(cfg *webtty.ClientConfig) *webtty.SessionConfig {

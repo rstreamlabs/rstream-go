@@ -236,7 +236,19 @@ message Attach {
   ClientProof client_proof = 9;
 }
 
-message Ack { }
+enum SessionCapability {
+  SESSION_CAPABILITY_UNSPECIFIED = 0;
+  // Terminate requests process termination; only a native Close reports its result.
+  SESSION_CAPABILITY_TERMINATE = 1;
+}
+
+message Ack {
+  repeated SessionCapability capabilities = 1;
+}
+
+// Terminate is an idempotent request from the authorized session controller.
+// It carries no exit status and does not close the reader's transport.
+message Terminate {}
 
 message Error {
   string msg = 1;
@@ -298,5 +310,6 @@ message Message {
     ServerHello server_hello = 9;
     ProtocolError protocol_error = 10;
     ClientHello client_hello = 11;
+    Terminate terminate = 12;
   }
 }

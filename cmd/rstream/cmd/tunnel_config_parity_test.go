@@ -30,7 +30,8 @@ func TestForwardOptionsCoverRunYAML(t *testing.T) {
 		"datagram-guaranteed-delivery": "datagramGuaranteedDelivery", "token-auth": "http.auth.token", "rstream-auth": "http.auth.rstream", "challenge-mode": "http.gate.challenge",
 	}
 	exclusions := map[string]string{
-		"name": "run entry name", "output": "interactive rendering only", "retry": "run reconciles desired state", "no-retry": "run reconciles desired state", "retry-interval": "run reconciliation interval is command-wide",
+		"new-process-group": "process ownership of this forward invocation; run's supervisor owns its tunnels",
+		"name":              "run entry name", "output": "interactive rendering only", "retry": "run reconciles desired state", "no-retry": "run reconciles desired state", "retry-interval": "run reconciliation interval is command-wide",
 	}
 	paths := yamlLeafPaths(reflect.TypeOf(runapply.TunnelSpec{}), "")
 	covered := map[string]bool{}

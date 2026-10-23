@@ -1493,9 +1493,13 @@ func TestMCPJSONResultRejectsNonObjectStructuredContent(t *testing.T) {
 }
 
 func TestMCPWebTTYExecResultPreservesCapturedOutput(t *testing.T) {
-	base := webTTYClientResult{URL: "rstrm://shell", Command: []string{"sh", "-lc", "build"}, ExitCode: 0, Stdout: "partial stdout", Stderr: "partial stderr", DurationMS: 42}
+	base := webTTYClientResult{URL: "rstrm://shell", Command: []string{"sh", "-lc", "build"}, ExitCode: new(0), Stdout: "partial stdout", Stderr: "partial stderr", DurationMS: 42}
 	nonzero := base
-	nonzero.ExitCode = 7
+	nonzero.ExitCode = new(7)
+	unknown := base
+	unknown.ExitCode = nil
+	truncated := nonzero
+	truncated.Truncated = true
 	tests := []struct {
 		name      string
 		result    webTTYClientResult
@@ -1505,9 +1509,12 @@ func TestMCPWebTTYExecResultPreservesCapturedOutput(t *testing.T) {
 	}{
 		{name: "success", result: base},
 		{name: "nonzero exit", result: nonzero, wantError: true},
+		{name: "unknown result", result: unknown, wantError: true},
+		{name: "lost native result", result: unknown, runErr: errors.New("connection closed"), errorKind: "session", wantError: true},
 		{name: "session failure", result: base, runErr: errors.New("connection closed"), errorKind: "session", wantError: true},
 		{name: "cancelled", result: base, runErr: context.Canceled, errorKind: "cancelled", wantError: true},
 		{name: "timeout", result: base, runErr: context.DeadlineExceeded, errorKind: "timeout", wantError: true},
+		{name: "output limit with confirmed exit", result: truncated, runErr: webtty.ErrCommandOutputLimit, errorKind: "output_limit", wantError: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1523,7 +1530,10 @@ func TestMCPWebTTYExecResultPreservesCapturedOutput(t *testing.T) {
 				t.Fatalf("structured content is not an object: %#v", result["structuredContent"])
 			}
 			command, commandOK := structured["command"].([]any)
-			if structured["surface"] != "cli" || structured["url"] != base.URL || !commandOK || len(command) != len(base.Command) || structured["stdout"] != base.Stdout || structured["stderr"] != base.Stderr || structured["duration_ms"] != float64(base.DurationMS) || structured["truncated"] != false {
+			if (structured["exit_code"] == nil) != (test.result.ExitCode == nil) || (test.result.ExitCode != nil && structured["exit_code"] != float64(*test.result.ExitCode)) {
+				t.Fatalf("native result changed: %#v", structured)
+			}
+			if structured["surface"] != "cli" || structured["url"] != base.URL || !commandOK || len(command) != len(base.Command) || structured["stdout"] != base.Stdout || structured["stderr"] != base.Stderr || structured["duration_ms"] != float64(base.DurationMS) || structured["truncated"] != test.result.Truncated {
 				t.Fatalf("captured output was not preserved: %#v", structured)
 			}
 			if test.runErr == nil {

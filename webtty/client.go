@@ -94,16 +94,17 @@ type AttachConfig struct {
 }
 
 type clientRuntime struct {
-	conn        messageConn
-	cfg         *ClientConfig
-	logger      *slog.Logger
-	logProto    bool
-	writeMu     sync.Mutex
-	closeOnce   sync.Once
-	closing     atomic.Bool
-	stdinFD     int
-	hasStdinFD  bool
-	hasTerminal bool
+	conn         messageConn
+	cfg          *ClientConfig
+	logger       *slog.Logger
+	logProto     bool
+	writeMu      sync.Mutex
+	closeOnce    sync.Once
+	closing      atomic.Bool
+	stdinFD      int
+	hasStdinFD   bool
+	hasTerminal  bool
+	canTerminate bool
 }
 
 type clientEndpoint struct {
@@ -920,6 +921,11 @@ func (c *clientRuntime) handleOpenMessage(msg *pb.Message) error {
 	}
 	switch payload := msg.Payload.(type) {
 	case *pb.Message_Ack:
+		for _, capability := range payload.Ack.GetCapabilities() {
+			if capability == pb.SessionCapability_SESSION_CAPABILITY_TERMINATE {
+				c.canTerminate = true
+			}
+		}
 		return nil
 	case *pb.Message_Error:
 		if payload.Error != nil && strings.TrimSpace(payload.Error.Msg) != "" {
