@@ -44,7 +44,7 @@ jobs:
           cache-dependency-path: go.sum
       - name: Prepare verified ICE patch
         shell: bash
-        run: make ice-patch
+        run: go run ./tools/icepatch
       - name: Rooted filesystem, WebRTC, streaming, HTTP and embedded UI
         env:
           GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
@@ -81,7 +81,7 @@ jobs:
           cache-dependency-path: go.sum
       - name: Prepare verified ICE patch
         shell: bash
-        run: make ice-patch
+        run: go run ./tools/icepatch
       - name: Install protobuf compiler
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
@@ -172,7 +172,7 @@ jobs:
           cache-dependency-path: go.sum
       - name: Prepare verified ICE patch
         shell: bash
-        run: make ice-patch
+        run: go run ./tools/icepatch
       - name: Vet strict profile
         env:
           GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
@@ -219,7 +219,7 @@ jobs:
           cache-dependency-path: go.sum
       - name: Prepare verified ICE patch
         shell: bash
-        run: make ice-patch
+        run: go run ./tools/icepatch
       - name: Run race detector
         env:
           GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
@@ -242,7 +242,7 @@ jobs:
           cache-dependency-path: go.sum
       - name: Prepare verified ICE patch
         shell: bash
-        run: make ice-patch
+        run: go run ./tools/icepatch
       - name: Test native Windows stdin with the race detector
         env:
           GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
@@ -269,7 +269,7 @@ jobs:
           cache-dependency-path: go.sum
       - name: Prepare verified ICE patch
         shell: bash
-        run: make ice-patch
+        run: go run ./tools/icepatch
       - name: Run WebTTY CLI workflows
         env:
           RSTREAM_KEEP_RUNTIME: "1"
