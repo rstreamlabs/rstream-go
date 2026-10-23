@@ -37,6 +37,33 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 	if err := validateFIPSClient(d, tlsCfg); err != nil {
 		return nil, err
 	}
+	ctx, cancel := dialSetupContext(ctx)
+	defer cancel()
+	proxyHTTP, proxySOCKS5, err := effectiveProxyURLs(proxyValue(d.ProxyHTTP), proxyValue(d.ProxySOCKS5), d.ProxyFromEnvironment, addr)
+	if err != nil {
+		return nil, err
+	}
+	if proxyHTTP == "" && proxySOCKS5 == "" && d.TLSProxyConfig != nil {
+		return nil, errors.New("TLS proxy configuration requires an HTTP or environment proxy")
+	}
+	if proxySOCKS5 != "" && d.TLSProxyConfig != nil {
+		return nil, errors.New("TLS proxy configuration cannot be used with SOCKS5 proxy")
+	}
+	if proxySOCKS5 != "" && len(d.ProxyHTTPHeaders) > 0 {
+		return nil, errors.New("proxy HTTP headers cannot be used with SOCKS5 proxy")
+	}
+	routes, err := prepareDialRoutes(ctx, addr, proxyHTTP, proxySOCKS5, dnsResolverOptionsFromTransport(d))
+	if err != nil {
+		return nil, err
+	}
+	return raceDialRoutes(ctx, routes, func(ctx context.Context, route dialRoute) (net.Conn, error) {
+		return d.dialRoute(ctx, route, tlsCfg, proxyHTTP, proxySOCKS5)
+	}, func(conn net.Conn) { _ = conn.Close() })
+}
+
+func (d *Transport) dialRoute(ctx context.Context, route dialRoute, tlsCfg *tls.Config, proxyHTTP, proxySOCKS5 string) (net.Conn, error) {
+	addr := route.target
+	network := dialNetwork("tcp", route)
 	var localAddr net.Addr = nil
 	if d.LocalAddr != nil {
 		ip := net.ParseIP(*d.LocalAddr)
@@ -45,7 +72,7 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 		}
 		localAddr = &net.TCPAddr{IP: ip}
 	} else if d.NetworkInterface != nil {
-		ip, err := selectInterfaceIP(*d.NetworkInterface, boolValue(d.ForceIPv4), boolValue(d.ForceIPv6))
+		ip, err := selectInterfaceIP(*d.NetworkInterface, network == "tcp4", network == "tcp6")
 		if err != nil {
 			return nil, err
 		}
@@ -53,12 +80,6 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 			return nil, errors.New("no matching IP for selected interface")
 		}
 		localAddr = &net.TCPAddr{IP: ip}
-	}
-	network := "tcp"
-	if d.ForceIPv4 != nil && *d.ForceIPv4 {
-		network = "tcp4"
-	} else if d.ForceIPv6 != nil && *d.ForceIPv6 {
-		network = "tcp6"
 	}
 	dialer := &net.Dialer{
 		LocalAddr: localAddr,
@@ -68,11 +89,6 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 	}
 	var conn net.Conn = nil
 	var err error = nil
-	dnsOpts := dnsResolverOptionsFromTransport(d)
-	proxyHTTP, proxySOCKS5, err := effectiveProxyURLs(proxyValue(d.ProxyHTTP), proxyValue(d.ProxySOCKS5), d.ProxyFromEnvironment, addr)
-	if err != nil {
-		return nil, err
-	}
 	switch {
 	case proxyHTTP != "" && proxySOCKS5 != "":
 		err = errors.New("only one proxy transport can be configured")
@@ -84,7 +100,7 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 		} else if d.TLSProxyConfig != nil {
 			err = errors.New("TLS proxy configuration cannot be used with SOCKS5 proxy")
 		} else {
-			conn, err = d.dialSOCKS5(ctx, dialer, network, proxySOCKS5, addr, dnsOpts)
+			conn, err = d.dialSOCKS5(ctx, dialer, network, proxySOCKS5, addr, route.proxy)
 		}
 	case proxyHTTP != "":
 		var proxyURL *url.URL
@@ -97,10 +113,7 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 		}
 		proxyDialAddr := ""
 		if err == nil {
-			proxyDialAddr, err = httpProxyDialAddress(proxyURL)
-		}
-		if err == nil && dnsOpts.enabled() {
-			proxyDialAddr, err = resolveDialAddress(ctx, proxyDialAddr, dnsOpts)
+			proxyDialAddr = route.proxy
 		}
 		if err == nil {
 			conn, err = dialer.DialContext(ctx, network, proxyDialAddr)
@@ -137,12 +150,6 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 				err = authErr
 			}
 			targetAddr := addr
-			if err == nil && dnsOpts.enabled() {
-				targetAddr, err = resolveDialAddress(ctx, addr, dnsOpts)
-				if err != nil {
-					err = fmt.Errorf("failed to resolve HTTP proxy target address: %w", err)
-				}
-			}
 			var req *http.Request
 			if err == nil {
 				req = &http.Request{
@@ -178,9 +185,6 @@ func (d *Transport) Dial(ctx context.Context, addr string, tlsCfg *tls.Config) (
 		}
 	default:
 		dialAddr := addr
-		if dnsOpts.enabled() {
-			dialAddr, err = resolveDialAddress(ctx, addr, dnsOpts)
-		}
 		if err == nil {
 			conn, err = dialer.DialContext(ctx, network, dialAddr)
 		}

@@ -221,3 +221,30 @@ For QUIC transport, `ProxyHTTP` must point at an HTTPS MASQUE proxy. If the URL 
 For published tunnels, transport configuration primarily concerns the publishing client that maintains the upstream session to the edge. Downstream users connect with standard clients and do not use rstream transport settings.
 
 For private tunnels, transport configuration applies on both sides. The publishing client must maintain its upstream session, and any rstream client dialing the private tunnel must also establish its own upstream session to the edge. Private connectivity therefore depends on both clients being able to reach the edge under their respective network constraints.
+
+### Alternate destination and proxy addresses
+
+Connection setup tries all resolved addresses, alternating IPv4 and IPv6 while
+preserving the order within each family. An unanswered first address does not
+consume the entire connection budget: a second complete connection attempt
+starts after 250 ms, and failures immediately make room for another address.
+At most two attempts run concurrently, including proxy and TLS handshakes. The
+losing connections are canceled, closed and joined before the dial returns.
+
+An explicit context deadline bounds the whole operation, including DNS. When
+no deadline is supplied, setup has a 30-second budget. Each attempt receives a
+share of the remaining budget (at least two seconds unless the total deadline
+is earlier). Cancellation interrupts blocked proxy handshakes as well as TCP
+and QUIC connection setup.
+
+Local addresses and interface bindings still restrict the usable routes. An
+interface address is selected for the address family of the current first hop.
+TLS server names, certificate verification, proxy URL identity, environment
+proxy selection and QUIC pooling use the original logical destination. Proxy
+remote DNS remains the default; custom DNS or forced IP-family options resolve
+proxy targets locally. Each new underlying connection resolves addresses again,
+including a connection opened after the QUIC transport is closed.
+
+MASQUE URI templates encode IPv6 target addresses once during expansion. A
+proxy that accepts its connection but never returns a CONNECT-UDP response is
+also interrupted by the setup deadline or cancellation.

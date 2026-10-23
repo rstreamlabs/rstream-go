@@ -17,8 +17,10 @@ import (
 	"github.com/yosida95/uritemplate/v3"
 )
 
-const defaultMasqueUDPTemplatePath = "/.well-known/masque/udp/{target_host}/{target_port}/"
-const masqueProxyInitialPacketSize = 1500
+const (
+	defaultMasqueUDPTemplatePath = "/.well-known/masque/udp/{target_host}/{target_port}/"
+	masqueProxyInitialPacketSize = 1500
+)
 
 func (t *QUICTransport) directPacketConn(network string, localAddr *net.UDPAddr, dialAddr string) (net.PacketConn, net.Addr, error) {
 	pconn, err := net.ListenUDP(network, localAddr)
@@ -34,25 +36,25 @@ func (t *QUICTransport) directPacketConn(network string, localAddr *net.UDPAddr,
 }
 
 func (t *QUICTransport) connectHTTPProxy(ctx context.Context, proxyRaw, target string, _ *tls.Config, _ *quic.Config, dnsOpts dnsResolverConfig, network string, localAddr *net.UDPAddr) (net.PacketConn, io.Closer, net.Addr, error) {
-	if t.ProxyUsername != nil || t.ProxyPassword != nil {
-		return nil, nil, nil, errors.New("QUIC transport uses MASQUE CONNECT-UDP and does not support proxy username/password fields")
+	if err := t.validateMASQUEProxy(); err != nil {
+		return nil, nil, nil, err
 	}
-	if len(t.ProxyHTTPHeaders) > 0 {
-		return nil, nil, nil, errors.New("QUIC transport uses MASQUE CONNECT-UDP and does not support custom HTTP proxy headers")
+	routes, err := prepareDialRoutes(ctx, target, proxyRaw, "", dnsOpts)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	tpl, tlsProxyCfg, err := t.masqueProxyTemplate(ctx, proxyRaw, dnsOpts)
+	route := routes.at(0)
+	return t.connectHTTPProxyRoute(ctx, proxyRaw, route.target, route.proxy, network, localAddr)
+}
+
+func (t *QUICTransport) connectHTTPProxyRoute(ctx context.Context, proxyRaw, target, proxyDialAddr, network string, localAddr *net.UDPAddr) (net.PacketConn, io.Closer, net.Addr, error) {
+	tpl, tlsProxyCfg, err := t.masqueProxyTemplate(ctx, proxyRaw, dnsResolverConfig{})
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	targetAddr := target
-	if dnsOpts.enabled() {
-		targetAddr, err = resolveDialAddress(ctx, target, dnsOpts)
-		if err != nil {
-			return nil, nil, nil, fmt.Errorf("failed to resolve MASQUE target address: %w", err)
-		}
-	}
 	remoteAddr := socks5Addr{network: "udp", address: targetAddr}
-	pconn, closer, err := dialMASQUEUDPProxy(ctx, tpl, tlsProxyCfg, network, localAddr, targetAddr, remoteAddr, dnsOpts)
+	pconn, closer, err := dialMASQUEUDPProxy(ctx, tpl, tlsProxyCfg, network, localAddr, targetAddr, remoteAddr, proxyDialAddr)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -122,4 +124,14 @@ func hasNextProto(protos []string, proto string) bool {
 		}
 	}
 	return false
+}
+
+func (t *QUICTransport) validateMASQUEProxy() error {
+	if t.ProxyUsername != nil || t.ProxyPassword != nil {
+		return errors.New("QUIC transport uses MASQUE CONNECT-UDP and does not support proxy username/password fields")
+	}
+	if len(t.ProxyHTTPHeaders) > 0 {
+		return errors.New("QUIC transport uses MASQUE CONNECT-UDP and does not support custom HTTP proxy headers")
+	}
+	return nil
 }

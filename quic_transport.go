@@ -464,35 +464,59 @@ func quicTransportOrigin(addr string, tlsCfg *tls.Config) (string, error) {
 	return strings.ToLower(host) + ":" + port + "|" + strings.ToLower(serverName) + "|" + nextProtos, nil
 }
 
+type quicDialResult struct {
+	conn      *quic.Conn
+	transport *quic.Transport
+	packet    net.PacketConn
+	proxy     io.Closer
+}
+
+func (r quicDialResult) close() {
+	if r.conn != nil {
+		_ = r.conn.CloseWithError(0, "alternate address selected")
+	}
+	_ = closeQUICTransportResources(r.transport, r.packet, r.proxy)
+}
+
 // connect creates the underlying QUIC connection. It returns the QUIC
 // transport, packet connection, and optional proxy closer so the caller can
 // tear down every owned resource when the connection is closed.
 func (t *QUICTransport) connect(ctx context.Context, addr string, tlsCfg *tls.Config) (*quic.Conn, *quic.Transport, net.PacketConn, io.Closer, error) {
-	network := "udp"
-	if t.ForceIPv4 != nil && *t.ForceIPv4 {
-		network = "udp4"
-	} else if t.ForceIPv6 != nil && *t.ForceIPv6 {
-		network = "udp6"
-	}
-	dialAddr := addr
-	dnsOpts := dnsResolverOptionsFromQUICTransport(t)
-	var err error
+	ctx, cancel := dialSetupContext(ctx)
+	defer cancel()
 	proxyHTTP, proxySOCKS5, err := effectiveProxyURLs(proxyValue(t.ProxyHTTP), proxyValue(t.ProxySOCKS5), t.ProxyFromEnvironment, addr)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	if proxyHTTP != "" && proxySOCKS5 != "" {
-		return nil, nil, nil, nil, errors.New("only one proxy transport can be configured")
-	}
 	if proxyHTTP == "" && proxySOCKS5 == "" && t.TLSProxyConfig != nil {
 		return nil, nil, nil, nil, errors.New("TLS proxy configuration requires an HTTP or environment proxy")
 	}
-	if proxySOCKS5 == "" && proxyHTTP == "" && dnsOpts.enabled() {
-		dialAddr, err = resolveDialAddress(ctx, addr, dnsOpts)
-		if err != nil {
+	if proxySOCKS5 != "" && t.TLSProxyConfig != nil {
+		return nil, nil, nil, nil, errors.New("TLS proxy configuration cannot be used with SOCKS5 proxy")
+	}
+	if proxyHTTP != "" {
+		if err := t.validateMASQUEProxy(); err != nil {
+			return nil, nil, nil, nil, err
+		}
+		if _, _, err := t.masqueProxyTemplate(ctx, proxyHTTP, dnsResolverConfig{}); err != nil {
 			return nil, nil, nil, nil, err
 		}
 	}
+	routes, err := prepareDialRoutes(ctx, addr, proxyHTTP, proxySOCKS5, dnsResolverOptionsFromQUICTransport(t))
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	result, err := raceDialRoutes(ctx, routes, func(ctx context.Context, route dialRoute) (quicDialResult, error) {
+		conn, transport, packet, proxy, err := t.connectRoute(ctx, route, tlsCfg, proxyHTTP, proxySOCKS5)
+		return quicDialResult{conn: conn, transport: transport, packet: packet, proxy: proxy}, err
+	}, func(result quicDialResult) { result.close() })
+	return result.conn, result.transport, result.packet, result.proxy, err
+}
+
+func (t *QUICTransport) connectRoute(ctx context.Context, route dialRoute, tlsCfg *tls.Config, proxyHTTP, proxySOCKS5 string) (*quic.Conn, *quic.Transport, net.PacketConn, io.Closer, error) {
+	network := dialNetwork("udp", route)
+	addr := route.target
+	var err error
 	// Bind to a local UDP address.
 	var localUDPAddr *net.UDPAddr
 	if t.LocalAddr != nil {
@@ -502,7 +526,7 @@ func (t *QUICTransport) connect(ctx context.Context, addr string, tlsCfg *tls.Co
 		}
 		localUDPAddr = &net.UDPAddr{IP: ip}
 	} else if t.NetworkInterface != nil {
-		ip, err := selectInterfaceIP(*t.NetworkInterface, boolValue(t.ForceIPv4), boolValue(t.ForceIPv6))
+		ip, err := selectInterfaceIP(*t.NetworkInterface, network == "udp4", network == "udp6")
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -520,7 +544,7 @@ func (t *QUICTransport) connect(ctx context.Context, addr string, tlsCfg *tls.Co
 	var proxyCloser io.Closer
 	if proxyHTTP != "" {
 		quicCfg.InitialPacketSize = 1200
-		pconn, proxyCloser, remoteAddr, err = t.connectHTTPProxy(ctx, proxyHTTP, addr, tlsCfg, quicCfg, dnsOpts, network, localUDPAddr)
+		pconn, proxyCloser, remoteAddr, err = t.connectHTTPProxyRoute(ctx, proxyHTTP, addr, route.proxy, network, localUDPAddr)
 	} else if proxySOCKS5 != "" {
 		if t.TLSProxyConfig != nil {
 			return nil, nil, nil, nil, errors.New("TLS proxy configuration cannot be used with SOCKS5 proxy")
@@ -530,9 +554,9 @@ func (t *QUICTransport) connect(ctx context.Context, addr string, tlsCfg *tls.Co
 		if localUDPAddr != nil {
 			tcpDialer.LocalAddr = &net.TCPAddr{IP: localUDPAddr.IP}
 		}
-		pconn, remoteAddr, err = newSOCKS5UDPConn(ctx, tcpDialer, network, strings.Replace(network, "udp", "tcp", 1), localUDPAddr, proxySOCKS5, addr, dnsOpts, t.ProxyUsername, t.ProxyPassword)
+		pconn, remoteAddr, err = newSOCKS5UDPConn(ctx, tcpDialer, network, strings.Replace(network, "udp", "tcp", 1), localUDPAddr, proxySOCKS5, addr, route.proxy, t.ProxyUsername, t.ProxyPassword)
 	} else {
-		pconn, remoteAddr, err = t.directPacketConn(network, localUDPAddr, dialAddr)
+		pconn, remoteAddr, err = t.directPacketConn(network, localUDPAddr, addr)
 	}
 	if err != nil {
 		return nil, nil, nil, nil, err

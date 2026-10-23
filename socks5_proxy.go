@@ -63,23 +63,16 @@ func proxyValue(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
-func (d *Transport) dialSOCKS5(ctx context.Context, dialer *net.Dialer, network, proxyRaw, target string, dnsOpts dnsResolverConfig) (net.Conn, error) {
+func (d *Transport) dialSOCKS5(ctx context.Context, dialer *net.Dialer, network, proxyRaw, target, proxyAddr string) (net.Conn, error) {
 	cfg, err := d.socks5ProxyConfig(proxyRaw)
 	if err != nil {
 		return nil, err
-	}
-	proxyAddr := cfg.address
-	if dnsOpts.enabled() {
-		proxyAddr, err = resolveDialAddress(ctx, cfg.address, dnsOpts)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve SOCKS5 proxy address: %w", err)
-		}
 	}
 	conn, err := dialer.DialContext(ctx, network, proxyAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to dial SOCKS5 proxy: %w", err)
 	}
-	targetAddr, err := socks5TargetAddress(ctx, target, dnsOpts)
+	targetAddr, err := parseSOCKS5TargetAddress(target)
 	if err != nil {
 		_ = conn.Close()
 		return nil, err
@@ -358,23 +351,16 @@ type socks5UDPConn struct {
 
 var _ net.PacketConn = (*socks5UDPConn)(nil)
 
-func newSOCKS5UDPConn(ctx context.Context, tcpDialer *net.Dialer, udpNetwork, tcpNetwork string, localAddr *net.UDPAddr, proxyRaw, target string, dnsOpts dnsResolverConfig, username, password *string) (*socks5UDPConn, net.Addr, error) {
+func newSOCKS5UDPConn(ctx context.Context, tcpDialer *net.Dialer, udpNetwork, tcpNetwork string, localAddr *net.UDPAddr, proxyRaw, target, proxyAddr string, username, password *string) (*socks5UDPConn, net.Addr, error) {
 	cfg, err := socks5ProxyConfigFromRaw(proxyRaw, username, password)
 	if err != nil {
 		return nil, nil, err
-	}
-	proxyAddr := cfg.address
-	if dnsOpts.enabled() {
-		proxyAddr, err = resolveDialAddress(ctx, cfg.address, dnsOpts)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to resolve SOCKS5 proxy address: %w", err)
-		}
 	}
 	control, err := tcpDialer.DialContext(ctx, tcpNetwork, proxyAddr)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to dial SOCKS5 proxy: %w", err)
 	}
-	targetAddr, err := socks5TargetAddress(ctx, target, dnsOpts)
+	targetAddr, err := parseSOCKS5TargetAddress(target)
 	if err != nil {
 		_ = control.Close()
 		return nil, nil, err

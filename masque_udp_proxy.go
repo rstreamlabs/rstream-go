@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,7 +52,7 @@ func (s *masqueProxySession) Close() error {
 	return err
 }
 
-func dialMASQUEUDPProxy(ctx context.Context, tpl *uritemplate.Template, tlsCfg *tls.Config, network string, localAddr *net.UDPAddr, target string, remoteAddr net.Addr, dnsOpts dnsResolverConfig) (net.PacketConn, io.Closer, error) {
+func dialMASQUEUDPProxy(ctx context.Context, tpl *uritemplate.Template, tlsCfg *tls.Config, network string, localAddr *net.UDPAddr, target string, remoteAddr net.Addr, proxyDialAddr string) (net.PacketConn, io.Closer, error) {
 	expanded, err := expandMASQUEUDPTemplate(tpl, target)
 	if err != nil {
 		return nil, nil, err
@@ -61,13 +60,6 @@ func dialMASQUEUDPProxy(ctx context.Context, tpl *uritemplate.Template, tlsCfg *
 	proxyURL, err := url.Parse(expanded)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to parse expanded MASQUE proxy URL: %w", err)
-	}
-	proxyDialAddr := proxyURL.Host
-	if dnsOpts.enabled() {
-		proxyDialAddr, err = resolveDialAddress(ctx, proxyDialAddr, dnsOpts)
-		if err != nil {
-			return nil, nil, fmt.Errorf("failed to resolve MASQUE proxy address: %w", err)
-		}
 	}
 	packet, proxyAddr, err := dialMASQUEProxyPacketConn(network, localAddr, proxyDialAddr)
 	if err != nil {
@@ -88,6 +80,16 @@ func dialMASQUEUDPProxy(ctx context.Context, tpl *uritemplate.Template, tlsCfg *
 		transport: qtransport,
 		packet:    packet,
 	}
+	interrupted := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		_ = conn.CloseWithError(0, "MASQUE connection setup canceled")
+		close(interrupted)
+	})
+	defer func() {
+		if !stop() {
+			<-interrupted
+		}
+	}()
 	proxiedConn, err := openMASQUEUDPStream(ctx, conn, proxyURL, remoteAddr)
 	if err != nil {
 		_ = session.Close()
@@ -115,17 +117,13 @@ func expandMASQUEUDPTemplate(tpl *uritemplate.Template, target string) (string, 
 		return "", fmt.Errorf("failed to parse MASQUE target address: %w", err)
 	}
 	expanded, err := tpl.Expand(uritemplate.Values{
-		"target_host": uritemplate.String(escapeMASQUEHost(host)),
+		"target_host": uritemplate.String(host),
 		"target_port": uritemplate.String(port),
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to expand MASQUE URI template: %w", err)
 	}
 	return expanded, nil
-}
-
-func escapeMASQUEHost(host string) string {
-	return strings.ReplaceAll(host, ":", "%3A")
 }
 
 func openMASQUEUDPStream(ctx context.Context, conn *quic.Conn, proxyURL *url.URL, remoteAddr net.Addr) (net.PacketConn, error) {
