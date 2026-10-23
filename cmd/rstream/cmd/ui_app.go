@@ -585,7 +585,7 @@ func (u *uiApp) renderClients() {
 	u.clientRows = append([]rstream.ClientProperties(nil), u.snapshot.Clients...)
 	u.prepareInventoryTable(uiViewClients)
 	if len(u.clientRows) == 0 {
-		addPlaceholderRow(u.table, "No clients in this project")
+		addPlaceholderRow(u.table, "No visible clients")
 		return
 	}
 	selectedRow := 1
@@ -613,7 +613,7 @@ func (u *uiApp) renderTunnels() {
 	u.tunnelRows = append([]rstream.TunnelInventory(nil), u.snapshot.Tunnels...)
 	u.prepareInventoryTable(uiViewTunnels)
 	if len(u.tunnelRows) == 0 {
-		addPlaceholderRow(u.table, "No tunnels in this project")
+		addPlaceholderRow(u.table, "No visible tunnels")
 		return
 	}
 	selectedRow := 1

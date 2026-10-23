@@ -199,11 +199,13 @@ func (s *uiStore) applyEvent(event rstream.Event) error {
 		}
 		s.clients = make(map[string]rstream.ClientProperties, len(initial.Clients))
 		for _, client := range initial.Clients {
-			s.clients[client.ID] = client
+			if client.ID != "" {
+				s.clients[client.ID] = client
+			}
 		}
 		s.tunnels = make(map[string]rstream.TunnelInventory, len(initial.Tunnels))
 		for _, tunnel := range initial.Tunnels {
-			if tunnel.ID != nil {
+			if tunnel.ID != nil && *tunnel.ID != "" {
 				s.tunnels[*tunnel.ID] = tunnel
 			}
 		}
@@ -212,7 +214,9 @@ func (s *uiStore) applyEvent(event rstream.Event) error {
 		if err := json.Unmarshal(event.Object, &client); err != nil {
 			return fmt.Errorf("decode %s: %w", event.Type, err)
 		}
-		s.clients[client.ID] = client
+		if client.ID != "" {
+			s.clients[client.ID] = client
+		}
 	case "client.deleted":
 		var client rstream.ClientProperties
 		if err := json.Unmarshal(event.Object, &client); err != nil {
@@ -224,7 +228,7 @@ func (s *uiStore) applyEvent(event rstream.Event) error {
 		if err := json.Unmarshal(event.Object, &tunnel); err != nil {
 			return fmt.Errorf("decode %s: %w", event.Type, err)
 		}
-		if tunnel.ID != nil {
+		if tunnel.ID != nil && *tunnel.ID != "" {
 			s.tunnels[*tunnel.ID] = tunnel
 		}
 	case "tunnel.deleted":
@@ -232,7 +236,7 @@ func (s *uiStore) applyEvent(event rstream.Event) error {
 		if err := json.Unmarshal(event.Object, &tunnel); err != nil {
 			return fmt.Errorf("decode %s: %w", event.Type, err)
 		}
-		if tunnel.ID != nil {
+		if tunnel.ID != nil && *tunnel.ID != "" {
 			delete(s.tunnels, *tunnel.ID)
 		}
 	}
