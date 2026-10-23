@@ -132,9 +132,29 @@ func interfaceAddrIP(addr net.Addr) net.IP {
 }
 
 func withContextConnDeadline(ctx context.Context, conn net.Conn, fn func() error) error {
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = conn.SetDeadline(deadline)
-		defer conn.SetDeadline(time.Time{})
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return fn()
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := conn.SetDeadline(deadline); err != nil {
+			return err
+		}
+	}
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		_ = conn.SetDeadline(time.Now())
+		close(done)
+	})
+	err := fn()
+	if !stop() {
+		<-done
+	}
+	resetErr := conn.SetDeadline(time.Time{})
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		return err
+	}
+	return resetErr
 }
