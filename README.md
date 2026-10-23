@@ -114,6 +114,11 @@ To build the CLI locally from this repository on the current platform, run:
 make
 ```
 
+The build applies a verified temporary ICE concurrency patch. Applications
+using the SDK's WebRTC filesystem transport must also prepare their own build;
+Go does not inherit dependency replacements. See the
+[ICE patch guide](tools/icepatch/README.md) for direct Go commands and adoption.
+
 ### Debian/Ubuntu
 For Debian-based distributions, the installer deploys packaged CLI binaries and dependencies:
 ```bash

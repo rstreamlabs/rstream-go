@@ -42,15 +42,24 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - name: Prepare verified ICE patch
+        shell: bash
+        run: go run ./tools/icepatch
       - name: Rooted filesystem, WebRTC, streaming, HTTP and embedded UI
+        env:
+          GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
         run: go test -count=1 ./filesystem/... ./fileserver/...
       - name: Actual CLI and MCP file transfers across both backends
+        env:
+          GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
         run: go test -count=1 ./cmd/rstream/cmd -run '^TestFilesystem(CLIAndMCPBackendMatrix|WebRTCThroughCLIAndMCP|WebRTCPreparedContextAvoidsControlPlane)$'
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         if: runner.os == 'Linux'
         with:
           node-version: "24"
       - name: Browser CORS and authenticated WebDAV operations
+        env:
+          GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
         if: runner.os == 'Linux'
         shell: bash
         run: |
@@ -70,6 +79,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - name: Prepare verified ICE patch
+        shell: bash
+        run: go run ./tools/icepatch
       - name: Install protobuf compiler
         uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3.0.0
         with:
@@ -97,6 +109,8 @@ jobs:
           go generate ./...
           git diff --exit-code -- '*.pb.go'
       - name: Vet
+        env:
+          GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
         run: go vet ./...
       - name: Install staticcheck
         run: go -C .github/tools install honnef.co/go/tools/cmd/staticcheck
@@ -131,6 +145,8 @@ jobs:
           jq empty release-please-config.json .release-please-manifest.json server.json
           go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -color
       - name: Test with coverage
+        env:
+          GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
         shell: bash
         run: |
           set -euo pipefail
@@ -154,7 +170,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - name: Prepare verified ICE patch
+        shell: bash
+        run: go run ./tools/icepatch
       - name: Vet strict profile
+        env:
+          GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
         run: go vet -tags=rstream_fips ./...
       - name: Install staticcheck
         run: go -C .github/tools install honnef.co/go/tools/cmd/staticcheck
@@ -196,7 +217,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - name: Prepare verified ICE patch
+        shell: bash
+        run: go run ./tools/icepatch
       - name: Run race detector
+        env:
+          GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
         shell: bash
         run: |
           set -euo pipefail
@@ -214,7 +240,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - name: Prepare verified ICE patch
+        shell: bash
+        run: go run ./tools/icepatch
       - name: Test native Windows stdin with the race detector
+        env:
+          GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -236,15 +267,20 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - name: Prepare verified ICE patch
+        shell: bash
+        run: go run ./tools/icepatch
       - name: Run WebTTY CLI workflows
         env:
           RSTREAM_KEEP_RUNTIME: "1"
+          GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
         run: ./test/e2e/webtty-cli-workflows.sh
       - name: Validate WebTTY runtime coverage and deadline guards
         run: python3 -m unittest discover -s test/e2e -p 'test_*.py'
       - name: Run WebTTY Go direct profile
         env:
           RSTREAM_KEEP_RUNTIME: "1"
+          GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
           RSTREAM_WEBTTY_RUNTIME_PROFILE: go-direct
         run: ./test/e2e/webtty-runtime-matrix.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
