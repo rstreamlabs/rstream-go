@@ -176,7 +176,7 @@ jobs:
         env:
           RSTREAM_TOKEN: ${{ secrets.RSTREAM_TOKEN }}
           VERSION: ${{ needs.prepare.outputs.version }}
-        run: ./.github/scripts/publish-package-api.sh "$PACKAGE_NAME" "$CHANNEL" "$VERSION" "$RSTREAM_URL" "$RSTREAM_TOKEN"
+        run: ./.promotion-policy/.github/scripts/publish-package-api.sh "$PACKAGE_NAME" "$CHANNEL" "$VERSION" "$RSTREAM_URL" "$RSTREAM_TOKEN"
       - name: Package published archive metadata
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
