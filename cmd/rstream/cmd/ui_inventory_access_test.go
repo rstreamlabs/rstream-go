@@ -119,7 +119,6 @@ func TestUIRestrictedInventoryOverNetwork(t *testing.T) {
 			})
 		}
 	}
-
 }
 
 func TestUITunnelEventsWithoutClients(t *testing.T) {
