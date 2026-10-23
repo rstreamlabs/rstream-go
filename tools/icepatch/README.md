@@ -26,16 +26,21 @@ go build -modfile=out/ice-patch/go.mod ./cmd/rstream
 
 Go does not inherit dependency `replace` directives. Installing a newer SDK
 alone therefore cannot apply this patch to another application's binary.
-Run the published `github.com/rstreamlabs/rstream-go/tools/icepatch` command
-from that application's module directory, then use the returned `go.mod` for
-**every** build and test of the application. Pin the tool to the same reviewed
-SDK release in your build script. Git and Go are required on the build host.
+The helper is available in this repository's source but is not yet included
+in a published SDK release. Set `RSTREAM_GO_SOURCE` to the absolute path of
+a reviewed checkout, then run the local helper from the consuming application's
+module directory. Use the returned `go.mod` for **every** build and test of
+the application. Git and Go are required on the build host.
 
 ```sh
-go run github.com/rstreamlabs/rstream-go/tools/icepatch@v1.36.4
+go run "$RSTREAM_GO_SOURCE/tools/icepatch/main.go"
 GOFLAGS="-modfile=$PWD/out/ice-patch/go.mod" go test -race ./...
 go build -modfile=out/ice-patch/go.mod ./cmd/application
 ```
+
+The [video samples](https://github.com/rstreamlabs/rstream-examples/tree/bc9339d7f1b4d4c81822e0018d4097e985839bdc/webrtc-video/ice-patch)
+ship their own helper and `ice-patch.sh`; use those together when adopting a
+sample. They require neither a separate SDK checkout nor a new SDK release.
 
 Prepare before setting `GOFLAGS`, `GOOS` or `GOARCH` for the target. An active
 Go workspace must be disabled with `GOWORK=off` for the consuming module.
