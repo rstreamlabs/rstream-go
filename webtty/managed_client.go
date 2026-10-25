@@ -37,14 +37,14 @@ func prepareManagedSession(cfg *SessionConfig, endpoint *clientEndpoint) error {
 	if managed == nil {
 		return nil
 	}
-	if !managed.Capabilities.ManagedProtocol {
-		return fmt.Errorf("engine does not support managed WebTTY")
-	}
 	if managed.ExecutionSeconds < 0 {
 		return fmt.Errorf("WebTTY execution duration must be positive")
 	}
 	if managed.ExecutionSeconds == 0 {
 		return nil
+	}
+	if !managed.Capabilities.ManagedProtocol {
+		return fmt.Errorf("engine does not support managed WebTTY")
 	}
 	if cfg.Attach != nil || cfg.Interactive || cfg.AllocateTTY {
 		return fmt.Errorf("detached WebTTY execution requires a new non-interactive command without a TTY")

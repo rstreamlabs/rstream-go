@@ -123,7 +123,9 @@ return session.Close()
 The SDK rejects unsupported capabilities, transports, conflicting URL options
 and excessive durations before opening a connection. `OpenClientSession` returns
 only after the relay confirms the ID. Zero `ExecutionSeconds` preserves the
-ordinary connection-bound lifetime. This option supports WebSocket and
+ordinary connection-bound lifetime, including when the Engine does not advertise
+the managed protocol. The capability snapshot still prevents unsupported
+termination requests. Detached execution supports WebSocket and
 WebTransport as advertised by the Engine; it cannot extend an existing Attach.
 
 Use the saved ID with the existing session/participant API to inspect the result

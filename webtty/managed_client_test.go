@@ -212,8 +212,17 @@ func TestManagedClientRejectsUnconfirmedOrMismatchedIdentity(t *testing.T) {
 }
 
 func TestManagedClientTerminationRequiresRelayCapability(t *testing.T) {
-	for _, supported := range []bool{false, true} {
-		t.Run(map[bool]string{false: "older relay", true: "supported relay"}[supported], func(t *testing.T) {
+	for _, scenario := range []struct {
+		name      string
+		managed   bool
+		supported bool
+	}{
+		{"older relay", true, false},
+		{"supported relay", true, true},
+		{"unmanaged relay", false, false},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			supported := scenario.supported
 			received := make(chan *pb.Message, 1)
 			server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
 				defer conn.Close()
@@ -225,6 +234,7 @@ func TestManagedClientTerminationRequiresRelayCapability(t *testing.T) {
 			defer server.Close()
 			managed := managedExecutionTestConfig()
 			managed.ExecutionSeconds = 0
+			managed.Capabilities.ManagedProtocol = scenario.managed
 			managed.Capabilities.ExplicitTermination = supported
 			session, err := OpenClientSession(t.Context(), &SessionConfig{URL: testWebTTYURL(server.URL), Managed: managed})
 			if err != nil {
