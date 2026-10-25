@@ -5,12 +5,14 @@ package webtty
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"syscall"
 	"testing"
 	"time"
 
@@ -18,6 +20,8 @@ import (
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
 	"google.golang.org/protobuf/proto"
 )
+
+var descendantConnectionReset error = syscall.ECONNRESET
 
 func runMonitoredTerminationDescendant(address string) {
 	monitor, err := net.DialTimeout("tcp", address, time.Second)
@@ -132,7 +136,7 @@ func TestNativeCompletionCleansOwnedDescendants(t *testing.T) {
 				}
 			}
 			var closed [1]byte
-			if n, err := child.Read(closed[:]); n != 0 || err != io.EOF {
+			if n, err := child.Read(closed[:]); n != 0 || (!errors.Is(err, io.EOF) && !errors.Is(err, descendantConnectionReset)) {
 				t.Fatalf("descendant outlived confirmed completion: n=%d, error=%v", n, err)
 			}
 		})

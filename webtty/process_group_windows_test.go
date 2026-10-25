@@ -15,6 +15,10 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func init() {
+	descendantConnectionReset = windows.WSAECONNRESET
+}
+
 func TestWindowsProcessGroupClosesRetainedProcessWithoutJob(t *testing.T) {
 	var process windows.Handle
 	if err := windows.DuplicateHandle(windows.CurrentProcess(), windows.CurrentProcess(), windows.CurrentProcess(), &process, windows.SYNCHRONIZE, false, 0); err != nil {

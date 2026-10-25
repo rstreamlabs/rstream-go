@@ -2909,6 +2909,7 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 		Username:      username,
 		CmdArgs:       args,
 		Logger:        logger,
+		Stdin:         cmd.InOrStdin(),
 	}
 	tlsConfig, err := webTTYClientTLSConfig(cmd)
 	if err != nil {

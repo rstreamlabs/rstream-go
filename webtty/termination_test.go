@@ -195,7 +195,10 @@ func TestNativeTerminatePreservesProcessResultAndFinalOutput(t *testing.T) {
 	}
 	writeWebTTYMessage(t, conn, &pb.Message{Payload: &pb.Message_Open{Open: &pb.Open{Config: &pb.Config{
 		CmdArgs: []string{os.Args[0], "-test.run=^TestWebTTYTerminationProcess$"},
-		EnvVars: []*pb.Environment{{Key: "RSTREAM_WEBTTY_TERMINATION_HELPER", Value: "1"}},
+		EnvVars: []*pb.Environment{
+			{Key: "RSTREAM_WEBTTY_TERMINATION_HELPER", Value: "1"},
+			{Key: "GOCOVERDIR", Value: t.TempDir()},
+		},
 		Options: &pb.Options{},
 	}}}})
 	var stdout, stderr bytes.Buffer
