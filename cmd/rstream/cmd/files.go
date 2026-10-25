@@ -39,6 +39,7 @@ func newFilesCmd() *cobra.Command {
 	cmd.Flags().String("backend", filesystem.BackendWebDAV, "file transfer backend (webdav, webrtc; WebRTC is read-only)")
 	cmd.Flags().Bool("read-write", false, "allow WebDAV uploads and filesystem changes")
 	cmd.Flags().Int64("max-upload-size", fileserver.DefaultMaxUploadSize, "maximum WebDAV upload size in bytes (requires --read-write)")
+	cmd.Flags().String("state-dir", "", "existing persistent directory for private upload state (env RSTREAM_FILES_STATE_DIR)")
 	addCORSFlags(cmd)
 	cmd.Flags().Bool("no-ui", false, "disable the embedded web page; keep transfer and discovery endpoints")
 	cmd.Flags().Bool("include-hidden", false, "include hidden files and directories")
@@ -130,6 +131,13 @@ func runFiles(cmd *cobra.Command, args []string) error {
 
 func filesConfig(cmd *cobra.Command, root string) (fileserver.Config, error) {
 	cfg := fileserver.Config{Root: root}
+	cfg.StateDir = os.Getenv("RSTREAM_FILES_STATE_DIR")
+	if cmd.Flags().Changed("state-dir") {
+		cfg.StateDir, _ = cmd.Flags().GetString("state-dir")
+		if cfg.StateDir == "" {
+			return cfg, fmt.Errorf("--state-dir cannot be empty")
+		}
+	}
 	var err error
 	cfg.CORS, err = fileserver.NormalizeCORS(corsFromFlags(cmd))
 	if err != nil {

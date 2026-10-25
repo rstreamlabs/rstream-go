@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -20,6 +21,42 @@ import (
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/fileserver"
 )
+
+func TestFilesStateDirectoryOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name, env, want, failure string
+		args                     []string
+	}{
+		{name: "default"},
+		{name: "environment", env: "/persistent/state", want: "/persistent/state"},
+		{name: "flag", args: []string{"--state-dir=./state"}, want: "./state"},
+		{name: "precedence", env: "/other", args: []string{"--state-dir=./state"}, want: "./state"},
+		{name: "empty flag", env: "/other", args: []string{"--state-dir="}, failure: "cannot be empty"},
+		{name: "webrtc", args: []string{"--state-dir=./state", "--backend=webrtc"}, failure: "requires the webdav backend"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("RSTREAM_FILES_STATE_DIR", tc.env)
+			command := newFilesCmd()
+			if err := command.ParseFlags(tc.args); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := filesConfig(command, "/export")
+			failure := tc.failure
+			if runtime.GOOS == "windows" && tc.want != "" {
+				failure = "not supported on this platform"
+			}
+			if failure != "" {
+				if err == nil || !strings.Contains(err.Error(), failure) {
+					t.Fatalf("expected %q, got %v", failure, err)
+				}
+				return
+			}
+			if err != nil || cfg.StateDir != tc.want {
+				t.Fatalf("state directory: %q %v", cfg.StateDir, err)
+			}
+		})
+	}
+}
 
 func TestFilesPasswordInputs(t *testing.T) {
 	for _, tc := range []struct {

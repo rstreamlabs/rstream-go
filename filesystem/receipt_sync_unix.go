@@ -20,7 +20,11 @@ func uploadFileIdentity(info os.FileInfo) (string, error) {
 }
 
 func (f *Local) syncDirectory(name string) error {
-	directory, err := f.root.Open(name)
+	return syncRootDirectory(f.root, name)
+}
+
+func syncRootDirectory(root *os.Root, name string) error {
+	directory, err := root.Open(name)
 	if err != nil {
 		return err
 	}
