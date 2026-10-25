@@ -4,8 +4,10 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"time"
 
 	"github.com/rstreamlabs/rstream-go"
@@ -94,6 +96,11 @@ func stopWebTTYSession(ctx context.Context, runtime *resolvedRuntime, client *rs
 		defer cancel()
 		_, err := client.DetachWebTTYParticipant(detachCtx, sessionID, participant.ID, rstream.DetachWebTTYParticipantRequest{Reason: "stop reader disconnected"})
 		if err != nil && stopErr == nil {
+			var apiErr *rstream.APIError
+			// Engine may already have detached this reader after native completion.
+			if result.ExitCode != nil && errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
+				return
+			}
 			stopErr = fmt.Errorf("failed to detach WebTTY stop reader: %w", err)
 		}
 	}()

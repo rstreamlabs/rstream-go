@@ -86,6 +86,9 @@ prints JSON with `session_id` and the confirmed `exit_code`, or null when the
 result is unknown. Successful native completion makes the stop operation
 successful even if the process returned a nonzero code. An already closed
 session returns its stored native result without another attachment.
+If Engine has already removed the stop reader after native completion, its
+cleanup response does not invalidate that confirmed result. Other cleanup
+failures remain errors and preserve the native `exit_code` in the JSON output.
 
 The wait is at most 65 seconds, followed by up to five seconds to release the
 participant record. Cancellation releases the reader; it cannot retract an

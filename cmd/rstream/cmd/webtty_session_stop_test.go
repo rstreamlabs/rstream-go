@@ -28,8 +28,12 @@ func TestMCPWebTTYSessionStopRequiresControlAndPreservesNativeResult(t *testing.
 		oldEngine, oldNative, denied, disconnected, cancelled, completed bool
 		code                                                             *int
 		wantError                                                        bool
+		detachStatus                                                     int
 	}{
 		{name: "confirmed stop", code: new(23)},
+		{name: "reader already detached", code: new(23), detachStatus: http.StatusNotFound},
+		{name: "cleanup forbidden preserves result", code: new(23), detachStatus: http.StatusForbidden, wantError: true},
+		{name: "cleanup unavailable preserves result", code: new(23), detachStatus: http.StatusServiceUnavailable, wantError: true},
 		{name: "old engine", oldEngine: true, wantError: true},
 		{name: "old native", oldNative: true, wantError: true},
 		{name: "control denied", denied: true, wantError: true},
@@ -67,6 +71,10 @@ func TestMCPWebTTYSessionStopRequiresControlAndPreservesNativeResult(t *testing.
 					_ = json.NewEncoder(w).Encode(rstream.WebTTYParticipant{ID: "reader-1", SessionID: "session-1", Role: rstream.WebTTYParticipantRoleSpectator, AttachGrant: []byte("fixture-grant")})
 				case "/api/webtty/sessions/session-1/participants/reader-1":
 					detached.Add(1)
+					if scenario.detachStatus != 0 {
+						http.Error(w, http.StatusText(scenario.detachStatus), scenario.detachStatus)
+						return
+					}
 					_ = json.NewEncoder(w).Encode(rstream.WebTTYParticipant{ID: "reader-1", SessionID: "session-1"})
 				case "/api/webtty/sessions/session-1/control-requests":
 					requested.Add(1)
