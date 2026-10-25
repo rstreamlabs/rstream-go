@@ -35,10 +35,26 @@ func waitChildExited(pid int) error {
 }
 
 func processGroupIsEmpty(pid int, signalError error) bool {
-	if !errors.Is(signalError, unix.EPERM) {
+	if pid <= 0 || !errors.Is(signalError, unix.EPERM) {
 		return false
 	}
-	// A single-record buffer fails with ENOMEM if another member exists.
-	info, err := unix.SysctlKinfoProc("kern.proc.pgrp", pid)
-	return err == nil && int(info.Proc.P_pid) == pid && info.Proc.P_stat == darwinProcessZombie
+	// Darwin skips zombies when signalling a group. Inspect a bounded snapshot,
+	// including the unreaped leader, without retrying a growing process table.
+	// Oversized or incomplete snapshots retain the original permission error.
+	const kernProc, kernProcGroup = 14, 2
+	query := [4]int32{unix.CTL_KERN, kernProc, kernProcGroup, int32(pid)}
+	var members [256]unix.KinfoProc
+	size := uintptr(unsafe.Sizeof(members))
+	_, _, errno := syscall.Syscall6(syscall.SYS___SYSCTL, uintptr(unsafe.Pointer(&query[0])), uintptr(len(query)), uintptr(unsafe.Pointer(&members[0])), uintptr(unsafe.Pointer(&size)), 0, 0)
+	if errno != 0 || size > unsafe.Sizeof(members) || size%unix.SizeofKinfoProc != 0 {
+		return false
+	}
+	leaderFound := false
+	for _, member := range members[:size/unix.SizeofKinfoProc] {
+		if int(member.Eproc.Pgid) != pid || member.Proc.P_stat != darwinProcessZombie {
+			return false
+		}
+		leaderFound = leaderFound || int(member.Proc.P_pid) == pid
+	}
+	return leaderFound
 }

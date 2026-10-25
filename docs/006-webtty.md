@@ -46,6 +46,12 @@ cancellation. Its `ExitCode` remains nil until native completion is confirmed.
 The CLI JSON and MCP collectors use the 8 MiB default and report `truncated`
 and the MCP `output_limit` error kind. Streaming CLI output is not retained.
 
+Unix cleanup retains the group leader's PID until its group has been stopped
+and the native result collected. macOS can return a permission error for an
+already exited group; WebTTY accepts that only after one bounded snapshot of
+up to 256 members confirms that every member, including the leader, is a zombie.
+Live members, incomplete snapshots and query failures retain the error.
+
 ## User Journeys
 
 ### Expose a Tunnel WebTTY Server
