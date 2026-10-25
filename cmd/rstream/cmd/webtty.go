@@ -538,7 +538,7 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 			}
 			logger.Info("webtty webtransport server started", "address", address)
 			resourcesHandedOff = true
-			return serveWebTransportWebTTYOnPacketConn(ctx, rstream.PacketConnFromPacketListener(packetListener), terminalHandler, authToken, allowUnauthenticated, allowedOrigins, shutdownTimeout, tlsConfig, true, logger, generations, releaseRstreamResources, admissionEnded)
+			return serveWebTransportWebTTYOnPacketConn(ctx, rstream.PacketConnFromPacketListenerWithUniquePeers(packetListener), terminalHandler, authToken, allowUnauthenticated, allowedOrigins, shutdownTimeout, tlsConfig, true, logger, generations, releaseRstreamResources, admissionEnded)
 		}
 		nl, ok := tunnel.(interface{ net.Listener })
 		if !ok {

@@ -596,6 +596,10 @@ heartbeats below the negotiated grace changes nothing. If that grace expires,
 the old generation stops admitting immediately and a replacement generation
 reconnects with bounded retries.
 
+WebTransport sessions on the same persistent server keep separate packet paths,
+including clients that share a source address. Starting or stopping one command
+does not replace another command's connection.
+
 Terminal sessions already accepted by the old generation keep their original
 byte-stream or QUIC data path. They can finish normally while the replacement
 accepts new sessions. The old listener, tunnel, control channel, transport,

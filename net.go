@@ -74,6 +74,8 @@ type packetListenerWrapper struct {
 	readers          sync.WaitGroup
 	inner            PacketListener
 	conns            map[string]*packetListenerConn
+	uniquePeers      bool
+	nextPeer         uint64
 	pkts             chan packet
 	done             chan struct{}
 	readDeadline     *packetDeadline
@@ -83,8 +85,14 @@ type packetListenerWrapper struct {
 type packetListenerConn struct {
 	conn   net.PacketConn
 	addr   net.Addr
+	peer   net.Addr
 	active atomic.Bool
 }
+
+type packetListenerPeerAddr uint64
+
+func (packetListenerPeerAddr) Network() string  { return "rstream-connection" }
+func (a packetListenerPeerAddr) String() string { return fmt.Sprintf("connection-%d", uint64(a)) }
 
 func PacketListenerFromListener(l net.Listener) PacketListener {
 	return &listenerWrapper{inner: l}
@@ -244,8 +252,13 @@ func sameAddr(a, b net.Addr) bool {
 // remain usable until they end naturally or the returned PacketConn is closed.
 // This keeps control-plane liveness independent from established data paths.
 func PacketConnFromPacketListener(l PacketListener) net.PacketConn {
+	return packetConnFromPacketListener(l, false)
+}
+
+func packetConnFromPacketListener(l PacketListener, uniquePeers bool) net.PacketConn {
 	pl := &packetListenerWrapper{
 		inner:         l,
+		uniquePeers:   uniquePeers,
 		conns:         make(map[string]*packetListenerConn),
 		pkts:          make(chan packet, 100),
 		done:          make(chan struct{}),
@@ -256,6 +269,14 @@ func PacketConnFromPacketListener(l PacketListener) net.PacketConn {
 	}
 	go pl.accept()
 	return pl
+}
+
+// PacketConnFromPacketListenerWithUniquePeers keeps independently accepted
+// connections distinct even when they report the same remote address. ReadFrom
+// returns opaque per-connection addresses that must be passed back to WriteTo.
+// Listener admission and connection shutdown follow PacketConnFromPacketListener.
+func PacketConnFromPacketListenerWithUniquePeers(l PacketListener) net.PacketConn {
+	return packetConnFromPacketListener(l, true)
 }
 
 func (pl *packetListenerWrapper) accept() {
@@ -276,8 +297,13 @@ func (pl *packetListenerWrapper) accept() {
 			_ = conn.Close()
 			return
 		}
-		key := packetAddrKey(raddr)
-		entry := &packetListenerConn{conn: conn, addr: raddr}
+		peer := raddr
+		if pl.uniquePeers {
+			pl.nextPeer++
+			peer = packetListenerPeerAddr(pl.nextPeer)
+		}
+		key := packetAddrKey(peer)
+		entry := &packetListenerConn{conn: conn, addr: raddr, peer: peer}
 		entry.active.Store(true)
 		previous := pl.conns[key]
 		if previous != nil {
@@ -324,7 +350,7 @@ func (pl *packetListenerWrapper) read(entry *packetListenerConn, key string) {
 		if !entry.active.Load() {
 			return
 		}
-		pkt := packet{data: append([]byte(nil), buf[:n]...), addr: entry.addr, source: entry}
+		pkt := packet{data: append([]byte(nil), buf[:n]...), addr: entry.peer, source: entry}
 		select {
 		case pl.pkts <- pkt:
 		case <-pl.done:
