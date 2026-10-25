@@ -34,6 +34,29 @@ capability discovery alone cannot qualify an older Engine relay. Spectators
 and revoked controllers cannot send termination. The session's original
 execution deadline is not extended by detaching or attaching another reader.
 
+### Stop an existing managed command
+
+```bash
+rstream webtty sessions stop <session-id> --reason "maintenance" --timeout 65s
+```
+
+The command joins the existing execution, requests and resolves control using
+Engine's existing session-control permission, then sends Terminate. It never
+reopens the command or forwards stdin. Older Engine/native versions fail
+explicitly; a refused control grant sends no termination request. The CLI
+prints JSON with `session_id` and the confirmed `exit_code`, or null when the
+result is unknown. Successful native completion makes the stop operation
+successful even if the process returned a nonzero code. An already closed
+session returns its stored native result without another attachment.
+
+The wait is at most 65 seconds, followed by up to five seconds to release the
+participant record. Cancellation releases the reader; it cannot retract an
+already delivered termination request. Final output is drained without keeping
+an output buffer; read authorized recordings separately with `sessions export`.
+Other readers stay attached until the native process ends. Like `sessions join`,
+`sessions stop` is unavailable in the restricted FIPS profile because live
+participant attachment does not yet support WebTransport.
+
 ### Bounded detached execution in the SDK
 
 With an authenticated Engine API client and an already configured terminal
@@ -89,7 +112,8 @@ and the MCP `output_limit` error kind. Streaming CLI output is not retained.
 Unix cleanup retains the group leader's PID until its group has been stopped
 and the native result collected. macOS can return a permission error for an
 already exited group; WebTTY accepts that only after one bounded snapshot of
-up to 256 members confirms that every member, including the leader, is a zombie.
+up to 256 members confirms that every member, including the leader, is a zombie
+or already has the kernel's irreversible `P_WEXIT` exit flag.
 Live members, incomplete snapshots and query failures retain the error.
 
 ## User Journeys

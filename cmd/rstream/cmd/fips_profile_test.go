@@ -31,6 +31,7 @@ func TestFIPSProfileCommandPolicy(t *testing.T) {
 		{path: "files server", want: "files is not available"},
 		{path: "mcp serve", want: "mcp is not available"},
 		{path: "webtty sessions join", want: "managed participant streams do not yet support WebTransport"},
+		{path: "webtty sessions stop", want: "managed participant streams do not yet support WebTransport"},
 	}
 	for _, test := range tests {
 		t.Run(test.path, func(t *testing.T) {
