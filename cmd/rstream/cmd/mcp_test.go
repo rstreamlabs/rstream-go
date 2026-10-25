@@ -767,7 +767,7 @@ func TestMCPToolsListContainsAgentNativeTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal returned error: %v", err)
 	}
-	for _, want := range []string{"rstream_auth_poll", "rstream_auth_start", "rstream_context_list", "rstream_context_get", "rstream_project_creation_options", "rstream_project_create", "rstream_project_update", "rstream_project_delete", "rstream_project_events_list", "rstream_project_list", "rstream_project_logs", "rstream_project_usage", "rstream_project_plan_get", "rstream_project_turn_usage", "rstream_project_turn_credentials_create", "rstream_project_webhooks_list", "rstream_project_webhook_deliveries_list", "rstream_project_webhook_delivery_get", "rstream_project_domains_list", "rstream_project_domain_create", "rstream_project_domain_get", "rstream_project_domain_delete", "rstream_project_domain_verify", "rstream_project_domain_connect", "rstream_project_tcp_addresses_list", "rstream_project_tcp_address_reserve", "rstream_project_tcp_address_release", "rstream_project_settings_get", "rstream_project_settings_patch", "rstream_project_settings_reset", "rstream_local_tunnel_expose", "rstream_local_tunnel_list", "rstream_local_tunnel_stop", "rstream_remote_expose", "rstream_remote_expose_stop", "rstream_remote_mcp_discover", "rstream_remote_mcp_tools", "rstream_remote_mcp_call", "rstream_runtime_prepare", "rstream_runtime_status", "rstream_token_create", "rstream_workspace_list", "rstream_workspace_members_list", "rstream_webtty_list", "rstream_webtty_servers_list", "rstream_webtty_server_get", "rstream_webtty_server_create", "rstream_webtty_server_update", "rstream_webtty_server_delete", "rstream_webtty_server_enrollment_get", "rstream_webtty_exec", "rstream_webtty_sessions_list", "rstream_webtty_session_get", "rstream_webtty_session_events", "rstream_webtty_session_export", "rstream_webtty_session_participants", "rstream_webtty_control_requests_list", "rstream_webtty_control_request_create", "rstream_webtty_control_request_resolve", "rstream_webtty_fs_list", "rstream_webtty_fs_read", "rstream_webtty_fs_download", "rstream_webtty_fs_write", "rstream_webtty_fs_mkdir", "rstream_webtty_fs_delete"} {
+	for _, want := range []string{"rstream_auth_poll", "rstream_auth_start", "rstream_context_list", "rstream_context_get", "rstream_project_creation_options", "rstream_project_create", "rstream_project_update", "rstream_project_delete", "rstream_project_events_list", "rstream_project_list", "rstream_project_logs", "rstream_project_usage", "rstream_project_plan_get", "rstream_project_turn_usage", "rstream_project_turn_credentials_create", "rstream_project_webhooks_list", "rstream_project_webhook_deliveries_list", "rstream_project_webhook_delivery_get", "rstream_project_domains_list", "rstream_project_domain_create", "rstream_project_domain_get", "rstream_project_domain_delete", "rstream_project_domain_verify", "rstream_project_domain_connect", "rstream_project_tcp_addresses_list", "rstream_project_tcp_address_reserve", "rstream_project_tcp_address_release", "rstream_project_settings_get", "rstream_project_settings_patch", "rstream_project_settings_reset", "rstream_local_tunnel_expose", "rstream_local_tunnel_list", "rstream_local_tunnel_stop", "rstream_remote_expose", "rstream_remote_expose_stop", "rstream_remote_mcp_discover", "rstream_remote_mcp_tools", "rstream_remote_mcp_call", "rstream_runtime_prepare", "rstream_runtime_status", "rstream_token_create", "rstream_workspace_list", "rstream_workspace_members_list", "rstream_webtty_list", "rstream_webtty_servers_list", "rstream_webtty_server_get", "rstream_webtty_server_create", "rstream_webtty_server_update", "rstream_webtty_server_delete", "rstream_webtty_server_enrollment_get", "rstream_webtty_exec", "rstream_webtty_sessions_list", "rstream_webtty_session_get", "rstream_webtty_session_stop", "rstream_webtty_session_start", "rstream_webtty_session_events", "rstream_webtty_session_export", "rstream_webtty_session_participants", "rstream_webtty_control_requests_list", "rstream_webtty_control_request_create", "rstream_webtty_control_request_resolve", "rstream_webtty_fs_list", "rstream_webtty_fs_read", "rstream_webtty_fs_download", "rstream_webtty_fs_write", "rstream_webtty_fs_mkdir", "rstream_webtty_fs_delete"} {
 		if !strings.Contains(string(payload), want) {
 			t.Fatalf("tools/list missing %q: %s", want, string(payload))
 		}
@@ -1493,9 +1493,13 @@ func TestMCPJSONResultRejectsNonObjectStructuredContent(t *testing.T) {
 }
 
 func TestMCPWebTTYExecResultPreservesCapturedOutput(t *testing.T) {
-	base := webTTYClientResult{URL: "rstrm://shell", Command: []string{"sh", "-lc", "build"}, ExitCode: 0, Stdout: "partial stdout", Stderr: "partial stderr", DurationMS: 42}
+	base := webTTYClientResult{URL: "rstrm://shell", Command: []string{"sh", "-lc", "build"}, ExitCode: new(0), Stdout: "partial stdout", Stderr: "partial stderr", DurationMS: 42}
 	nonzero := base
-	nonzero.ExitCode = 7
+	nonzero.ExitCode = new(7)
+	unknown := base
+	unknown.ExitCode = nil
+	truncated := nonzero
+	truncated.Truncated = true
 	tests := []struct {
 		name      string
 		result    webTTYClientResult
@@ -1505,9 +1509,12 @@ func TestMCPWebTTYExecResultPreservesCapturedOutput(t *testing.T) {
 	}{
 		{name: "success", result: base},
 		{name: "nonzero exit", result: nonzero, wantError: true},
+		{name: "unknown result", result: unknown, wantError: true},
+		{name: "lost native result", result: unknown, runErr: errors.New("connection closed"), errorKind: "session", wantError: true},
 		{name: "session failure", result: base, runErr: errors.New("connection closed"), errorKind: "session", wantError: true},
 		{name: "cancelled", result: base, runErr: context.Canceled, errorKind: "cancelled", wantError: true},
 		{name: "timeout", result: base, runErr: context.DeadlineExceeded, errorKind: "timeout", wantError: true},
+		{name: "output limit with confirmed exit", result: truncated, runErr: webtty.ErrCommandOutputLimit, errorKind: "output_limit", wantError: true},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1523,7 +1530,10 @@ func TestMCPWebTTYExecResultPreservesCapturedOutput(t *testing.T) {
 				t.Fatalf("structured content is not an object: %#v", result["structuredContent"])
 			}
 			command, commandOK := structured["command"].([]any)
-			if structured["surface"] != "cli" || structured["url"] != base.URL || !commandOK || len(command) != len(base.Command) || structured["stdout"] != base.Stdout || structured["stderr"] != base.Stderr || structured["duration_ms"] != float64(base.DurationMS) || structured["truncated"] != false {
+			if (structured["exit_code"] == nil) != (test.result.ExitCode == nil) || (test.result.ExitCode != nil && structured["exit_code"] != float64(*test.result.ExitCode)) {
+				t.Fatalf("native result changed: %#v", structured)
+			}
+			if structured["surface"] != "cli" || structured["url"] != base.URL || !commandOK || len(command) != len(base.Command) || structured["stdout"] != base.Stdout || structured["stderr"] != base.Stderr || structured["duration_ms"] != float64(base.DurationMS) || structured["truncated"] != test.result.Truncated {
 				t.Fatalf("captured output was not preserved: %#v", structured)
 			}
 			if test.runErr == nil {
@@ -1534,6 +1544,15 @@ func TestMCPWebTTYExecResultPreservesCapturedOutput(t *testing.T) {
 			}
 			if structured["error"] != "WebTTY command execution failed." || structured["error_kind"] != test.errorKind {
 				t.Fatalf("unexpected execution error payload: %#v", structured)
+			}
+			properties := mcpToolOutputSchema("rstream_webtty_exec")["properties"].(map[string]any)
+			kinds := properties["error_kind"].(map[string]any)["enum"].([]string)
+			declared := false
+			for _, kind := range kinds {
+				declared = declared || kind == test.errorKind
+			}
+			if !declared {
+				t.Fatalf("execution result error_kind %q is rejected by the tool's output schema", test.errorKind)
 			}
 		})
 	}

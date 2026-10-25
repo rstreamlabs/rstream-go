@@ -244,7 +244,7 @@ jobs:
           # The timeout covers all repetitions, including race-instrumented helper processes.
           go test -race -shuffle=on -count="${REPEAT}" -timeout=30m ./...
   windows-stdin-race:
-    name: Windows stdin race and lifecycle tests
+    name: Windows WebTTY process, stdin and capture lifecycle
     runs-on: windows-2025
     timeout-minutes: 30
     steps:
@@ -258,7 +258,7 @@ jobs:
       - name: Prepare verified ICE patch
         shell: bash
         run: go run ./tools/icepatch
-      - name: Test native Windows stdin with the race detector
+      - name: Test native Windows WebTTY with the race detector
         env:
           GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
         shell: pwsh
@@ -268,7 +268,7 @@ jobs:
           $env:CGO_ENABLED = '1'
           gcc --version
           if ($LASTEXITCODE -ne 0) { throw 'MinGW is required for the Windows race detector' }
-          go test -race -count=1 -run '^(TestWindowsStdinReader.*|TestRunClientWindows(StdinLifecycle|TerminalGeometry)|TestRunWebTTYClientCaptureForwardsPipedStdin)$' ./webtty ./cmd/rstream/cmd
+          go test -race -count=1 -run '^(TestWindowsStdinReader.*|TestRunClientWindows(StdinLifecycle|TerminalGeometry)|TestRunWebTTYClientCaptureForwardsPipedStdin|TestWindowsProcessGroup.*|TestWindowsWebTTYJobOwnsDescendants|TestNativeCompletionCleansOwnedDescendants|TestNativeTerminatePreservesProcessResultAndFinalOutput|TestClientTermination.*|TestClientSessionNativeResultWinsOverPendingLocalClose|TestCaptureCommand.*|TestWebTTYCapture.*|TestSessionIsolationPreservesActiveClientsAndServer)$' ./webtty ./cmd/rstream/cmd
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   webtty-runtime:
     name: WebTTY Go direct profile (partial coverage)

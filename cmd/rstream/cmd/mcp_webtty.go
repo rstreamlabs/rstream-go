@@ -773,3 +773,38 @@ func nilIfEmptyStringMap(value map[string]string) map[string]string {
 	}
 	return value
 }
+
+func mcpWebTTYSessionStop(ctx context.Context, args map[string]json.RawMessage) (map[string]any, error) {
+	sessionID, err := mcpRequiredStringArg(args, "session_id")
+	if err != nil {
+		return nil, err
+	}
+	reason, err := mcpOptionalStringArg(args, "reason", "")
+	if err != nil {
+		return nil, err
+	}
+	timeout, err := mcpOptionalIntArg(args, "timeout_seconds")
+	if err != nil {
+		return nil, err
+	}
+	if timeout != nil && (*timeout < 1 || *timeout > 65) {
+		return nil, fmt.Errorf("timeout_seconds must be between 1 and 65")
+	}
+	if timeout != nil {
+		bounded, cancel := context.WithTimeout(ctx, time.Duration(*timeout)*time.Second)
+		defer cancel()
+		ctx = bounded
+	}
+	runtime, client, err := mcpWebTTYEngineClient(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+	defer closeRstreamClientLogged(client, slog.Default())
+	result, stopErr := stopWebTTYSession(ctx, runtime, client, sessionID, reason)
+	payload := map[string]any{"surface": "cli", "session_id": result.SessionID, "exit_code": result.ExitCode}
+	if stopErr != nil {
+		payload["error"] = stopErr.Error()
+		payload["error_kind"] = mcpWebTTYExecErrorKind(stopErr)
+	}
+	return mcpJSONResult(payload, stopErr != nil)
+}

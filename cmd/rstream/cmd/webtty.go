@@ -57,6 +57,7 @@ type commandExitError struct {
 }
 
 type webTTYClientRunOptions struct {
+	Detached           bool
 	DefaultOutput      string
 	ForceNoInteractive bool
 	ForceNoTTY         bool
@@ -66,10 +67,11 @@ type webTTYClientRunOptions struct {
 type webTTYClientResult struct {
 	URL        string   `json:"url"`
 	Command    []string `json:"command,omitempty"`
-	ExitCode   int      `json:"exit_code"`
+	ExitCode   *int     `json:"exit_code"`
 	Stdout     string   `json:"stdout"`
 	Stderr     string   `json:"stderr"`
 	DurationMS int64    `json:"duration_ms"`
+	Truncated  bool     `json:"truncated"`
 }
 
 type webTTYClientRuntimeE2EContext struct {
@@ -536,7 +538,7 @@ func runWebTTYServerOnce(ctx context.Context, cmd *cobra.Command, logger *slog.L
 			}
 			logger.Info("webtty webtransport server started", "address", address)
 			resourcesHandedOff = true
-			return serveWebTransportWebTTYOnPacketConn(ctx, rstream.PacketConnFromPacketListener(packetListener), terminalHandler, authToken, allowUnauthenticated, allowedOrigins, shutdownTimeout, tlsConfig, true, logger, generations, releaseRstreamResources, admissionEnded)
+			return serveWebTransportWebTTYOnPacketConn(ctx, rstream.PacketConnFromPacketListenerWithUniquePeers(packetListener), terminalHandler, authToken, allowUnauthenticated, allowedOrigins, shutdownTimeout, tlsConfig, true, logger, generations, releaseRstreamResources, admissionEnded)
 		}
 		nl, ok := tunnel.(interface{ net.Listener })
 		if !ok {
@@ -2876,6 +2878,14 @@ func webTTYClientTerminalModes(cmd *cobra.Command, args []string, options webTTY
 
 func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []string, options webTTYClientRunOptions) error {
 	ctx := cmd.Context()
+	if options.Detached {
+		originalContext := ctx
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 65*time.Second)
+		defer cancel()
+		cmd.SetContext(ctx)
+		defer cmd.SetContext(originalContext)
+	}
 	logger := slog.With("cmd", "webtty", "subcmd", options.Subcommand)
 	urlValue := strings.TrimSpace(urlOverride)
 	if urlValue == "" {
@@ -2894,6 +2904,17 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 	}
 	execPath, _ := cmd.Flags().GetString("exec-path")
 	interactive, allocateTTY := webTTYClientTerminalModes(cmd, args, options)
+	executionSeconds := 0
+	if options.Detached {
+		executionSeconds, _ = cmd.Flags().GetInt("execution-seconds")
+		if err := validateWebTTYDetachedStart(urlValue, executionSeconds, noDiscovery, interactive, allocateTTY); err != nil {
+			return err
+		}
+		output, _ := cmd.Flags().GetString("output")
+		if output != "json" {
+			return fmt.Errorf("detached WebTTY start requires --output=json")
+		}
+	}
 	envVars, _ := cmd.Flags().GetStringArray("env")
 	workdir := getStringPtr(cmd, "workdir")
 	username := getStringPtr(cmd, "user")
@@ -2908,6 +2929,7 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 		Username:      username,
 		CmdArgs:       args,
 		Logger:        logger,
+		Stdin:         cmd.InOrStdin(),
 	}
 	tlsConfig, err := webTTYClientTLSConfig(cmd)
 	if err != nil {
@@ -2955,7 +2977,13 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 			return err
 		}
 		runtimeE2E = rstreamResolution.RuntimeE2E
-		if rstream.FIPSProfileEnabled() && transport == webtty.WebTTYTransportWebTransport && rstreamResolution.PublishedHost != "" {
+		if options.Detached {
+			clientCfg.URL = urlValue
+			if err := configureWebTTYDetachedStart(ctx, clientCfg, rstreamClient, rstreamResolution, executionSeconds); err != nil {
+				return err
+			}
+			urlValue = clientCfg.URL
+		} else if rstream.FIPSProfileEnabled() && transport == webtty.WebTTYTransportWebTransport && rstreamResolution.PublishedHost != "" {
 			urlValue, err = webTTYURLWithPublishedHost(urlValue, rstreamResolution.PublishedHost)
 			if err != nil {
 				return err
@@ -3031,6 +3059,13 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 		}
 		clientCfg.EndpointIdentity = identity
 	}
+	if options.Detached {
+		result, startErr := startWebTTYSession(ctx, clientCfg)
+		if err := printWebTTYJSON(cmd.OutOrStdout(), result); err != nil {
+			return err
+		}
+		return startErr
+	}
 	if outputMode == "json" {
 		result, err := runWebTTYClientCapture(ctx, clientCfg)
 		if result != nil {
@@ -3041,8 +3076,11 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 		if err != nil {
 			return err
 		}
-		if result.ExitCode != 0 {
-			return &commandExitError{code: result.ExitCode}
+		if result.ExitCode == nil {
+			return errors.New("WebTTY command result is unknown")
+		}
+		if *result.ExitCode != 0 {
+			return &commandExitError{code: *result.ExitCode}
 		}
 		return nil
 	}
@@ -3069,13 +3107,9 @@ func webTTYPublishedServerName(host string) string {
 
 func runWebTTYClientCapture(ctx context.Context, cfg *webtty.ClientConfig) (*webTTYClientResult, error) {
 	start := time.Now()
-	stdout := bytes.Buffer{}
-	stderr := bytes.Buffer{}
-	resolved := *cfg
-	resolved.Stdout = &stdout
-	resolved.Stderr = &stderr
-	exitCode, err := webtty.RunClient(ctx, &resolved)
-	return &webTTYClientResult{URL: cfg.URL, Command: append([]string(nil), cfg.CmdArgs...), ExitCode: exitCode, Stdout: stdout.String(), Stderr: stderr.String(), DurationMS: time.Since(start).Milliseconds()}, err
+	captured, err := webtty.CaptureCommand(ctx, cfg, 0)
+	result := &webTTYClientResult{URL: cfg.URL, Command: append([]string(nil), cfg.CmdArgs...), ExitCode: captured.ExitCode, Stdout: captured.Stdout, Stderr: captured.Stderr, Truncated: captured.OutputTruncated, DurationMS: time.Since(start).Milliseconds()}
+	return result, err
 }
 
 func webTTYSessionConfigFromClientConfig(cfg *webtty.ClientConfig) *webtty.SessionConfig {
@@ -3089,6 +3123,7 @@ func webTTYSessionConfigFromClientConfig(cfg *webtty.ClientConfig) *webtty.Sessi
 		AllocateTTY:            cfg.AllocateTTY,
 		SendHeartbeat:          cfg.SendHeartbeat,
 		Attach:                 cfg.Attach,
+		Managed:                cfg.Managed,
 		PayloadCrypto:          cfg.PayloadCrypto,
 		EndpointIdentity:       cfg.EndpointIdentity,
 		ExpectedServerIdentity: cfg.ExpectedServerIdentity,

@@ -494,7 +494,7 @@ func TestClientSessionWaitClosedChannel(t *testing.T) {
 	}
 }
 
-func TestClientSessionCloseStoresLocalResult(t *testing.T) {
+func TestClientSessionCloseLeavesNativeResultUnknown(t *testing.T) {
 	server := newClientSessionTestServer(t, func(conn *websocket.Conn) {
 		defer conn.Close()
 		_ = readWebTTYMessage(t, conn)
@@ -510,7 +510,7 @@ func TestClientSessionCloseStoresLocalResult(t *testing.T) {
 		t.Fatalf("Close() error = %v", err)
 	}
 	exitCode, err := session.Wait()
-	if err != nil || exitCode != -1 {
+	if !errors.Is(err, ErrSessionDisconnected) || exitCode != -1 {
 		t.Fatalf("Wait() after Close() = %d, %v", exitCode, err)
 	}
 }
@@ -554,8 +554,8 @@ func TestClientSessionConcurrentCloseAndWaitJoinLifecycle(t *testing.T) {
 		}
 		select {
 		case result := <-waitResults:
-			if result.exitCode != -1 || result.err != nil {
-				t.Fatalf("Wait() = %d, %v; want -1, nil", result.exitCode, result.err)
+			if result.exitCode != -1 || !errors.Is(result.err, ErrSessionDisconnected) {
+				t.Fatalf("Wait() = %d, %v; want an unknown result after disconnection", result.exitCode, result.err)
 			}
 		case <-time.After(time.Second):
 			t.Fatal("Wait() did not observe the shared terminal result")
@@ -566,8 +566,8 @@ func TestClientSessionConcurrentCloseAndWaitJoinLifecycle(t *testing.T) {
 	default:
 		t.Fatal("session completed before its reader stopped")
 	}
-	if exitCode, err := session.Wait(); exitCode != -1 || err != nil {
-		t.Fatalf("repeated Wait() = %d, %v; want -1, nil", exitCode, err)
+	if exitCode, err := session.Wait(); exitCode != -1 || !errors.Is(err, ErrSessionDisconnected) {
+		t.Fatalf("repeated Wait() = %d, %v; want an unknown result after disconnection", exitCode, err)
 	}
 }
 
@@ -589,7 +589,7 @@ func TestClientSessionCloseReleasesParentContextWatcher(t *testing.T) {
 		if err := session.Close(); err != nil {
 			t.Fatalf("Close() error = %v", err)
 		}
-		if _, err := session.Wait(); err != nil {
+		if _, err := session.Wait(); !errors.Is(err, ErrSessionDisconnected) {
 			t.Fatalf("Wait() error = %v", err)
 		}
 	}
@@ -648,7 +648,7 @@ func TestClientSessionCloseDoesNotRequireDrainingEvents(t *testing.T) {
 	}()
 	select {
 	case result := <-waitDone:
-		if result.exitCode != -1 || result.err != nil {
+		if result.exitCode != -1 || !errors.Is(result.err, ErrSessionDisconnected) {
 			t.Fatalf("Wait() after Close() = %d, %v", result.exitCode, result.err)
 		}
 	case <-time.After(time.Second):
@@ -1015,7 +1015,7 @@ func newClientSessionTestServer(t *testing.T, handle func(*websocket.Conn)) *htt
 	}))
 }
 
-func readWebTTYMessage(t *testing.T, conn *websocket.Conn) *pb.Message {
+func readWebTTYMessage(t *testing.T, conn messageConn) *pb.Message {
 	t.Helper()
 	messageType, raw, err := conn.ReadMessage()
 	if err != nil {
@@ -1031,7 +1031,7 @@ func readWebTTYMessage(t *testing.T, conn *websocket.Conn) *pb.Message {
 	return msg
 }
 
-func writeWebTTYMessage(t *testing.T, conn *websocket.Conn, msg *pb.Message) {
+func writeWebTTYMessage(t *testing.T, conn messageConn, msg *pb.Message) {
 	t.Helper()
 	raw, err := proto.Marshal(msg)
 	if err != nil {

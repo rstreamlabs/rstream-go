@@ -5,6 +5,7 @@ package webtty
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -26,6 +27,8 @@ import (
 
 const tunneledWebTransportInitialPacketSize = 1200
 
+var ErrSessionDisconnected = errors.New("WebTTY reader disconnected before native completion")
+
 type SessionConfig struct {
 	URL                    string
 	Transport              WebTTYTransport
@@ -36,6 +39,7 @@ type SessionConfig struct {
 	AllocateTTY            bool
 	SendHeartbeat          bool
 	Attach                 *AttachConfig
+	Managed                *ManagedSessionConfig
 	PayloadCrypto          *PayloadCrypto
 	EndpointIdentity       *WebTTYEndpointIdentity
 	ExpectedServerIdentity *WebTTYEndpointIdentityPublic
@@ -108,6 +112,7 @@ func (cfg *ClientConfig) sessionConfig() *SessionConfig {
 		AllocateTTY:            cfg.AllocateTTY,
 		SendHeartbeat:          cfg.SendHeartbeat,
 		Attach:                 cloneAttachConfig(cfg.Attach),
+		Managed:                cloneManagedSessionConfig(cfg.Managed),
 		PayloadCrypto:          clonePayloadCrypto(cfg.PayloadCrypto),
 		EndpointIdentity:       cloneWebTTYEndpointIdentity(cfg.EndpointIdentity),
 		ExpectedServerIdentity: cloneWebTTYEndpointIdentityPublic(cfg.ExpectedServerIdentity),
@@ -145,6 +150,7 @@ func (cfg *SessionConfig) clientConfig() *ClientConfig {
 		AllocateTTY:            cfg.AllocateTTY,
 		SendHeartbeat:          cfg.SendHeartbeat,
 		Attach:                 cloneAttachConfig(cfg.Attach),
+		Managed:                cloneManagedSessionConfig(cfg.Managed),
 		PayloadCrypto:          clonePayloadCrypto(cfg.PayloadCrypto),
 		EndpointIdentity:       cloneWebTTYEndpointIdentity(cfg.EndpointIdentity),
 		ExpectedServerIdentity: cloneWebTTYEndpointIdentityPublic(cfg.ExpectedServerIdentity),
@@ -224,6 +230,9 @@ func OpenClientSession(ctx context.Context, cfg *SessionConfig) (*ClientSession,
 		return nil, err
 	}
 	if err := validateFIPSWebTTYClientConfig(resolved, resolved.TLSConfig); err != nil {
+		return nil, err
+	}
+	if err := prepareManagedSession(resolved, endpoint); err != nil {
 		return nil, err
 	}
 	conn, err := dialWebTTYMessageConn(ctx, resolved, endpoint)
@@ -536,6 +545,7 @@ func cloneSessionConfig(value *SessionConfig) *SessionConfig {
 	}
 	cloned := *value
 	cloned.Attach = cloneAttachConfig(value.Attach)
+	cloned.Managed = cloneManagedSessionConfig(value.Managed)
 	cloned.PayloadCrypto = clonePayloadCrypto(value.PayloadCrypto)
 	cloned.EndpointIdentity = cloneWebTTYEndpointIdentity(value.EndpointIdentity)
 	cloned.ExpectedServerIdentity = cloneWebTTYEndpointIdentityPublic(value.ExpectedServerIdentity)
@@ -561,6 +571,7 @@ func cloneClientConfig(value *ClientConfig) *ClientConfig {
 	}
 	cloned := *value
 	cloned.Attach = cloneAttachConfig(value.Attach)
+	cloned.Managed = cloneManagedSessionConfig(value.Managed)
 	cloned.PayloadCrypto = clonePayloadCrypto(value.PayloadCrypto)
 	cloned.EndpointIdentity = cloneWebTTYEndpointIdentity(value.EndpointIdentity)
 	cloned.ExpectedServerIdentity = cloneWebTTYEndpointIdentityPublic(value.ExpectedServerIdentity)
@@ -601,6 +612,36 @@ func ensureTLSNextProto(values []string, proto string) []string {
 }
 
 func (s *ClientSession) Events() <-chan ClientSessionEvent { return s.events }
+
+// ManagedSessionID returns the confirmed detached execution ID or the attached
+// session ID. It is empty for a direct or ordinary connection-bound command.
+func (s *ClientSession) ManagedSessionID() string {
+	if s == nil || s.runtime == nil {
+		return ""
+	}
+	return s.runtime.managedSessionID
+}
+
+// CanTerminate reports native and configured Engine support, not current control authority.
+func (s *ClientSession) CanTerminate() bool {
+	return s != nil && s.runtime != nil && s.runtime.canTerminate
+}
+
+// RequestTermination sends an explicit stop request without disconnecting.
+// Only Wait returning a native result confirms process completion. Keep draining Events.
+// Cancelling an in-flight write closes the transport because a partial frame cannot be retried.
+func (s *ClientSession) RequestTermination(ctx context.Context) error {
+	if !s.CanTerminate() {
+		return ErrTerminationUnsupported
+	}
+	select {
+	case <-s.done:
+		_, err := s.Wait()
+		return err
+	default:
+	}
+	return s.runtime.writeTermination(ctx)
+}
 
 func (s *ClientSession) Wait() (int, error) {
 	if s == nil || s.done == nil {
@@ -679,6 +720,60 @@ func (s *ClientSession) Close() error {
 	s.requestClose(-1, nil, false)
 	_, _ = s.Wait()
 	return nil
+}
+
+// Disconnect finishes a managed reader's transport before releasing it. It
+// preserves queued stdin frames, including SendEOF, on an orderly peer close.
+// Keep draining Events. The wait is bounded by ctx and CloseDeadline (5s by
+// default); a timeout forces Close and does not confirm delivery or process exit.
+// Close remains the immediate, unconditional reader release operation.
+func (s *ClientSession) Disconnect(ctx context.Context) error {
+	if s.ManagedSessionID() == "" {
+		return fmt.Errorf("orderly disconnect requires a managed WebTTY reader")
+	}
+	ctx, cancel := context.WithDeadline(ctx, s.runtime.closeWriteDeadline())
+	defer cancel()
+	defer s.Close()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	cancelled := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(cancelled)
+		_ = s.runtime.conn.Close()
+	})
+	defer func() {
+		if !stop() {
+			<-cancelled
+		}
+	}()
+	if !s.runtime.writeMu.TryLock() {
+		return errClientWriteBusy
+	}
+	if !s.runtime.closing.Swap(true) {
+		deadline, _ := ctx.Deadline()
+		err := s.runtime.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "reader disconnected"), deadline)
+		s.runtime.writeMu.Unlock()
+		if err != nil {
+			return err
+		}
+	} else {
+		s.runtime.writeMu.Unlock()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.done:
+		_, err := s.Wait()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var sessionError *webtransport.SessionError
+		if errors.Is(err, io.EOF) || websocket.IsCloseError(err, websocket.CloseNormalClosure) || (errors.As(err, &sessionError) && sessionError.Remote && sessionError.ErrorCode == 0) {
+			return nil
+		}
+		return err
+	}
 }
 
 func (s *ClientSession) CloseWithError(err error) error {
@@ -789,6 +884,9 @@ func (s *ClientSession) decodeEvent(ctx context.Context, data *pb.Data) (ClientS
 }
 
 func (s *ClientSession) requestClose(exitCode int, err error, sendError bool) {
+	if err == nil {
+		err = ErrSessionDisconnected
+	}
 	s.closeTransportOnce.Do(func() {
 		s.resultMu.Lock()
 		s.closeResult = &clientSessionResult{exitCode: exitCode, err: err}
@@ -810,7 +908,7 @@ func (s *ClientSession) finalize(exitCode int, err error) {
 		}
 		result := clientSessionResult{exitCode: exitCode, err: err}
 		s.resultMu.Lock()
-		if s.closeResult != nil {
+		if err != nil && s.closeResult != nil {
 			result = *s.closeResult
 		}
 		s.result = result

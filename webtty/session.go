@@ -38,8 +38,11 @@ type session struct {
 	opening         bool
 	shutdownReq     bool
 	cmd             *exec.Cmd
+	processGroup    childProcessGroup
 	ptyFile         *os.File
 	stdinPipe       io.WriteCloser
+	stdoutPipe      io.ReadCloser
+	stderrPipe      io.ReadCloser
 	stdinClosed     bool
 	doneCh          chan struct{}
 	openTimer       *time.Timer
@@ -50,6 +53,8 @@ type session struct {
 	streamsOpen     map[pb.Data_Type]bool
 	childDone       bool
 	childExitCode   int
+	childExited     chan struct{}
+	terminationReq  bool
 	opened          bool
 	disconnecting   bool
 	closeErr        error
@@ -66,24 +71,28 @@ type session struct {
 }
 
 type sessionCleanup struct {
-	logger      *slog.Logger
-	conn        messageConn
-	cmd         *exec.Cmd
-	ptyFile     *os.File
-	stdinPipe   io.WriteCloser
-	doneCh      chan struct{}
-	attrs       []any
-	childDone   bool
-	closeFrame  []byte
-	lifecycleWG *sync.WaitGroup
+	logger       *slog.Logger
+	conn         messageConn
+	cmd          *exec.Cmd
+	processGroup childProcessGroup
+	ptyFile      *os.File
+	stdinPipe    io.WriteCloser
+	stdoutPipe   io.ReadCloser
+	stderrPipe   io.ReadCloser
+	doneCh       chan struct{}
+	attrs        []any
+	childDone    bool
+	closeFrame   []byte
+	lifecycleWG  *sync.WaitGroup
 }
 
 type sessionOpenResources struct {
 	cmd           *exec.Cmd
+	processGroup  childProcessGroup
 	ptyFile       *os.File
 	stdinPipe     io.WriteCloser
-	stdout        io.Reader
-	stderr        io.Reader
+	stdout        io.ReadCloser
+	stderr        io.ReadCloser
 	payloadCrypto *PayloadCrypto
 	streamsActive int
 	allocateTTY   bool
@@ -94,8 +103,15 @@ func (r *sessionOpenResources) close() {
 		return
 	}
 	if r.cmd != nil && r.cmd.Process != nil {
-		_ = r.cmd.Process.Kill()
+		if r.processGroup != nil {
+			_ = r.processGroup.close()
+		} else {
+			_ = killChildProcess(r.cmd)
+		}
 		_ = r.cmd.Wait()
+	}
+	if r.processGroup != nil {
+		_ = r.processGroup.close()
 	}
 	if r.ptyFile != nil {
 		_ = r.ptyFile.Close()
@@ -103,11 +119,11 @@ func (r *sessionOpenResources) close() {
 	if r.stdinPipe != nil {
 		_ = r.stdinPipe.Close()
 	}
-	if closer, ok := r.stdout.(io.Closer); ok {
-		_ = closer.Close()
+	if r.stdout != nil {
+		_ = r.stdout.Close()
 	}
-	if closer, ok := r.stderr.(io.Closer); ok {
-		_ = closer.Close()
+	if r.stderr != nil {
+		_ = r.stderr.Close()
 	}
 }
 
@@ -133,6 +149,7 @@ func newSession(conn messageConn, cfg *ServerConfig, logger *slog.Logger, sessio
 		cancel:        cancel,
 		logProto:      strings.EqualFold(strings.TrimSpace(rstream.Channel), "dev"),
 		doneCh:        make(chan struct{}),
+		childExited:   make(chan struct{}),
 		payloadCrypto: cfg.PayloadCrypto,
 		acceptedAt:    time.Now(),
 	}
@@ -217,6 +234,7 @@ func (s *session) shutdown(ctx context.Context) {
 	}
 	s.shutdownReq = true
 	cmd := s.cmd
+	processGroup := s.processGroup
 	ptyFile := s.ptyFile
 	childDone := s.childDone
 	s.mu.Unlock()
@@ -225,7 +243,7 @@ func (s *session) shutdown(ctx context.Context) {
 		return
 	}
 	if !childDone {
-		if err := requestChildShutdown(cmd, ptyFile); err != nil {
+		if err := requestChildShutdown(cmd, ptyFile, processGroup); err != nil {
 			s.logger.Debug("failed to request child process shutdown", "error", err)
 		} else {
 			s.logger.Debug("requested child process shutdown")
@@ -238,10 +256,11 @@ func (s *session) shutdown(ctx context.Context) {
 	}
 	s.mu.Lock()
 	cmd = s.cmd
+	processGroup = s.processGroup
 	childDone = s.childDone
 	s.mu.Unlock()
 	if cmd != nil && cmd.Process != nil && !childDone {
-		if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		if err := killOwnedChild(cmd, processGroup); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			s.logger.Warn("failed to force kill child process", "error", err)
 		}
 	}
@@ -274,7 +293,10 @@ func signalChildInterrupt(cmd *exec.Cmd) error {
 	return nil
 }
 
-func requestChildShutdown(cmd *exec.Cmd, ptyFile *os.File) error {
+func requestChildShutdown(cmd *exec.Cmd, ptyFile *os.File, group childProcessGroup) error {
+	if group != nil {
+		return group.interrupt()
+	}
 	if ptyFile != nil {
 		return hangupChildProcess(cmd)
 	}
@@ -375,6 +397,17 @@ func (s *session) waitProcessLoop(cmd *exec.Cmd) {
 		}
 	}
 	_ = s.onChildExit(exitCode, err)
+}
+
+func (s *session) waitOwnedProcessExit() {
+	s.mu.Lock()
+	group := s.processGroup
+	s.mu.Unlock()
+	if group != nil {
+		if err := group.waitForExit(); err != nil {
+			s.error(fmt.Errorf("failed to clean up WebTTY process group: %w", err))
+		}
+	}
 }
 
 func (s *session) onIncomingMessage(messageType int, p []byte, err error) bool {
@@ -489,6 +522,9 @@ func (s *session) onChildExit(exitCode int, err error) bool {
 		return false
 	}
 	if err == nil {
+		if !s.childDone && s.childExited != nil {
+			close(s.childExited)
+		}
 		s.childDone = true
 		s.childExitCode = exitCode
 		shouldClose := s.streamsActive == 0
@@ -525,6 +561,8 @@ func (s *session) handleMessage(m *pb.Message) error {
 		return err
 	case *pb.Message_Data:
 		return s.handleData(payload.Data)
+	case *pb.Message_Terminate:
+		return s.handleTerminate()
 	case *pb.Message_Error:
 		if payload.Error == nil || strings.TrimSpace(payload.Error.Msg) == "" {
 			return fmt.Errorf("client error")
@@ -560,6 +598,7 @@ func (s *session) waitPipedProcessLoop(cmd *exec.Cmd, stdout, stderr io.Reader) 
 		defer wg.Done()
 		s.copyStderrLoop(stderr)
 	}()
+	s.waitOwnedProcessExit()
 	wg.Wait()
 	s.waitProcessLoop(cmd)
 }
@@ -617,7 +656,10 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 	s.payloadCrypto = resources.payloadCrypto
 	s.ptyFile = resources.ptyFile
 	s.stdinPipe = resources.stdinPipe
+	s.stdoutPipe = resources.stdout
+	s.stderrPipe = resources.stderr
 	s.cmd = resources.cmd
+	s.processGroup = resources.processGroup
 	s.streamsActive = resources.streamsActive
 	s.streamsEnding = make(map[pb.Data_Type]bool, resources.streamsActive)
 	s.streamsOpen = make(map[pb.Data_Type]bool, resources.streamsActive)
@@ -645,7 +687,10 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 		return errors.New("session is closed")
 	}
 	if allocateTTY {
-		s.startLoopLocked(func() { s.waitProcessLoop(resources.cmd) })
+		s.startLoopLocked(func() {
+			s.waitOwnedProcessExit()
+			s.waitProcessLoop(resources.cmd)
+		})
 		s.startLoopLocked(func() { s.copyStdoutLoop(resources.ptyFile) })
 	} else {
 		s.startLoopLocked(func() { s.waitPipedProcessLoop(resources.cmd, resources.stdout, resources.stderr) })
@@ -655,7 +700,7 @@ func (s *session) handleOpen(openCfg *pb.Open) error {
 	}
 	s.mu.Unlock()
 	if shutdownReq {
-		if err := requestChildShutdown(resources.cmd, resources.ptyFile); err != nil {
+		if err := requestChildShutdown(resources.cmd, resources.ptyFile, resources.processGroup); err != nil {
 			s.logger.Debug("failed to request child process shutdown", "error", err)
 		} else {
 			s.logger.Debug("requested child process shutdown")
@@ -727,6 +772,7 @@ func (s *session) prepareOpen(openCfg *pb.Open) (*sessionOpenResources, error) {
 		}
 	}
 	resources.cmd = cmd
+	prepareChildProcess(cmd, resources.allocateTTY)
 	if resources.allocateTTY {
 		resources.ptyFile, err = pty.Start(cmd)
 		if err != nil {
@@ -734,6 +780,7 @@ func (s *session) prepareOpen(openCfg *pb.Open) (*sessionOpenResources, error) {
 			return nil, err
 		}
 		resources.streamsActive = 1
+		resources.processGroup = ownChildProcess(cmd)
 		return resources, nil
 	}
 	resources.stdout, err = cmd.StdoutPipe()
@@ -751,7 +798,8 @@ func (s *session) prepareOpen(openCfg *pb.Open) (*sessionOpenResources, error) {
 		resources.close()
 		return nil, err
 	}
-	if err := cmd.Start(); err != nil {
+	resources.processGroup, err = startChildProcess(cmd)
+	if err != nil {
 		resources.close()
 		return nil, err
 	}
@@ -925,30 +973,40 @@ func (s *session) detachCleanupLocked() *sessionCleanup {
 		"opened", s.opened,
 		"authenticated", !s.authenticatedAt.IsZero(),
 		"child_done", s.childDone,
-		"exit_code", s.childExitCode,
 	)
+	if s.childDone {
+		attrs = append(attrs, "exit_code", s.childExitCode)
+	}
 	attrs = appendSessionPolicyAttrs(attrs, s.cfg)
 	if s.closeErr != nil {
 		attrs = append(attrs, "reason_code", webTTYSessionErrorReasonCode(s.closeErr), "error", s.closeErr)
 	}
 	return &sessionCleanup{
-		logger:      s.logger,
-		conn:        s.conn,
-		cmd:         s.cmd,
-		ptyFile:     s.ptyFile,
-		stdinPipe:   s.stdinPipe,
-		doneCh:      s.doneCh,
-		attrs:       attrs,
-		childDone:   s.childDone,
-		closeFrame:  websocket.FormatCloseMessage(websocket.CloseNormalClosure, "finished"),
-		lifecycleWG: &s.lifecycleWG,
+		logger:       s.logger,
+		conn:         s.conn,
+		cmd:          s.cmd,
+		processGroup: s.processGroup,
+		ptyFile:      s.ptyFile,
+		stdinPipe:    s.stdinPipe,
+		stdoutPipe:   s.stdoutPipe,
+		stderrPipe:   s.stderrPipe,
+		doneCh:       s.doneCh,
+		attrs:        attrs,
+		childDone:    s.childDone,
+		closeFrame:   websocket.FormatCloseMessage(websocket.CloseNormalClosure, "finished"),
+		lifecycleWG:  &s.lifecycleWG,
 	}
 }
 
 func (c *sessionCleanup) run() {
 	if c.cmd != nil && c.cmd.Process != nil && !c.childDone {
-		if err := c.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		if err := killOwnedChild(c.cmd, c.processGroup); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			c.logger.Debug("failed to kill child on close", "error", err)
+		}
+	}
+	if c.processGroup != nil {
+		if err := c.processGroup.close(); err != nil {
+			c.logger.Warn("failed to close WebTTY process group", "error", err)
 		}
 	}
 	if c.ptyFile != nil {
@@ -956,6 +1014,12 @@ func (c *sessionCleanup) run() {
 	}
 	if c.stdinPipe != nil {
 		_ = c.stdinPipe.Close()
+	}
+	if c.stdoutPipe != nil {
+		_ = c.stdoutPipe.Close()
+	}
+	if c.stderrPipe != nil {
+		_ = c.stderrPipe.Close()
 	}
 	_ = c.conn.WriteControl(websocket.CloseMessage, c.closeFrame, time.Now().Add(time.Second))
 	_ = c.conn.Close()
@@ -1025,7 +1089,13 @@ func (s *session) startCloseHandshake() {
 }
 
 func (s *session) sendAck() error {
-	msg := &pb.Message{Payload: &pb.Message_Ack{Ack: &pb.Ack{}}}
+	s.mu.Lock()
+	ack := &pb.Ack{}
+	if s.processGroup != nil {
+		ack.Capabilities = []pb.SessionCapability{pb.SessionCapability_SESSION_CAPABILITY_TERMINATE}
+	}
+	s.mu.Unlock()
+	msg := &pb.Message{Payload: &pb.Message_Ack{Ack: ack}}
 	return s.writeMessage(msg)
 }
 

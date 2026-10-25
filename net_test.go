@@ -802,6 +802,81 @@ func TestPacketConnFromPacketListenerCloseInterruptsBlockedWrite(t *testing.T) {
 	}
 }
 
+func TestPacketConnFromPacketListenerUniquePeersPreservesSameAddressConnections(t *testing.T) {
+	remote := stubNetAddr("same-remote")
+	listener := newFakePacketListener(stubNetAddr("listener"))
+	packets := PacketConnFromPacketListenerWithUniquePeers(listener)
+	defer packets.Close()
+	if err := packets.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	connections := []*fakePacketConn{newFakePacketConn(remote), newFakePacketConn(remote)}
+	peers := make([]net.Addr, 0, 2)
+	buffer := make([]byte, 32)
+	for _, connection := range connections {
+		listener.accepted <- acceptedPacketConn{conn: connection, addr: remote}
+		connection.reads <- []byte("ready")
+		n, peer, err := packets.ReadFrom(buffer)
+		if err != nil || string(buffer[:n]) != "ready" {
+			t.Fatalf("connection was not admitted: %q %v", buffer[:n], err)
+		}
+		peers = append(peers, peer)
+	}
+	if sameAddr(peers[0], peers[1]) {
+		t.Fatal("independent connections share a routing address")
+	}
+	for index, connection := range connections {
+		select {
+		case <-connection.closed:
+			t.Fatal("new connection closed an existing peer")
+		default:
+		}
+		if _, err := packets.WriteTo([]byte("reply"), peers[index]); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case reply := <-connection.writes:
+			if string(reply) != "reply" {
+				t.Fatalf("wrong routed reply: %q", reply)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("reply reached another connection")
+		}
+	}
+	if err := connections[0].Close(); err != nil {
+		t.Fatal(err)
+	}
+	third := newFakePacketConn(remote)
+	connections = append(connections, third)
+	listener.accepted <- acceptedPacketConn{conn: third, addr: remote}
+	third.reads <- []byte("new peer")
+	n, peer, err := packets.ReadFrom(buffer)
+	if err != nil || string(buffer[:n]) != "new peer" || sameAddr(peer, peers[0]) || sameAddr(peer, peers[1]) {
+		t.Fatalf("reconnection reused a peer identity: %q %v %v", buffer[:n], peer, err)
+	}
+	if _, err := packets.WriteTo([]byte("stale"), peers[0]); err == nil {
+		t.Fatal("a stale peer address reached a new connection")
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	connections[1].reads <- []byte("still active")
+	n, peer, err = packets.ReadFrom(buffer)
+	if err != nil || string(buffer[:n]) != "still active" || !sameAddr(peer, peers[1]) {
+		t.Fatalf("admission shutdown closed an accepted peer: %q %v %v", buffer[:n], peer, err)
+	}
+	if err := packets.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, connection := range connections {
+		select {
+		case <-connection.closed:
+		default:
+			t.Fatal("packet adapter leaked an accepted connection")
+		}
+	}
+}
+
 func TestPacketConnFromPacketListenerReplacesSameAddressAtomically(t *testing.T) {
 	remote := stubNetAddr("remote")
 	first := newFakePacketConn(stubNetAddr("first"))

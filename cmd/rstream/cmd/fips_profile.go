@@ -45,13 +45,14 @@ func validateFIPSCommand(cmd *cobra.Command) error {
 	if path == "rstream webtty fs" || strings.HasPrefix(path, "rstream webtty fs ") {
 		return fmt.Errorf("webtty fs is not available in the current rstream FIPS profile")
 	}
-	if path == "rstream webtty sessions join" {
-		return fmt.Errorf("webtty sessions join is not available in the current rstream FIPS profile because managed participant streams do not yet support WebTransport")
+	if path == "rstream webtty sessions join" || path == "rstream webtty sessions stop" {
+		return fmt.Errorf("%s is not available in the current rstream FIPS profile because managed participant streams do not yet support WebTransport", strings.TrimPrefix(path, "rstream "))
 	}
 	for _, livePath := range []string{
 		"rstream webtty server",
 		"rstream webtty client",
 		"rstream webtty exec",
+		"rstream webtty sessions start",
 	} {
 		if path != livePath {
 			continue

@@ -36,6 +36,7 @@ type ClientConfig struct {
 	AllocateTTY            bool
 	SendHeartbeat          bool
 	Attach                 *AttachConfig
+	Managed                *ManagedSessionConfig
 	PayloadCrypto          *PayloadCrypto
 	EndpointIdentity       *WebTTYEndpointIdentity
 	ExpectedServerIdentity *WebTTYEndpointIdentityPublic
@@ -94,16 +95,18 @@ type AttachConfig struct {
 }
 
 type clientRuntime struct {
-	conn        messageConn
-	cfg         *ClientConfig
-	logger      *slog.Logger
-	logProto    bool
-	writeMu     sync.Mutex
-	closeOnce   sync.Once
-	closing     atomic.Bool
-	stdinFD     int
-	hasStdinFD  bool
-	hasTerminal bool
+	conn             messageConn
+	cfg              *ClientConfig
+	logger           *slog.Logger
+	logProto         bool
+	writeMu          sync.Mutex
+	closeOnce        sync.Once
+	closing          atomic.Bool
+	stdinFD          int
+	hasStdinFD       bool
+	hasTerminal      bool
+	canTerminate     bool
+	managedSessionID string
 }
 
 type clientEndpoint struct {
@@ -920,7 +923,12 @@ func (c *clientRuntime) handleOpenMessage(msg *pb.Message) error {
 	}
 	switch payload := msg.Payload.(type) {
 	case *pb.Message_Ack:
-		return nil
+		for _, capability := range payload.Ack.GetCapabilities() {
+			if capability == pb.SessionCapability_SESSION_CAPABILITY_TERMINATE {
+				c.canTerminate = true
+			}
+		}
+		return c.acceptManagedAck(payload.Ack)
 	case *pb.Message_Error:
 		if payload.Error != nil && strings.TrimSpace(payload.Error.Msg) != "" {
 			return fmt.Errorf("%w: %s", errClientServer, payload.Error.Msg)
@@ -1156,8 +1164,14 @@ func (c *clientRuntime) heartbeatLoop(ctx context.Context, errCh chan<- error) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if c.closing.Load() {
+				return
+			}
 			msg := &pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: &pb.Heartbeat{}}}
 			if err := c.writeMessage(msg); err != nil {
+				if c.closing.Load() {
+					return
+				}
 				select {
 				case errCh <- fmt.Errorf("failed to send heartbeat: %w", err):
 				default:
@@ -1196,6 +1210,9 @@ func (c *clientRuntime) writeMessage(msg *pb.Message) error {
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	if c.closing.Load() {
+		return ErrSessionDisconnected
+	}
 	return c.conn.WriteMessage(websocket.BinaryMessage, payload)
 }
 
