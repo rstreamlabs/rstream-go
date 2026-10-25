@@ -1015,7 +1015,7 @@ func newClientSessionTestServer(t *testing.T, handle func(*websocket.Conn)) *htt
 	}))
 }
 
-func readWebTTYMessage(t *testing.T, conn *websocket.Conn) *pb.Message {
+func readWebTTYMessage(t *testing.T, conn messageConn) *pb.Message {
 	t.Helper()
 	messageType, raw, err := conn.ReadMessage()
 	if err != nil {
@@ -1031,7 +1031,7 @@ func readWebTTYMessage(t *testing.T, conn *websocket.Conn) *pb.Message {
 	return msg
 }
 
-func writeWebTTYMessage(t *testing.T, conn *websocket.Conn, msg *pb.Message) {
+func writeWebTTYMessage(t *testing.T, conn messageConn, msg *pb.Message) {
 	t.Helper()
 	raw, err := proto.Marshal(msg)
 	if err != nil {

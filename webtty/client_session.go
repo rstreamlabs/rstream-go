@@ -39,6 +39,7 @@ type SessionConfig struct {
 	AllocateTTY            bool
 	SendHeartbeat          bool
 	Attach                 *AttachConfig
+	Managed                *ManagedSessionConfig
 	PayloadCrypto          *PayloadCrypto
 	EndpointIdentity       *WebTTYEndpointIdentity
 	ExpectedServerIdentity *WebTTYEndpointIdentityPublic
@@ -111,6 +112,7 @@ func (cfg *ClientConfig) sessionConfig() *SessionConfig {
 		AllocateTTY:            cfg.AllocateTTY,
 		SendHeartbeat:          cfg.SendHeartbeat,
 		Attach:                 cloneAttachConfig(cfg.Attach),
+		Managed:                cloneManagedSessionConfig(cfg.Managed),
 		PayloadCrypto:          clonePayloadCrypto(cfg.PayloadCrypto),
 		EndpointIdentity:       cloneWebTTYEndpointIdentity(cfg.EndpointIdentity),
 		ExpectedServerIdentity: cloneWebTTYEndpointIdentityPublic(cfg.ExpectedServerIdentity),
@@ -148,6 +150,7 @@ func (cfg *SessionConfig) clientConfig() *ClientConfig {
 		AllocateTTY:            cfg.AllocateTTY,
 		SendHeartbeat:          cfg.SendHeartbeat,
 		Attach:                 cloneAttachConfig(cfg.Attach),
+		Managed:                cloneManagedSessionConfig(cfg.Managed),
 		PayloadCrypto:          clonePayloadCrypto(cfg.PayloadCrypto),
 		EndpointIdentity:       cloneWebTTYEndpointIdentity(cfg.EndpointIdentity),
 		ExpectedServerIdentity: cloneWebTTYEndpointIdentityPublic(cfg.ExpectedServerIdentity),
@@ -227,6 +230,9 @@ func OpenClientSession(ctx context.Context, cfg *SessionConfig) (*ClientSession,
 		return nil, err
 	}
 	if err := validateFIPSWebTTYClientConfig(resolved, resolved.TLSConfig); err != nil {
+		return nil, err
+	}
+	if err := prepareManagedSession(resolved, endpoint); err != nil {
 		return nil, err
 	}
 	conn, err := dialWebTTYMessageConn(ctx, resolved, endpoint)
@@ -539,6 +545,7 @@ func cloneSessionConfig(value *SessionConfig) *SessionConfig {
 	}
 	cloned := *value
 	cloned.Attach = cloneAttachConfig(value.Attach)
+	cloned.Managed = cloneManagedSessionConfig(value.Managed)
 	cloned.PayloadCrypto = clonePayloadCrypto(value.PayloadCrypto)
 	cloned.EndpointIdentity = cloneWebTTYEndpointIdentity(value.EndpointIdentity)
 	cloned.ExpectedServerIdentity = cloneWebTTYEndpointIdentityPublic(value.ExpectedServerIdentity)
@@ -564,6 +571,7 @@ func cloneClientConfig(value *ClientConfig) *ClientConfig {
 	}
 	cloned := *value
 	cloned.Attach = cloneAttachConfig(value.Attach)
+	cloned.Managed = cloneManagedSessionConfig(value.Managed)
 	cloned.PayloadCrypto = clonePayloadCrypto(value.PayloadCrypto)
 	cloned.EndpointIdentity = cloneWebTTYEndpointIdentity(value.EndpointIdentity)
 	cloned.ExpectedServerIdentity = cloneWebTTYEndpointIdentityPublic(value.ExpectedServerIdentity)
@@ -605,7 +613,16 @@ func ensureTLSNextProto(values []string, proto string) []string {
 
 func (s *ClientSession) Events() <-chan ClientSessionEvent { return s.events }
 
-// CanTerminate reports native protocol support, not current managed control authority.
+// ManagedSessionID returns the confirmed detached execution ID or the attached
+// session ID. It is empty for a direct or ordinary connection-bound command.
+func (s *ClientSession) ManagedSessionID() string {
+	if s == nil || s.runtime == nil {
+		return ""
+	}
+	return s.runtime.managedSessionID
+}
+
+// CanTerminate reports native and configured Engine support, not current control authority.
 func (s *ClientSession) CanTerminate() bool {
 	return s != nil && s.runtime != nil && s.runtime.canTerminate
 }

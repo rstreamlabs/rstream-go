@@ -18,7 +18,7 @@ After a local close without native completion, `Wait()` now returns
 mistaken for a confirmed process result. `Close()` itself remains idempotent
 and returns nil; a previously confirmed native result is preserved.
 
-`ClientSession.CanTerminate()` reports native protocol support.
+`ClientSession.CanTerminate()` reports native and configured Engine support.
 `RequestTermination(ctx)` sends a separate stop request and leaves the reader
 open for final output. Keep draining `Events()` and use `Wait()` to obtain the
 native exit code. A successful request write is not confirmation that the
@@ -26,11 +26,51 @@ process has exited. An older server returns `ErrTerminationUnsupported`; the
 client does not substitute a disconnect. Cancelling a partially written request
 closes the transport because that frame cannot be retried safely.
 
-For managed sessions, first check `GetWebTTYCapabilities().ExplicitTermination`
-and acquire control through the existing participant/control APIs. Native
+For managed sessions, pass the result of `GetWebTTYCapabilities()` in
+`ManagedSessionConfig.Capabilities` and acquire control through the existing
+participant/control APIs. The SDK checks `ExplicitTermination` as well as native
+support. An Attach without Engine capabilities cannot request termination. Native
 capability discovery alone cannot qualify an older Engine relay. Spectators
 and revoked controllers cannot send termination. The session's original
 execution deadline is not extended by detaching or attaching another reader.
+
+### Bounded detached execution in the SDK
+
+With an authenticated Engine API client and an already configured terminal
+`SessionConfig`, fetch capabilities from that same Engine and opt in explicitly:
+
+```go
+capabilities, err := api.GetWebTTYCapabilities(ctx)
+if err != nil {
+    return err
+}
+cfg.Managed = &webtty.ManagedSessionConfig{
+    Capabilities: *capabilities,
+    ExecutionSeconds: 300,
+}
+cfg.Interactive, cfg.AllocateTTY = false, false
+session, err := webtty.OpenClientSession(ctx, &cfg)
+if err != nil {
+    return err
+}
+executionID := session.ManagedSessionID()
+// Persist executionID before releasing this reader.
+fmt.Println(executionID)
+return session.Close()
+```
+
+The SDK rejects unsupported capabilities, transports, conflicting URL options
+and excessive durations before opening a connection. `OpenClientSession` returns
+only after the relay confirms the ID. Zero `ExecutionSeconds` preserves the
+ordinary connection-bound lifetime. This option supports WebSocket and
+WebTransport as advertised by the Engine; it cannot extend an existing Attach.
+
+Use the saved ID with the existing session/participant API to inspect the result
+or obtain a fresh authorized Attach grant. A running command is joined without
+another Open. Receiving an ID grants no authority, and a lost opening response
+does not make retrying Open safe. Recording retention and permissions determine
+which historical output is available; this API adds no history/live cursor or
+survival across process or Engine restarts.
 
 JSON command capture and MCP execution return `exit_code: null` when no native
 result was confirmed, including transport loss and local cancellation. Confirmed
@@ -330,11 +370,10 @@ control, and keeps stdin gated until the control request is granted. The
 standalone `request-control` and `resolve-control` commands keep explicit ids
 for automation, admin tooling, and test harnesses. Pass
 `--approver-participant-id` when the current controller is granting the request;
-omit it for permission-based owner/admin approval. The current CLI live join
-path supports WebSocket-backed managed sessions; non-WebSocket sessions are
-rejected before opening a terminal stream. The engine also rejects non-WebSocket
-participant transports before issuing an attach grant, so clients do not receive
-unusable grants. Commands that request or resolve control first check
+omit it for permission-based owner/admin approval. The CLI uses a WebSocket
+participant stream and checks the Engine's live/attachable state, including for
+executions originally opened over WebTransport. The Engine rejects unsupported
+participant transports before issuing an attach grant. Commands that request or resolve control first check
 `control_transfer`; read-only metadata commands can still inspect stored
 participants and requests. Go and JS clients both send an explicit `Attach`
 protobuf message as the first frame after the transport opens; direct WebTTY

@@ -244,6 +244,9 @@ enum SessionCapability {
 
 message Ack {
   repeated SessionCapability capabilities = 1;
+  // The managed relay assigns this ID to a detached execution. It is not the
+  // native ServerHello identity or an authorization grant.
+  string managed_session_id = 2;
 }
 
 // Terminate is an idempotent request from the authorized session controller.

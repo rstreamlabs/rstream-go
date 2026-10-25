@@ -1881,10 +1881,13 @@ func (x *Attach) GetClientProof() *ClientProof {
 }
 
 type Ack struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Capabilities  []SessionCapability    `protobuf:"varint,1,rep,packed,name=capabilities,proto3,enum=SessionCapability" json:"capabilities,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Capabilities []SessionCapability    `protobuf:"varint,1,rep,packed,name=capabilities,proto3,enum=SessionCapability" json:"capabilities,omitempty"`
+	// The managed relay assigns this ID to a detached execution. It is not the
+	// native ServerHello identity or an authorization grant.
+	ManagedSessionId string `protobuf:"bytes,2,opt,name=managed_session_id,json=managedSessionId,proto3" json:"managed_session_id,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Ack) Reset() {
@@ -1922,6 +1925,13 @@ func (x *Ack) GetCapabilities() []SessionCapability {
 		return x.Capabilities
 	}
 	return nil
+}
+
+func (x *Ack) GetManagedSessionId() string {
+	if x != nil {
+		return x.ManagedSessionId
+	}
+	return ""
 }
 
 // Terminate is an idempotent request from the authorized session controller.
@@ -2772,9 +2782,10 @@ const file_pb_webtty_proto_rawDesc = "" +
 	"\tdevice_id\x18\a \x01(\v2\x1c.google.protobuf.StringValueR\bdeviceId\x12;\n" +
 	"\n" +
 	"browser_id\x18\b \x01(\v2\x1c.google.protobuf.StringValueR\tbrowserId\x12/\n" +
-	"\fclient_proof\x18\t \x01(\v2\f.ClientProofR\vclientProof\"=\n" +
+	"\fclient_proof\x18\t \x01(\v2\f.ClientProofR\vclientProof\"k\n" +
 	"\x03Ack\x126\n" +
-	"\fcapabilities\x18\x01 \x03(\x0e2\x12.SessionCapabilityR\fcapabilities\"\v\n" +
+	"\fcapabilities\x18\x01 \x03(\x0e2\x12.SessionCapabilityR\fcapabilities\x12,\n" +
+	"\x12managed_session_id\x18\x02 \x01(\tR\x10managedSessionId\"\v\n" +
 	"\tTerminate\"\x19\n" +
 	"\x05Error\x12\x10\n" +
 	"\x03msg\x18\x01 \x01(\tR\x03msg\"(\n" +

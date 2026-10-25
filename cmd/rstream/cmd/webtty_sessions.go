@@ -960,6 +960,7 @@ func runWebTTYSessionAttach(cmd *cobra.Command, sessionID string) error {
 	}
 	cfg := &webtty.ClientConfig{
 		URL:               streamURL,
+		Managed:           &webtty.ManagedSessionConfig{Capabilities: *capabilities},
 		Transport:         webtty.WebTTYTransportWebSocket,
 		DialTLSContext:    newWebTTYEngineDialTLSContext(client),
 		Interactive:       interactive || requestControl,

@@ -36,6 +36,7 @@ type ClientConfig struct {
 	AllocateTTY            bool
 	SendHeartbeat          bool
 	Attach                 *AttachConfig
+	Managed                *ManagedSessionConfig
 	PayloadCrypto          *PayloadCrypto
 	EndpointIdentity       *WebTTYEndpointIdentity
 	ExpectedServerIdentity *WebTTYEndpointIdentityPublic
@@ -94,17 +95,18 @@ type AttachConfig struct {
 }
 
 type clientRuntime struct {
-	conn         messageConn
-	cfg          *ClientConfig
-	logger       *slog.Logger
-	logProto     bool
-	writeMu      sync.Mutex
-	closeOnce    sync.Once
-	closing      atomic.Bool
-	stdinFD      int
-	hasStdinFD   bool
-	hasTerminal  bool
-	canTerminate bool
+	conn             messageConn
+	cfg              *ClientConfig
+	logger           *slog.Logger
+	logProto         bool
+	writeMu          sync.Mutex
+	closeOnce        sync.Once
+	closing          atomic.Bool
+	stdinFD          int
+	hasStdinFD       bool
+	hasTerminal      bool
+	canTerminate     bool
+	managedSessionID string
 }
 
 type clientEndpoint struct {
@@ -926,7 +928,7 @@ func (c *clientRuntime) handleOpenMessage(msg *pb.Message) error {
 				c.canTerminate = true
 			}
 		}
-		return nil
+		return c.acceptManagedAck(payload.Ack)
 	case *pb.Message_Error:
 		if payload.Error != nil && strings.TrimSpace(payload.Error.Msg) != "" {
 			return fmt.Errorf("%w: %s", errClientServer, payload.Error.Msg)
