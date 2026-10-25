@@ -793,6 +793,7 @@ func mcpTools() []map[string]any {
 		mcpTool("rstream_webtty_server_update", "Update mutable metadata on a registered WebTTY server record.", mcpProjectSelectorProperties(map[string]any{"server_id": mcpStringSchema("Registered WebTTY server ID."), "name": mcpStringSchema("Optional new server name."), "description": mcpStringSchema("Optional new server description."), "status": mcpStringSchema("Optional status: active or suspended."), "recording_policy": mcpStringSchema("Optional recording policy: recorded or private."), "access_policy": mcpStringSchema("Optional access policy: project_members or restricted."), "labels": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Optional replacement labels as key=value entries."}}), []string{"server_id"}),
 		mcpTool("rstream_webtty_server_delete", "Delete a registered WebTTY server record after explicit user approval.", mcpProjectSelectorProperties(map[string]any{"server_id": mcpStringSchema("Registered WebTTY server ID.")}), []string{"server_id"}),
 		mcpTool("rstream_webtty_server_enrollment_get", "Return the commands needed to enroll and run a registered WebTTY server. The tool does not launch a remote process.", mcpProjectSelectorProperties(map[string]any{"server_id": mcpStringSchema("Registered WebTTY server ID.")}), []string{"server_id"}),
+		mcpWebTTYSessionStartTool(),
 		mcpTool("rstream_webtty_exec", "Execute a non-interactive command through a WebTTY server.", mcpProjectSelectorProperties(mcpWebTTYConnectionProperties(map[string]any{"url": mcpStringSchema("WebTTY URL, for example rstrm://shell."), "exec_path": mcpStringSchema("Advertised exec_path from rstream_webtty_list. Defaults to /."), "known_server": mcpStringSchema("Optional local known WebTTY server name for direct URLs."), "command": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "minItems": 1}, "workdir": mcpStringSchema("Optional working directory."), "env": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "user": mcpStringSchema("Optional username or UID.")})), []string{"url", "command"}),
 		mcpTool("rstream_webtty_sessions_list", "List managed WebTTY sessions through the local Engine API context.", mcpProjectSelectorProperties(map[string]any{"server_id": mcpStringSchema("Optional registered server ID filter."), "tunnel_id": mcpStringSchema("Optional tunnel ID filter."), "user_id": mcpStringSchema("Optional user ID filter."), "group_id": mcpStringSchema("Optional session group ID filter."), "origin": mcpStringSchema("Optional session origin filter."), "status": mcpStringSchema("Optional session status filter."), "started_after": mcpStringSchema("Optional RFC3339 start lower bound."), "started_before": mcpStringSchema("Optional RFC3339 start upper bound."), "limit": map[string]any{"type": "number", "description": "Optional limit."}}), []string{}),
 		mcpTool("rstream_webtty_session_stop", "Stop an existing managed WebTTY command after acquiring authorized control. Joins the same execution without Open, waits for native completion and reports a null exit_code when unconfirmed. Requires Engine and native termination support plus session control permission.", mcpProjectSelectorProperties(map[string]any{"session_id": mcpStringSchema("WebTTY session ID."), "reason": mcpStringSchema("Optional audited control request reason."), "timeout_seconds": map[string]any{"type": "integer", "minimum": 1, "maximum": 65, "description": "Maximum wait for control and native completion; defaults to 65 seconds."}}), []string{"session_id"}),
@@ -887,6 +888,7 @@ var mcpToolBehaviors = map[string]mcpToolBehavior{
 	"rstream_webtty_server_update":            {Title: "Update Registered WebTTY Server", Destructive: true, Idempotent: true},
 	"rstream_webtty_server_delete":            {Title: "Delete Registered WebTTY Server", Destructive: true, Idempotent: true},
 	"rstream_webtty_server_enrollment_get":    {Title: "Get WebTTY Enrollment", ReadOnly: true, Idempotent: true},
+	"rstream_webtty_session_start":            {Title: "Start Detached WebTTY Command", Destructive: true, OpenWorld: true},
 	"rstream_webtty_exec":                     {Title: "Execute WebTTY Command", Destructive: true, OpenWorld: true},
 	"rstream_webtty_sessions_list":            {Title: "List WebTTY Sessions", ReadOnly: true, Idempotent: true},
 	"rstream_webtty_session_stop":             {Title: "Stop WebTTY Session", Destructive: true, Idempotent: true},
@@ -998,9 +1000,11 @@ func mcpToolOutputSchema(name string) map[string]any {
 	case "rstream_webtty_server_delete":
 		return map[string]any{"type": "object", "properties": map[string]any{"surface": mcpStringSchema("MCP surface name."), "deleted": map[string]any{"type": "boolean"}, "server_id": mcpStringSchema("Deleted registered WebTTY server ID.")}, "required": []string{"surface", "deleted", "server_id"}, "additionalProperties": true}
 	case "rstream_webtty_exec":
-		return map[string]any{"type": "object", "properties": map[string]any{"surface": mcpStringSchema("MCP surface name."), "url": mcpStringSchema("Resolved WebTTY URL."), "command": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "exit_code": map[string]any{"type": []string{"integer", "null"}}, "stdout": mcpStringSchema("Captured stdout, including partial output on session failure."), "stderr": mcpStringSchema("Captured stderr, including partial output on session failure."), "duration_ms": map[string]any{"type": "number"}, "truncated": map[string]any{"type": "boolean"}, "error": mcpStringSchema("Safe execution error summary."), "error_kind": map[string]any{"type": "string", "enum": []string{"cancelled", "timeout", "session"}}}, "required": []string{"surface", "url", "command", "exit_code", "stdout", "stderr", "duration_ms", "truncated"}, "additionalProperties": true}
+		return map[string]any{"type": "object", "properties": map[string]any{"surface": mcpStringSchema("MCP surface name."), "url": mcpStringSchema("Resolved WebTTY URL."), "command": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "exit_code": map[string]any{"type": []string{"integer", "null"}}, "stdout": mcpStringSchema("Captured stdout, including partial output on session failure."), "stderr": mcpStringSchema("Captured stderr, including partial output on session failure."), "duration_ms": map[string]any{"type": "number"}, "truncated": map[string]any{"type": "boolean"}, "error": mcpStringSchema("Safe execution error summary."), "error_kind": map[string]any{"type": "string", "enum": []string{"cancelled", "timeout", "session", "output_limit"}}}, "required": []string{"surface", "url", "command", "exit_code", "stdout", "stderr", "duration_ms", "truncated"}, "additionalProperties": true}
 	case "rstream_webtty_sessions_list":
 		return map[string]any{"type": "object", "properties": map[string]any{"surface": mcpStringSchema("MCP surface name."), "sessions": map[string]any{"type": "array", "items": map[string]any{"type": "object"}}}, "required": []string{"surface", "sessions"}, "additionalProperties": true}
+	case "rstream_webtty_session_start":
+		return mcpObjectOutputSchema(map[string]any{"surface": mcpStringSchema("MCP surface name."), "session_id": mcpStringSchema("Acknowledged execution ID; empty when start was not confirmed."), "error": mcpStringSchema("Operation error; never automatically retry an unconfirmed start."), "error_kind": mcpStringSchema("Operation error category.")}, "surface", "session_id")
 	case "rstream_webtty_session_stop":
 		return mcpObjectOutputSchema(map[string]any{"surface": mcpStringSchema("MCP surface name."), "session_id": mcpStringSchema("WebTTY session ID."), "exit_code": map[string]any{"type": []string{"integer", "null"}}, "error": mcpStringSchema("Operation error; native completion remains independent."), "error_kind": mcpStringSchema("Operation error category.")}, "surface", "session_id", "exit_code")
 	case "rstream_webtty_session_get":
@@ -1148,6 +1152,8 @@ func handleMCPToolCall(ctx context.Context, params json.RawMessage) (map[string]
 		return mcpWebTTYExec(ctx, call.Arguments)
 	case "rstream_webtty_sessions_list":
 		return mcpWebTTYSessionsList(ctx, call.Arguments)
+	case "rstream_webtty_session_start":
+		return mcpWebTTYSessionStart(ctx, call.Arguments)
 	case "rstream_webtty_session_stop":
 		return mcpWebTTYSessionStop(ctx, call.Arguments)
 	case "rstream_webtty_session_get":
@@ -1329,6 +1335,10 @@ func (c *mcpWebTTYClientConfig) Close() error {
 }
 
 func mcpWebTTYExecClientConfig(ctx context.Context, args map[string]json.RawMessage, command []string) (result *mcpWebTTYClientConfig, err error) {
+	return mcpWebTTYCommandConfig(ctx, args, command, 0)
+}
+
+func mcpWebTTYCommandConfig(ctx context.Context, args map[string]json.RawMessage, command []string, executionSeconds int) (result *mcpWebTTYClientConfig, err error) {
 	transportValue, err := mcpOptionalStringArg(args, "transport", "")
 	if err != nil {
 		return nil, err
@@ -1348,6 +1358,11 @@ func mcpWebTTYExecClientConfig(ctx context.Context, args map[string]json.RawMess
 	urlValue, err := mcpRequiredStringArg(args, "url")
 	if err != nil {
 		return nil, err
+	}
+	if executionSeconds != 0 {
+		if err := validateWebTTYDetachedStart(urlValue, executionSeconds, noDiscovery, false, false); err != nil {
+			return nil, err
+		}
 	}
 	execPath, err := mcpOptionalStringArg(args, "exec_path", "")
 	if err != nil {
@@ -1402,9 +1417,15 @@ func mcpWebTTYExecClientConfig(ctx context.Context, args map[string]json.RawMess
 		}
 		runtimeE2E = rstreamResolution.RuntimeE2E
 		securityScope = rstreamResolution.Scope
-		result.DialContext = newWebTTYClientDialContext(client)
-		result.DialPacketContext = newWebTTYClientPacketDialContext(client)
-		result.TLSConfig = webTTYClientRstreamTLSConfig(result.Transport, nil)
+		if executionSeconds != 0 {
+			if err := configureWebTTYDetachedStart(ctx, result.ClientConfig, client, rstreamResolution, executionSeconds); err != nil {
+				return nil, err
+			}
+		} else {
+			result.DialContext = newWebTTYClientDialContext(client)
+			result.DialPacketContext = newWebTTYClientPacketDialContext(client)
+			result.TLSConfig = webTTYClientRstreamTLSConfig(result.Transport, nil)
+		}
 	}
 	result.URL, err = resolveWebTTYClientExecURL(result.URL, result.Transport, execPath, serverInfo)
 	if err != nil {

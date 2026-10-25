@@ -18,6 +18,14 @@ After a local close without native completion, `Wait()` now returns
 mistaken for a confirmed process result. `Close()` itself remains idempotent
 and returns nil; a previously confirmed native result is preserved.
 
+For a managed reader that has just written input or `SendEOF()`, use
+`Disconnect(ctx)` to finish the transport exchange before releasing it. Continue
+draining `Events()` during this wait. It is bounded by the caller context and
+`CloseDeadline` (five seconds by default); failure forces a local close and does
+not confirm input delivery. An orderly reader disconnect never confirms process
+completion. This matters especially for WebTransport, where an immediate session
+close can discard queued input. `Close()` remains available for immediate release.
+
 `ClientSession.CanTerminate()` reports native and configured Engine support.
 `RequestTermination(ctx)` sends a separate stop request and leaves the reader
 open for final output. Keep draining `Events()` and use `Wait()` to obtain the
@@ -33,6 +41,36 @@ support. An Attach without Engine capabilities cannot request termination. Nativ
 capability discovery alone cannot qualify an older Engine relay. Spectators
 and revoked controllers cannot send termination. The session's original
 execution deadline is not extended by detaching or attaching another reader.
+
+### Start and retrieve a detached command
+
+```bash
+rstream webtty sessions start --url rstrm://build-server --execution-seconds 300 -- sh -c 'make check'
+# Save the returned session_id, then inspect or join that same execution:
+rstream webtty sessions show <session-id>
+rstream webtty sessions join <session-id>
+```
+
+`sessions start` returns JSON with the Engine-acknowledged `session_id` and
+disconnects its reader. It requires an explicit budget of 1–86400 seconds,
+within the Engine's advertised maximum. The CLI discovers the target through
+the configured Engine and uses its published WebSocket or WebTransport endpoint;
+private direct dialing cannot provide this managed lifetime. Unpublished
+targets, disabled discovery, interactive/TTY options and unsupported capabilities
+fail before Open. Existing endpoint identity and E2E requirements still apply.
+
+The command receives empty stdin; local piped input is not forwarded. Output is
+not captured by the start operation. Authorized recording export remains subject
+to the server's recording policy and retention. Use ordinary `webtty exec` for
+connection-bound execution and local output capture.
+
+An acknowledged start is not process completion. Read the saved session to find
+its actual result, or attach while it is still running. If the opening response
+is lost, the command may already be running: do not automatically retry start.
+No idempotency key or business-level deduplication is supplied. The start operation
+has a 65-second bound independent of the remote execution budget. In the FIPS
+profile it requires WebTransport, like `webtty exec`; live participant join and
+stop retain their separate restriction below.
 
 ### Stop an existing managed command
 

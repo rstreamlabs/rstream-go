@@ -57,6 +57,7 @@ type commandExitError struct {
 }
 
 type webTTYClientRunOptions struct {
+	Detached           bool
 	DefaultOutput      string
 	ForceNoInteractive bool
 	ForceNoTTY         bool
@@ -2877,6 +2878,14 @@ func webTTYClientTerminalModes(cmd *cobra.Command, args []string, options webTTY
 
 func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []string, options webTTYClientRunOptions) error {
 	ctx := cmd.Context()
+	if options.Detached {
+		originalContext := ctx
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 65*time.Second)
+		defer cancel()
+		cmd.SetContext(ctx)
+		defer cmd.SetContext(originalContext)
+	}
 	logger := slog.With("cmd", "webtty", "subcmd", options.Subcommand)
 	urlValue := strings.TrimSpace(urlOverride)
 	if urlValue == "" {
@@ -2895,6 +2904,17 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 	}
 	execPath, _ := cmd.Flags().GetString("exec-path")
 	interactive, allocateTTY := webTTYClientTerminalModes(cmd, args, options)
+	executionSeconds := 0
+	if options.Detached {
+		executionSeconds, _ = cmd.Flags().GetInt("execution-seconds")
+		if err := validateWebTTYDetachedStart(urlValue, executionSeconds, noDiscovery, interactive, allocateTTY); err != nil {
+			return err
+		}
+		output, _ := cmd.Flags().GetString("output")
+		if output != "json" {
+			return fmt.Errorf("detached WebTTY start requires --output=json")
+		}
+	}
 	envVars, _ := cmd.Flags().GetStringArray("env")
 	workdir := getStringPtr(cmd, "workdir")
 	username := getStringPtr(cmd, "user")
@@ -2957,7 +2977,13 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 			return err
 		}
 		runtimeE2E = rstreamResolution.RuntimeE2E
-		if rstream.FIPSProfileEnabled() && transport == webtty.WebTTYTransportWebTransport && rstreamResolution.PublishedHost != "" {
+		if options.Detached {
+			clientCfg.URL = urlValue
+			if err := configureWebTTYDetachedStart(ctx, clientCfg, rstreamClient, rstreamResolution, executionSeconds); err != nil {
+				return err
+			}
+			urlValue = clientCfg.URL
+		} else if rstream.FIPSProfileEnabled() && transport == webtty.WebTTYTransportWebTransport && rstreamResolution.PublishedHost != "" {
 			urlValue, err = webTTYURLWithPublishedHost(urlValue, rstreamResolution.PublishedHost)
 			if err != nil {
 				return err
@@ -3033,6 +3059,13 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 		}
 		clientCfg.EndpointIdentity = identity
 	}
+	if options.Detached {
+		result, startErr := startWebTTYSession(ctx, clientCfg)
+		if err := printWebTTYJSON(cmd.OutOrStdout(), result); err != nil {
+			return err
+		}
+		return startErr
+	}
 	if outputMode == "json" {
 		result, err := runWebTTYClientCapture(ctx, clientCfg)
 		if result != nil {
@@ -3090,6 +3123,7 @@ func webTTYSessionConfigFromClientConfig(cfg *webtty.ClientConfig) *webtty.Sessi
 		AllocateTTY:            cfg.AllocateTTY,
 		SendHeartbeat:          cfg.SendHeartbeat,
 		Attach:                 cfg.Attach,
+		Managed:                cfg.Managed,
 		PayloadCrypto:          cfg.PayloadCrypto,
 		EndpointIdentity:       cfg.EndpointIdentity,
 		ExpectedServerIdentity: cfg.ExpectedServerIdentity,

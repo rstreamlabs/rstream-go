@@ -722,6 +722,60 @@ func (s *ClientSession) Close() error {
 	return nil
 }
 
+// Disconnect finishes a managed reader's transport before releasing it. It
+// preserves queued stdin frames, including SendEOF, on an orderly peer close.
+// Keep draining Events. The wait is bounded by ctx and CloseDeadline (5s by
+// default); a timeout forces Close and does not confirm delivery or process exit.
+// Close remains the immediate, unconditional reader release operation.
+func (s *ClientSession) Disconnect(ctx context.Context) error {
+	if s.ManagedSessionID() == "" {
+		return fmt.Errorf("orderly disconnect requires a managed WebTTY reader")
+	}
+	ctx, cancel := context.WithDeadline(ctx, s.runtime.closeWriteDeadline())
+	defer cancel()
+	defer s.Close()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	cancelled := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(cancelled)
+		_ = s.runtime.conn.Close()
+	})
+	defer func() {
+		if !stop() {
+			<-cancelled
+		}
+	}()
+	if !s.runtime.writeMu.TryLock() {
+		return errClientWriteBusy
+	}
+	if !s.runtime.closing.Swap(true) {
+		deadline, _ := ctx.Deadline()
+		err := s.runtime.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "reader disconnected"), deadline)
+		s.runtime.writeMu.Unlock()
+		if err != nil {
+			return err
+		}
+	} else {
+		s.runtime.writeMu.Unlock()
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-s.done:
+		_, err := s.Wait()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var sessionError *webtransport.SessionError
+		if errors.Is(err, io.EOF) || websocket.IsCloseError(err, websocket.CloseNormalClosure) || (errors.As(err, &sessionError) && sessionError.Remote && sessionError.ErrorCode == 0) {
+			return nil
+		}
+		return err
+	}
+}
+
 func (s *ClientSession) CloseWithError(err error) error {
 	s.requestClose(-1, err, true)
 	_, _ = s.Wait()

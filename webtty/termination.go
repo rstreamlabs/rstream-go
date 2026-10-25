@@ -27,6 +27,9 @@ func (c *clientRuntime) writeTermination(ctx context.Context) error {
 		return errClientWriteBusy
 	}
 	defer c.writeMu.Unlock()
+	if c.closing.Load() {
+		return ErrSessionDisconnected
+	}
 	deadline := c.closeWriteDeadline()
 	if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(deadline) {
 		deadline = callerDeadline

@@ -26,6 +26,7 @@ func TestFIPSProfileCommandPolicy(t *testing.T) {
 		want string
 	}{
 		{path: "webtty client", want: "requires --transport=webtransport"},
+		{path: "webtty sessions start", want: "requires --transport=webtransport"},
 		{path: "ui", want: "ui is not available"},
 		{path: "files", want: "files is not available"},
 		{path: "files server", want: "files is not available"},

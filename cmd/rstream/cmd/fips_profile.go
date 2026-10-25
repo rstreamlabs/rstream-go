@@ -52,6 +52,7 @@ func validateFIPSCommand(cmd *cobra.Command) error {
 		"rstream webtty server",
 		"rstream webtty client",
 		"rstream webtty exec",
+		"rstream webtty sessions start",
 	} {
 		if path != livePath {
 			continue

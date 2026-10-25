@@ -1164,8 +1164,14 @@ func (c *clientRuntime) heartbeatLoop(ctx context.Context, errCh chan<- error) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if c.closing.Load() {
+				return
+			}
 			msg := &pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: &pb.Heartbeat{}}}
 			if err := c.writeMessage(msg); err != nil {
+				if c.closing.Load() {
+					return
+				}
 				select {
 				case errCh <- fmt.Errorf("failed to send heartbeat: %w", err):
 				default:
@@ -1204,6 +1210,9 @@ func (c *clientRuntime) writeMessage(msg *pb.Message) error {
 	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
+	if c.closing.Load() {
+		return ErrSessionDisconnected
+	}
 	return c.conn.WriteMessage(websocket.BinaryMessage, payload)
 }
 
