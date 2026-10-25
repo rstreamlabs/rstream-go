@@ -53,6 +53,21 @@ jobs:
         env:
           GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
         run: go test -count=1 ./cmd/rstream/cmd -run '^TestFilesystem(CLIAndMCPBackendMatrix|WebRTCThroughCLIAndMCP|WebRTCPreparedContextAvoidsControlPlane)$'
+      - name: Upload journals on restricted Linux and separate filesystems
+        if: runner.os == 'Linux'
+        env:
+          GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
+        shell: bash
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 go test -c -o "${RUNNER_TEMP}/filesystem.test" ./filesystem
+          docker run --rm --user 65534:65534 --cap-drop ALL \
+            --security-opt no-new-privileges --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,size=128m,mode=1777 \
+            --mount "type=bind,source=${RUNNER_TEMP}/filesystem.test,target=/tests/filesystem.test,readonly" \
+            --env RSTREAM_TEST_READONLY_ROOT=1 \
+            ubuntu:24.04 /tests/filesystem.test -test.v -test.count=1 \
+            -test.run 'TestExternalJournal|TestPreparedReceiptCrashBoundaries'
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         if: runner.os == 'Linux'
         with:

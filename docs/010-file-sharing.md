@@ -20,6 +20,7 @@ File sharing is unavailable in the restricted FIPS build for both WebDAV and Web
 | `--backend webdav\|webrtc` | Select WebDAV (default) or read-only WebRTC using the current rstream project’s STUN/TURN. |
 | `--read-write` | Enable WebDAV uploads, replacement, directory creation, copy, move and deletion. Default: disabled. Rejected with WebRTC. |
 | `--max-upload-size <bytes>` | Per-request upload limit; requires `--read-write`. Default: 67108864 (64 MiB); must be greater than zero. |
+| `--state-dir <path>` | Existing persistent directory dedicated to the export’s private upload journal. Overrides `RSTREAM_FILES_STATE_DIR`; otherwise the journal stays at the export root. WebDAV on platforms supporting durable uploads only. |
 | `--no-ui` | Return 404 for the embedded page while keeping transfer, archive and discovery endpoints available. Works with both backends. |
 | `--include-hidden` | Include dotfiles and dot-directories; excluded by default for directory shares. |
 | `--exclude <glob>` | Repeatable, case-insensitive Go `path.Match` glob. Without `/`, matches basenames at any depth; with `/`, matches root-relative paths. Matching directories exclude descendants. `**` has no special recursive meaning. |
@@ -122,9 +123,31 @@ A 200 receipt response means the attempt was found; inspect `state` and its reco
 
 The owner synchronizes staging data, a private preparation journal, the renamed directory and the final receipt before acknowledging success. On restart, the next lookup or mutation reconciles unfinished preparation before any later write can replace its evidence. Staging inode identity, size and digest establish a committed rename; missing or contradictory evidence becomes `uncertain`. Uploads interrupted before publication leave the original intact. This is process-restart recovery under the same filesystem ownership discipline, not coordination with arbitrary external writers.
 
-Receipts use the same authenticated export and current path policy as file reads; the ID grants no access. The metadata is hidden and cannot be downloaded through WebDAV or ZIP. It is retained without automatic expiry, bounded to 4,096 receipts per export; a full or unavailable journal refuses new durable uploads with 507. Existing receipt reads and ordinary file operations remain available. There is no expiry or purge API in this protocol. Removing an old receipt would forget its identity and could let the same request write again. Do not remove this journal while its identities must remain recoverable. Journal retention and any higher-level operation retention must be coordinated by the owning application. The receipt does not by itself supply a cross-service operations catalogue or an audit identity.
+Receipts use the same authenticated export and current path policy as file reads; the ID grants no access. The metadata is hidden and cannot be downloaded through WebDAV or ZIP. It is retained without automatic expiry, bounded to 4,096 receipts per export; a full journal (receipt limit, disk space or quota) refuses new durable uploads with 507. An inaccessible or otherwise unavailable journal returns 503, with the underlying admission error in the server log. Existing receipt reads and ordinary file operations remain available. There is no expiry or purge API in this protocol. Removing an old receipt would forget its identity and could let the same request write again. Do not remove this journal while its identities must remain recoverable. Journal retention and any higher-level operation retention must be coordinated by the owning application. The receipt does not by itself supply a cross-service operations catalogue or an audit identity.
 
 HTTP `Range`/`If-Range` and the `resume` capability describe downloads only. ZIP downloads must still restart after interruption.
+
+### Upload state outside the export
+
+By default, durable uploads keep `.rstream-upload-receipts`, `.rstream-upload-pending` and journal temporary files at the export root. Consequently, a writable destination under a non-writable export root is insufficient. Select a separate persistent directory when the root is read-only or the server cannot write there:
+
+```sh
+mkdir -m 700 /writable-volume/rstream-state
+rstream files / --read-write --no-ui --token-auth --state-dir /writable-volume/rstream-state
+# Alternatively, set RSTREAM_FILES_STATE_DIR=/writable-volume/rstream-state.
+```
+
+The directory must already exist. The CLI flag overrides the environment variable; an explicitly empty flag is rejected. The library does not read this environment variable: embedders set `fileserver.Config.StateDir` or `filesystem.Policy.StateDir` when opening a `filesystem.Local`. Each export needs its own state directory. Omit the option to preserve the existing layout; there is no automatic fallback to a temporary directory or user home.
+
+The service creates a private `.rstream-upload-state` child with owner-only permissions. It binds the journal to the canonical export root and its filesystem identity, rejects reuse by another export, and checks journal writes and synchronization before opening a writable service. A missing, inaccessible, invalid or unsupported configured state directory fails startup. Read-only services can reopen existing state to retrieve receipts. This option is unavailable on Windows until durable directory synchronization is supported there.
+
+All processes serving the same export **must use the same persistent state directory**, including after restart. The existing export-inode mutation lock remains in effect. The state directory must survive for as long as upload IDs can be retried; do not use an automatically cleaned `/tmp` directory for durable operation. Changing or deleting the directory can discard idempotence history. A read-only export has no writable place to remember the selected external path, so independent processes using different state directories cannot detect every configuration mismatch. There is no additional global registry or hidden writable-path dependency. Deploy the state location as part of the export's persistent configuration.
+
+The server refuses to hide an existing journal at the export root when external state is requested. Automatic migration of existing receipts is not provided; retain their current location until an offline migration has been designed for that deployment. Relocating or replacing an export root, changing its mount identity, or copying state between hosts requires reviewing its ownership binding rather than silently creating a fresh history.
+
+Files cannot list, read, overwrite, remove or move the reserved state subtree, including through an enclosing export, a symlink alias, ZIP, or an ancestor directory mutation. Selecting the state subtree itself as an export is also rejected. The enclosing user-selected directory may contain other ordinary files; only the reserved child contains private state.
+
+Only journal metadata moves. Upload content is still staged beside its destination and atomically renamed on the destination filesystem. Journal and destination may reside on different filesystems; each is synchronized independently, and interrupted commits are reconciled through the same durable receipts. Protocol capabilities describe supported operations rather than a live disk-health guarantee: each durable upload still checks journal admission before modifying content, including receipt-directory write access. A later storage failure can still require receipt lookup and produce an explicitly uncertain outcome.
 
 The process needs OS permissions for the requested operation. Hidden paths and exclusions apply to writes as well as reads, including symlink targets. Removing, moving or replacing a directory that contains filtered children is rejected. Filtered subtree checks examine at most 10,000 entries and 64 levels; larger mutations must be split. A selected single-file share permits changes only to that file, never its siblings. Capabilities advertise enabled protocol operations; they do not override OS permissions or filters.
 

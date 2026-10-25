@@ -4,6 +4,7 @@ package filesystem
 
 import (
 	"context"
+	"os"
 	"time"
 )
 
@@ -18,6 +19,11 @@ func (f *Local) lockMutation(ctx context.Context) (func(), error) {
 	if err != nil {
 		return nil, err
 	}
+	return lockMutationFile(ctx, file)
+}
+
+// lockMutationFile takes ownership of file, including on failure.
+func lockMutationFile(ctx context.Context, file *os.File) (func(), error) {
 	timer := time.NewTicker(20 * time.Millisecond)
 	defer timer.Stop()
 	for {

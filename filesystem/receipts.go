@@ -4,7 +4,6 @@ package filesystem
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -89,24 +88,12 @@ func (f *Local) newReceipt(r *http.Request, name string, body *uploadBody) (*rec
 }
 
 func (f *Local) readReceiptFile(name string) (*receiptRecord, error) {
-	info, err := f.root.Lstat(name)
+	data, err := readJournalFile(f.journal, name)
 	if err != nil {
 		return nil, err
-	}
-	if !info.Mode().IsRegular() || info.Size() > 16<<10 {
-		return nil, os.ErrPermission
-	}
-	file, err := f.root.Open(name)
-	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-	opened, err := file.Stat()
-	if err != nil || !os.SameFile(info, opened) {
-		return nil, os.ErrPermission
 	}
 	var record receiptRecord
-	err = json.NewDecoder(io.LimitReader(file, 16<<10)).Decode(&record)
+	err = json.Unmarshal(data, &record)
 	if err != nil {
 		return nil, err
 	}
@@ -121,21 +108,7 @@ func (f *Local) writeReceiptFile(name string, record *receiptRecord) error {
 	if err != nil {
 		return err
 	}
-	temporary := uploadPrefix + "journal-" + rand.Text()
-	file, err := f.root.OpenFile(temporary, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	defer f.root.Remove(temporary)
-	_, writeErr := file.Write(data)
-	err = errors.Join(writeErr, file.Sync(), file.Close())
-	if err != nil {
-		return err
-	}
-	if err := f.root.Rename(temporary, name); err != nil {
-		return err
-	}
-	return f.syncDirectory(filepath.Dir(name))
+	return writeJournalFile(f.journal, name, data)
 }
 
 func (f *Local) beginReceipt(record *receiptRecord) error {
@@ -147,14 +120,12 @@ func (f *Local) beginReceipt(record *receiptRecord) error {
 		return err
 	}
 	record.Target = target
-	if err := f.root.Mkdir(receiptDirectory, 0o700); err != nil && !os.IsExist(err) {
+	receipts, err := f.openReceiptDirectory()
+	if err != nil {
 		return err
 	}
-	info, err := f.root.Lstat(receiptDirectory)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return os.ErrPermission
-	}
-	directory, err := f.root.Open(receiptDirectory)
+	defer receipts.Close()
+	directory, err := receipts.Open(".")
 	if err != nil {
 		return err
 	}
@@ -167,12 +138,40 @@ func (f *Local) beginReceipt(record *receiptRecord) error {
 		return closeErr
 	}
 	if len(entries) >= receiptLimit {
-		return fmt.Errorf("upload receipt capacity reached")
+		return errReceiptCapacity
 	}
-	if err := f.syncDirectory("."); err != nil {
+	// Check the receipt destination before modifying content, too. A writable
+	// pending journal alone cannot guarantee publication of the terminal receipt.
+	if err := probeJournal(receipts); err != nil {
+		return err
+	}
+	if err := syncRootDirectory(f.journal, "."); err != nil {
 		return err
 	}
 	return f.writeReceiptFile(pendingReceipt, record)
+}
+
+func (f *Local) openReceiptDirectory() (*os.Root, error) {
+	if err := f.journal.Mkdir(receiptDirectory, 0o700); err != nil && !os.IsExist(err) {
+		return nil, err
+	}
+	info, err := f.journal.Lstat(receiptDirectory)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, os.ErrPermission
+	}
+	root, err := f.journal.OpenRoot(receiptDirectory)
+	if err != nil {
+		return nil, err
+	}
+	opened, err := root.Stat(".")
+	if err != nil || !os.SameFile(info, opened) {
+		root.Close()
+		return nil, os.ErrPermission
+	}
+	return root, nil
 }
 
 func (f *Local) completeReceipt(record *receiptRecord, state string, status int) error {
@@ -184,10 +183,10 @@ func (f *Local) completeReceipt(record *receiptRecord, state string, status int)
 	if err := f.writeReceiptFile(receiptName(record.ID), record); err != nil {
 		return err
 	}
-	if err := f.root.Remove(pendingReceipt); err != nil && !os.IsNotExist(err) {
+	if err := f.journal.Remove(pendingReceipt); err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	return f.syncDirectory(".")
+	return syncRootDirectory(f.journal, ".")
 }
 
 // Must hold the namespace mutation lock. Recovery runs before a later writer,
@@ -206,10 +205,10 @@ func (f *Local) recoverReceipt(ctx context.Context) error {
 		if terminal.Fingerprint != record.Fingerprint {
 			return fmt.Errorf("upload journal identity mismatch")
 		}
-		if err := f.root.Remove(pendingReceipt); err != nil {
+		if err := f.journal.Remove(pendingReceipt); err != nil {
 			return err
 		}
-		return f.syncDirectory(".")
+		return syncRootDirectory(f.journal, ".")
 	}
 	if !os.IsNotExist(err) {
 		return err

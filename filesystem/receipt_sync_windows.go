@@ -15,5 +15,9 @@ func uploadFileIdentity(os.FileInfo) (string, error) {
 }
 
 func (f *Local) syncDirectory(string) error {
+	return syncRootDirectory(f.root, "")
+}
+
+func syncRootDirectory(*os.Root, string) error {
 	return errors.New("durable directory synchronization is not supported on Windows")
 }

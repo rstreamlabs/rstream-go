@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -14,7 +15,7 @@ import (
 // The admission token belongs to the exported namespace, not an individual URL:
 // aliases and ancestor MOVE/DELETE requests must not race a conditional mutation.
 // It is context-cancellable and shared by all WebDAV handlers using this Local.
-func (f *Local) serveMutation(w http.ResponseWriter, r *http.Request, next http.Handler, prefix string) {
+func (f *Local) serveMutation(w http.ResponseWriter, r *http.Request, next http.Handler, prefix string, logger *slog.Logger) {
 	if f.policy.ReadOnly {
 		http.Error(w, "Filesystem is read-only", http.StatusForbidden)
 		return
@@ -76,7 +77,9 @@ func (f *Local) serveMutation(w http.ResponseWriter, r *http.Request, next http.
 				return
 			}
 			if err := f.beginReceipt(receipt); err != nil {
-				http.Error(w, "Upload journal unavailable or full", http.StatusInsufficientStorage)
+				logger.Warn("upload journal admission failed", "error", err)
+				status, message := journalError(err)
+				http.Error(w, message, status)
 				return
 			}
 			body.receipt = receipt
