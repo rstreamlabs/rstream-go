@@ -12,8 +12,12 @@ import (
 
 const processGroupSupported = true
 
-// SZOMB from Darwin's sys/proc.h. A zombie remains owned until cmd.Wait.
-const darwinProcessZombie = 5
+// SZOMB and P_WEXIT from Darwin's sys/proc.h. Both states are irreversible;
+// group signalling can stop finding a process before it becomes a zombie.
+const (
+	darwinProcessZombie  = 5
+	darwinProcessExiting = 0x2000
+)
 
 func waitChildExited(pid int) error {
 	// Darwin emits NOTE_EXIT before the process becomes waitable. waitid with
@@ -38,7 +42,7 @@ func processGroupIsEmpty(pid int, signalError error) bool {
 	if pid <= 0 || !errors.Is(signalError, unix.EPERM) {
 		return false
 	}
-	// Darwin skips zombies when signalling a group. Inspect a bounded snapshot,
+	// Darwin skips exited processes when signalling a group. Inspect a bounded snapshot,
 	// including the unreaped leader, without retrying a growing process table.
 	// Oversized or incomplete snapshots retain the original permission error.
 	const kernProc, kernProcGroup = 14, 2
@@ -51,7 +55,7 @@ func processGroupIsEmpty(pid int, signalError error) bool {
 	}
 	leaderFound := false
 	for _, member := range members[:size/unix.SizeofKinfoProc] {
-		if int(member.Eproc.Pgid) != pid || member.Proc.P_stat != darwinProcessZombie {
+		if int(member.Eproc.Pgid) != pid || (member.Proc.P_stat != darwinProcessZombie && member.Proc.P_flag&darwinProcessExiting == 0) {
 			return false
 		}
 		leaderFound = leaderFound || int(member.Proc.P_pid) == pid
