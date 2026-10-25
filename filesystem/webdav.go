@@ -123,7 +123,7 @@ func NewWebDAV(local *Local, cfg WebDAVConfig) (http.Handler, error) {
 			w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'")
 		}
 		if !readMethod(r.Method) {
-			local.serveMutation(w, r, dav, cfg.Prefix)
+			local.serveMutation(w, r, dav, cfg.Prefix, cfg.Logger)
 			return
 		}
 		dav.ServeHTTP(w, r)

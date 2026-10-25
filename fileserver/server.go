@@ -29,6 +29,9 @@ const FSPath = "/fs"
 const DefaultMaxUploadSize int64 = 64 << 20
 
 type Config struct {
+	// StateDir is an existing persistent directory dedicated to this export
+	// (see filesystem.Policy.StateDir). Empty keeps state at the export root.
+	StateDir string
 	// CORS enables browser access from explicit origins; nil leaves CORS disabled.
 	CORS *httpcors.Config
 	// ReadWrite enables WebDAV mutations; the zero value keeps shares read-only.
@@ -89,6 +92,14 @@ func (cfg Config) Validate() error {
 	if err != nil {
 		return err
 	}
+	if cfg.StateDir != "" {
+		if backend != filesystem.BackendWebDAV {
+			return fmt.Errorf("upload state directory requires the webdav backend")
+		}
+		if !filesystem.DurableUploadsSupported() {
+			return fmt.Errorf("external upload state is not supported on this platform")
+		}
+	}
 	if cfg.CORS != nil && backend != filesystem.BackendWebDAV {
 		return fmt.Errorf("CORS file sharing requires the webdav backend")
 	}
@@ -126,7 +137,7 @@ func New(cfg Config) (*Server, error) {
 	if cfg.ReadWrite && cfg.MaxUploadSize == 0 {
 		cfg.MaxUploadSize = DefaultMaxUploadSize
 	}
-	local, err := filesystem.Open(cfg.Root, filesystem.Policy{ReadOnly: !cfg.ReadWrite, HideHidden: !cfg.IncludeHidden, Exclude: cfg.Exclude, MaxEntries: 10000, AllowFile: true})
+	local, err := filesystem.Open(cfg.Root, filesystem.Policy{StateDir: cfg.StateDir, ReadOnly: !cfg.ReadWrite, HideHidden: !cfg.IncludeHidden, Exclude: cfg.Exclude, MaxEntries: 10000, AllowFile: true})
 	if err != nil {
 		return nil, err
 	}

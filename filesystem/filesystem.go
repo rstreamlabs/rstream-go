@@ -19,6 +19,10 @@ import (
 var ErrListingLimit = errors.New("directory exceeds the listing limit")
 
 type Policy struct {
+	// StateDir stores private upload state outside the export. Empty preserves
+	// the journal at the export root. All owners of an export must use the same
+	// persistent directory; a directory cannot be shared by different exports.
+	StateDir   string
 	ReadOnly   bool
 	HideHidden bool
 	Exclude    []string
@@ -29,6 +33,7 @@ type Policy struct {
 // Local owns a directory handle. Close it after all users have stopped.
 type Local struct {
 	root      *os.Root
+	journal   *os.Root
 	path      string
 	file      string
 	policy    Policy
@@ -53,6 +58,9 @@ func Open(name string, policy Policy) (*Local, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve filesystem root: %w", err)
 	}
+	if privateUploadPath(resolved) {
+		return nil, fmt.Errorf("filesystem root contains private upload state")
+	}
 	info, err := os.Stat(resolved)
 	if err != nil {
 		return nil, err
@@ -70,15 +78,26 @@ func Open(name string, policy Policy) (*Local, error) {
 		return nil, err
 	}
 	policy.Exclude = append([]string(nil), policy.Exclude...)
-	local := &Local{root: root, path: resolved, file: file, policy: policy, mutations: make(chan struct{}, 1), locks: webdav.NewMemLS()}
+	local := &Local{root: root, journal: root, path: resolved, file: file, policy: policy, mutations: make(chan struct{}, 1), locks: webdav.NewMemLS()}
 	if file != "" && !local.allowed(file) {
 		_ = root.Close()
 		return nil, fmt.Errorf("selected file matches an exclusion")
 	}
+	if policy.StateDir != "" {
+		if err := local.openJournal(policy.StateDir); err != nil {
+			_ = local.Close()
+			return nil, fmt.Errorf("prepare upload state directory: %w", err)
+		}
+	}
 	return local, nil
 }
 
-func (f *Local) Close() error { return f.root.Close() }
+func (f *Local) Close() error {
+	if f.journal != f.root {
+		return errors.Join(f.journal.Close(), f.root.Close())
+	}
+	return f.root.Close()
+}
 
 func (f *Local) Name() string {
 	if f.file != "" {
@@ -327,9 +346,6 @@ func (f *Local) Rename(ctx context.Context, oldName, newName string) error {
 
 // Directory mutations must not bypass filters by acting on a visible ancestor.
 func (f *Local) checkMutationTree(ctx context.Context, source, destination string) error {
-	if !f.policy.HideHidden && len(f.policy.Exclude) == 0 {
-		return ctx.Err()
-	}
 	remaining := 10000
 	var visit func(string, string, int) error
 	visit = func(source, destination string, depth int) error {

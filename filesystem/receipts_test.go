@@ -205,57 +205,66 @@ func TestReceiptIsDurableBeforeAnyResponse(t *testing.T) {
 // Build durable crash-boundary fixtures, then use the real public lookup and
 // mutation paths to recover them. No recovery branch invokes the PUT again.
 func TestPreparedReceiptCrashBoundaries(t *testing.T) {
-	for _, boundary := range []string{"before-rename", "after-rename", "ambiguous"} {
-		t.Run(boundary, func(t *testing.T) {
-			root := t.TempDir()
-			local, handler := testLocal(t, root, Policy{})
-			r := durableRequest(testReceiptID, "first")
-			body, err := newUploadBody(r)
-			if err != nil {
-				t.Fatal(err)
+	for _, external := range []bool{false, true} {
+		t.Run("external="+strconv.FormatBool(external), func(t *testing.T) {
+			policy := Policy{}
+			for _, boundary := range []string{"before-rename", "after-rename", "ambiguous"} {
+				t.Run(boundary, func(t *testing.T) {
+					root := t.TempDir()
+					if external {
+						policy.StateDir = t.TempDir()
+					}
+					local, handler := testLocal(t, root, policy)
+					r := durableRequest(testReceiptID, "first")
+					body, err := newUploadBody(r)
+					if err != nil {
+						t.Fatal(err)
+					}
+					record, err := local.newReceipt(r, "file", body)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := local.beginReceipt(record); err != nil {
+						t.Fatal(err)
+					}
+					record.State, record.Temporary = "prepared", uploadPrefix+"crash-fixture"
+					writeFixture(t, root, record.Temporary, "first")
+					info, err := os.Stat(filepath.Join(root, record.Temporary))
+					if err != nil {
+						t.Fatal(err)
+					}
+					record.FileIdentity, err = uploadFileIdentity(info)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if err := local.writeReceiptFile(pendingReceipt, record); err != nil {
+						t.Fatal(err)
+					}
+					if boundary != "before-rename" {
+						if err := local.root.Rename(record.Temporary, record.Target); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if boundary == "ambiguous" {
+						writeFixture(t, root, record.Target, "other")
+					}
+					// A later mutation must preserve the old outcome before replacing it.
+					if result := fileRequest(handler, "PUT", "file", "later", "", ""); result.Code != 201 {
+						t.Fatalf("later write: %d", result.Code)
+					}
+					expected := map[string]string{"before-rename": "interrupted", "after-rename": "committed", "ambiguous": "uncertain"}[boundary]
+					if receipt := readReceipt(t, handler, testReceiptID); receipt.State != expected {
+						t.Fatalf("%s: %+v", boundary, receipt)
+					}
+					if read := fileRequest(handler, "GET", "file", "", "", ""); read.Body.String() != "later" {
+						t.Fatal("recovery replayed an earlier write")
+					}
+					if _, err := os.Stat(filepath.Join(root, record.Temporary)); !os.IsNotExist(err) {
+						t.Fatalf("staging file remains: %v", err)
+					}
+				})
 			}
-			record, err := local.newReceipt(r, "file", body)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := local.beginReceipt(record); err != nil {
-				t.Fatal(err)
-			}
-			record.State, record.Temporary = "prepared", uploadPrefix+"crash-fixture"
-			writeFixture(t, root, record.Temporary, "first")
-			info, err := os.Stat(filepath.Join(root, record.Temporary))
-			if err != nil {
-				t.Fatal(err)
-			}
-			record.FileIdentity, err = uploadFileIdentity(info)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := local.writeReceiptFile(pendingReceipt, record); err != nil {
-				t.Fatal(err)
-			}
-			if boundary != "before-rename" {
-				if err := local.root.Rename(record.Temporary, record.Target); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if boundary == "ambiguous" {
-				writeFixture(t, root, record.Target, "other")
-			}
-			// A later mutation must preserve the old outcome before replacing it.
-			if result := fileRequest(handler, "PUT", "file", "later", "", ""); result.Code != 201 {
-				t.Fatalf("later write: %d", result.Code)
-			}
-			expected := map[string]string{"before-rename": "interrupted", "after-rename": "committed", "ambiguous": "uncertain"}[boundary]
-			if receipt := readReceipt(t, handler, testReceiptID); receipt.State != expected {
-				t.Fatalf("%s: %+v", boundary, receipt)
-			}
-			if read := fileRequest(handler, "GET", "file", "", "", ""); read.Body.String() != "later" {
-				t.Fatal("recovery replayed an earlier write")
-			}
-			if _, err := os.Stat(filepath.Join(root, record.Temporary)); !os.IsNotExist(err) {
-				t.Fatalf("staging file remains: %v", err)
-			}
+
 		})
 	}
 }
