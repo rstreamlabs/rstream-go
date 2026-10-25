@@ -38,7 +38,7 @@ func prepareManagedSession(cfg *SessionConfig, endpoint *clientEndpoint) error {
 		return nil
 	}
 	if !managed.Capabilities.ManagedProtocol {
-		return fmt.Errorf("Engine does not support managed WebTTY")
+		return fmt.Errorf("engine does not support managed WebTTY")
 	}
 	if managed.ExecutionSeconds < 0 {
 		return fmt.Errorf("WebTTY execution duration must be positive")
@@ -50,13 +50,13 @@ func prepareManagedSession(cfg *SessionConfig, endpoint *clientEndpoint) error {
 		return fmt.Errorf("detached WebTTY execution requires a new non-interactive command without a TTY")
 	}
 	if !managed.Capabilities.DetachedExecution {
-		return fmt.Errorf("Engine does not support detached WebTTY execution")
+		return fmt.Errorf("engine does not support detached WebTTY execution")
 	}
 	if managed.ExecutionSeconds > managed.Capabilities.MaxExecutionSeconds {
 		return fmt.Errorf("WebTTY execution duration exceeds the Engine limit")
 	}
 	if (endpoint.Transport != WebTTYTransportWebSocket && endpoint.Transport != WebTTYTransportWebTransport) || !slices.Contains(managed.Capabilities.ExecutionTransports, rstream.WebTTYTransport(endpoint.Transport)) {
-		return fmt.Errorf("Engine does not support detached WebTTY execution over %s", endpoint.Transport)
+		return fmt.Errorf("engine does not support detached WebTTY execution over %s", endpoint.Transport)
 	}
 	parsed, err := url.Parse(endpoint.URL)
 	if err != nil {
@@ -98,7 +98,7 @@ func (c *clientRuntime) acceptManagedAck(ack *pb.Ack) error {
 	}
 	identity := ack.GetManagedSessionId()
 	if identity == "" || len(identity) > 256 || identity != strings.TrimSpace(identity) {
-		return fmt.Errorf("Engine did not confirm the detached WebTTY session identity")
+		return fmt.Errorf("engine did not confirm the detached WebTTY session identity")
 	}
 	c.managedSessionID = identity
 	return nil
