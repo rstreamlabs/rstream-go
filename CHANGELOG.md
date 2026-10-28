@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.37.0](https://github.com/rstreamlabs/rstream-go/compare/v1.36.4...v1.37.0) (2026-10-28)
+
+
+### Features
+
+* **webtty:** add detached execution handles and confirmed process termination ([9401247](https://github.com/rstreamlabs/rstream-go/commit/940124707ea64415da9b603b9fa0aa40920e54f0))
+* **webtty:** confirm managed execution identity and gate detached sessions ([5a93162](https://github.com/rstreamlabs/rstream-go/commit/5a931628f975a8c7cfed25da400bbb304e0ce5d5))
+* **webtty:** start detached commands with orderly reader disconnect ([b0fd677](https://github.com/rstreamlabs/rstream-go/commit/b0fd677a65d60a68f6238cab6fa4788bddbb3e15))
+* **webtty:** stop managed sessions through authorized CLI and MCP control ([ef23302](https://github.com/rstreamlabs/rstream-go/commit/ef2330245d8ec3c995f828d9b7c9b116799a04fb))
+
+
+### Bug Fixes
+
+* **files:** allow upload state outside the exported root ([#173](https://github.com/rstreamlabs/rstream-go/issues/173)) ([f2d12a2](https://github.com/rstreamlabs/rstream-go/commit/f2d12a2a02fd6b050e7d3819f6881f0643e5880f))
+* support private datagram self-dial on one QUIC connection ([#176](https://github.com/rstreamlabs/rstream-go/issues/176)) ([dafc303](https://github.com/rstreamlabs/rstream-go/commit/dafc303ce5e5b13f5b88965f5ed3431aa3607de6))
+* **webtty:** forward CLI stdin and qualify native process results ([58eb455](https://github.com/rstreamlabs/rstream-go/commit/58eb4551aff05c09a453ae5b1980b51551a0d1a4))
+* **webtty:** isolate WebTransport connections sharing an address ([9bd3ba2](https://github.com/rstreamlabs/rstream-go/commit/9bd3ba20ed452e0dbb8687ba40744cdf078917ec))
+* **webtty:** preserve confirmed stop after reader cleanup ([95aa839](https://github.com/rstreamlabs/rstream-go/commit/95aa839dac1cc07f6134c0dbb25e42cb3c1d3725))
+* **webtty:** preserve results for exited Darwin process groups ([1aa8fde](https://github.com/rstreamlabs/rstream-go/commit/1aa8fded610d6fb3d1708faecbf92d5f528c6641))
+* **webtty:** preserve terminal modes in bounded JSON capture ([d2a5c8d](https://github.com/rstreamlabs/rstream-go/commit/d2a5c8d1744198ede34e67eefb967b2f53feedf6))
+* **webtty:** preserve terminal modes in bounded JSON capture ([3407a43](https://github.com/rstreamlabs/rstream-go/commit/3407a43d44a65df68cb6fc54e9913e6784f82e41))
+* **webtty:** recognize irreversible Darwin process exit during cleanup ([6f896de](https://github.com/rstreamlabs/rstream-go/commit/6f896dede774865f2b00279e6dc899db6482ed31))
+* **webtty:** retain ordinary execution with legacy relay capabilities ([2dd6fc9](https://github.com/rstreamlabs/rstream-go/commit/2dd6fc9cd44d00b907d2584ae71715b4266044f0))
+
 ## [1.36.4](https://github.com/rstreamlabs/rstream-go/compare/v1.36.3...v1.36.4) (2026-10-23)
 
 
