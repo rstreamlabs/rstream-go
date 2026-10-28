@@ -19,17 +19,20 @@ import (
 
 func TestCaptureCommandBoundsOutputAndPreservesNativeResult(t *testing.T) {
 	for _, test := range []struct {
-		name      string
-		limit     int
-		supported bool
-		lost      bool
-		code      *int
+		name        string
+		limit       int
+		supported   bool
+		lost        bool
+		code        *int
+		interactive bool
 	}{
 		{name: "overflow with confirmed stop", limit: 8, supported: true, code: new(37)},
 		{name: "overflow unsupported", limit: 8},
 		{name: "exact limit", limit: 12, supported: true, code: new(0)},
 		{name: "transport loss", limit: 12, lost: true},
 		{name: "negative native code", limit: 12, code: new(-1)},
+		{name: "interactive overflow", limit: 8, supported: true, code: new(37), interactive: true},
+		{name: "interactive transport loss", limit: 12, lost: true, interactive: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var requests atomic.Int32
@@ -81,7 +84,7 @@ func TestCaptureCommandBoundsOutputAndPreservesNativeResult(t *testing.T) {
 			defer server.Close()
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			result, err := CaptureCommand(ctx, &ClientConfig{URL: "ws" + strings.TrimPrefix(server.URL, "http")}, test.limit)
+			result, err := CaptureCommand(ctx, &ClientConfig{URL: "ws" + strings.TrimPrefix(server.URL, "http"), Interactive: test.interactive, Stdin: strings.NewReader("")}, test.limit)
 			if (result.ExitCode == nil) != (test.code == nil) || (test.code != nil && *result.ExitCode != *test.code) {
 				t.Fatalf("native result = %+v, error = %v, expected code = %v", result, err, test.code)
 			}

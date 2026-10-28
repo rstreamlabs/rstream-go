@@ -72,10 +72,14 @@ func TestRunClientWindowsTerminalGeometry(t *testing.T) {
 		name        string
 		interactive bool
 		cancel      bool
+		capture     bool
 	}{
 		{name: "redirected output"},
 		{name: "interactive close", interactive: true},
 		{name: "interactive cancellation", interactive: true, cancel: true},
+		{name: "capture redirected output", capture: true},
+		{name: "capture interactive close", interactive: true, capture: true},
+		{name: "capture interactive cancellation", interactive: true, cancel: true, capture: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -97,7 +101,23 @@ func TestRunClientWindowsTerminalGeometry(t *testing.T) {
 			})
 			defer server.Close()
 			var stdout, stderr bytes.Buffer
-			code, err := RunClient(ctx, &ClientConfig{URL: testWebTTYURL(server.URL), AllocateTTY: true, Interactive: test.interactive, Stdin: stdin, Stdout: &stdout, Stderr: &stderr})
+			cfg := &ClientConfig{URL: testWebTTYURL(server.URL), AllocateTTY: true, Interactive: test.interactive, Stdin: stdin, Stdout: &stdout, Stderr: &stderr}
+			var code int
+			var err error
+			if test.capture {
+				var result CommandResult
+				result, err = CaptureCommand(ctx, cfg, 0)
+				if (result.ExitCode == nil) != test.cancel {
+					t.Fatalf("capture native result = %+v, error = %v", result, err)
+				}
+				if result.ExitCode != nil {
+					code = *result.ExitCode
+				}
+				stdout.WriteString(result.Stdout)
+				stderr.WriteString(result.Stderr)
+			} else {
+				code, err = RunClient(ctx, cfg)
+			}
 			if test.cancel {
 				if !errors.Is(err, context.Canceled) {
 					t.Fatalf("canceled client = %d, %v", code, err)
