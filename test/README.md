@@ -10,11 +10,11 @@ This directory contains end-to-end tests for the rstream Go SDK. Each subdirecto
 | `webtransport` | 2 | Private SDK-dialer and published HTTP/3 reverse-proxy runs covering bidirectional streams, unidirectional streams, datagrams, multi-stream, close codes, and same-origin validation |
 | `http` | 3 | HTTP tunnels over H1, H2C, and H3, including GET and SSE streaming |
 | `stream` | 8 | Bytestream tunnel: plain (unpublished), raw TCP and TLS via engine listeners (published), TLS via SDK dialer (unpublished), TLS passthrough, TLS with upstream TLS, and ALPN rejection checks |
-| `datagram` | 13 | Datagram tunnel: DTLS via SDK dialer (unpublished), DTLS via engine listener (published, with and without upstream DTLS), QUIC via SDK dialer (unpublished), QUIC via engine listener (published), SCTP via pion/sctp over SDK datagrams and published DTLS, and ALPN rejection checks |
+| `datagram` | 16 | Datagram tunnel: private self-dial, shared transport, guaranteed self-dial, DTLS via SDK dialer (unpublished), DTLS via engine listener (published, with and without upstream DTLS), QUIC via SDK dialer (unpublished), QUIC via engine listener (published), SCTP via pion/sctp over SDK datagrams and published DTLS, and ALPN rejection checks |
 | `masque` | 2 | Published HTTP/3 datagram tunnels carrying CONNECT-UDP and CONNECT-IP Extended CONNECT sessions end-to-end, including public authority preservation |
 | `connect` | 9 | All upstream × downstream HTTP version combinations for published authority-form CONNECT (H1, H2C, H3) |
 
-The primary `run-e2e.sh` matrix executes 34 cases. Each WebTransport runner case
+The primary `run-e2e.sh` matrix executes 37 cases. Each WebTransport runner case
 contains multiple protocol subcases internally. Additional runtime suites cover
 MASQUE, the nine-case CONNECT matrix, and the six bandwidth-limit cases described below.
 
@@ -80,6 +80,7 @@ go build -o out/test/stream/server       ./test/stream/server
 go build -o out/test/stream/client       ./test/stream/client
 go build -o out/test/datagram/server     ./test/datagram/server
 go build -o out/test/datagram/client     ./test/datagram/client
+go build -o out/test/datagram/self       ./test/datagram/self
 go build -o out/test/masque/server       ./test/masque/server
 go build -o out/test/masque/client       ./test/masque/client
 go build -o out/test/connect/server      ./test/connect/server
@@ -108,6 +109,21 @@ Before running cases, the script checks that all required binaries are executabl
 Private datagram cases also assert the selected tunnel packet path: stream framing over TLS transport, QUIC datagrams over QUIC transport, and stream framing when guaranteed delivery is requested. Nested QUIC and WebTransport cases use a 1200-byte initial packet size so their packets fit the QUIC datagram tunnel budget.
 
 The baseline command pins TLS so packet-path assertions remain deterministic. Use `bash run-e2e.sh --quic` for strict QUIC and `bash run-e2e.sh --auto` to verify that automatic selection prefers QUIC on a reachable local engine.
+
+`datagram/self` owns and dials its private tunnel in one process, by name and
+ID, sequentially and with eight concurrent dialers. It verifies packet routing
+after other dialers close. `--shared-transport` uses two clients on the same
+transport; `--guaranteed` exercises stream framing. The Engine repository also
+runs this binary against local real TLS/QUIC listeners with the race detector,
+asserting exactly one QUIC connection in `quic` and `auto` modes, zero in `tls`,
+and no retained streams after shutdown:
+
+```sh
+# Run from the Engine repository; no deployed service or credentials needed.
+RSTREAM_GO_REPO=/path/to/rstream-go \
+go test -race -tags ee,http2legacy,integration ./internal/engine/control \
+  -run '^TestDatagramSDKSingleQUICConnection$' -count=1 -timeout=5m
+```
 
 To verify routing between distinct engines in the same regional pool, keep the
 normal context pointed at the regional ingress and explicitly select the tunnel
@@ -440,7 +456,8 @@ test/
 │   └── client/   — Bytestream client (plain / tls, direct or via SDK dialer)
 ├── datagram/
 │   ├── server/   — Datagram echo server (dtls / quic / sctp, published or not)
-│   └── client/   — Datagram client (dtls / quic / sctp, direct or via SDK dialer)
+│   ├── client/   — Datagram client (dtls / quic / sctp, direct or via SDK dialer)
+│   └── self/     — Private self-dial and concurrent clients sharing one transport
 ├── masque/
 │   ├── server/   — CONNECT-UDP / CONNECT-IP server behind a published HTTP/3 datagram tunnel
 │   └── client/   — MASQUE clients using quic-go/masque-go and quic-go/connect-ip-go

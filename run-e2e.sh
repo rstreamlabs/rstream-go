@@ -30,6 +30,7 @@ REQUIRED_BINS=(
   stream/client
   datagram/server
   datagram/client
+  datagram/self
   http/server
   http/client
   websocket/server
@@ -220,6 +221,14 @@ if start_server "stream/tls-published-upstream-tls-alpn-reject" stream/server --
 fi
 
 echo "=== datagram ==="
+native=false
+if [ "$TUNNEL_PACKET_PATH" = quic-datagram ]; then
+  native=true
+fi
+run_client "datagram/self" datagram/self --name "$DATAGRAM_PREFIX-self" --native="$native"
+run_client "datagram/shared-transport" datagram/self --name "$DATAGRAM_PREFIX-shared" --shared-transport --native="$native"
+run_client "datagram/self-guaranteed" datagram/self --name "$DATAGRAM_PREFIX-self-guaranteed" --guaranteed --native=false
+
 if start_server "datagram/dtls" datagram/server --variant dtls --name "$DATAGRAM_PREFIX-dtls"; then
 	run_client "datagram/dtls" datagram/client --variant dtls --tunnel "$DATAGRAM_PREFIX" --expect-tunnel-packet-path "$TUNNEL_PACKET_PATH"
   stop_server

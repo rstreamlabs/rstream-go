@@ -645,6 +645,21 @@ func datagramChannelIDFromStreamID(streamID string) (datagramChannelID, error) {
 	return id, nil
 }
 
+func dialDatagramChannelID(streamID string, negotiated []byte) (datagramChannelID, error) {
+	legacy, err := datagramChannelIDFromStreamID(streamID)
+	if err != nil || len(negotiated) == 0 {
+		return legacy, err
+	}
+	if len(negotiated) != datagramChannelIDSize {
+		return datagramChannelID{}, errors.New("invalid negotiated datagram channel ID length")
+	}
+	id := datagramChannelID(negotiated)
+	if id == legacy || id == (datagramChannelID{}) {
+		return datagramChannelID{}, errors.New("invalid independent datagram channel ID")
+	}
+	return id, nil
+}
+
 func (id datagramChannelID) String() string {
 	return fmt.Sprintf("%x", id[:])
 }
