@@ -320,41 +320,45 @@ func TestRunWebTTYClientCaptureForwardsPipedStdin(t *testing.T) {
 }
 
 func TestRunWebTTYClientJSONForwardsCommandInput(t *testing.T) {
-	zero := time.Duration(0)
-	allowUnauthenticated := true
-	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{HeartbeatInterval: &zero, AllowUnauthenticated: &allowUnauthenticated})
-	server := httptest.NewServer(handler)
-	defer server.Close()
-	defer handler.Shutdown(t.Context())
-	cmd := newTestWebTTYClientCommand()
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	cmd.SetContext(ctx)
-	cmd.SetIn(strings.NewReader("command-input\n"))
-	for name, value := range map[string]string{
-		"output": "json", "no-discovery": "true", "transport": "websocket",
-	} {
-		if err := cmd.Flags().Set(name, value); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, value := range []string{"RSTREAM_CMD_WEBTTY_TEST_STDIN_HELPER=1", "GOCOVERDIR=" + t.TempDir()} {
-		if err := cmd.Flags().Set("env", value); err != nil {
-			t.Fatal(err)
-		}
-	}
-	output, err := captureStdout(t, func() error {
-		return runWebTTYClientWithOptions(cmd, "ws"+strings.TrimPrefix(server.URL, "http"), []string{os.Args[0], "-test.run=^TestCmdWebTTYEchoStdinHelperProcess$"}, webTTYClientRunOptions{})
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var result webTTYClientResult
-	if err := json.Unmarshal([]byte(output), &result); err != nil {
-		t.Fatal(err)
-	}
-	if result.ExitCode == nil || *result.ExitCode != 0 || result.Stdout != "command-input\n" || result.Stderr != "" {
-		t.Fatalf("JSON command result = %#v", result)
+	for _, interactive := range []string{"false", "true"} {
+		t.Run("interactive="+interactive, func(t *testing.T) {
+			zero := time.Duration(0)
+			allowUnauthenticated := true
+			handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{HeartbeatInterval: &zero, AllowUnauthenticated: &allowUnauthenticated})
+			server := httptest.NewServer(handler)
+			defer server.Close()
+			defer handler.Shutdown(t.Context())
+			cmd := newTestWebTTYClientCommand()
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			cmd.SetContext(ctx)
+			cmd.SetIn(strings.NewReader("command-input\n"))
+			for name, value := range map[string]string{
+				"output": "json", "no-discovery": "true", "transport": "websocket", "interactive": interactive,
+			} {
+				if err := cmd.Flags().Set(name, value); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, value := range []string{"RSTREAM_CMD_WEBTTY_TEST_STDIN_HELPER=1", "GOCOVERDIR=" + t.TempDir()} {
+				if err := cmd.Flags().Set("env", value); err != nil {
+					t.Fatal(err)
+				}
+			}
+			output, err := captureStdout(t, func() error {
+				return runWebTTYClientWithOptions(cmd, "ws"+strings.TrimPrefix(server.URL, "http"), []string{os.Args[0], "-test.run=^TestCmdWebTTYEchoStdinHelperProcess$"}, webTTYClientRunOptions{})
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result webTTYClientResult
+			if err := json.Unmarshal([]byte(output), &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.ExitCode == nil || *result.ExitCode != 0 || result.Stdout != "command-input\n" || result.Stderr != "" {
+				t.Fatalf("JSON command result = %#v", result)
+			}
+		})
 	}
 }
 

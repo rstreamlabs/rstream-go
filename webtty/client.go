@@ -143,22 +143,12 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 		return -1, err
 	}
 	runtime := &clientRuntime{cfg: resolved}
-	if fd, ok := stdinFileDescriptor(resolved.Stdin); ok {
-		runtime.stdinFD = fd
-		runtime.hasStdinFD = true
+	restoreTerminal, err := runtime.prepareTerminal()
+	if err != nil {
+		return -1, err
 	}
-	if resolved.AllocateTTY {
-		if !runtime.hasStdinFD || !term.IsTerminal(runtime.stdinFD) {
-			return -1, fmt.Errorf("tty allocation requires stdin to be a terminal")
-		}
-		runtime.hasTerminal = true
-		if resolved.Interactive {
-			state, err := term.MakeRaw(runtime.stdinFD)
-			if err != nil {
-				return -1, fmt.Errorf("failed to switch terminal to raw mode: %w", err)
-			}
-			defer term.Restore(runtime.stdinFD, state)
-		}
+	if restoreTerminal != nil {
+		defer restoreTerminal()
 	}
 	forwardStdin := resolved.Interactive || !runtime.hasStdinFD || !term.IsTerminal(runtime.stdinFD)
 	var readStdin clientStdinReadFunc
@@ -283,6 +273,32 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 			return -1, errClientOperationTimeout
 		}
 	}
+}
+
+func (c *clientRuntime) prepareTerminal() (func(), error) {
+	if fd, ok := stdinFileDescriptor(c.cfg.Stdin); ok {
+		c.stdinFD = fd
+		c.hasStdinFD = true
+	}
+	if !c.cfg.AllocateTTY {
+		return nil, nil
+	}
+	if !c.hasStdinFD || !term.IsTerminal(c.stdinFD) {
+		return nil, fmt.Errorf("tty allocation requires stdin to be a terminal")
+	}
+	c.hasTerminal = true
+	if !c.cfg.Interactive {
+		return nil, nil
+	}
+	state, err := term.MakeRaw(c.stdinFD)
+	if err != nil {
+		return nil, fmt.Errorf("failed to switch terminal to raw mode: %w", err)
+	}
+	return func() {
+		if err := term.Restore(c.stdinFD, state); err != nil {
+			c.cfg.Logger.Error("failed to restore terminal mode", "error", err)
+		}
+	}, nil
 }
 
 func (c *clientRuntime) writeSessionEvent(event ClientSessionEvent) error {

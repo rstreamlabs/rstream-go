@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/term"
 )
 
 const DefaultCommandOutputLimit = 8 * 1024 * 1024
@@ -26,7 +28,8 @@ type CommandResult struct {
 	OutputTruncated bool
 }
 
-// CaptureCommand runs a non-interactive command with bounded retained output.
+// CaptureCommand runs a command with bounded retained output. Interactive and
+// TTY modes use the same terminal input, resizing and restoration as RunClient.
 // maxOutputBytes bounds stdout and stderr together; zero selects 8 MiB.
 // On overflow it requests explicit termination and drains output for up to 65
 // seconds while retaining any confirmed process result. Unsupported termination
@@ -40,22 +43,36 @@ func CaptureCommand(ctx context.Context, cfg *ClientConfig, maxOutputBytes int) 
 		maxOutputBytes = DefaultCommandOutputLimit
 	}
 	copyConfig := cloneClientConfig(cfg)
-	if copyConfig.Interactive || copyConfig.AllocateTTY {
-		return result, fmt.Errorf("WebTTY command capture requires non-interactive pipes")
-	}
-	if copyConfig.Stdin == nil && copyConfig.StdinReadContext == nil {
+	if !copyConfig.Interactive && !copyConfig.AllocateTTY && copyConfig.Stdin == nil && copyConfig.StdinReadContext == nil {
 		copyConfig.Stdin = strings.NewReader("")
 	}
 	resolved, err := resolveClientConfig(copyConfig)
 	if err != nil {
 		return result, err
 	}
-	readInput, closeInput, err := resolveClientStdinRead(resolved)
+	runtime := &clientRuntime{cfg: resolved, logger: resolved.Logger}
+	restoreTerminal, err := runtime.prepareTerminal()
 	if err != nil {
 		return result, err
 	}
-	if closeInput != nil {
-		defer closeInput()
+	if restoreTerminal != nil {
+		defer restoreTerminal()
+	}
+	forwardStdin := resolved.Interactive || !runtime.hasStdinFD || !term.IsTerminal(runtime.stdinFD)
+	var readInput clientStdinReadFunc
+	if forwardStdin {
+		var closeInput func() error
+		readInput, closeInput, err = resolveClientStdinRead(resolved)
+		if err != nil {
+			return result, err
+		}
+		if closeInput != nil {
+			defer func() {
+				if err := closeInput(); err != nil {
+					resolved.Logger.Error("failed to close stdin reader", "error", err)
+				}
+			}()
+		}
 	}
 	session, err := OpenClientSession(ctx, resolved.sessionConfig())
 	if err != nil {
@@ -75,11 +92,21 @@ func CaptureCommand(ctx context.Context, cfg *ClientConfig, maxOutputBytes int) 
 	}()
 	inputErrors := make(chan error, 1)
 	completed := make(chan clientSessionResult, 1)
-	loops.Add(2)
-	go func() {
-		defer loops.Done()
-		(&clientRuntime{cfg: resolved, logger: resolved.Logger}).stdinSessionLoop(loopCtx, session, inputErrors, readInput)
-	}()
+	if forwardStdin {
+		loops.Add(1)
+		go func() {
+			defer loops.Done()
+			runtime.stdinSessionLoop(loopCtx, session, inputErrors, readInput)
+		}()
+	}
+	if resolved.AllocateTTY {
+		loops.Add(1)
+		go func() {
+			defer loops.Done()
+			runtime.resizeSessionLoop(loopCtx, session, inputErrors)
+		}()
+	}
+	loops.Add(1)
 	go func() {
 		defer loops.Done()
 		code, err := session.Wait()

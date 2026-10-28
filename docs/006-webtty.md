@@ -144,8 +144,12 @@ nonzero or negative native codes remain unchanged. Partial stdout and stderr
 remain separate from the local execution error.
 
 `CaptureCommand(ctx, config, maxOutputBytes)` retains stdout and stderr within
-one combined byte limit (zero selects 8 MiB). It accepts non-interactive pipe
-commands and returns `CommandResult` alongside any local error. Overflow sets
+one combined byte limit (zero selects 8 MiB) and returns `CommandResult` alongside
+any local error. CLI JSON output preserves explicit `--interactive` and `--tty`
+options: terminal input, resize events and local terminal restoration match
+streaming output. TTY allocation still requires a local terminal; remote terminal
+stdout and stderr share the terminal's output stream. Without those options,
+SDK capture defaults to empty input when no input reader is supplied. Overflow sets
 `OutputTruncated`, returns `ErrCommandOutputLimit`, requests explicit termination
 when supported, and keeps draining for at most 65 seconds or until caller
 cancellation. Its `ExitCode` remains nil until native completion is confirmed.
