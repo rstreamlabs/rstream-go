@@ -50,6 +50,29 @@ The client-to-edge session is always negotiated over TLS 1.3. Transport settings
 
 When an HTTP CONNECT proxy is used, the proxy only provides a TCP tunnel to the edge. The rstream TLS 1.3 session is then established through that tunnel and remains end-to-end between the rstream client and the edge.
 
+## Private QUIC datagram self-dial
+
+`Client.PacketDial` can dial a private datagram tunnel owned by the same client,
+including two clients sharing a QUIC transport. Both roles use the same QUIC
+connection. Protocol 1.4.7 negotiates a separate dialer routing identifier in
+the existing `StreamReq` / `StreamRsp` exchange. This adds no round trip, extra
+connection, or bytes to the datagram prefix. TLS and guaranteed-delivery
+datagrams continue to use stream framing.
+
+The dialer sets `StreamReq.independent_datagram_channel` and uses the returned
+12-byte `StreamRsp.datagram_channel_id` for datagram routing. The tunnel owner
+keeps the identifier derived from `stream_id`. Lifecycle messages, including
+channel closure, continue to refer to `stream_id`. A response without the new
+field retains legacy routing; malformed, zero, or non-independent identifiers
+are rejected.
+
+Upgrade the Engine to protocol 1.4.7 before using SDK builds that advertise
+1.4.7. The Engine continues to accept existing 1.4.6 clients without requiring
+SDK releases together. Their separate-connection datagram flows are unchanged;
+an unsupported legacy self-dial receives an explicit error before allocating a
+channel. Older Engines reject clients advertising a newer protocol patch under
+the existing admission rule.
+
 ## Admission
 
 Admission is how the edge decides whether to accept the upstream session.

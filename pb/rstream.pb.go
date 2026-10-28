@@ -1461,8 +1461,10 @@ type StreamReq struct {
 	TunnelIdName    string                 `protobuf:"bytes,2,opt,name=tunnel_id_name,json=tunnelIdName,proto3" json:"tunnel_id_name,omitempty"`
 	ZeroRtt         *wrapperspb.BoolValue  `protobuf:"bytes,3,opt,name=zero_rtt,json=zeroRtt,proto3" json:"zero_rtt,omitempty"`
 	DatagramChannel *wrapperspb.BoolValue  `protobuf:"bytes,4,opt,name=datagram_channel,json=datagramChannel,proto3" json:"datagram_channel,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Opt in to a separate dialer routing ID; the owner still uses stream_id.
+	IndependentDatagramChannel bool `protobuf:"varint,5,opt,name=independent_datagram_channel,json=independentDatagramChannel,proto3" json:"independent_datagram_channel,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
 }
 
 func (x *StreamReq) Reset() {
@@ -1523,8 +1525,18 @@ func (x *StreamReq) GetDatagramChannel() *wrapperspb.BoolValue {
 	return nil
 }
 
+func (x *StreamReq) GetIndependentDatagramChannel() bool {
+	if x != nil {
+		return x.IndependentDatagramChannel
+	}
+	return false
+}
+
 type StreamRsp struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Exactly 12 bytes when independent_datagram_channel was negotiated.
+	// The datagram prefix uses this ID; lifecycle messages keep stream_id.
+	DatagramChannelId []byte `protobuf:"bytes,3,opt,name=datagram_channel_id,json=datagramChannelId,proto3" json:"datagram_channel_id,omitempty"`
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*StreamRsp_StreamId
@@ -1562,6 +1574,13 @@ func (x *StreamRsp) ProtoReflect() protoreflect.Message {
 // Deprecated: Use StreamRsp.ProtoReflect.Descriptor instead.
 func (*StreamRsp) Descriptor() ([]byte, []int) {
 	return file_pb_rstream_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *StreamRsp) GetDatagramChannelId() []byte {
+	if x != nil {
+		return x.DatagramChannelId
+	}
+	return nil
 }
 
 func (x *StreamRsp) GetPayload() isStreamRsp_Payload {
@@ -2355,13 +2374,15 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\tstream_id\x18\x02 \x01(\tR\bstreamId\x125\n" +
 	"\bzero_rtt\x18\x03 \x01(\v2\x1a.google.protobuf.BoolValueR\azeroRtt\"B\n" +
 	"\bProxyRsp\x126\n" +
-	"\x05error\x18\x01 \x01(\v2 .rstream.io_rstrm.protobuf.ErrorR\x05error\"\x80\x02\n" +
+	"\x05error\x18\x01 \x01(\v2 .rstream.io_rstrm.protobuf.ErrorR\x05error\"\xc2\x02\n" +
 	"\tStreamReq\x12O\n" +
 	"\x0eclient_details\x18\x01 \x01(\v2(.rstream.io_rstrm.protobuf.ClientDetailsR\rclientDetails\x12$\n" +
 	"\x0etunnel_id_name\x18\x02 \x01(\tR\ftunnelIdName\x125\n" +
 	"\bzero_rtt\x18\x03 \x01(\v2\x1a.google.protobuf.BoolValueR\azeroRtt\x12E\n" +
-	"\x10datagram_channel\x18\x04 \x01(\v2\x1a.google.protobuf.BoolValueR\x0fdatagramChannel\"o\n" +
-	"\tStreamRsp\x12\x1d\n" +
+	"\x10datagram_channel\x18\x04 \x01(\v2\x1a.google.protobuf.BoolValueR\x0fdatagramChannel\x12@\n" +
+	"\x1cindependent_datagram_channel\x18\x05 \x01(\bR\x1aindependentDatagramChannel\"\x9f\x01\n" +
+	"\tStreamRsp\x12.\n" +
+	"\x13datagram_channel_id\x18\x03 \x01(\fR\x11datagramChannelId\x12\x1d\n" +
 	"\tstream_id\x18\x01 \x01(\tH\x00R\bstreamId\x128\n" +
 	"\x05error\x18\x02 \x01(\v2 .rstream.io_rstrm.protobuf.ErrorH\x00R\x05errorB\t\n" +
 	"\apayload\"k\n" +
@@ -2413,7 +2434,7 @@ const file_pb_rstream_proto_rawDesc = "" +
 	"\x1cERROR_CODE_RESOURCE_CONFLICT\x10\xc0>\x12\x18\n" +
 	"\x13ERROR_CODE_INTERNAL\x10\xa8F:I\n" +
 	"\x10protocol_version\x12\x1c.google.protobuf.FileOptions\x18\xb8\x8e\x03 \x01(\tR\x0fprotocolVersion:7\n" +
-	"\x06access\x12\x1d.google.protobuf.FieldOptions\x18\xa2\x90\x03 \x01(\tR\x06accessB\x0f\xc2\xf3\x18\x051.4.6Z\x04./pbb\x06proto3"
+	"\x06access\x12\x1d.google.protobuf.FieldOptions\x18\xa2\x90\x03 \x01(\tR\x06accessB\x0f\xc2\xf3\x18\x051.4.7Z\x04./pbb\x06proto3"
 
 var (
 	file_pb_rstream_proto_rawDescOnce sync.Once

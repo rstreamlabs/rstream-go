@@ -510,7 +510,12 @@ func tunnelAllowsQUICDatagrams(props TunnelProperties) bool {
 	return props.DatagramGuaranteedDelivery == nil || !*props.DatagramGuaranteedDelivery
 }
 
-func (c *Client) packetDialDatagramChannel(ctx context.Context, raddr Addr) (net.PacketConn, bool, error) {
+func (c *Client) packetDialDatagramChannel(ctx context.Context, raddr Addr) (packet net.PacketConn, available bool, err error) {
+	ctx, finishDial, err := c.beginDial(ctx)
+	if err != nil {
+		return nil, true, err
+	}
+	defer finishDial()
 	registry, provider, supported := datagramTransport(c.defaultTunnelTransport())
 	auto, isAuto := c.Transport.(*AutoTransport)
 	if !supported && (!isAuto || auto.SelectedTransport() != nil) {
@@ -524,6 +529,20 @@ func (c *Client) packetDialDatagramChannel(ctx context.Context, raddr Addr) (net
 	if err != nil {
 		return nil, true, fmt.Errorf("failed to dial engine: %w", err)
 	}
+	interruptDone := make(chan struct{})
+	stopInterrupt := context.AfterFunc(ctx, func() { _ = conn.Close(); close(interruptDone) })
+	defer func() {
+		if !stopInterrupt() {
+			<-interruptDone
+		}
+		if cause := context.Cause(ctx); cause != nil {
+			if packet != nil {
+				_ = packet.Close()
+				packet = nil
+			}
+			available, err = true, cause
+		}
+	}()
 	if !supported {
 		registry, provider, supported = datagramTransport(c.Transport)
 		if !supported {
@@ -538,7 +557,7 @@ func (c *Client) packetDialDatagramChannel(ctx context.Context, raddr Addr) (net
 		_ = conn.Close()
 		return nil, true, fmt.Errorf("failed to get client details: %w", err)
 	}
-	msg := &pb.Message{Payload: &pb.Message_StreamReq{StreamReq: &pb.StreamReq{ClientDetails: toClientDetailsPb(clientDetails), TunnelIdName: raddr.IdOrName, ZeroRtt: boolPbValueOrNil(BoolPtr(false)), DatagramChannel: boolPbValueOrNil(BoolPtr(true))}}}
+	msg := &pb.Message{Payload: &pb.Message_StreamReq{StreamReq: &pb.StreamReq{ClientDetails: toClientDetailsPb(clientDetails), TunnelIdName: raddr.IdOrName, ZeroRtt: boolPbValueOrNil(BoolPtr(false)), DatagramChannel: boolPbValueOrNil(BoolPtr(true)), IndependentDatagramChannel: true}}}
 	if err := writePbMessage(w, msg); err != nil {
 		_ = conn.Close()
 		return nil, true, fmt.Errorf("failed to send StreamReq: %w", err)
@@ -563,7 +582,7 @@ func (c *Client) packetDialDatagramChannel(ctx context.Context, raddr Addr) (net
 		return nil, false, nil
 	}
 	streamID := payload.StreamId
-	channelID, err := datagramChannelIDFromStreamID(streamID)
+	channelID, err := dialDatagramChannelID(streamID, streamRsp.StreamRsp.DatagramChannelId)
 	if err != nil {
 		_ = conn.Close()
 		return nil, true, err

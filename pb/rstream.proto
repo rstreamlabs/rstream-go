@@ -14,7 +14,7 @@ extend google.protobuf.FieldOptions {
   string access = 51234;
 }
 
-option (protocol_version) = "1.4.6";
+option (protocol_version) = "1.4.7";
 
 package rstream.io_rstrm.protobuf;
 
@@ -264,11 +264,16 @@ message StreamReq {
   string tunnel_id_name = 2;
   google.protobuf.BoolValue zero_rtt = 3;
   google.protobuf.BoolValue datagram_channel = 4;
+  // Opt in to a separate dialer routing ID; the owner still uses stream_id.
+  bool independent_datagram_channel = 5;
 }
 
 // Server's response to a 'StreamReq'. Skipped if zero_rtt option is enabled.
 
 message StreamRsp {
+  // Exactly 12 bytes when independent_datagram_channel was negotiated.
+  // The datagram prefix uses this ID; lifecycle messages keep stream_id.
+  bytes datagram_channel_id = 3;
   oneof payload {
     string stream_id = 1;
     Error error = 2;
