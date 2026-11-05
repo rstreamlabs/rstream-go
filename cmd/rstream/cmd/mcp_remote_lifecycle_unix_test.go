@@ -74,8 +74,13 @@ func TestRemoteExposeForwarderSurvivesLaunchCommand(t *testing.T) {
 		CmdArgs: []string{"/bin/sh", "-c", remoteExposeShellScript(expose)},
 		EnvVars: []string{"RSTREAM_TEST_REMOTE_EXPOSE_MONITOR=" + monitor.Addr().String(), "RSTREAM_REMOTE_EXPOSE_DIR=" + dir},
 	})
-	if err != nil || result.ExitCode == nil || *result.ExitCode != 0 || !strings.Contains(result.Stdout, remoteExposeStatusLine+"online") {
+	if err != nil || result.ExitCode == nil || *result.ExitCode != 0 {
 		t.Fatalf("launch result = %+v, error = %v", result, err)
+	}
+	// The launcher can return before the race-instrumented child becomes ready.
+	// Its connection and echo below prove that it survives either normal status.
+	if !strings.Contains(result.Stdout, remoteExposeStatusLine+"online") && !strings.Contains(result.Stdout, remoteExposeStatusLine+"starting") {
+		t.Fatalf("unexpected launch status: %s", result.Stdout)
 	}
 	forwarder, err := monitor.Accept()
 	if err != nil {
