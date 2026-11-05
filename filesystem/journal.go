@@ -97,7 +97,10 @@ func (f *Local) openJournal(name string) error {
 	if err != nil {
 		return err
 	}
-	owner := journalOwner{Version: 1, Root: f.path, Identity: identity}
+	// Version 2 binds mutation coordination to this directory as well as the
+	// journal. Older implementations reject it instead of using a different lock.
+	owner := journalOwner{Version: 2, Root: f.path, Identity: identity}
+	privateMutationLock := true
 	data, err := readJournalFile(journal, journalOwnerName)
 	if os.IsNotExist(err) && !f.policy.ReadOnly {
 		// Never adopt unbound state: it may contain receipts from another export.
@@ -119,13 +122,17 @@ func (f *Local) openJournal(name string) error {
 		}
 		// Canonical paths keep symlinked aliases together. A relocated or
 		// replaced export, or changed mount identity, requires explicit review.
-		if stored.Version != owner.Version || stored.Root != owner.Root || stored.Identity != owner.Identity {
+		if (stored.Version != 1 && stored.Version != owner.Version) || stored.Root != owner.Root || stored.Identity != owner.Identity {
 			return fmt.Errorf("upload state belongs to a different export; refusing to reuse its receipts")
 		}
+		// Do not migrate a live version 1 journal: an older process may still
+		// be using the export inode. Preserve its lock and durable receipts.
+		privateMutationLock = stored.Version == owner.Version
 	}
 	if err != nil {
 		return err
 	}
+	f.privateMutationLock = privateMutationLock
 	if !f.policy.ReadOnly {
 		receipts, err := f.openReceiptDirectory()
 		if err != nil {
