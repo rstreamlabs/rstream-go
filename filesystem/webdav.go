@@ -46,6 +46,15 @@ func NewWebDAV(local *Local, cfg WebDAVConfig) (http.Handler, error) {
 		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor == 1 && r.Body != nil && r.Body != http.NoBody {
+			// Refusals must reach a caller still sending a chunked upload; the
+			// HTTP/1 server otherwise drains that body before writing its reply.
+			if err := http.NewResponseController(w).EnableFullDuplex(); err != nil && !errors.Is(err, http.ErrNotSupported) {
+				cfg.Logger.Warn("filesystem duplex setup failed", "reason", "response_writer")
+				http.Error(w, "Filesystem transfer unavailable", http.StatusServiceUnavailable)
+				return
+			}
+		}
 		// Older WebDAV owners may ignore conditional headers on PUT/DELETE.
 		// PATCH is an explicit protocol opt-in that those owners refuse, so
 		// clients never silently downgrade a guarded mutation during rollout.
