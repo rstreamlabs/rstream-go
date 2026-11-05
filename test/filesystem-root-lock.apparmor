@@ -1,0 +1,8 @@
+# Test-only profile: retain file access but forbid locking the exported root.
+# The container independently drops capabilities and mounts its root read-only.
+profile rstream-filesystem-root-lock flags=(attach_disconnected,mediate_deleted) {
+  file,
+  network,
+  signal,
+  deny / k,
+}

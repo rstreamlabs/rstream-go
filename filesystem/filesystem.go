@@ -39,6 +39,9 @@ type Local struct {
 	policy    Policy
 	mutations chan struct{}
 	locks     webdav.LockSystem
+	// Existing version 1 external journals keep the export lock so that older
+	// processes still serialize with this instance. New journals own their lock.
+	privateMutationLock bool
 }
 
 func Open(name string, policy Policy) (*Local, error) {

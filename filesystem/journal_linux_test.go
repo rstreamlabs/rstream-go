@@ -4,6 +4,7 @@ package filesystem
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -28,6 +29,17 @@ func TestExternalJournalReadOnlySystemRoot(t *testing.T) {
 	}
 	if stat.Flags&unix.ST_RDONLY == 0 {
 		t.Fatal("system root must be mounted read-only")
+	}
+	if os.Getenv("RSTREAM_TEST_DENY_ROOT_LOCK") == "1" {
+		root, err := os.Open("/")
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = unix.Flock(int(root.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+		root.Close()
+		if !errors.Is(err, unix.EACCES) && !errors.Is(err, unix.EPERM) {
+			t.Fatalf("confinement must deny the export root lock: %v", err)
+		}
 	}
 	state := t.TempDir()
 	target := filepath.Join(t.TempDir(), "file")

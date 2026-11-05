@@ -29,7 +29,7 @@ func TestMutationProcessWorker(t *testing.T) {
 	if root == "" {
 		return
 	}
-	_, handler := testLocal(t, root, Policy{})
+	_, handler := testLocal(t, root, Policy{StateDir: os.Getenv("RSTREAM_MUTATION_STATE")})
 	request := httptest.NewRequest("PUT", "/fs/file", io.MultiReader(strings.NewReader("child"), &processUploadBody{}))
 	request.Header.Set("If-Match", os.Getenv("RSTREAM_MUTATION_REVISION"))
 	response := httptest.NewRecorder()
@@ -40,14 +40,26 @@ func TestMutationProcessWorker(t *testing.T) {
 }
 
 func TestConditionalWritersAcrossProcessesShareAdmission(t *testing.T) {
+	testConditionalWritersAcrossProcesses(t, Policy{})
+}
+
+func TestExternalJournalConditionalWritersAcrossProcesses(t *testing.T) {
+	if !durableUploads {
+		t.Skip("external journals require durable uploads")
+	}
+	testConditionalWritersAcrossProcesses(t, Policy{StateDir: t.TempDir()})
+}
+
+func testConditionalWritersAcrossProcesses(t *testing.T, policy Policy) {
+	t.Helper()
 	root := t.TempDir()
 	writeFixture(t, root, "file", "original")
-	_, handler := testLocal(t, root, Policy{})
+	_, handler := testLocal(t, root, policy)
 	revision := fileRequest(handler, "GET", "file", "", "", "").Header().Get("ETag")
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestMutationProcessWorker$")
-	command.Env = append(os.Environ(), "RSTREAM_MUTATION_ROOT="+root, "RSTREAM_MUTATION_REVISION="+revision)
+	command.Env = append(os.Environ(), "RSTREAM_MUTATION_ROOT="+root, "RSTREAM_MUTATION_STATE="+policy.StateDir, "RSTREAM_MUTATION_REVISION="+revision)
 	input, err := command.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
