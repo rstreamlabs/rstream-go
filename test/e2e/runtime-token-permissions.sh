@@ -178,7 +178,9 @@ def setup():
         {"permissions": ["tunnels.resources.read-only"], "resources": {"tunnels": [{"projects": [project_id]}]}},
     )
     invalid_resource_rejected = status == 400
-    status, _ = request_status(
+    # Inventory permission covers clients and tunnels independently. Omitted
+    # client scopes preserve legacy client-list access, even if tunnels are denied.
+    status, legacy_client_payload = request_status(
         api_url,
         control_token,
         "POST",
@@ -188,8 +190,23 @@ def setup():
             "resources": {"tunnels": project_resource(project_id, {"list": False})},
         },
     )
+    legacy_client_list_allowed = status == 200
+    status, _ = request_status(
+        api_url,
+        control_token,
+        "POST",
+        "/api/tokens",
+        {
+            "permissions": ["tunnels.resources.read-only"],
+            "resources": {"tunnels": {
+                "projects": [project_id],
+                "scopes": {"clients": {"list": False}, "tunnels": {"list": False}},
+            }},
+        },
+    )
     permission_resource_mismatch_rejected = status == 400
     tokens = {
+        "legacyClientOnly": json.loads(legacy_client_payload).get("token", "") if legacy_client_list_allowed else "",
         "controlProjectsRead": create_named_token("controlProjectsRead", ["account.projects.read-only"]),
         "controlCredentialsRead": create_named_token("controlCredentialsRead", ["account.credentials.read-only"]),
         "tokenCreator": create_named_token("tokenCreator", ["account.tokens.create"]),
@@ -233,6 +250,7 @@ def setup():
         "project": project,
         "tokens": tokens,
         "invalidResourceRejected": invalid_resource_rejected,
+        "legacyClientListAllowed": legacy_client_list_allowed,
         "permissionResourceMismatchRejected": permission_resource_mismatch_rejected,
     }))
 
@@ -532,6 +550,7 @@ CONTROL_CREDENTIALS_TOKEN="$(json_get "$TMP_DIR/setup.json" tokens.controlCreden
 TOKEN_CREATOR_TOKEN="$(json_get "$TMP_DIR/setup.json" tokens.tokenCreator)"
 EMPTY_TOKEN="$(json_get "$TMP_DIR/setup.json" tokens.emptyPermissions)"
 ENGINE_READ_TOKEN="$(json_get "$TMP_DIR/setup.json" tokens.engineReadOnly)"
+LEGACY_CLIENT_TOKEN="$(json_get "$TMP_DIR/setup.json" tokens.legacyClientOnly)"
 CREATE_FORCED_TOKEN="$(json_get "$TMP_DIR/setup.json" tokens.createForced)"
 LIST_SELECTED_TOKEN="$(json_get "$TMP_DIR/setup.json" tokens.listSelected)"
 LIST_AND_DENIED_PROJECT_TOKEN="$(json_get "$TMP_DIR/setup.json" tokens.listAndDeniedProject)"
@@ -545,10 +564,16 @@ else
     fail "invalid tunnel resource shape is rejected" "root array was accepted"
 fi
 
-if [ "$(json_get "$TMP_DIR/setup.json" permissionResourceMismatchRejected)" = "True" ]; then
-    pass "token mint rejects resources that do not allow requested permission"
+if [ "$(json_get "$TMP_DIR/setup.json" legacyClientListAllowed)" = "True" ]; then
+    pass "inventory token preserves legacy client access when tunnel list is denied"
 else
-    fail "token mint rejects resources that do not allow requested permission" "resource/permission mismatch was accepted"
+    fail "inventory token preserves legacy client access when tunnel list is denied" "client-only inventory token was rejected"
+fi
+
+if [ "$(json_get "$TMP_DIR/setup.json" permissionResourceMismatchRejected)" = "True" ]; then
+    pass "token mint rejects inventory permission when both categories are denied"
+else
+    fail "token mint rejects inventory permission when both categories are denied" "resource/permission mismatch was accepted"
 fi
 
 status=$(control_status "$CONTROL_PROJECTS_TOKEN" GET "/api/projects/tunnels?pageSize=1")
@@ -628,6 +653,12 @@ fi
 
 status=$(engine_status "$PROJECT_ENGINE" "$LIST_SELECTED_TOKEN" "/api/tunnels")
 if [ "$status" = "200" ]; then pass "Engine API read permission allows tunnel list"; else fail "Engine API read permission allows tunnel list" "status=$status"; fi
+
+status=$(engine_status "$PROJECT_ENGINE" "$LEGACY_CLIENT_TOKEN" "/api/clients")
+if [ "$status" = "200" ]; then pass "omitted client scope preserves client inventory"; else fail "omitted client scope preserves client inventory" "status=$status"; fi
+
+status=$(engine_status "$PROJECT_ENGINE" "$LEGACY_CLIENT_TOKEN" "/api/tunnels")
+if [ "$status" = "403" ]; then pass "legacy client inventory token cannot list denied tunnels"; else fail "legacy client inventory token cannot list denied tunnels" "status=$status"; fi
 
 if "$PYTHON" "$TMP_DIR/runtime_api.py" engine-list-check "$PROJECT_ENGINE" "$LIST_SELECTED_TOKEN" --expect "$ALLOWED_NAME" --deny "$DENIED_NAME" --selected; then
     pass "list scope filters and projects selected tunnel fields"
