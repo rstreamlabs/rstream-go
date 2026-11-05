@@ -377,9 +377,21 @@ if env -u RSTREAM_CONTEXT -u RSTREAM_AUTHENTICATION_TOKEN \
   RSTREAM_MTLS_CERT_FILE="$TMP_DIR/client.crt" \
   RSTREAM_MTLS_KEY_FILE="$TMP_DIR/client.key" \
   "$RSTREAM_BIN" tunnel list -o json >/dev/null 2>&1; then
-  fail "Engine HTTP API rejects certificate-only mTLS authentication" "certificate-only tunnel list succeeded"
+  pass "Engine HTTP API discovers mTLS authority for certificate-only authentication"
 else
-  pass "Engine HTTP API rejects certificate-only mTLS authentication"
+  fail "Engine HTTP API discovers mTLS authority for certificate-only authentication" "certificate-only tunnel list failed"
+fi
+
+if env -u RSTREAM_CONTEXT -u RSTREAM_AUTHENTICATION_TOKEN \
+  RSTREAM_ENGINE="$PRO_ENGINE" \
+  RSTREAM_MTLS_CERT_FILE="$TMP_DIR/denied.crt" \
+  RSTREAM_MTLS_KEY_FILE="$TMP_DIR/denied.key" \
+  "$RSTREAM_BIN" tunnel list -o json >"$TMP_DIR/denied-list.log" 2>&1; then
+  fail "Engine HTTP API rejects certificate without inventory permission" "unpermitted certificate listed tunnels"
+elif grep -Eiq "unauthorized|forbidden" "$TMP_DIR/denied-list.log"; then
+  pass "Engine HTTP API rejects certificate without inventory permission"
+else
+  fail "Engine HTTP API rejects certificate without inventory permission" "request failed without an authorization denial"
 fi
 
 if env -u RSTREAM_CONTEXT \

@@ -82,7 +82,11 @@ func reexec(godebug string) {
 	if !found {
 		env = append(env, "GODEBUG="+godebug)
 	}
-	cmd := exec.Command(os.Args[0], os.Args[1:]...)
+	// The matrix runner owns this process. Forward shutdown to the re-executed
+	// child so stopping an h2c fixture cannot leave a tunnel running.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	cmd := exec.CommandContext(ctx, os.Args[0], os.Args[1:]...)
 	cmd.Env = env
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
