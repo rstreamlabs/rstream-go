@@ -118,22 +118,14 @@ jobs:
             echo "sha=${RELEASE_SHA}"
             echo "run-id=${CANDIDATE_RUN_ID}"
           } >>"$GITHUB_OUTPUT"
-      - name: Checkout trusted WebTTY certification policy
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: rstreamlabs/rstream-engine
-          ref: main
-          token: ${{ secrets.GIT_TOKEN }}
-          path: .webtty-policy
-          persist-credentials: false
-      - uses: ./.webtty-policy/.github/actions/verify-webtty-release
-        with:
-          component: go
-          candidate-sha: ${{ steps.release.outputs.sha }}
-          assembly: ${{ vars.WEBTTY_RELEASE_ASSEMBLY }}
-          run-id: ${{ vars.WEBTTY_CERTIFICATION_RUN_ID }}
-          allowed-actor: ${{ vars.CI_ALLOWED_ACTOR }}
-          token: ${{ secrets.GIT_TOKEN }}
+      - name: Verify the approved release candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPROVED_RELEASE_CANDIDATE: ${{ vars.APPROVED_RELEASE_CANDIDATE }}
+          CANDIDATE_SHA: ${{ steps.release.outputs.sha }}
+          CANDIDATE_RUN_ID: ${{ steps.release.outputs.run-id }}
+          CANDIDATE_PREFIX: release-candidate-
+        run: ./.github/scripts/verify-release-approval.sh
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-candidate-${{ steps.release.outputs.version }}
