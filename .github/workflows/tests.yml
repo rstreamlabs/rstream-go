@@ -26,6 +26,56 @@ jobs:
         run: ./.github/scripts/install-nuget.sh
       - name: Verify real packing and local promotion
         run: ./test/release-nuget-runtime.sh
+  filesystem-node-webrtc:
+    name: Go and Node WebRTC (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: rstreamlabs/rstream-js
+          ref: 9b170e37165de684ad2614fc3d9638614dd24a77
+          path: js-consumer
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: js-consumer/package-lock.json
+      - name: Build this SDK's verified WebRTC owner
+        run: |
+          set -euo pipefail
+          make ice-patch
+          go build -modfile=out/ice-patch/go.mod -o "$RUNNER_TEMP/files-owner" ./filesystem/rtc/testdata/server
+      - name: Build the immutable JS consumer
+        working-directory: js-consumer
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run generate-proto-files --workspace @rstreamlabs/webtty
+          npm run build --workspace @rstreamlabs/filesystem
+          npm run build --workspace @rstreamlabs/webtty
+      - name: Real transfers, permissions, cancellation and renewed TURN path
+        working-directory: js-consumer
+        env:
+          RSTREAM_FILES_E2E_SERVER: ${{ runner.temp }}/files-owner
+        run: |
+          set -euo pipefail
+          npm run test:e2e --workspace @rstreamlabs/filesystem
+          for _ in 1 2 3; do
+            node --test --test-name-pattern='TURN download' packages/filesystem/test/e2e/webrtc.test.cjs
+          done
   filesystem-platforms:
     name: filesystem behavior (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

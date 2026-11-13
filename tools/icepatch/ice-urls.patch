@@ -1,104 +1,98 @@
 diff --git a/gather.go b/gather.go
-index b357e06..8143114 100644
 --- a/gather.go
 +++ b/gather.go
-@@ -132,8 +132,9 @@ func (a *Agent) GatherCandidates() error {
- 		a.gatherCandidateCancel = cancel
- 		done := make(chan struct{})
+@@ -150,9 +150,10 @@
  		a.gatherCandidateDone = done
+ 		generation := a.gatherGeneration
+ 		localUfrag := a.localUfrag
 +		urls := append([]*stun.URI(nil), a.urls...)
+ 		a.gatheringState = GatheringStateGathering
  
--		go a.gatherCandidates(ctx, done)
-+		go a.gatherCandidates(ctx, done, urls)
+-		go a.gatherCandidates(ctx, done, generation, localUfrag)
++		go a.gatherCandidates(ctx, done, generation, localUfrag, urls)
  	}); runErr != nil {
  		return runErr
  	}
-@@ -141,7 +142,7 @@ func (a *Agent) GatherCandidates() error {
- 	return gatherErr
- }
- 
--func (a *Agent) gatherCandidates(ctx context.Context, done chan struct{}) { //nolint:cyclop
-+func (a *Agent) gatherCandidates(ctx context.Context, done chan struct{}, urls []*stun.URI) { //nolint:cyclop
+@@ -165,13 +166,14 @@
+ 	done chan struct{},
+ 	generation uint64,
+ 	localUfrag string,
++	urls []*stun.URI,
+ ) { //nolint:cyclop
  	defer close(done)
- 	applied, err := a.setGatheringState(ctx, GatheringStateGathering)
- 	if err != nil {
-@@ -154,7 +155,7 @@ func (a *Agent) gatherCandidates(ctx context.Context, done chan struct{}) { //no
+ 	if ctx.Err() != nil {
  		return
  	}
  
--	a.gatherCandidatesInternal(ctx)
-+	a.gatherCandidatesInternal(ctx, urls)
+-	a.gatherCandidatesInternal(ctx, generation, localUfrag)
++	a.gatherCandidatesInternal(ctx, generation, localUfrag, urls)
  
  	switch a.continualGatheringPolicy {
  	case GatherOnce:
-@@ -263,7 +264,7 @@ func (a *Agent) applyHostRewriteForUDPMux(candidateIPs []net.IP, udpAddr *net.UD
+@@ -291,7 +293,7 @@
  }
  
  // gatherCandidatesInternal performs the actual candidate gathering for all configured types.
--func (a *Agent) gatherCandidatesInternal(ctx context.Context) {
-+func (a *Agent) gatherCandidatesInternal(ctx context.Context, urls []*stun.URI) {
+-func (a *Agent) gatherCandidatesInternal(ctx context.Context, generation uint64, localUfrag string) {
++func (a *Agent) gatherCandidatesInternal(ctx context.Context, generation uint64, localUfrag string, urls []*stun.URI) {
  	var wg sync.WaitGroup
  	for _, t := range a.candidateTypes {
  		switch t {
-@@ -274,11 +275,11 @@ func (a *Agent) gatherCandidatesInternal(ctx context.Context) {
+@@ -302,11 +304,11 @@
  				wg.Done()
  			}()
  		case CandidateTypeServerReflexive:
--			a.gatherServerReflexiveCandidates(ctx, &wg)
-+			a.gatherServerReflexiveCandidates(ctx, &wg, urls)
+-			a.gatherServerReflexiveCandidates(ctx, &wg, generation, localUfrag)
++			a.gatherServerReflexiveCandidates(ctx, &wg, generation, localUfrag, urls)
  		case CandidateTypeRelay:
  			wg.Add(1)
  			go func() {
--				a.gatherCandidatesRelay(ctx, a.urls)
-+				a.gatherCandidatesRelay(ctx, urls)
+-				a.gatherCandidatesRelay(ctx, a.urls, generation)
++				a.gatherCandidatesRelay(ctx, urls, generation)
  				wg.Done()
  			}()
  		case CandidateTypePeerReflexive, CandidateTypeUnspecified:
-@@ -289,15 +290,15 @@ func (a *Agent) gatherCandidatesInternal(ctx context.Context) {
- 	wg.Wait()
- }
- 
--func (a *Agent) gatherServerReflexiveCandidates(ctx context.Context, wg *sync.WaitGroup) {
-+func (a *Agent) gatherServerReflexiveCandidates(ctx context.Context, wg *sync.WaitGroup, urls []*stun.URI) {
+@@ -322,15 +324,16 @@
+ 	wg *sync.WaitGroup,
+ 	generation uint64,
+ 	localUfrag string,
++	urls []*stun.URI,
+ ) {
  	replaceSrflx := a.addressRewriteMapper != nil && a.addressRewriteMapper.shouldReplace(CandidateTypeServerReflexive)
  	if !replaceSrflx {
  		wg.Add(1)
  		go func() {
  			if a.udpMuxSrflx != nil {
--				a.gatherCandidatesSrflxUDPMux(ctx, a.urls, a.networkTypes)
-+				a.gatherCandidatesSrflxUDPMux(ctx, urls, a.networkTypes)
+-				a.gatherCandidatesSrflxUDPMux(ctx, a.urls, a.networkTypes, generation, localUfrag)
++				a.gatherCandidatesSrflxUDPMux(ctx, urls, a.networkTypes, generation, localUfrag)
  			} else {
--				a.gatherCandidatesSrflx(ctx, a.urls, a.networkTypes)
-+				a.gatherCandidatesSrflx(ctx, urls, a.networkTypes)
+-				a.gatherCandidatesSrflx(ctx, a.urls, a.networkTypes, generation)
++				a.gatherCandidatesSrflx(ctx, urls, a.networkTypes, generation)
  			}
  			wg.Done()
  		}()
-@@ -1418,12 +1419,27 @@ func (a *Agent) startNetworkMonitoring(ctx context.Context) {
+@@ -1504,7 +1507,11 @@
  			return
  		case <-ticker.C:
  			if a.detectNetworkChanges() {
--				a.gatherCandidatesInternal(ctx)
+-				a.gatherCandidatesInternal(ctx, generation, localUfrag)
 +				urls, err := a.snapshotURLs(ctx)
 +				if err != nil {
 +					return
 +				}
-+				a.gatherCandidatesInternal(ctx, urls)
++				a.gatherCandidatesInternal(ctx, generation, localUfrag, urls)
  			}
  		}
  	}
- }
+@@ -1551,3 +1558,11 @@
  
+ 	return hasAdditions
+ }
++
 +func (a *Agent) snapshotURLs(ctx context.Context) ([]*stun.URI, error) {
 +	var urls []*stun.URI
-+	if err := a.loop.Run(ctx, func(context.Context) {
-+		urls = append([]*stun.URI(nil), a.urls...)
-+	}); err != nil {
++	if err := a.loop.Run(ctx, func(context.Context) { urls = append([]*stun.URI(nil), a.urls...) }); err != nil {
 +		return nil, err
 +	}
-+
 +	return urls, nil
 +}
-+
- // detectNetworkChanges checks if the network interfaces have changed since the last check.
- func (a *Agent) detectNetworkChanges() bool {
- 	// Try to refresh interfaces if using stdnet
