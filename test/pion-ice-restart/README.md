@@ -36,8 +36,9 @@ server changes from the client graph. It changes neither graph's Pion sources.
 
 On 13 November 2026, Linux ARM64 Docker on macOS reproduces old-pass/new-timeout,
 including old-WebRTC/new-TURN and new-WebRTC/old-TURN controls. This does not
-establish a universal upstream defect: the actual SDK/Node suite passes on native
-Ubuntu x86_64, and modern Chromium/Firefox pass against the candidate SDK on macOS.
+establish a universal upstream defect. Initial native Ubuntu x86_64 runs pass,
+but a later repeated SDK transfer also times out there. Modern Chromium/Firefox
+trials pass against the candidate SDK on macOS.
 See [the qualification record](../../docs/015-transport-dependency-qualification.md)
 for the application gate and current limitations. No upstream issue has been
 posted; do not present this platform-specific result as a diagnosed Pion bug.

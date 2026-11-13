@@ -10,11 +10,13 @@ own verified modfile; Go does not inherit replacements from dependencies.
 
 ## Open interoperability gate
 
-**The Pion upgrade is not qualified for the existing Node ARM64 consumer.**
+**The Pion upgrade is not qualified for the existing native Node consumer.**
 The immutable real JS consumer runs in SDK CI on native Ubuntu x86_64 and ARM64.
 Both run the complete suite and, after it passes, three additional renewal cases.
-On 13 November 2026, x86_64 passes all runs; ARM64 passes eight cases but times
-out in the 30-second renewed/restarted TURN transfer. Local Linux ARM64 Docker
+On 13 November 2026, ARM64 passes eight cases but times out in the 30-second
+renewed/restarted TURN transfer. Initial x86_64 full/repeated runs pass; the
+final candidate x86_64 job passes the full suite and first repeat, then times
+out on its second repeat. The gate is therefore intermittent on x86_64 too. Local Linux ARM64 Docker
 reproduces the same case on three consecutive runs; the preceding graph passes
 three times in 9.5–9.8 seconds. No assertions, payload or deadlines are relaxed.
 
@@ -22,7 +24,7 @@ Modern Chromium 156 and Firefox 157 on macOS pass the candidate's real 8 MiB
 transfer with three/four authenticated ICE restarts in 7.4/8.3 seconds. The
 separate native `@roamhq/wrtc` 0.10.0 macOS gathering limit reproduces on both
 old and new graphs. These results distinguish browser, architecture and provider;
-a green Go/Go suite or x86_64 CI does not certify Node ARM64.
+a green Go/Go suite or a single x86_64 run does not certify repeated Node use.
 
 The [public Pion control](../test/pion-ice-restart/README.md) reproduces the
 old-pass/new-timeout distinction without rstream signaling, its bounded UDP
