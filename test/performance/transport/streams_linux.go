@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"runtime"
@@ -211,7 +210,7 @@ func cancellationProbe(ctx context.Context, conn net.Conn, out *result) error {
 		out.CancelUS = float64(time.Since(start).Nanoseconds()) / 1000
 		return closeErr
 	case <-time.After(2 * time.Second):
-		return fmt.Errorf("writer did not stop after stream close: %w", ctx.Err())
+		return errors.Join(errors.New("writer did not stop after stream close"), ctx.Err())
 	}
 }
 
