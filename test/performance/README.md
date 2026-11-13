@@ -26,9 +26,10 @@ separate; this probe neither fixes it nor switches delivery guarantees.
 
 JSON contains CPU/allocation deltas for both SDK peers in one process, latency
 quantiles, overlapping ping count, sampled heap/goroutine peaks and before/after
-goroutine counts around client cleanup. Sampling uses `runtime.ReadMemStats`
-every 5 ms, contributes measurement overhead and does not capture an exact peak
-or RSS. CPU/allocation transfer deltas exclude setup. An optional
+goroutine counts around client cleanup. Sampling uses `runtime/metrics`
+every 20 ms, contributes measurement overhead and does not capture an exact peak
+or RSS. JSON identifies the sampler and interval. Repeated `ReadMemStats`
+sampling was removed after profiling showed its stop-the-world overhead. CPU/allocation transfer deltas exclude setup. An optional
 `--profile-prefix=/new/output/sample` produces exclusive mode-0600 CPU/allocation
 profile files over the probe, including connection setup; the parent directory
 must exist. Use a separate profiling pass, then `go tool pprof` on those files.

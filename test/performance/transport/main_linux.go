@@ -27,33 +27,35 @@ import (
 )
 
 type result struct {
-	ConcurrentPings  int                           `json:"concurrent_pings"`
-	CancelUS         float64                       `json:"cancel_us"`
-	PeakHeapBytes    uint64                        `json:"peak_heap_bytes"`
-	PeakGoroutines   int                           `json:"peak_goroutines"`
-	GoroutinesBefore int                           `json:"goroutines_before"`
-	GoroutinesAfter  int                           `json:"goroutines_after"`
-	PeerQueue        *rstream.DatagramReceiveStats `json:"peer_queue,omitempty"`
-	EchoQueue        *rstream.DatagramReceiveStats `json:"echo_queue,omitempty"`
-	SendSeconds      float64                       `json:"send_seconds"`
-	PacingMS         int                           `json:"pacing_ms"`
-	DrainSeconds     int                           `json:"drain_seconds"`
-	Workload         string                        `json:"workload"`
-	Transport        string                        `json:"transport"`
-	CrossRegion      bool                          `json:"cross_region"`
-	Pings            int                           `json:"pings"`
-	Seconds          float64                       `json:"seconds"`
-	CPUSeconds       float64                       `json:"cpu_seconds"`
-	AllocBytes       uint64                        `json:"alloc_bytes"`
-	Allocs           uint64                        `json:"allocs"`
-	Bytes            int64                         `json:"bytes"`
-	Sent             int                           `json:"sent"`
-	Received         int                           `json:"received"`
-	Duplicates       int                           `json:"duplicates"`
-	Reordered        int                           `json:"reordered"`
-	P50US            float64                       `json:"p50_us"`
-	P95US            float64                       `json:"p95_us"`
-	P99US            float64                       `json:"p99_us"`
+	ResourceSampleIntervalMS int                           `json:"resource_sample_interval_ms"`
+	ResourceSampler          string                        `json:"resource_sampler"`
+	ConcurrentPings          int                           `json:"concurrent_pings"`
+	CancelUS                 float64                       `json:"cancel_us"`
+	PeakHeapBytes            uint64                        `json:"peak_heap_bytes"`
+	PeakGoroutines           int                           `json:"peak_goroutines"`
+	GoroutinesBefore         int                           `json:"goroutines_before"`
+	GoroutinesAfter          int                           `json:"goroutines_after"`
+	PeerQueue                *rstream.DatagramReceiveStats `json:"peer_queue,omitempty"`
+	EchoQueue                *rstream.DatagramReceiveStats `json:"echo_queue,omitempty"`
+	SendSeconds              float64                       `json:"send_seconds"`
+	PacingMS                 int                           `json:"pacing_ms"`
+	DrainSeconds             int                           `json:"drain_seconds"`
+	Workload                 string                        `json:"workload"`
+	Transport                string                        `json:"transport"`
+	CrossRegion              bool                          `json:"cross_region"`
+	Pings                    int                           `json:"pings"`
+	Seconds                  float64                       `json:"seconds"`
+	CPUSeconds               float64                       `json:"cpu_seconds"`
+	AllocBytes               uint64                        `json:"alloc_bytes"`
+	Allocs                   uint64                        `json:"allocs"`
+	Bytes                    int64                         `json:"bytes"`
+	Sent                     int                           `json:"sent"`
+	Received                 int                           `json:"received"`
+	Duplicates               int                           `json:"duplicates"`
+	Reordered                int                           `json:"reordered"`
+	P50US                    float64                       `json:"p50_us"`
+	P95US                    float64                       `json:"p95_us"`
+	P99US                    float64                       `json:"p99_us"`
 }
 
 func cpuSeconds() (float64, error) {

@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"runtime"
+	"runtime/metrics"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -217,15 +218,17 @@ func cancellationProbe(ctx context.Context, conn net.Conn, out *result) error {
 func sampleResources(out *result) func() {
 	stop, done := make(chan struct{}), make(chan struct{})
 	out.GoroutinesBefore = runtime.NumGoroutine()
+	out.ResourceSampleIntervalMS = 20
+	out.ResourceSampler = "runtime/metrics"
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(5 * time.Millisecond)
+		ticker := time.NewTicker(20 * time.Millisecond)
 		defer ticker.Stop()
+		samples := []metrics.Sample{{Name: "/memory/classes/heap/objects:bytes"}, {Name: "/sched/goroutines:goroutines"}}
 		for {
-			var memory runtime.MemStats
-			runtime.ReadMemStats(&memory)
-			out.PeakHeapBytes = max(out.PeakHeapBytes, memory.HeapAlloc)
-			out.PeakGoroutines = max(out.PeakGoroutines, runtime.NumGoroutine())
+			metrics.Read(samples)
+			out.PeakHeapBytes = max(out.PeakHeapBytes, samples[0].Value.Uint64())
+			out.PeakGoroutines = max(out.PeakGoroutines, int(samples[1].Value.Uint64()))
 			select {
 			case <-stop:
 				return
