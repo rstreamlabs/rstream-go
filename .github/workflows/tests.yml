@@ -95,6 +95,10 @@ jobs:
       - name: Prepare verified ICE patch
         shell: bash
         run: go run ./tools/icepatch
+      - name: QUIC close, concurrent writers and half-close
+        env:
+          GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
+        run: go test -race -count=2 -timeout=2m -run '^TestQUICTransport(Close|HalfClose)' .
       - name: Rooted filesystem, WebRTC, streaming, HTTP and embedded UI
         env:
           GOFLAGS: -modfile=${{ github.workspace }}/out/ice-patch/go.mod
