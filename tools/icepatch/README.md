@@ -1,11 +1,12 @@
 # Verified ICE build patch
 
-`icepatch` prepares a temporary source patch for `github.com/pion/ice/v4 v4.4.2`.
+`icepatch` prepares a temporary source patch for `github.com/pion/ice/v4 v4.4.9`.
 Updating STUN/TURN URLs while gathering candidates otherwise races with the
 background gathering workers. Each gathering cycle must use a URL snapshot
 captured on the agent event loop; continual gathering takes a fresh snapshot.
 
-The patch is the `gather.go` change originally proposed in
+The patch preserves the v4.4.9 gathering generation checks. Its URL snapshot
+change was originally proposed in
 [pion/ice#957](https://github.com/pion/ice/pull/957). It changes no public API.
 A [new proposal against v4](https://github.com/pion/ice/pull/1049) includes
 stronger race regressions. Keep this workaround until
