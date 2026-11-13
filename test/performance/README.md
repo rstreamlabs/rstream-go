@@ -22,9 +22,12 @@ range `1..30`) permit paced-load and late-delivery diagnostics. JSON includes th
 actual send duration and supported receive-queue snapshots for both SDK peers.
 Compare actual offered rates as well as requested pacing: blocking writes can
 throttle an older transport, while a faster sender can saturate existing bounded
-queues. A native datagram benchmark under overload is not a loss-free delivery
-contract. Keep stress results separate from equal-rate comparisons and use the
-existing guaranteed-delivery mode when the application requires reliable packets.
+queues. Also attribute loss before application queues: the November 2026
+[QUIC datagram diagnosis](quic-datagram-diagnosis.md) reproduces previously unseen
+reordered packets being rejected after QUIC receive-history purging. Queue growth
+cannot fix those losses. The QUIC upgrade retains a pre-merge qualification gate.
+Keep stress results separate from equal-rate comparisons and select the existing
+guaranteed-delivery mode explicitly when the application requires reliable packets.
 
 The engine repository's `test/performance/README.md` describes the isolated Docker
 fixture, forwarding-router impairment, repeated comparison and metric limits.
