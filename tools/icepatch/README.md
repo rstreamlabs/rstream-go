@@ -39,7 +39,7 @@ GOFLAGS="-modfile=$PWD/out/ice-patch/go.mod" go test -race ./...
 go build -modfile=out/ice-patch/go.mod ./cmd/application
 ```
 
-The [video samples](https://github.com/rstreamlabs/rstream-examples/tree/bc9339d7f1b4d4c81822e0018d4097e985839bdc/webrtc-video/ice-patch)
+The [video samples](https://github.com/rstreamlabs/rstream-examples/tree/516157ba4dd95b89d1dcaa948e2965ad1607847c/webrtc-video/ice-patch)
 ship their own helper and `ice-patch.sh`; use those together when adopting a
 sample. They require neither a separate SDK checkout nor a new SDK release.
 

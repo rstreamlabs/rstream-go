@@ -6,7 +6,7 @@ QUIC versions remain a separate upgrade. Keep the
 4.4.9 still reproduces that race. Consuming modules need their own verified
 modfile; Go does not inherit dependency replacements.
 
-## Recovery correction under qualification
+## Restart recovery
 
 Initial candidate transfers exposed a restart-cadence weakness: signaling may
 finish while ICE is still selecting a path, and selection may precede reliable
@@ -31,8 +31,11 @@ The companion JS implementation is source
 helpers enforce the same ownership, authorization and backpressure rules. See
 its filesystem technical recovery document for provider statistics requirements.
 CI pins that immutable source and runs native Ubuntu x86_64 and ARM64: full real
-Go/Node transfer suite plus repeated original renewal stress. This remains a
-draft until the exact corrected pair passes those gates.
+Go/Node transfer suite plus repeated original renewal stress. The corrected
+runtime at Go source `86f80e042235d2438cb5b34990d7c3474ca0dff6` passes both
+architectures, including three additional stress repetitions. Keep those gates
+required for subsequent changes; source qualification does not authorize merge
+or stable publication.
 
 Local validation includes full Go Linux race/vet, frozen strict FIPS and source
 govulncheck. RTC tests cover consumer-paced 8 MiB TURN transfers, short leases,
