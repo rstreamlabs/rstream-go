@@ -23,7 +23,7 @@ func validateToken(ctx context.Context, apiURL, token string, headers map[string
 		return errors.New("token is required")
 	}
 	client := controlplane.NewClient(apiURL, token, controlplane.WithHeaders(headers), controlplane.WithLogger(logger))
-	whoami, err := client.Whoami(ctx)
+	identity, err := client.Identity(ctx)
 	if err != nil {
 		if errors.Is(err, controlplane.ErrUnauthorized) {
 			return errors.New("token validation failed: not authenticated")
@@ -31,7 +31,7 @@ func validateToken(ctx context.Context, apiURL, token string, headers map[string
 		return err
 	}
 	if flagVerbose {
-		logger.Debug("token validated", "id", whoami.ID, "role", whoami.Role)
+		logger.Debug("token validated", "owner_kind", identity.Owner.Kind, "user_id", identity.Owner.UserID, "workspace_id", identity.Owner.WorkspaceID, "credential_id", identity.CredentialID)
 	}
 	return nil
 }

@@ -1,0 +1,248 @@
+{
+  "contractVersion": 1,
+  "cases": [
+    {
+      "name": "workspace with bounded authority",
+      "valid": true,
+      "owner": {
+        "kind": "workspace",
+        "workspaceId": "workspace-1"
+      },
+      "response": {
+        "owner": {
+          "kind": "workspace",
+          "workspaceId": "workspace-1"
+        },
+        "credentialId": "credential-1",
+        "name": "Acme",
+        "permissions": ["account.projects.read-only"],
+        "resources": {
+          "tunnels": {
+            "projects": ["project-1"]
+          }
+        },
+        "authExpiresAt": "2030-01-01T00:00:00.000Z"
+      }
+    },
+    {
+      "name": "workspace with explicitly empty permissions",
+      "valid": true,
+      "owner": {
+        "kind": "workspace",
+        "workspaceId": "workspace-1"
+      },
+      "response": {
+        "owner": {
+          "kind": "workspace",
+          "workspaceId": "workspace-1"
+        },
+        "credentialId": "credential-1",
+        "permissions": []
+      }
+    },
+    {
+      "name": "owner-aware personal authority",
+      "valid": true,
+      "owner": {
+        "kind": "user",
+        "userId": "user-1"
+      },
+      "response": {
+        "owner": {
+          "kind": "user",
+          "userId": "user-1"
+        },
+        "role": "user",
+        "credentialId": "credential-1",
+        "permissions": [],
+        "email": "alice@example.test"
+      }
+    },
+    {
+      "name": "legacy personal response ignores unrelated fields",
+      "valid": true,
+      "owner": {
+        "kind": "user",
+        "userId": "user-1"
+      },
+      "response": {
+        "id": "user-1",
+        "role": "user",
+        "serverExtension": true
+      }
+    },
+    {
+      "name": "ambiguous owner",
+      "valid": false,
+      "response": {
+        "owner": {
+          "kind": "workspace",
+          "workspaceId": "workspace-1",
+          "userId": "user-1"
+        },
+        "credentialId": "credential-1",
+        "permissions": []
+      }
+    },
+    {
+      "name": "explicit null owner cannot fall back",
+      "valid": false,
+      "response": {
+        "owner": null,
+        "id": "user-1",
+        "role": "user"
+      }
+    },
+    {
+      "name": "padded owner reference",
+      "valid": false,
+      "response": {
+        "owner": {
+          "kind": "workspace",
+          "workspaceId": " workspace-1"
+        },
+        "credentialId": "credential-1",
+        "permissions": []
+      }
+    },
+    {
+      "name": "unknown owner reference",
+      "valid": false,
+      "response": {
+        "owner": {
+          "kind": "workspace",
+          "workspaceId": "workspace-1",
+          "creator": null
+        },
+        "credentialId": "credential-1",
+        "permissions": []
+      }
+    },
+    {
+      "name": "workspace missing credential reference",
+      "valid": false,
+      "response": {
+        "owner": {
+          "kind": "workspace",
+          "workspaceId": "workspace-1"
+        },
+        "permissions": []
+      }
+    },
+    {
+      "name": "workspace missing explicit permissions",
+      "valid": false,
+      "response": {
+        "owner": {
+          "kind": "workspace",
+          "workspaceId": "workspace-1"
+        },
+        "credentialId": "credential-1"
+      }
+    },
+    {
+      "name": "workspace cannot acquire a human role",
+      "valid": false,
+      "response": {
+        "owner": {
+          "kind": "workspace",
+          "workspaceId": "workspace-1"
+        },
+        "credentialId": "credential-1",
+        "permissions": [],
+        "role": "admin"
+      }
+    },
+    {
+      "name": "malformed explicit owner cannot use legacy identity",
+      "valid": false,
+      "response": {
+        "owner": {
+          "kind": "workspace",
+          "workspaceId": "workspace-1"
+        },
+        "id": "user-1",
+        "role": "user"
+      }
+    },
+    {
+      "name": "invalid authentication deadline",
+      "valid": false,
+      "response": {
+        "owner": {
+          "kind": "workspace",
+          "workspaceId": "workspace-1"
+        },
+        "credentialId": "credential-1",
+        "permissions": [],
+        "authExpiresAt": "not-a-date"
+      }
+    },
+    {
+      "name": "personal identity missing role",
+      "valid": false,
+      "response": {
+        "owner": {
+          "kind": "user",
+          "userId": "user-1"
+        }
+      }
+    },
+    {
+      "name": "legacy identity missing role",
+      "valid": false,
+      "response": {
+        "id": "user-1"
+      }
+    },
+    {
+      "name": "null permissions are not unspecified authority",
+      "valid": false,
+      "response": {
+        "id": "user-1",
+        "role": "user",
+        "permissions": null
+      }
+    },
+    {
+      "name": "non-object resource limits",
+      "valid": false,
+      "response": {
+        "owner": {
+          "kind": "workspace",
+          "workspaceId": "workspace-1"
+        },
+        "credentialId": "credential-1",
+        "permissions": [],
+        "resources": []
+      }
+    },
+    {
+      "name": "personal role remains an opaque string",
+      "valid": true,
+      "owner": {
+        "kind": "user",
+        "userId": "user-1"
+      },
+      "response": {
+        "owner": {
+          "kind": "user",
+          "userId": "user-1"
+        },
+        "role": ""
+      }
+    },
+    {
+      "name": "permission entries cannot be null",
+      "valid": false,
+      "response": {
+        "owner": {
+          "kind": "workspace",
+          "workspaceId": "workspace-1"
+        },
+        "credentialId": "credential-1",
+        "permissions": [null]
+      }
+    }
+  ]
+}
