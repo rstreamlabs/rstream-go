@@ -1,7 +1,7 @@
 # Public Pion ICE restart control
 
-This isolated module distinguishes transport-library interoperability from the
-rstream signaling, authorization, UDP adapter and verified ICE URL snapshot patch.
+This isolated module retains the failing fast-replacement baseline independently
+of rstream signaling, authorization, its UDP adapter and verified ICE snapshot patch.
 It uses only published Pion APIs and unmodified modules. It does not implement a
 production service: its fixed local TURN credentials and signaling endpoint are
 synthetic test inputs, and every listener/process belongs to the test.
@@ -41,4 +41,6 @@ but a later repeated SDK transfer also times out there. Modern Chromium/Firefox
 trials pass against the candidate SDK on macOS.
 See [the qualification record](../../docs/015-transport-dependency-qualification.md)
 for the application gate and current limitations. No upstream issue has been
-posted; do not present this platform-specific result as a diagnosed Pion bug.
+posted. The corrected SDK serializes selection/reliable recovery while renewing
+authorization independently; this control intentionally retains the old cadence.
+Do not present its failure as a diagnosed Pion bug.

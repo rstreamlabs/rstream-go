@@ -41,7 +41,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: rstreamlabs/rstream-js
-          ref: b258743a480260ce216eb0662a22d3dbb97e3b07
+          ref: 9b170e37165de684ad2614fc3d9638614dd24a77
           path: js-consumer
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
