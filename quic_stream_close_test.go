@@ -55,6 +55,7 @@ func quicClosePair(t *testing.T) (net.Conn, *quic.Conn, *QUICTransport) {
 
 func TestQUICTransportCloseUnblocksReadAndFlowControlledWrite(t *testing.T) {
 	conn, peer, transport := quicClosePair(t)
+	underlying := transport.quicConn
 	written := make(chan error, 1)
 	read := make(chan error, 1)
 	go func() { _, err := conn.Write(make([]byte, 1<<20)); written <- err }()
@@ -113,6 +114,50 @@ func TestQUICTransportCloseUnblocksReadAndFlowControlledWrite(t *testing.T) {
 	}
 	if _, err := conn.Write([]byte("closed")); err == nil {
 		t.Fatal("write accepted after full close")
+	}
+	if transport.quicConn != underlying || underlying.Context().Err() != nil {
+		t.Fatal("stream close invalidated the multiplexed connection")
+	}
+}
+
+func TestQUICTransportClosePreservesPartialWrite(t *testing.T) {
+	conn, peer, _ := quicClosePair(t)
+	payload := bytes.Repeat([]byte{0x5a}, 1<<20)
+	type writeResult struct {
+		n   int
+		err error
+	}
+	written := make(chan writeResult, 1)
+	go func() { n, err := conn.Write(payload); written <- writeResult{n, err} }()
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	stream, err := peer.AcceptStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case result := <-written:
+		t.Fatalf("write did not block: %+v", result)
+	case <-time.After(30 * time.Millisecond):
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var result writeResult
+	select {
+	case result = <-written:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("partial writer did not stop")
+	}
+	if result.err == nil || result.n <= 0 || result.n >= len(payload) {
+		t.Fatalf("expected a partially accepted write: %+v", result)
+	}
+	if err := stream.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(stream)
+	if err != nil || !bytes.Equal(got, payload[:result.n]) {
+		t.Fatalf("partial close lost accepted bytes: received=%d accepted=%d error=%v", len(got), result.n, err)
 	}
 }
 
