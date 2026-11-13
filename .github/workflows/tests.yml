@@ -27,9 +27,13 @@ jobs:
       - name: Verify real packing and local promotion
         run: ./test/release-nuget-runtime.sh
   filesystem-node-webrtc:
-    name: Go and Node WebRTC direct, TURN and ICE renewal
-    runs-on: ubuntu-latest
+    name: Go and Node WebRTC (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -66,7 +70,12 @@ jobs:
         working-directory: js-consumer
         env:
           RSTREAM_FILES_E2E_SERVER: ${{ runner.temp }}/files-owner
-        run: npm run test:e2e --workspace @rstreamlabs/filesystem
+        run: |
+          set -euo pipefail
+          npm run test:e2e --workspace @rstreamlabs/filesystem
+          for _ in 1 2 3; do
+            node --test --test-name-pattern='TURN download' packages/filesystem/test/e2e/webrtc.test.cjs
+          done
   filesystem-platforms:
     name: filesystem behavior (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
