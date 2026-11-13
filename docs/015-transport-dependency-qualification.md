@@ -1,6 +1,10 @@
 # Transport dependency qualification
 
-This candidate uses WebRTC 4.2.26, ICE 4.4.9, SCTP 1.12.1 and TURN 5.1.3.
+This candidate combines DTLS 1.3 samples with the maintained WebRTC 4.2.26,
+ICE 4.4.9, SCTP 1.12.1 and TURN 5.1.3 graph. The endpoint samples use published
+DTLS 4.0.2; WebRTC and TURN retain DTLS 3.1.15. Their coexistence does not imply
+DTLS 1.3 support in WebRTC or the TURN listener. Shared Transport 5.1.5 satisfies
+the DTLS 4.0.2 requirement without downgrading the maintenance dependencies.
 QUIC versions remain a separate upgrade. Keep the
 [verified ICE URL snapshot patch](../tools/icepatch/README.md): official ICE
 4.4.9 still reproduces that race. Consuming modules need their own verified
@@ -78,6 +82,24 @@ See the product's `tools/build/files-browser-candidates.md` for reproduction and
 source/package fingerprint recording. Coordinate stable JS publication, product
 lock repinning and the final asset regeneration in the later authorized release
 phase. Current source/PR qualification is not a stable SDK publication or rollout.
+
+## Combined graph qualification
+
+Qualify the combined sources rather than reusing a parent branch's green checks:
+
+- Engine CE/EE, strict project policy, fragmented admission, ECH/PQ and negotiated
+  metadata checks; frozen FIPS and race/lifecycle suites.
+- Current DTLS 1.3 and original unmodified DTLS 1.2 datagram/SCTP samples through
+  published/private paths, with certificate validation and forbidden-version
+  rejection, plus the complete two-engine TLS/QUIC/auto SDK/CLI matrix.
+- Full SDK races/vet and actual Go/Node transfers on both native architectures,
+  retaining restart, authorization, pause/cancellation and payload/hash budgets.
+- Affected consumer builds and video/TURN-restart repair with the retained forks.
+
+The high-cadence QUIC datagram finding remains a separate upstream acceptance
+gate. A defect confirmed in quic-go is not a reason to change application queues,
+weaken tests or introduce a local quic-go workaround in this reconciliation.
+No merge, stable publication or deployment is part of source qualification.
 
 ## Reproduce the real consumer gate
 

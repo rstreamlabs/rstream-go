@@ -251,6 +251,8 @@ fi
 
 if start_server "datagram/dtls-published" datagram/server --variant dtls --publish --tls-alpn rstream-dtls-echo --name "$DATAGRAM_PREFIX-dtls-published"; then
   run_client "datagram/dtls-published" datagram/client --variant dtls --addr "$SERVER_ADDR" --tls-alpn rstream-dtls-echo
+  run_client "datagram/dtls-published-12" datagram/client --variant dtls --addr "$SERVER_ADDR" --tls-alpn rstream-dtls-echo --dtls-version 1.2
+  run_client "datagram/dtls-published-13-fragmented" datagram/client --variant dtls --addr "$SERVER_ADDR" --tls-alpn rstream-dtls-echo --dtls-version 1.3 --dtls-mtu 160
   stop_server
 fi
 
@@ -261,6 +263,8 @@ fi
 
 if start_server "datagram/dtls-published-upstream-tls" datagram/server --variant dtls --publish --tls-alpn rstream-dtls-echo --upstream-tls --name "$DATAGRAM_PREFIX-dtls-upstream"; then
   run_client "datagram/dtls-published-upstream-tls" datagram/client --variant dtls --addr "$SERVER_ADDR" --tls-alpn rstream-dtls-echo
+  run_client "datagram/dtls-published-12-upstream-tls" datagram/client --variant dtls --addr "$SERVER_ADDR" --tls-alpn rstream-dtls-echo --dtls-version 1.2
+  run_client "datagram/dtls-published-13-fragmented-upstream-tls" datagram/client --variant dtls --addr "$SERVER_ADDR" --tls-alpn rstream-dtls-echo --dtls-version 1.3 --dtls-mtu 160
   stop_server
 fi
 
@@ -281,6 +285,7 @@ fi
 
 if start_server "datagram/sctp-published" datagram/server --variant sctp --publish --tls-alpn rstream-sctp-echo --name "$DATAGRAM_PREFIX-sctp-published"; then
   run_client "datagram/sctp-published" datagram/client --variant sctp --addr "$SERVER_ADDR" --tls-alpn rstream-sctp-echo
+  run_client "datagram/sctp-13-fragmented-published" datagram/client --variant sctp --addr "$SERVER_ADDR" --tls-alpn rstream-sctp-echo --dtls-version 1.3 --dtls-mtu 160
   stop_server
 fi
 
@@ -291,6 +296,7 @@ fi
 
 if start_server "datagram/sctp-published-upstream-tls" datagram/server --variant sctp --publish --tls-alpn rstream-sctp-echo --upstream-tls --name "$DATAGRAM_PREFIX-sctp-upstream"; then
   run_client "datagram/sctp-published-upstream-tls" datagram/client --variant sctp --addr "$SERVER_ADDR" --tls-alpn rstream-sctp-echo
+  run_client "datagram/sctp-13-fragmented-published-upstream-tls" datagram/client --variant sctp --addr "$SERVER_ADDR" --tls-alpn rstream-sctp-echo --dtls-version 1.3 --dtls-mtu 160
   stop_server
 fi
 
