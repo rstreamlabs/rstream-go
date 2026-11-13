@@ -17,6 +17,15 @@ one process; setup is excluded. Stream measurements cover bulk transfer after
 latency pings. Datagrams use 1 ms pacing and a three-second drain, so missing
 packets are delivery-deadline misses rather than a physical loss measurement.
 
+`--pacing-ms` (default `1`, range `1..1000`) and `--drain-seconds` (default `3`,
+range `1..30`) permit paced-load and late-delivery diagnostics. JSON includes the
+actual send duration and supported receive-queue snapshots for both SDK peers.
+Compare actual offered rates as well as requested pacing: blocking writes can
+throttle an older transport, while a faster sender can saturate existing bounded
+queues. A native datagram benchmark under overload is not a loss-free delivery
+contract. Keep stress results separate from equal-rate comparisons and use the
+existing guaranteed-delivery mode when the application requires reliable packets.
+
 The engine repository's `test/performance/README.md` describes the isolated Docker
 fixture, forwarding-router impairment, repeated comparison and metric limits.
 Use identical helper sources/compiler/settings with each version's SDK module
