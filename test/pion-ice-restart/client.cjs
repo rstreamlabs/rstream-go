@@ -9,6 +9,7 @@ const { RTCPeerConnection } = require('@roamhq/wrtc');
 
 async function owner(executable, env, context, children) {
   await access(executable);
+  context.signal.throwIfAborted();
   const child = spawn(executable, [], { env, stdio: ['ignore', 'pipe', 'inherit'] });
   const lines = createInterface({ input: child.stdout });
   const closed = new Promise(resolve => child.once('close', resolve));
@@ -113,8 +114,9 @@ async function run() {
     for (const { child, lines, closed } of children.reverse()) {
       child.kill('SIGTERM');
       const killed = setTimeout(() => child.kill('SIGKILL'), 5000);
-      await closed;
+      const code = await closed;
       clearTimeout(killed);
+      assert.equal(code, 0, "owned Pion process failed or required SIGKILL");
       lines.close();
     }
   }

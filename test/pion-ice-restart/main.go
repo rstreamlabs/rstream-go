@@ -64,6 +64,7 @@ func run() error {
 	}
 	defer peer.Close()
 	var workers sync.WaitGroup
+	var opening sync.Mutex
 	peer.OnDataChannel(func(channel *webrtc.DataChannel) {
 		credits := make(chan struct{}, 32)
 		for range 32 {
@@ -79,6 +80,11 @@ func run() error {
 			}
 		})
 		channel.OnOpen(func() {
+			opening.Lock()
+			defer opening.Unlock()
+			if ctx.Err() != nil {
+				return
+			}
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
@@ -152,6 +158,8 @@ func run() error {
 	}
 	err = server.Serve(listener)
 	cancel()
+	opening.Lock()
+	opening.Unlock()
 	_ = peer.Close()
 	workers.Wait()
 	if err == http.ErrServerClosed {
