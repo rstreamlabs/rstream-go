@@ -4,6 +4,32 @@ Transport settings define how an rstream client establishes its upstream session
 
 Transport configuration is independent from tunnel properties. Tunnel properties control how traffic is exposed and forwarded once an upstream session exists; transport controls how that upstream session is created in the first place.
 
+## Reviewed dependency baseline
+
+| Module | Version |
+| --- | --- |
+| `github.com/quic-go/quic-go` | `v0.64.1` |
+| `github.com/quic-go/webtransport-go` | `v0.13.0` |
+| `github.com/quic-go/masque-go` | `v0.6.0` |
+| `github.com/quic-go/connect-ip-go` | `v0.6.0` |
+
+These companion versions are qualified together. WebTransport v0.13.0 requires
+the HTTP/3 streaming API provided by this QUIC line; upgrading QUIC independently
+to v0.65 requires a compatible WebTransport release and new qualification.
+The dependency upgrade preserves transport defaults, certificate verification,
+project admission policy and the existing early-data behavior.
+
+`TestReviewedTransportDependencyGraph` inspects the compiled dependency metadata
+in standard tests, including generated modfile builds. It rejects another version
+or a replacement for these libraries and the DTLS v3 security baseline. The
+required Pion ICE replacement remains separate. Downstream modules must update
+their SDK requirement and verify their resolved graph; updating this repository
+alone does not update an already published SDK or its consumers.
+
+The [FIPS profile](010-fips-140-3-profile.md) adds its exact frozen-module and
+startup requirements. The [Linux benchmark](../test/performance/README.md) covers
+repeatable local performance comparisons without changing production settings.
+
 ## Configuration
 
 Transport settings live in the YAML config file and can be defined at:

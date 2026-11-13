@@ -411,7 +411,7 @@ func dialWebTransportWebTTYMessageConn(ctx context.Context, cfg *SessionConfig, 
 	if cfg.AuthToken != nil && strings.TrimSpace(*cfg.AuthToken) != "" {
 		header.Set("Authorization", "Bearer "+strings.TrimSpace(*cfg.AuthToken))
 	}
-	dialer := &webtransport.Dialer{
+	dialer := &webtransport.Transport{
 		TLSClientConfig: tlsConfig,
 		QUICConfig:      webTransportClientQUICConfig(endpoint.RequiresCustomDial),
 	}

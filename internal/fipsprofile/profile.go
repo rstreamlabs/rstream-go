@@ -16,10 +16,10 @@ const (
 	RequiredModuleBuild = "v1.0.0-c2097c7c"
 	// RequiredQUICModuleVersion is the reviewed quic-go implementation used by
 	// the phase-two profile. A dependency change requires a new FIPS review.
-	RequiredQUICModuleVersion = "v0.60.0"
+	RequiredQUICModuleVersion = "v0.64.1"
 	// RequiredWebTransportModuleVersion is the reviewed WebTransport framing
 	// implementation used by the phase-three profile.
-	RequiredWebTransportModuleVersion = "v0.11.1"
+	RequiredWebTransportModuleVersion = "v0.13.0"
 )
 
 const (
@@ -108,12 +108,16 @@ func dependencyVersion(path string) string {
 	if !ok {
 		return ""
 	}
-	for _, dependency := range info.Deps {
+	return unreplacedModuleVersion(info.Deps, path)
+}
+
+func unreplacedModuleVersion(dependencies []*debug.Module, path string) string {
+	for _, dependency := range dependencies {
 		if dependency.Path != path {
 			continue
 		}
 		if dependency.Replace != nil {
-			return dependency.Replace.Version
+			return ""
 		}
 		return dependency.Version
 	}
