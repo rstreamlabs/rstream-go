@@ -172,15 +172,11 @@ The shared Go filesystem and selected transport also back `webtty.NewFileSystemH
 
 The JS package `@rstreamlabs/filesystem` defines `FileSystemBackend` (list/stat/readStream/archiveStream/downloadURL) independently from `WebDAVFileSystem`. `WebTTYFileSystem` preserves its existing exports through a compatibility wrapper. Capabilities describe transport functionality and encryption separately, while `RemoteFileSystem` discovers WebDAV or WebRTC and `WebRTCFileSystem` explicitly requires WebRTC. Both reuse the same operations.
 
-## UI regeneration
+## Embedded browser UI
 
-UI source lives in `rstream-nextjs/src/components/files-browser`, styles in `src/styles/files-browser.css`. From that worktree:
+The CLI embeds a generated browser bundle; normal Go builds require no JavaScript toolchain. The HTML, gzip and integrity manifest are committed together. The manifest records the contract version, content hash and inline CSP hashes; `fileserver/ui` verifies them in tests.
 
-```sh
-npm run files-ui:build -- --go-assets-dir=../rstream-go/fileserver/ui/assets
-```
-
-Commit HTML, gzip and manifest together. The manifest pins the contract version, source fingerprint, content hash and inline CSP hashes. `fileserver/ui` verifies integrity in tests; the generator enforces a 150 KiB gzip budget. Normal Go builds use `go:embed` only. Review UI changes before publishing either repository. See Next.js `docs/file-browser-ui.md` for SDK packaging and release order.
+Changes to the shared browser client need a regenerated bundle rather than edits to compressed assets. Coordinate that update with the maintainers. The public [`@rstreamlabs/filesystem`](https://github.com/rstreamlabs/rstream-js/tree/main/packages/filesystem) package documents the filesystem API used by browser integrations.
 
 ## Verification
 

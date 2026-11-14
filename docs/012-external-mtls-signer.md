@@ -269,26 +269,6 @@ real TLS 1.2/1.3 and QUIC handshakes, all supported key families, cancellation,
 process cleanup, and CLI/configuration propagation. Run `go test -race ./...`
 for the complete concurrency suite and `make fips-test` for profile rejection.
 
-For an actual standalone CLI WebTTY session with an EE engine and two private
-tunnels, run the opt-in fixture:
-
-```sh
-RSTREAM_ENGINE_REPO=/path/to/rstream-engine \
-RSTREAM_NEXT_REPO=/path/to/rstream-nextjs \
-test/e2e/external-mtls-webtty.sh
-```
-
-Install the Next.js checkout's npm dependencies first; the fixture applies its
-product schema only to a fresh isolated PostgreSQL database. It builds the CLI,
-the portable example helper and the EE engine, generates a P-521 test identity,
-registers its fingerprint locally, and checks TLS, QUIC, reconnection and
-`doctor`. It needs Go, Python 3, OpenSSL and Docker. To use an isolated local
-PostgreSQL process instead of Docker, set `RSTREAM_TEST_POSTGRES_BIN` to the
-absolute directory containing `initdb`, `pg_ctl`, `createdb` and `psql`.
-The helper advertises message signing only, so the test exercises the HSM
-integration path without depending on hardware or existing account credentials.
-Generated artifacts are kept on failure, or with `RSTREAM_KEEP_RUNTIME=1`.
-
 Measure launch/signature cost on the target device; it depends on the helper and
 HSM. `go test ./internal/mtlsexec -run '^$' -bench ExecMessageSigning` measures a
 software P-521 signing operation including subprocess startup and local

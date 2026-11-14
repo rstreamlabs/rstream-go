@@ -83,7 +83,7 @@ Use agent mTLS when the engine should authenticate the agent with a client certi
 - When `RSTREAM_MTLS_CERT_FILE` and `RSTREAM_MTLS_KEY_FILE` are set, the resolver uses mTLS for the agent control-channel connection and does not fall back to a stored context token for that connection.
 - If mTLS variables are set together with `RSTREAM_AUTHENTICATION_TOKEN`, resolution fails before connecting.
 - Certificate and key inputs must be complete pairs. File-based and inline certificate material cannot be mixed in the same auth block.
-- Engine HTTP API operations, such as resource listing and watch streams, use token authentication.
+- Engine HTTP API operations, including resource listing and watch streams, reuse the certificate identity through [automatic API discovery](014-engine-mtls-turn.md). Control plane administration still requires a token.
 
 ```yaml
 contexts:

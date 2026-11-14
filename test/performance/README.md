@@ -20,9 +20,7 @@ The probe has a 90-second deadline. Echo workers, resource sampling and clients
 are owned and joined on exit. Transfer sizes, sample counts and datagram timing
 are bounded. `--pacing-ms=1..1000` and `--drain-seconds=1..30` control datagram
 timing; defaults are 1 ms and three seconds. Missing packets mean delivery-window
-misses, not physical link loss. Keep the
-[native-datagram qualification issue](https://github.com/rstreamlabs/rstream-engine/pull/217)
-separate; this probe neither fixes it nor switches delivery guarantees.
+misses, not physical link loss. Datagram delivery is best effort; this probe measures the selected transport without changing its delivery guarantees.
 
 JSON contains CPU/allocation deltas for both SDK peers in one process, latency
 quantiles, overlapping ping count, sampled heap/goroutine peaks and before/after
@@ -44,10 +42,7 @@ The real HTTP/3/WebTransport control in `webtty/transport_close_test.go` also
 checks session close with three flow-controlled writers, without changing the
 WebTransport implementation or extrapolating the native QUIC finding to it.
 
-The engine's `test/performance/README.md` specifies its disposable two-engine
-fixture, impairment, quotas and comparison procedure. Use identical helpers,
-compiler and settings for reference and candidate, retain raw ranges and binary
-metadata, and alternate order. Local measurements do not establish production
+Provide two test engine endpoints and a CA bundle for this probe. Use identical helpers, compiler and settings for reference and candidate, retain raw ranges and binary metadata, and alternate order. Local measurements do not establish production
 capacity. This utility changes no project policy, dependency version or protocol
 feature default.
 
