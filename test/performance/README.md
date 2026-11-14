@@ -50,3 +50,10 @@ compiler and settings for reference and candidate, retain raw ranges and binary
 metadata, and alternate order. Local measurements do not establish production
 capacity. This utility changes no project policy, dependency version or protocol
 feature default.
+
+For an isolated stream-wrapper comparison without the resource sampler, run
+`go test -run '^$' -bench '^BenchmarkQUICTransportStreamRoundTrip$' -benchtime=2s
+-count=3 -benchmem .` as one command from the SDK root. It measures a verified
+32 KiB echo over real local QUIC, includes both peers in allocation counts, and
+excludes certificate/connection setup. Compare identical helpers and compiler;
+this is not a production-capacity benchmark.
