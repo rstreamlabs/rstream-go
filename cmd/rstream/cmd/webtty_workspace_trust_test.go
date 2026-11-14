@@ -414,3 +414,65 @@ func mustMarshalWorkspaceTrustPayload(t *testing.T, payload map[string]any) []by
 	}
 	return data
 }
+
+func TestWebTTYWorkspaceServiceCredentialBindsItsSourceWithoutPrivateEnvelope(t *testing.T) {
+	testSetWebTTYWorkspaceTrustHome(t)
+	material, err := generateWorkspaceDeviceMaterial("workspace-1", workspaceDeviceKindService, "Camera")
+	if err != nil {
+		t.Fatal(err)
+	}
+	device := material.file
+	device.Version = workspaceServiceDeviceFileVersion
+	device.CredentialID = "credential-a"
+	device.DeviceKeyID = "device-service"
+	device.Status = workspaceDeviceStatusActive
+	keysetPrivate, _, bundle, _ := testWorkspaceKeyEnvelopeForDevice(t, device, "keyset-1")
+	writeTestWorkspaceDeviceWithWebTTYIdentity(t, device, material.webttyIdentity)
+	resolved := controlplane.ResolveWebTTYServerClientResponse{
+		ServerID: "server-1", WorkspaceID: "workspace-1", ProjectID: "project-1",
+		EncryptionPolicy: webTTYServerEncryptionPolicyWorkspaceManaged, E2ERequired: true,
+		CurrentDevice: testWebTTYCurrentDeviceResolution(t, device, keysetPrivate, bundle),
+	}
+	enrollment := &webTTYServerEnrollmentFile{
+		WorkspaceID: "workspace-1", ProjectID: "project-1", ServerID: "server-1",
+		WorkspaceTrustKeysetID: "keyset-1", WorkspaceTrustKeysetFingerprint: bundle.Fingerprint,
+		WorkspaceTrustPublicSigningKey: bundle.PublicSigningKey,
+	}
+	credential, err := webTTYWorkspaceClientCredential(device, resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpointIdentity, err := workspaceDeviceWebTTYEndpointIdentity(device)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verifyWebTTYWorkspaceClientCredential(enrollment, testWebTTYClientProofVerification(endpointIdentity, credential)); err != nil {
+		t.Fatalf("service certificate did not verify: %v", err)
+	}
+	if device.DeviceEnvelope != nil {
+		t.Fatal("service acquired private workspace keys")
+	}
+	for _, scenario := range []string{"different owner", "missing owner", "legacy version", "human kind"} {
+		t.Run(scenario, func(t *testing.T) {
+			tampered := testResignWebTTYWorkspaceClientCredential(t, credential, func(payload map[string]any) {
+				switch scenario {
+				case "different owner":
+					payload["owner_credential_id"] = "credential-b"
+				case "missing owner":
+					delete(payload, "owner_credential_id")
+				case "legacy version":
+					payload["v"] = 1
+				case "human kind":
+					payload["device_kind"] = "cli"
+				}
+			})
+			if _, err := verifyWebTTYWorkspaceClientCredential(enrollment, testWebTTYClientProofVerification(endpointIdentity, tampered)); err == nil {
+				t.Fatal("service signature escaped its approved owner")
+			}
+		})
+	}
+	resolved.CurrentDevice.CredentialID = "credential-b"
+	if _, err := webTTYWorkspaceClientCredential(device, resolved); err == nil {
+		t.Fatal("resolved certificate from another token accepted")
+	}
+}

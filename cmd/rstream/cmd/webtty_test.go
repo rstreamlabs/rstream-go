@@ -3905,6 +3905,9 @@ func TestWebTTYClientCryptoPreservesKnownServerClientIdentityWithRegisteredRunti
 	serverEndpointIdentity := webtty.KnownServerEndpointIdentityString(identity.Public())
 	serverPublicKey := webtty.EncodeE2EKeyMaterial(identity.Encryption.PublicKey)
 	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.EscapedPath() != "/api/projects/tunnels/project-1/webtty/servers/server-1/client-resolution" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
@@ -3973,6 +3976,9 @@ func TestWebTTYClientPayloadCryptoResolvesWorkspaceManagedServer(t *testing.T) {
 	serverPublicKey := webtty.EncodeE2EKeyMaterial(serverIdentity.Encryption.PublicKey)
 	var seen controlplane.ResolveWebTTYServerClientRequest
 	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.EscapedPath() != "/api/projects/tunnels/project-1/webtty/servers/server-1/client-resolution" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
@@ -4125,6 +4131,9 @@ func TestWebTTYClientOpensWorkspaceManagedE2ERuntime(t *testing.T) {
 	serverPublicKey := webtty.EncodeE2EKeyMaterial(serverIdentity.Encryption.PublicKey)
 	var seen controlplane.ResolveWebTTYServerClientRequest
 	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.EscapedPath() != "/api/projects/tunnels/project-runtime/webtty/servers/server-runtime/client-resolution" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
@@ -4286,6 +4295,9 @@ func TestWebTTYServerCommandAcceptsWorkspaceManagedDeviceCredential(t *testing.T
 	serverEndpointIdentity := webtty.KnownServerEndpointIdentityString(serverIdentity.Public())
 	serverPublicKey := webtty.EncodeE2EKeyMaterial(serverIdentity.Encryption.PublicKey)
 	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.EscapedPath() != "/api/projects/tunnels/project-command-runtime/webtty/servers/server-command-runtime/client-resolution" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
@@ -4370,6 +4382,9 @@ func TestWebTTYClientPayloadCryptoWorkspaceManagedRequiresResolvedTrustedDevice(
 	serverPublicKey := webtty.EncodeE2EKeyMaterial(serverIdentity.Encryption.PublicKey)
 	requestSeen := false
 	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.EscapedPath() != "/api/projects/tunnels/project-1/webtty/servers/server-1/client-resolution" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
@@ -4435,6 +4450,9 @@ func TestWebTTYClientPayloadCryptoWorkspaceManagedIgnoresForeignWorkspaceDevice(
 	serverPublicKey := webtty.EncodeE2EKeyMaterial(serverIdentity.Encryption.PublicKey)
 	requestSeen := false
 	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.EscapedPath() != "/api/projects/tunnels/project-1/webtty/servers/server-1/client-resolution" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
@@ -4483,6 +4501,9 @@ func TestWebTTYClientPayloadCryptoWorkspaceManagedMapsForbiddenToTrustedDeviceHi
 	projectID := "project-1"
 	serverID := "server-1"
 	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.EscapedPath() != "/api/projects/tunnels/project-1/webtty/servers/server-1/client-resolution" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
@@ -4536,6 +4557,9 @@ func TestWebTTYClientPayloadCryptoWorkspaceManagedRejectsUnexpectedResolvedDevic
 	serverEndpointIdentity := webtty.KnownServerEndpointIdentityString(serverIdentity.Public())
 	serverPublicKey := webtty.EncodeE2EKeyMaterial(serverIdentity.Encryption.PublicKey)
 	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.EscapedPath() != "/api/projects/tunnels/project-1/webtty/servers/server-1/client-resolution" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return

@@ -150,6 +150,8 @@ type WebTTYCryptoMetadata struct {
 }
 
 type WebTTYContextMetadata struct {
+	CredentialID      string              `json:"credential_id,omitempty"`
+	OwnerWorkspaceID  string              `json:"owner_workspace_id,omitempty"`
 	ExecutionDeadline *time.Time          `json:"execution_deadline,omitempty"`
 	Origin            WebTTYOrigin        `json:"origin,omitempty"`
 	OriginID          string              `json:"origin_id,omitempty"`
@@ -207,6 +209,9 @@ type WebTTYSessionGroup struct {
 }
 
 type WebTTYParticipant struct {
+	CredentialID         string                `json:"credential_id,omitempty"`
+	OwnerWorkspaceID     string                `json:"owner_workspace_id,omitempty"`
+	AuthExpiresAt        *time.Time            `json:"auth_expires_at,omitempty"`
 	ID                   string                `json:"id"`
 	SessionID            string                `json:"session_id"`
 	UserID               string                `json:"user_id,omitempty"`

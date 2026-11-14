@@ -1567,7 +1567,11 @@ func webTTYClientRuntimeE2EServerSources(ctx context.Context, runtimeE2E *webTTY
 	localDevices := []workspaceDeviceFile{}
 	if workspaceID != "" {
 		var err error
-		proofItems, err := workspaceDeviceAccessProofsWithDevices(workspaceID, 8)
+		identity, err := runtimeE2E.controlClient.Identity(ctx)
+		if err != nil {
+			return nil, nil, nil, false, mapControlPlaneError(err)
+		}
+		proofItems, err := workspaceDeviceAccessProofsWithDevices(workspaceID, 8, identity)
 		if err != nil {
 			return nil, nil, nil, false, err
 		}

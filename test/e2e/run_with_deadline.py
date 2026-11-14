@@ -14,6 +14,28 @@ def signal_group(process, number):
         os.killpg(process.pid, number)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        # Darwin may deny signaling an orphaned group after its last member
+        # exits. Verify the group has no live members; never hide a real denial.
+        if sys.platform != "darwin" or group_has_live_members(process.pid):
+            raise
+
+
+def group_has_live_members(group_id):
+    snapshot = subprocess.run(
+        ["ps", "-axo", "pgid=,stat="],
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=1,
+    )
+    for line in snapshot.stdout.splitlines():
+        fields = line.split()
+        if len(fields) != 2:
+            raise ValueError("cannot verify process-group cleanup")
+        if fields[0] == str(group_id) and not fields[1].startswith("Z"):
+            return True
+    return False
 
 
 def stop_group(process):

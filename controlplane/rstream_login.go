@@ -16,15 +16,17 @@ type RstreamLabel struct {
 }
 
 type RstreamLoginRequest struct {
-	Permissions []string       `json:"permissions"`
-	Source      []RstreamLabel `json:"source,omitempty"`
+	Permissions            []string       `json:"permissions"`
+	Source                 []RstreamLabel `json:"source,omitempty"`
+	CredentialOwnerVersion int            `json:"credentialOwnerVersion,omitempty"`
 }
 
 type RstreamLoginResponse struct {
-	RequestID     string     `json:"requestId"`
-	RequestSecret string     `json:"requestSecret"`
-	URL           string     `json:"url"`
-	ExpiresAt     *time.Time `json:"expiresAt,omitempty"`
+	RequestID              string     `json:"requestId"`
+	RequestSecret          string     `json:"requestSecret"`
+	URL                    string     `json:"url"`
+	ExpiresAt              *time.Time `json:"expiresAt,omitempty"`
+	CredentialOwnerVersion int        `json:"credentialOwnerVersion,omitempty"`
 }
 
 type RstreamLoginTokenRequest struct {

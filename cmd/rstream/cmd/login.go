@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/rstreamlabs/rstream-go/config"
+	"github.com/rstreamlabs/rstream-go/controlplane"
 	"github.com/spf13/cobra"
 )
 
@@ -14,9 +15,10 @@ const loginAuthFlowOAuth = "oauth"
 const loginAuthFlowLegacy = "legacy"
 
 type loginResult struct {
-	Authenticated bool   `json:"authenticated"`
-	APIURL        string `json:"apiUrl"`
-	AuthFlow      string `json:"authFlow"`
+	Authenticated bool                         `json:"authenticated"`
+	APIURL        string                       `json:"apiUrl"`
+	AuthFlow      string                       `json:"authFlow"`
+	Identity      *controlplane.CallerIdentity `json:"identity,omitempty"`
 }
 
 var loginCmd = &cobra.Command{
@@ -80,10 +82,15 @@ func init() {
 }
 
 func completeLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL, token, authFlow string) error {
-	if err := storeTokenFromFlags(cmd, path, cfg, apiURL, token); err != nil {
+	output, _ := cmd.Flags().GetString("output")
+	if err := validateOutputMode(output, "text", "json"); err != nil {
 		return err
 	}
-	return writeLoginResult(cmd, loginResult{Authenticated: true, APIURL: apiURL, AuthFlow: authFlow})
+	identity, err := storeTokenFromFlags(cmd, path, cfg, apiURL, token)
+	if err != nil {
+		return err
+	}
+	return writeLoginResult(cmd, loginResult{Authenticated: true, APIURL: apiURL, AuthFlow: authFlow, Identity: &identity})
 }
 
 func writeLoginResult(cmd *cobra.Command, result loginResult) error {
@@ -91,6 +98,14 @@ func writeLoginResult(cmd *cobra.Command, result loginResult) error {
 	switch output {
 	case "text":
 		fmt.Fprintln(os.Stdout, "Login successful.")
+		if result.Identity != nil {
+			owner := result.Identity.Owner
+			if owner.Kind == "workspace" {
+				fmt.Fprintf(os.Stdout, "Token owner: workspace %s\n", owner.WorkspaceID)
+			} else {
+				fmt.Fprintf(os.Stdout, "Token owner: user %s\n", owner.UserID)
+			}
+		}
 		return nil
 	case "json":
 		return writeStructuredOutput("json", result)
