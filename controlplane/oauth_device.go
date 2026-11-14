@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"slices"
+	"strconv"
 	"strings"
 )
 
 const OAuthDeviceGrantType = "urn:ietf:params:oauth:grant-type:device_code"
+const NativeCredentialOwnerVersion = 1
 
 type OAuthError struct {
 	Code        string
@@ -18,18 +21,24 @@ type OAuthError struct {
 }
 
 type OAuthAuthorizationServerMetadata struct {
-	Issuer                      string   `json:"issuer"`
-	DeviceAuthorizationEndpoint string   `json:"device_authorization_endpoint"`
-	TokenEndpoint               string   `json:"token_endpoint"`
-	RevocationEndpoint          string   `json:"revocation_endpoint"`
-	GrantTypesSupported         []string `json:"grant_types_supported"`
-	ScopesSupported             []string `json:"scopes_supported"`
+	Issuer                           string   `json:"issuer"`
+	DeviceAuthorizationEndpoint      string   `json:"device_authorization_endpoint"`
+	TokenEndpoint                    string   `json:"token_endpoint"`
+	RevocationEndpoint               string   `json:"revocation_endpoint"`
+	GrantTypesSupported              []string `json:"grant_types_supported"`
+	ScopesSupported                  []string `json:"scopes_supported"`
+	CredentialOwnerVersionsSupported []int    `json:"rstream:credential_owner_versions_supported,omitempty"`
+}
+
+func (m OAuthAuthorizationServerMetadata) SupportsCredentialOwnerVersion(version int) bool {
+	return slices.Contains(m.CredentialOwnerVersionsSupported, version)
 }
 
 type OAuthDeviceAuthorizationRequest struct {
-	ClientID string
-	Scope    string
-	Source   []RstreamLabel
+	ClientID               string
+	Scope                  string
+	Source                 []RstreamLabel
+	CredentialOwnerVersion int
 }
 
 type OAuthDeviceAuthorizationResponse struct {
@@ -63,6 +72,9 @@ func (e *OAuthError) Error() string {
 func (r OAuthDeviceAuthorizationRequest) values() (url.Values, error) {
 	values := url.Values{}
 	values.Set("client_id", r.ClientID)
+	if r.CredentialOwnerVersion != 0 {
+		values.Set("rstream_credential_owner_version", strconv.Itoa(r.CredentialOwnerVersion))
+	}
 	if strings.TrimSpace(r.Scope) != "" {
 		values.Set("scope", strings.TrimSpace(r.Scope))
 	}

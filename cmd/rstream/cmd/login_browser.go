@@ -4,8 +4,11 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -16,6 +19,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Compatibility request for servers without owner-aware enrollment. Current
+// servers define their default in the shared versioned enrollment catalog.
 var rstreamLoginPermissions = []string{
 	"account.plan.read-only",
 	"account.projects.read-write",
@@ -50,33 +55,40 @@ func storeToken(ctx context.Context, path string, cfg config.Config, apiURL, tok
 	return storeTokenWithStorage(ctx, path, cfg, apiURL, token, config.TokenStorage{Kind: config.TokenStorageInline, Value: token})
 }
 
-func storeTokenFromFlags(cmd *cobra.Command, path string, cfg config.Config, apiURL, token string) error {
+func storeTokenFromFlags(cmd *cobra.Command, path string, cfg config.Config, apiURL, token string) (controlplane.CallerIdentity, error) {
 	storage, err := tokenStorageFromFlags(cmd, apiURL)
 	if err != nil {
-		return err
+		return controlplane.CallerIdentity{}, err
 	}
-	return storeTokenWithStorage(cmd.Context(), path, cfg, apiURL, token, storage)
+	return storeTokenAndIdentity(cmd.Context(), path, cfg, apiURL, token, storage)
 }
 
 func storeTokenWithStorage(ctx context.Context, path string, cfg config.Config, apiURL, token string, storage config.TokenStorage) error {
+	_, err := storeTokenAndIdentity(ctx, path, cfg, apiURL, token, storage)
+	return err
+}
+
+func storeTokenAndIdentity(ctx context.Context, path string, cfg config.Config, apiURL, token string, storage config.TokenStorage) (controlplane.CallerIdentity, error) {
 	env, _ := cfg.FindEnvironment(apiURL)
 	headers, err := config.ResolveControlPlaneHeaders(env, config.ReadEnv().ControlPlaneHeaders)
 	if err != nil {
-		return err
+		return controlplane.CallerIdentity{}, err
 	}
-	if err := validateToken(ctx, apiURL, token, headers); err != nil {
-		return err
+	identity, err := validateTokenIdentity(ctx, apiURL, token, headers)
+	if err != nil {
+		return controlplane.CallerIdentity{}, err
 	}
 	switch storage.Kind {
 	case config.TokenStorageInline:
 	case config.TokenStorageKeychain:
+		storage = loginIdentityTokenStorage(storage, identity, token)
 		if err := storeTokenInCredentialProvider(storage, token); err != nil {
-			return err
+			return controlplane.CallerIdentity{}, err
 		}
 	default:
-		return fmt.Errorf("token storage kind %q is not supported", storage.Kind)
+		return controlplane.CallerIdentity{}, fmt.Errorf("token storage kind %q is not supported", storage.Kind)
 	}
-	return config.UpdateAtomic(path, func(latest *config.Config) error {
+	err = config.UpdateAtomic(path, func(latest *config.Config) error {
 		environment := latest.EnsureEnvironment(apiURL)
 		if storage.Kind == config.TokenStorageInline {
 			return setEnvironmentToken(environment, token)
@@ -84,6 +96,21 @@ func storeTokenWithStorage(ctx context.Context, path string, cfg config.Config, 
 		setEnvironmentTokenStorage(environment, storage)
 		return nil
 	})
+	if err != nil {
+		return controlplane.CallerIdentity{}, err
+	}
+	return identity, nil
+}
+
+// Each approved proof gets its own slot. Switching owner or re-enrolling must
+// not change a token still referenced by an existing context or process.
+func loginIdentityTokenStorage(storage config.TokenStorage, identity controlplane.CallerIdentity, token string) config.TokenStorage {
+	ownerID := identity.Owner.UserID
+	if identity.Owner.Kind == "workspace" {
+		ownerID = identity.Owner.WorkspaceID
+	}
+	storage.Account += fmt.Sprintf(":owner:%s:%s:token:%x", identity.Owner.Kind, url.QueryEscape(ownerID), sha256.Sum256([]byte(token)))
+	return storage
 }
 
 func tokenStorageFromFlags(cmd *cobra.Command, apiURL string) (config.TokenStorage, error) {
@@ -107,6 +134,16 @@ func runLegacyDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, ap
 	}
 	client := controlplane.NewClient(apiURL, "", controlplane.WithHeaders(headers))
 	req := controlplane.RstreamLoginRequest{Permissions: rstreamLoginPermissions, Source: resolveRstreamLoginSource()}
+	metadata, err := client.OAuthAuthorizationServerMetadata(ctx)
+	if err != nil {
+		var apiError *controlplane.APIError
+		if !errors.As(err, &apiError) || (apiError.StatusCode != http.StatusNotFound && apiError.StatusCode != http.StatusMethodNotAllowed) {
+			return rstreamLoginCommandError(err)
+		}
+	} else if metadata.SupportsCredentialOwnerVersion(controlplane.NativeCredentialOwnerVersion) {
+		req.CredentialOwnerVersion = controlplane.NativeCredentialOwnerVersion
+		req.Permissions = nil
+	}
 	res, err := client.CreateRstreamLogin(ctx, req)
 	if err != nil {
 		return rstreamLoginCommandError(err)
@@ -143,10 +180,9 @@ func runOAuthDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, api
 	if metadata.DeviceAuthorizationEndpoint == "" || metadata.TokenEndpoint == "" {
 		return errors.New("OAuth device authorization metadata is incomplete")
 	}
-	req := controlplane.OAuthDeviceAuthorizationRequest{
-		ClientID: rstreamOAuthClientID,
-		Scope:    strings.Join(rstreamLoginPermissions, " "),
-		Source:   resolveRstreamLoginSource(),
+	req, err := nativeOAuthDeviceLoginRequest(metadata, nil)
+	if err != nil {
+		return err
 	}
 	res, err := client.CreateOAuthDeviceAuthorization(ctx, metadata.DeviceAuthorizationEndpoint, req)
 	if err != nil {
@@ -174,6 +210,21 @@ func runOAuthDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, api
 		return rstreamLoginCommandError(err)
 	}
 	return rstreamLoginCommandError(completeLogin(cmd, path, cfg, apiURL, token, loginAuthFlowOAuth))
+}
+
+// Nil permissions selects the server's default on capable servers. Explicit
+// scopes (for example an MCP request) remain an independent maximum.
+func nativeOAuthDeviceLoginRequest(metadata controlplane.OAuthAuthorizationServerMetadata, permissions []string) (controlplane.OAuthDeviceAuthorizationRequest, error) {
+	if permissions != nil && len(permissions) == 0 {
+		return controlplane.OAuthDeviceAuthorizationRequest{}, errors.New("at least one permission must be requested")
+	}
+	version := 0
+	if metadata.SupportsCredentialOwnerVersion(controlplane.NativeCredentialOwnerVersion) {
+		version = controlplane.NativeCredentialOwnerVersion
+	} else if permissions == nil {
+		permissions = rstreamLoginPermissions
+	}
+	return controlplane.OAuthDeviceAuthorizationRequest{ClientID: rstreamOAuthClientID, Scope: strings.Join(permissions, " "), Source: resolveRstreamLoginSource(), CredentialOwnerVersion: version}, nil
 }
 
 func loginProgressOutput(cmd *cobra.Command) *os.File {

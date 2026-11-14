@@ -22,12 +22,15 @@ func TestMCPAuthStartAndPollStoresTokenWithoutReturningIt(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/.well-known/oauth-authorization-server":
-			_ = json.NewEncoder(w).Encode(controlplane.OAuthAuthorizationServerMetadata{DeviceAuthorizationEndpoint: "/oauth/device_authorization", TokenEndpoint: "/oauth/token"})
+			_ = json.NewEncoder(w).Encode(controlplane.OAuthAuthorizationServerMetadata{DeviceAuthorizationEndpoint: "/oauth/device_authorization", TokenEndpoint: "/oauth/token", CredentialOwnerVersionsSupported: []int{1}})
 		case "/oauth/device_authorization":
 			if err := r.ParseForm(); err != nil {
 				t.Fatalf("ParseForm returned error: %v", err)
 			}
 			scope := r.Form.Get("scope")
+			if r.Form.Get("rstream_credential_owner_version") != "1" {
+				t.Error("MCP enrollment did not negotiate owner-aware credentials")
+			}
 			hasPlanRead := strings.Contains(scope, "account.plan.read-only")
 			hasProjectWrite := strings.Contains(scope, "account.projects.read-write")
 			hasTokenCreate := strings.Contains(scope, "account.tokens.create")

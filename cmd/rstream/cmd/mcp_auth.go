@@ -88,7 +88,11 @@ func mcpCreateAuthSession(ctx context.Context, args map[string]json.RawMessage) 
 	if metadata.DeviceAuthorizationEndpoint == "" || metadata.TokenEndpoint == "" {
 		return nil, errors.New("OAuth device authorization metadata is incomplete")
 	}
-	response, err := client.CreateOAuthDeviceAuthorization(ctx, metadata.DeviceAuthorizationEndpoint, controlplane.OAuthDeviceAuthorizationRequest{ClientID: rstreamOAuthClientID, Scope: strings.Join(permissions, " "), Source: resolveRstreamLoginSource()})
+	request, err := nativeOAuthDeviceLoginRequest(metadata, permissions)
+	if err != nil {
+		return nil, err
+	}
+	response, err := client.CreateOAuthDeviceAuthorization(ctx, metadata.DeviceAuthorizationEndpoint, request)
 	if err != nil {
 		return nil, rstreamLoginCommandError(err)
 	}
@@ -193,11 +197,12 @@ func mcpAuthExchangeRaw(ctx context.Context, session mcpAuthSession) (map[string
 		if response.AccessToken == "" {
 			return nil, true, errors.New("login token is empty")
 		}
-		if err := storeToken(ctx, session.ConfigPath, cfg, session.APIURL, response.AccessToken); err != nil {
+		identity, err := storeTokenAndIdentity(ctx, session.ConfigPath, cfg, session.APIURL, response.AccessToken, config.TokenStorage{Kind: config.TokenStorageInline})
+		if err != nil {
 			return nil, true, err
 		}
 		_ = mcpAuthRemoveSession(mcpAuthRegistryPath(session.ConfigPath), session.ID)
-		return map[string]any{"authenticated": true, "status": "authenticated", "api_url": session.APIURL, "config_path": session.ConfigPath, "auth_flow": loginAuthFlowOAuth}, true, nil
+		return map[string]any{"authenticated": true, "status": "authenticated", "api_url": session.APIURL, "config_path": session.ConfigPath, "auth_flow": loginAuthFlowOAuth, "identity": identity}, true, nil
 	}
 	result, pending, pollErr := mcpAuthPollResult(ctx, session, err)
 	if pollErr != nil {

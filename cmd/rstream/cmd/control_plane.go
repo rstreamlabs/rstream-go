@@ -18,22 +18,27 @@ func newRuntimeControlPlaneClient(resolved config.Resolved, opts ...controlplane
 }
 
 func validateToken(ctx context.Context, apiURL, token string, headers map[string]string) error {
+	_, err := validateTokenIdentity(ctx, apiURL, token, headers)
+	return err
+}
+
+func validateTokenIdentity(ctx context.Context, apiURL, token string, headers map[string]string) (controlplane.CallerIdentity, error) {
 	logger := slog.With("component", "control_plane_api.validate-token")
 	if strings.TrimSpace(token) == "" {
-		return errors.New("token is required")
+		return controlplane.CallerIdentity{}, errors.New("token is required")
 	}
 	client := controlplane.NewClient(apiURL, token, controlplane.WithHeaders(headers), controlplane.WithLogger(logger))
 	identity, err := client.Identity(ctx)
 	if err != nil {
 		if errors.Is(err, controlplane.ErrUnauthorized) {
-			return errors.New("token validation failed: not authenticated")
+			return controlplane.CallerIdentity{}, errors.New("token validation failed: not authenticated")
 		}
-		return err
+		return controlplane.CallerIdentity{}, err
 	}
 	if flagVerbose {
 		logger.Debug("token validated", "owner_kind", identity.Owner.Kind, "user_id", identity.Owner.UserID, "workspace_id", identity.Owner.WorkspaceID, "credential_id", identity.CredentialID)
 	}
-	return nil
+	return identity, nil
 }
 
 func resolveControlPlaneToken(cfg config.Config, apiURL string) (string, error) {
