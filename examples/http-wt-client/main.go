@@ -46,7 +46,7 @@ func handleConnection(ctx context.Context, sess *webtransport.Session) error {
 }
 
 func run(ctx context.Context, client *rstream.Client, publish bool) error {
-	dialer := webtransport.Dialer{}
+	dialer := webtransport.Transport{}
 	name := "wt-example"
 	var url *string
 	if publish {

@@ -29,7 +29,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/pion/dtls/v3"
+	"github.com/pion/dtls/v4"
 	"github.com/pion/sctp"
 	"github.com/quic-go/quic-go"
 	rstream "github.com/rstreamlabs/rstream-go"
@@ -186,7 +186,7 @@ func handleSCTPConn(conn net.Conn) {
 }
 
 func handleDTLSUpstreamConn(conn net.PacketConn, raddr net.Addr, certs []tls.Certificate, tlsALPN string) {
-	dtlsConn, err := dtls.ServerWithOptions(conn, raddr, dtlsServerOptions(certs, tlsALPN)...)
+	dtlsConn, err := dtls.Server(conn, raddr, dtlsServerOptions(certs, tlsALPN)...)
 	if err != nil {
 		log.Printf("dtls upstream: handshake error: %v", err)
 		conn.Close()
@@ -204,11 +204,11 @@ func handleDTLSUpstreamConn(conn net.PacketConn, raddr net.Addr, certs []tls.Cer
 			return
 		}
 	}
-	handleDTLSConn(rstream.PacketConnFromDTLSConn(dtlsConn))
+	handleDTLSConn(rstream.PacketConnFromConn(dtlsConn, nil, rstream.PacketModeRaw))
 }
 
 func handleSCTPDTLSUpstreamConn(conn net.PacketConn, raddr net.Addr, certs []tls.Certificate, tlsALPN string) {
-	dtlsConn, err := dtls.ServerWithOptions(conn, raddr, dtlsServerOptions(certs, tlsALPN)...)
+	dtlsConn, err := dtls.Server(conn, raddr, dtlsServerOptions(certs, tlsALPN)...)
 	if err != nil {
 		log.Printf("sctp dtls upstream: handshake error: %v", err)
 		conn.Close()

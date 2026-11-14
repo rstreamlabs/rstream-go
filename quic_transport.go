@@ -17,6 +17,7 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/rstreamlabs/rstream-go/internal/handshakectx"
+	"github.com/rstreamlabs/rstream-go/internal/quicstream"
 )
 
 // ErrDatagramTooLarge is returned by datagram channel writes when the payload
@@ -143,7 +144,7 @@ func (t *QUICTransport) Dial(ctx context.Context, addr string, tlsCfg *tls.Confi
 		}
 		stream, err := conn.OpenStreamSync(ctx)
 		if err == nil {
-			return &quicStreamConn{stream: stream, conn: conn, transport: t}, nil
+			return &quicStreamConn{stream: quicstream.New(stream, 0), conn: conn, transport: t}, nil
 		}
 		openErr = err
 		if ctx.Err() != nil {
@@ -573,7 +574,7 @@ func (t *QUICTransport) connectRoute(ctx context.Context, route dialRoute, tlsCf
 // quicStreamConn wraps a quic.Stream as a net.Conn, delegating LocalAddr and
 // RemoteAddr to the underlying quic.Conn.
 type quicStreamConn struct {
-	stream    *quic.Stream
+	stream    *quicstream.Stream
 	conn      *quic.Conn
 	transport *QUICTransport
 }
@@ -591,14 +592,11 @@ func (c *quicStreamConn) Write(p []byte) (int, error) {
 }
 
 func (c *quicStreamConn) Close() error {
-	// CancelRead sends STOP_SENDING so the remote stops sending and any
-	// pending Read call returns immediately, giving a true bidirectional close.
-	c.stream.CancelRead(0)
 	return c.stream.Close()
 }
 
 func (c *quicStreamConn) CloseWrite() error {
-	return c.stream.Close()
+	return c.stream.CloseWrite()
 }
 
 func (c *quicStreamConn) LocalAddr() net.Addr {

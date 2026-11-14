@@ -58,6 +58,33 @@ tested.
 
 Payload keys must be random key material. Do not derive them from passwords or application strings.
 
+## Published DTLS versions and project policy
+
+Published DTLS endpoints support DTLS 1.2 and 1.3 when the engine enables DTLS.
+The tunnel and project minimum use the existing values `tls1.2` and `tls1.3`;
+for DTLS these select a DTLS 1.2-or-newer or DTLS 1.3 minimum. Old Pion v3 clients
+remain compatible with endpoints permitting DTLS 1.2.
+
+| Project setting | Published DTLS behavior |
+| --- | --- |
+| PQ preferred, NIST off | X25519MLKEM768 preferred on DTLS 1.3; classical fallback allowed |
+| PQ required, NIST off | X25519MLKEM768 and DTLS 1.3 required |
+| PQ preferred, NIST on | Classical P-256/P-384 fallback only |
+| PQ required, NIST on | Rejected: required hybrid groups unavailable |
+| ECH preferred | Permitted without ECH, subject to other policy |
+| ECH required | Rejected: ECH unavailable on this DTLS surface |
+
+Requirements combine with the minimum version and access/authentication rules.
+0-RTT, DTLS session resumption and CID migration are not enabled by this feature.
+DTLS remains excluded from the restricted FIPS profile.
+
+The SDK's agent-to-engine transports are independent of the published DTLS
+protocol. DTLS samples and matrix binaries use Pion v4. The public
+`PacketConnFromDTLSConn` helper continues to accept Pion v3 connections;
+wrap a v4 connection with
+`PacketConnFromConn(conn, nil, PacketModeRaw)` instead. WebRTC dependencies
+can continue to use v3 in the same Go module.
+
 ## Forwarding hostname
 
 For published tunnels, the server returns the public forwarding hostname in `hostname` and the public forwarding port in `port`. Clients normally leave `port` unset. For `protocol=tcp`, a client may set it to a port already reserved by the authenticated project; all other protocols treat it as read-only.

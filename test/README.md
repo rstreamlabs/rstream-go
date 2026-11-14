@@ -10,11 +10,11 @@ This directory contains end-to-end tests for the rstream Go SDK. Each subdirecto
 | `webtransport` | 2 | Private SDK-dialer and published HTTP/3 reverse-proxy runs covering bidirectional streams, unidirectional streams, datagrams, multi-stream, close codes, and same-origin validation |
 | `http` | 3 | HTTP tunnels over H1, H2C, and H3, including GET and SSE streaming |
 | `stream` | 8 | Bytestream tunnel: plain (unpublished), raw TCP and TLS via engine listeners (published), TLS via SDK dialer (unpublished), TLS passthrough, TLS with upstream TLS, and ALPN rejection checks |
-| `datagram` | 16 | Datagram tunnel: private self-dial, shared transport, guaranteed self-dial, DTLS via SDK dialer (unpublished), DTLS via engine listener (published, with and without upstream DTLS), QUIC via SDK dialer (unpublished), QUIC via engine listener (published), SCTP via pion/sctp over SDK datagrams and published DTLS, and ALPN rejection checks |
+| `datagram` | 22 | Datagram tunnel: private self-dial, shared transport, guaranteed self-dial, DTLS via SDK dialer (unpublished), DTLS via engine listener (published, with and without upstream DTLS), forced DTLS 1.2/1.3 and fragmented DTLS 1.3, QUIC via SDK dialer (unpublished), QUIC via engine listener (published), SCTP via pion/sctp over SDK datagrams and published DTLS, and ALPN rejection checks |
 | `masque` | 2 | Published HTTP/3 datagram tunnels carrying CONNECT-UDP and CONNECT-IP Extended CONNECT sessions end-to-end, including public authority preservation |
 | `connect` | 9 | All upstream × downstream HTTP version combinations for published authority-form CONNECT (H1, H2C, H3) |
 
-The primary `run-e2e.sh` matrix executes 37 cases. Each WebTransport runner case
+The primary `run-e2e.sh` matrix executes 43 cases. Each WebTransport runner case
 contains multiple protocol subcases internally. Additional runtime suites cover
 MASQUE, the nine-case CONNECT matrix, and the six bandwidth-limit cases described below.
 
@@ -507,6 +507,9 @@ test/
 | `--variant` | `dtls` | `dtls`, `quic`, or `sctp` |
 | `--addr` | — | Engine edge address for direct (published) connections |
 | `--tls-alpn` | — | Custom ALPN for published DTLS, QUIC, or SCTP connections |
+| `--dtls-version` | auto | Force published DTLS/SCTP to `1.2` or `1.3` |
+| `--dtls-mtu` | Pion default | Handshake MTU; use `160` to exercise fragmentation |
+| `--dtls-curve` | Pion default | Restrict the group to `x25519`, `p256`, `p384`, or `x25519mlkem768` for policy tests |
 | `--tunnel` | `datagram-matrix` | Tunnel name prefix for SDK dialer |
 
 ### masque/server

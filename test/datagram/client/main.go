@@ -24,7 +24,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pion/dtls/v3"
+	"github.com/pion/dtls/v4"
+	"github.com/pion/dtls/v4/pkg/crypto/elliptic"
+	"github.com/pion/dtls/v4/pkg/protocol"
 	"github.com/pion/sctp"
 	"github.com/quic-go/quic-go"
 	rstream "github.com/rstreamlabs/rstream-go"
@@ -48,12 +50,42 @@ func dtlsALPNs(tlsALPN string) []string {
 	return nil
 }
 
-func dtlsClientOptions(hostname, tlsALPN string) []dtls.ClientOption {
-	opts := []dtls.ClientOption{dtls.WithServerName(hostname), dtls.WithInsecureSkipVerify(true)}
+func dtlsClientOptions(hostname, tlsALPN, version, curve string, mtu int) ([]dtls.ClientOption, error) {
+	minimum, maximum := protocol.Version1_2, protocol.Version1_3
+	switch version {
+	case "":
+	case "1.2":
+		maximum = protocol.Version1_2
+	case "1.3":
+		minimum = protocol.Version1_3
+	default:
+		return nil, fmt.Errorf("invalid DTLS version %q", version)
+	}
+	if mtu < 0 || mtu > 65535 || (mtu > 0 && mtu < 64) {
+		return nil, fmt.Errorf("invalid DTLS handshake MTU %d", mtu)
+	}
+
+	opts := []dtls.ClientOption{dtls.WithServerName(hostname), dtls.WithInsecureSkipVerify(true), dtls.WithMinVersion(minimum), dtls.WithMaxVersion(maximum)}
+	if mtu > 0 {
+		opts = append(opts, dtls.WithMTU(mtu))
+	}
+	switch curve {
+	case "":
+	case "x25519":
+		opts = append(opts, dtls.WithEllipticCurves(elliptic.X25519))
+	case "p256":
+		opts = append(opts, dtls.WithEllipticCurves(elliptic.P256))
+	case "p384":
+		opts = append(opts, dtls.WithEllipticCurves(elliptic.P384))
+	case "x25519mlkem768":
+		opts = append(opts, dtls.WithEllipticCurves(elliptic.X25519MLKEM768))
+	default:
+		return nil, fmt.Errorf("invalid DTLS key-exchange group %q", curve)
+	}
 	if protocols := dtlsALPNs(tlsALPN); len(protocols) > 0 {
 		opts = append(opts, dtls.WithSupportedProtocols(protocols...))
 	}
-	return opts
+	return opts, nil
 }
 
 // hostPortFromAddr extracts a bare host:port, stripping any scheme prefix and
@@ -107,14 +139,18 @@ func runDTLSUnpublished(ctx context.Context, client *rstream.Client, tunnelName,
 	return dtlsEcho(packetConn, &raddr)
 }
 
-func runDTLSPublished(ctx context.Context, addr, tlsALPN string) error {
+func runDTLSPublished(ctx context.Context, addr, tlsALPN, version, curve string, mtu int) error {
 	hp := hostPortFromAddr(addr, "4433")
 	hostname, _, _ := net.SplitHostPort(hp)
 	udpAddr, err := net.ResolveUDPAddr("udp", hp)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", hp, err)
 	}
-	conn, err := dtls.DialWithOptions("udp", udpAddr, dtlsClientOptions(hostname, tlsALPN)...)
+	options, err := dtlsClientOptions(hostname, tlsALPN, version, curve, mtu)
+	if err != nil {
+		return err
+	}
+	conn, err := dtls.Dial("udp", udpAddr, options...)
 	if err != nil {
 		return fmt.Errorf("dtls dial %s: %w", hp, err)
 	}
@@ -126,7 +162,7 @@ func runDTLSPublished(ctx context.Context, addr, tlsALPN string) error {
 			return fmt.Errorf("unexpected DTLS ALPN: got %q, want %q", state.NegotiatedProtocol, tlsALPN)
 		}
 	}
-	pc := rstream.PacketConnFromDTLSConn(conn)
+	pc := rstream.PacketConnFromConn(conn, nil, rstream.PacketModeRaw)
 	defer pc.Close()
 	return dtlsEcho(pc, udpAddr)
 }
@@ -239,14 +275,18 @@ func runSCTPUnpublished(ctx context.Context, client *rstream.Client, tunnelName,
 	return sctpEcho(rstream.ConnFromPacketConn(packetConn, &raddr))
 }
 
-func runSCTPPublished(ctx context.Context, addr, tlsALPN string) error {
+func runSCTPPublished(ctx context.Context, addr, tlsALPN, version, curve string, mtu int) error {
 	hp := hostPortFromAddr(addr, "4433")
 	hostname, _, _ := net.SplitHostPort(hp)
 	udpAddr, err := net.ResolveUDPAddr("udp", hp)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", hp, err)
 	}
-	conn, err := dtls.DialWithOptions("udp", udpAddr, dtlsClientOptions(hostname, tlsALPN)...)
+	options, err := dtlsClientOptions(hostname, tlsALPN, version, curve, mtu)
+	if err != nil {
+		return err
+	}
+	conn, err := dtls.Dial("udp", udpAddr, options...)
 	if err != nil {
 		return fmt.Errorf("dtls dial %s: %w", hp, err)
 	}
@@ -297,6 +337,9 @@ func sctpEcho(conn net.Conn) error {
 
 func main() {
 	variant := flag.String("variant", "dtls", "variant: dtls, quic, sctp")
+	dtlsCurve := flag.String("dtls-curve", "", "restrict DTLS group: x25519, p256, p384, x25519mlkem768")
+	dtlsVersion := flag.String("dtls-version", "", "force a published DTLS version: 1.2 or 1.3 (empty negotiates either)")
+	dtlsMTU := flag.Int("dtls-mtu", 0, "DTLS handshake MTU for fragmentation tests (0 uses Pion default)")
 	addr := flag.String("addr", "", "forwarding address for direct (published) connection")
 	tlsALPN := flag.String("tls-alpn", "", "custom ALPN for published DTLS, QUIC, or SCTP tunnels")
 	tunnelPrefix := flag.String("tunnel", "datagram-matrix", "tunnel name prefix for SDK dialer")
@@ -326,7 +369,7 @@ func main() {
 	switch *variant {
 	case "dtls":
 		if *addr != "" {
-			runErr = runDTLSPublished(tctx, *addr, *tlsALPN)
+			runErr = runDTLSPublished(tctx, *addr, *tlsALPN, *dtlsVersion, *dtlsCurve, *dtlsMTU)
 		} else {
 			runErr = runDTLSUnpublished(tctx, client, *tunnelPrefix+"-dtls", *expectedTunnelPacketPath)
 		}
@@ -338,7 +381,7 @@ func main() {
 		}
 	case "sctp":
 		if *addr != "" {
-			runErr = runSCTPPublished(tctx, *addr, *tlsALPN)
+			runErr = runSCTPPublished(tctx, *addr, *tlsALPN, *dtlsVersion, *dtlsCurve, *dtlsMTU)
 		} else {
 			runErr = runSCTPUnpublished(tctx, client, *tunnelPrefix+"-sctp", *expectedTunnelPacketPath)
 		}

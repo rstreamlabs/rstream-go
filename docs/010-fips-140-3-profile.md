@@ -147,8 +147,8 @@ CGO_ENABLED=0
 
 `GOFIPS140` selects a frozen Go Cryptographic Module and enables FIPS mode by default. The `rstream_fips` build tag enables the rstream feature policy and fail-closed runtime checks. Both are required.
 
-The phase-three profile freezes `github.com/quic-go/quic-go` at `v0.60.0` and
-`github.com/quic-go/webtransport-go` at `v0.11.1`.
+The phase-three profile freezes `github.com/quic-go/quic-go` at `v0.64.1` and
+`github.com/quic-go/webtransport-go` at `v0.13.0`.
 The FIPS build fails its metadata check, and the executable fails closed at
 startup, if that reviewed dependency identity changes.
 
@@ -157,7 +157,7 @@ startup, if that reviewed dependency identity changes.
 A FIPS-profile CLI identifies itself and the exact linked module build:
 
 ```text
-rstream version <version> (FIPS 140-3 profile, Go module v1.0.0-c2097c7c, quic-go v0.60.0, webtransport-go v0.11.1)
+rstream version <version> (FIPS 140-3 profile, Go module v1.0.0-c2097c7c, quic-go v0.64.1, webtransport-go v0.13.0)
 ```
 
 At process startup, the CLI verifies that:
@@ -302,3 +302,19 @@ An upgrade requires:
 3. running the standard and FIPS-specific test suites;
 4. rebuilding both Linux architectures and checking their build metadata;
 5. updating this document, release evidence, and product documentation with the exact module version.
+
+## QUIC 0.64.1 review
+
+The reviewed transport tuple is quic-go v0.64.1 and webtransport-go v0.13.0.
+The frozen Go Cryptographic Module remains v1.0.0-c2097c7c. The handshake review
+retains the Initial/Retry integrity exceptions and approved Handshake/1-RTT
+cryptographic paths. Go 1.27 QUIC TLS callbacks now use ClientHelloInfoConn
+directly; configured certificate and authentication policy remains authoritative.
+No new early-data, session-pooling or security-policy option is enabled by this
+dependency update. Existing standard/profile policy tests remain required.
+
+The [Go FIPS documentation](https://go.dev/doc/security/fips140) identifies the
+frozen module, and [CMVP certificate 5247](https://csrc.nist.gov/projects/cryptographic-module-validation-program/certificate/5247)
+is active when checked on 13 November 2026. Applicable operating environments
+and the module security policy still govern deployment claims. Source review,
+local tests and build metadata do not certify an application or deployment.

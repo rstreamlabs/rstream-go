@@ -72,7 +72,7 @@ func buildDialer(client *rstream.Client, publish bool, token string, tunnelName 
 			dialHdr.Set("Authorization", "Bearer "+token)
 		}
 		return func(ctx context.Context, relPath string) (*webtransport.Session, error) {
-			d := webtransport.Dialer{TLSClientConfig: webTransportTLSConfig(publishedTLSConfig)}
+			d := webtransport.Transport{TLSClientConfig: webTransportTLSConfig(publishedTLSConfig)}
 			u := "https://" + host + relPath
 			_, sess, err := d.Dial(ctx, u, dialHdr)
 			return sess, err
@@ -80,7 +80,7 @@ func buildDialer(client *rstream.Client, publish bool, token string, tunnelName 
 	}
 	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 	return func(ctx context.Context, relPath string) (*webtransport.Session, error) {
-		d := webtransport.Dialer{
+		d := webtransport.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h3"}},
 			DialAddr: func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
 				raddr := rstream.Addr{IdOrName: addr}

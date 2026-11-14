@@ -53,8 +53,8 @@ for arch in x86_64 arm64; do
   grep -Fq $'\tbuild\tGOFIPS140=v1.0.0-c2097c7c' "$metadata"
   grep -Fq $'\tbuild\tGOOS=linux' "$metadata"
   grep -Fq $'\tbuild\tGOARCH='"${go_arch}" "$metadata"
-  grep -Fq $'\tdep\tgithub.com/quic-go/quic-go\tv0.60.0\t' "$metadata"
-  grep -Fq $'\tdep\tgithub.com/quic-go/webtransport-go\tv0.11.1\t' "$metadata"
+  grep -Fq $'\tdep\tgithub.com/quic-go/quic-go\tv0.64.1\t' "$metadata"
+  grep -Fq $'\tdep\tgithub.com/quic-go/webtransport-go\tv0.13.0\t' "$metadata"
 
   {
     printf '\nrelease-version\t%s\n' "$version"
