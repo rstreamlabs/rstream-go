@@ -246,6 +246,9 @@ func TestRunDeepUsesButDoesNotCloseCallerTransport(t *testing.T) {
 		if !errors.Is(err, doctor.ErrChecksFailed) || checks["engine"].Status != doctor.StatusFail {
 			t.Fatalf("unreachable engine: %+v %v", report, err)
 		}
+		if checks["dns"].Status != doctor.StatusSkip {
+			t.Fatalf("custom transport DNS was guessed: %+v", checks["dns"])
+		}
 		check, exists := checks["tunnel_creation"]
 		if exists != deep || deep && (check.Status != doctor.StatusFail || !strings.Contains(check.Details["error"], "fixture transport failure")) {
 			t.Fatalf("deep execution: %+v", checks)
