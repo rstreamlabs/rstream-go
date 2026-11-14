@@ -20,7 +20,7 @@ The probe has a 90-second deadline. Echo workers, resource sampling and clients
 are owned and joined on exit. Transfer sizes, sample counts and datagram timing
 are bounded. `--pacing-ms=1..1000` and `--drain-seconds=1..30` control datagram
 timing; defaults are 1 ms and three seconds. Missing packets mean delivery-window
-misses, not physical link loss. Datagram delivery is best effort; this probe measures the selected transport without changing its delivery guarantees.
+misses, not physical link loss. Datagram delivery is best effort; this probe measures the selected transport without changing its delivery guarantees. The reviewed QUIC dependency set has an open delivery limitation under packet reordering: packets can be discarded by QUIC receive history before reaching the SDK. This is separate from application queue overflow. A successful stream or WebTransport test does not qualify native datagram behavior, and larger SDK queues cannot recover packets already rejected by QUIC.
 
 JSON contains CPU/allocation deltas for both SDK peers in one process, latency
 quantiles, overlapping ping count, sampled heap/goroutine peaks and before/after
