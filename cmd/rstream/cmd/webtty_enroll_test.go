@@ -562,6 +562,16 @@ func testWebTTYCurrentDeviceResolution(t *testing.T, device workspaceDeviceFile,
 		"device_envelope_hash":      "test-device-envelope-hash",
 		"recovery_envelope_hash":    "test-recovery-envelope-hash",
 	}
+	trustSource := "keyset_setup"
+	if device.CredentialID != "" {
+		trustSource = "approval"
+		payload = map[string]any{
+			"v": 2, "type": "workspace.device.approve", "workspace_id": device.WorkspaceID,
+			"keyset_id": "keyset-1", "approver_device_key_id": "browser-approver",
+			"target_device_key_id": device.DeviceKeyID, "target_fingerprint": device.Fingerprint,
+			"owner_credential_id": device.CredentialID,
+		}
+	}
 	hash, err := workspaceSHA256Base64URL(payload)
 	if err != nil {
 		t.Fatalf("workspaceSHA256Base64URL(device trust) error = %v", err)
@@ -572,6 +582,7 @@ func testWebTTYCurrentDeviceResolution(t *testing.T, device workspaceDeviceFile,
 	}
 	return &controlplane.WebTTYCurrentDeviceResolution{
 		DeviceKeyID:          device.DeviceKeyID,
+		CredentialID:         device.CredentialID,
 		Kind:                 device.Kind,
 		PublicEncryptionKey:  device.PublicEncryptionKey,
 		PublicSigningKey:     device.PublicSigningKey,
@@ -580,7 +591,7 @@ func testWebTTYCurrentDeviceResolution(t *testing.T, device workspaceDeviceFile,
 		WebTTYKeyID:          device.WebTTYKeyID,
 		WebTTYKeyAlgorithm:   device.WebTTYKeyAlgorithm,
 		TrustKeysetID:        "keyset-1",
-		TrustSource:          "keyset_setup",
+		TrustSource:          trustSource,
 		TrustPayload:         mustMarshalWorkspaceTrustPayload(t, payload),
 		TrustPayloadHash:     hash,
 		TrustKeysetSignature: signature,

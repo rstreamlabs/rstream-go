@@ -309,6 +309,7 @@ type ResolveWebTTYServerClientResponse struct {
 }
 
 type WebTTYCurrentDeviceResolution struct {
+	CredentialID         string          `json:"credentialId,omitempty"`
 	DeviceKeyID          string          `json:"deviceKeyId"`
 	Kind                 string          `json:"kind"`
 	PublicEncryptionKey  string          `json:"publicEncryptionKey"`

@@ -26,7 +26,7 @@ func webTTYWorkspaceClientCredential(device workspaceDeviceFile, resolved contro
 	if current == nil {
 		return nil, fmt.Errorf("workspace-managed WebTTY client credential requires a resolved trusted device")
 	}
-	if device.DeviceKeyID != current.DeviceKeyID {
+	if device.DeviceKeyID != current.DeviceKeyID || device.CredentialID != current.CredentialID {
 		return nil, fmt.Errorf("workspace-managed WebTTY resolved device does not match local trusted device")
 	}
 	endpointIdentity, err := workspaceDeviceWebTTYEndpointIdentity(device)
@@ -72,6 +72,13 @@ func webTTYWorkspaceClientCredential(device workspaceDeviceFile, resolved contro
 		"trust_keyset_signature":       current.TrustKeysetSignature,
 		"trust_signed_at":              current.TrustSignedAt,
 		"signed_at":                    signedAt,
+	}
+	if device.CredentialID != "" {
+		payload["v"] = 2
+		payload["owner_credential_id"] = device.CredentialID
+	}
+	if !workspaceClientCredentialOwnerMatches(payload, trustPayload) {
+		return nil, fmt.Errorf("workspace-managed WebTTY trust owner does not match the resolved device")
 	}
 	if current.TrustActorSignature != nil && strings.TrimSpace(*current.TrustActorSignature) != "" {
 		payload["trust_actor_signature"] = strings.TrimSpace(*current.TrustActorSignature)
@@ -211,7 +218,41 @@ func validateWebTTYWorkspaceClientCredentialPayload(enrollment *webTTYServerEnro
 	return nil
 }
 
+func workspaceClientCredentialOwnerMatches(credential map[string]any, trustPayload map[string]any) bool {
+	owner, hasOwner := credential["owner_credential_id"]
+	if !hasOwner {
+		_, trustHasOwner := trustPayload["owner_credential_id"]
+		return workspaceTrustVersion(credential, 1) && workspaceTrustVersion(trustPayload, 1) && !trustHasOwner
+	}
+	credentialID, ok := owner.(string)
+	if !ok || credentialID == "" || strings.TrimSpace(credentialID) != credentialID {
+		return false
+	}
+	_, hasEnvelope := trustPayload["envelope_hash"]
+	return workspaceTrustVersion(credential, 2) && workspaceTrustVersion(trustPayload, 2) &&
+		workspaceTrustString(credential, "device_kind") == workspaceDeviceKindService &&
+		workspaceTrustString(trustPayload, "type") == "workspace.device.approve" &&
+		workspaceTrustString(trustPayload, "owner_credential_id") == credentialID && !hasEnvelope
+}
+
+func workspaceTrustVersion(payload map[string]any, expected int) bool {
+	switch version := payload["v"].(type) {
+	case int:
+		return version == expected
+	case float64:
+		return version == float64(expected)
+	case json.Number:
+		value, err := version.Int64()
+		return err == nil && value == int64(expected)
+	default:
+		return false
+	}
+}
+
 func workspaceClientCredentialTrustPayloadMatches(enrollment *webTTYServerEnrollmentFile, credential map[string]any, trustPayload map[string]any) bool {
+	if !workspaceClientCredentialOwnerMatches(credential, trustPayload) {
+		return false
+	}
 	if workspaceTrustString(trustPayload, "workspace_id") != enrollment.WorkspaceID {
 		return false
 	}
