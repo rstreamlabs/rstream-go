@@ -27,27 +27,35 @@ import (
 )
 
 type result struct {
-	PeerQueue    *rstream.DatagramReceiveStats `json:"peer_queue,omitempty"`
-	EchoQueue    *rstream.DatagramReceiveStats `json:"echo_queue,omitempty"`
-	SendSeconds  float64                       `json:"send_seconds"`
-	PacingMS     int                           `json:"pacing_ms"`
-	DrainSeconds int                           `json:"drain_seconds"`
-	Workload     string                        `json:"workload"`
-	Transport    string                        `json:"transport"`
-	CrossRegion  bool                          `json:"cross_region"`
-	Pings        int                           `json:"pings"`
-	Seconds      float64                       `json:"seconds"`
-	CPUSeconds   float64                       `json:"cpu_seconds"`
-	AllocBytes   uint64                        `json:"alloc_bytes"`
-	Allocs       uint64                        `json:"allocs"`
-	Bytes        int64                         `json:"bytes"`
-	Sent         int                           `json:"sent"`
-	Received     int                           `json:"received"`
-	Duplicates   int                           `json:"duplicates"`
-	Reordered    int                           `json:"reordered"`
-	P50US        float64                       `json:"p50_us"`
-	P95US        float64                       `json:"p95_us"`
-	P99US        float64                       `json:"p99_us"`
+	ResourceSampleIntervalMS int                           `json:"resource_sample_interval_ms"`
+	ResourceSampler          string                        `json:"resource_sampler"`
+	ConcurrentPings          int                           `json:"concurrent_pings"`
+	CancelUS                 float64                       `json:"cancel_us"`
+	PeakHeapBytes            uint64                        `json:"peak_heap_bytes"`
+	PeakGoroutines           int                           `json:"peak_goroutines"`
+	GoroutinesBefore         int                           `json:"goroutines_before"`
+	GoroutinesAfter          int                           `json:"goroutines_after"`
+	PeerQueue                *rstream.DatagramReceiveStats `json:"peer_queue,omitempty"`
+	EchoQueue                *rstream.DatagramReceiveStats `json:"echo_queue,omitempty"`
+	SendSeconds              float64                       `json:"send_seconds"`
+	PacingMS                 int                           `json:"pacing_ms"`
+	DrainSeconds             int                           `json:"drain_seconds"`
+	Workload                 string                        `json:"workload"`
+	Transport                string                        `json:"transport"`
+	CrossRegion              bool                          `json:"cross_region"`
+	Pings                    int                           `json:"pings"`
+	Seconds                  float64                       `json:"seconds"`
+	CPUSeconds               float64                       `json:"cpu_seconds"`
+	AllocBytes               uint64                        `json:"alloc_bytes"`
+	Allocs                   uint64                        `json:"allocs"`
+	Bytes                    int64                         `json:"bytes"`
+	Sent                     int                           `json:"sent"`
+	Received                 int                           `json:"received"`
+	Duplicates               int                           `json:"duplicates"`
+	Reordered                int                           `json:"reordered"`
+	P50US                    float64                       `json:"p50_us"`
+	P95US                    float64                       `json:"p95_us"`
+	P99US                    float64                       `json:"p99_us"`
 }
 
 func cpuSeconds() (float64, error) {
@@ -259,7 +267,7 @@ func run() (out result, err error) {
 	ownerEngine := flag.String("owner", "", "Owner engine host:port")
 	peerEngine := flag.String("peer", "", "Consumer engine host:port")
 	ca := flag.String("ca", "", "Trusted fixture CA PEM")
-	flag.StringVar(&out.Workload, "workload", "stream", "stream or datagram")
+	flag.StringVar(&out.Workload, "workload", "stream", "stream, mixed, slow, cancel or datagram")
 	flag.StringVar(&out.Transport, "transport", "quic", "tls or quic control transport")
 	flag.BoolVar(&out.CrossRegion, "cross-region", false, "Allow routing between engines")
 	flag.IntVar(&out.Pings, "pings", 100, "Stream latency samples before bulk transfer")
@@ -267,10 +275,13 @@ func run() (out result, err error) {
 	packets := flag.Int("packets", 1000, "Datagrams to send at 1 ms intervals")
 	flag.IntVar(&out.PacingMS, "pacing-ms", 1, "Datagram send pacing in milliseconds")
 	flag.IntVar(&out.DrainSeconds, "drain-seconds", 3, "Post-send datagram drain in seconds")
+	profilePrefix := flag.String("profile-prefix", "", "Exclusive output prefix for CPU and allocation profiles")
 	flag.Parse()
-	if out.PacingMS < 1 || out.PacingMS > 1000 || out.DrainSeconds < 1 || out.DrainSeconds > 30 || *ownerEngine == "" || *peerEngine == "" || *ca == "" || os.Getenv("RSTREAM_AUTHENTICATION_TOKEN") == "" || *size <= 0 || *size > 1<<31 || *packets <= 0 || *packets > 100000 || out.Pings <= 0 || out.Pings > 10000 || (out.Workload != "stream" && out.Workload != "datagram") {
+	if out.PacingMS < 1 || out.PacingMS > 1000 || out.DrainSeconds < 1 || out.DrainSeconds > 30 || *ownerEngine == "" || *peerEngine == "" || *ca == "" || os.Getenv("RSTREAM_AUTHENTICATION_TOKEN") == "" || *size <= 0 || *size > 1<<31 || *packets <= 0 || *packets > 100000 || out.Pings <= 0 || out.Pings > 10000 || (out.Workload != "stream" && out.Workload != "datagram" && out.Workload != "mixed" && out.Workload != "slow" && out.Workload != "cancel") {
 		return out, errors.New("invalid benchmark configuration or missing fixture authentication")
 	}
+	stopResources := sampleResources(&out)
+	defer stopResources()
 	pem, err := os.ReadFile(*ca)
 	if err != nil {
 		return out, err
@@ -308,7 +319,17 @@ func run() (out result, err error) {
 	defer tunnel.Close()
 	serverCtx, stopServer := context.WithCancel(ctx)
 	serverDone := make(chan error, 1)
-	go func() { serverDone <- serveEcho(serverCtx, tunnel, out.Workload, &out.EchoQueue) }()
+	go func() {
+		if out.Workload == "mixed" || out.Workload == "slow" || out.Workload == "cancel" {
+			count := 2
+			if out.Workload == "slow" {
+				count = 1
+			}
+			serverDone <- serveStreams(serverCtx, tunnel.(net.Listener), count)
+			return
+		}
+		serverDone <- serveEcho(serverCtx, tunnel, out.Workload, &out.EchoQueue)
+	}()
 	defer func() {
 		stopServer()
 		_ = tunnel.Close()
@@ -318,11 +339,18 @@ func run() (out result, err error) {
 			err = errors.Join(err, errors.New("echo server did not stop"))
 		}
 	}()
+	stopProfiles, err := startProfiles(*profilePrefix)
+	if err != nil {
+		return out, err
+	}
+	defer func() { err = errors.Join(err, stopProfiles()) }()
 	target := rstream.Addr{IdOrName: name}
 	if out.Workload == "datagram" {
 		err = datagramProbe(ctx, peer, target, *packets, &out)
-	} else {
+	} else if out.Workload == "stream" {
 		err = streamProbe(ctx, peer, target, *size, &out)
+	} else {
+		err = applicationProbe(ctx, peer, target, *size, &out)
 	}
 	return out, err
 }

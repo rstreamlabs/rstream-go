@@ -1,36 +1,59 @@
-# Transport benchmark
+# Local transport probes
 
-The Linux-only `transport` program measures verified private stream/datagram
-tunnels through actual engines, using explicit TLS or QUIC and direct/cross-region
-routing. It is a test utility, not a load generator or production capacity test.
+The Linux-only `transport` program exercises verified private tunnels through
+actual engines. Build with `CGO_ENABLED=0 GOOS=linux go build -o
+/absolute/output/transport-benchmark ./test/performance/transport` on one line.
+Supply `--owner`, `--peer`, `--ca`, `--transport=tls|quic`,
+`--workload=stream|mixed|slow|cancel|datagram` and optionally `--cross-region=true`.
+`RSTREAM_AUTHENTICATION_TOKEN` must hold the temporary fixture token.
+Certificates and payloads are checked; 0-RTT is disabled.
 
-Build with `CGO_ENABLED=0 GOOS=linux go build -o /absolute/output/transport-benchmark
-./test/performance/transport` in one shell line. Run with `--owner`, `--peer`,
-`--ca`, `--transport=tls|quic`, `--workload=stream|datagram` and optionally
-`--cross-region=true`. `RSTREAM_AUTHENTICATION_TOKEN` must contain a fixture token.
-Certificates and payloads are verified; 0-RTT is disabled. The invocation has a
-90-second deadline and closes its owned tunnel, clients and echo worker.
+| Workload | Observation |
+| --- | --- |
+| `stream` | Ping latency before verified bulk transfer |
+| `mixed` | Interactive latency only while bulk traffic is active on another stream; both use the same consumer client/transport |
+| `slow` | Verified transfer with a 2 ms pause after each 64 KiB read |
+| `cancel` | Close an active stream with unread response, require writer shutdown within two seconds, then verify another stream |
+| `datagram` | Delivery, duplicates, reordering, actual send duration and receive-queue snapshots |
 
-JSON reports process CPU, allocation deltas, transferred bytes, latency quantiles,
-and datagram delivery/duplicate/reordering counts. CPU includes both SDK peers in
-one process; setup is excluded. Stream measurements cover bulk transfer after
-latency pings. Datagrams use 1 ms pacing and a three-second drain, so missing
-packets are delivery-deadline misses rather than a physical loss measurement.
+The probe has a 90-second deadline. Echo workers, resource sampling and clients
+are owned and joined on exit. Transfer sizes, sample counts and datagram timing
+are bounded. `--pacing-ms=1..1000` and `--drain-seconds=1..30` control datagram
+timing; defaults are 1 ms and three seconds. Missing packets mean delivery-window
+misses, not physical link loss. Keep the
+[native-datagram qualification issue](https://github.com/rstreamlabs/rstream-engine/pull/217)
+separate; this probe neither fixes it nor switches delivery guarantees.
 
-`--pacing-ms` (default `1`, range `1..1000`) and `--drain-seconds` (default `3`,
-range `1..30`) permit paced-load and late-delivery diagnostics. JSON includes the
-actual send duration and supported receive-queue snapshots for both SDK peers.
-Compare actual offered rates as well as requested pacing: blocking writes can
-throttle an older transport, while a faster sender can saturate existing bounded
-queues. Also attribute loss before application queues: the November 2026
-[QUIC datagram diagnosis](quic-datagram-diagnosis.md) reproduces previously unseen
-reordered packets being rejected after QUIC receive-history purging. Queue growth
-cannot fix those losses. The QUIC upgrade retains a pre-merge qualification gate.
-Keep stress results separate from equal-rate comparisons and select the existing
-guaranteed-delivery mode explicitly when the application requires reliable packets.
+JSON contains CPU/allocation deltas for both SDK peers in one process, latency
+quantiles, overlapping ping count, sampled heap/goroutine peaks and before/after
+goroutine counts around client cleanup. Sampling uses `runtime/metrics`
+every 20 ms, contributes measurement overhead and does not capture an exact peak
+or RSS. JSON identifies the sampler and interval. Repeated `ReadMemStats`
+sampling was removed after profiling showed its stop-the-world overhead. CPU/allocation transfer deltas exclude setup. An optional
+`--profile-prefix=/new/output/sample` produces exclusive mode-0600 CPU/allocation
+profile files over the probe, including connection setup; the parent directory
+must exist. Use a separate profiling pass, then `go tool pprof` on those files.
+Never overwrite evidence from earlier runs.
 
-The engine repository's `test/performance/README.md` describes the isolated Docker
-fixture, forwarding-router impairment, repeated comparison and metric limits.
-Use identical helper sources/compiler/settings with each version's SDK module
-graph; retain `go version -m` for both binaries. Run Linux unit/race tests with
-`go test -race ./test/performance/transport`.
+Run Linux helpers under `go test -race ./test/performance/transport`. Focused
+public transport tests in `quic_stream_close_test.go` additionally prove close
+unblocks reads and flow-controlled writes, survives deadline/close races and
+concurrent writers, preserves accepted bytes and retains half-close responses.
+Those deterministic tests complement the timing-based runtime workload.
+The real HTTP/3/WebTransport control in `webtty/transport_close_test.go` also
+checks session close with three flow-controlled writers, without changing the
+WebTransport implementation or extrapolating the native QUIC finding to it.
+
+The engine's `test/performance/README.md` specifies its disposable two-engine
+fixture, impairment, quotas and comparison procedure. Use identical helpers,
+compiler and settings for reference and candidate, retain raw ranges and binary
+metadata, and alternate order. Local measurements do not establish production
+capacity. This utility changes no project policy, dependency version or protocol
+feature default.
+
+For an isolated stream-wrapper comparison without the resource sampler, run
+`go test -run '^$' -bench '^BenchmarkQUICTransportStreamRoundTrip$' -benchtime=2s
+-count=3 -benchmem .` as one command from the SDK root. It measures a verified
+32 KiB echo over real local QUIC, includes both peers in allocation counts, and
+excludes certificate/connection setup. Compare identical helpers and compiler;
+this is not a production-capacity benchmark.
