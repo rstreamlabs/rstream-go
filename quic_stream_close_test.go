@@ -16,7 +16,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-func quicClosePair(t *testing.T) (net.Conn, *quic.Conn, *QUICTransport) {
+func quicClosePair(t testing.TB) (net.Conn, *quic.Conn, *QUICTransport) {
 	t.Helper()
 	listener, err := quic.ListenAddr("127.0.0.1:0", testQUICServerTLSConfig(t, testQUICALPN), &quic.Config{InitialStreamReceiveWindow: 32 << 10, MaxStreamReceiveWindow: 32 << 10})
 	if err != nil {
@@ -259,4 +259,49 @@ func TestQUICTransportHalfClosePreservesResponse(t *testing.T) {
 	if err != nil || string(response) != "response" {
 		t.Fatalf("response=%q error=%v", response, err)
 	}
+}
+
+func BenchmarkQUICTransportStreamRoundTrip(b *testing.B) {
+	conn, peer, transport := quicClosePair(b)
+	ctx, cancel := context.WithCancel(b.Context())
+	done := make(chan error, 1)
+	go func() {
+		stream, err := peer.AcceptStream(ctx)
+		if err != nil {
+			done <- err
+			return
+		}
+		_, err = io.Copy(stream, stream)
+		done <- err
+	}()
+	defer func() {
+		_ = conn.Close()
+		_ = transport.Close()
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			b.Error("benchmark echo worker did not stop")
+		}
+	}()
+	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		b.Fatal(err)
+	}
+	payload := bytes.Repeat([]byte{0x5a}, 32<<10)
+	reply := make([]byte, len(payload))
+	b.SetBytes(2 * int64(len(payload)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		if _, err := conn.Write(payload); err != nil {
+			b.Fatal(err)
+		}
+		if _, err := io.ReadFull(conn, reply); err != nil {
+			b.Fatal(err)
+		}
+		if !bytes.Equal(reply, payload) {
+			b.Fatal("benchmark echo payload mismatch")
+		}
+	}
+	b.StopTimer()
 }
