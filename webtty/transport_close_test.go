@@ -45,7 +45,7 @@ func TestWebTransportMessageCloseUnblocksFlowControlledSession(t *testing.T) {
 			t.Error("WebTransport server leaked")
 		}
 	})
-	dialer := &webtransport.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, QUICConfig: &quic.Config{EnableDatagrams: true, EnableStreamResetPartialDelivery: true}}
+	dialer := &webtransport.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, QUICConfig: &quic.Config{EnableDatagrams: true, EnableStreamResetPartialDelivery: true}}
 	defer dialer.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()

@@ -5,7 +5,8 @@ ICE 4.4.9, SCTP 1.12.1 and TURN 5.1.3 graph. The endpoint samples use published
 DTLS 4.0.2; WebRTC and TURN retain DTLS 3.1.15. Their coexistence does not imply
 DTLS 1.3 support in WebRTC or the TURN listener. Shared Transport 5.1.5 satisfies
 the DTLS 4.0.2 requirement without downgrading the maintenance dependencies.
-QUIC versions remain a separate upgrade. Keep the
+The reconciled Lot 2 baseline uses QUIC 0.64.1, WebTransport 0.13.0, MASQUE 0.6.0
+and CONNECT-IP 0.6.0, with the Lot 4 bounded stream-close correction. Keep the
 [verified ICE URL snapshot patch](../tools/icepatch/README.md): official ICE
 4.4.9 still reproduces that race. Consuming modules need their own verified
 modfile; Go does not inherit dependency replacements.
@@ -114,3 +115,25 @@ Retain the resolved module graph, source revisions, provider and architecture.
 The suite fails on missing dependencies; skipping it is not qualification. Keep
 project security policy, certificate checks, authorization and the independent
 QUIC datagram acceptance gate unchanged.
+
+## QUIC 0.65 compatibility audit — 14 November 2026
+
+Published WebTransport0.13 and MASQUE0.6 both fail to compile with QUIC0.65:
+their HTTP/3 server hijack assumes one HTTPStream return value instead of two.
+CONNECT-IP0.6 has the same error. Published CONNECT-IP0.7 fixes its own use but
+requires QUIC0.65, so Go minimal version selection also raises QUIC when only
+CONNECT-IP is upgraded. Removing WebTransport does not resolve MASQUE.
+
+The 0.64.1 baseline compiles, and isolated HTTP/3 and CONNECT-IP0.7 controls
+compile with 0.65. None of those probes qualifies a full 0.65 stack at runtime.
+The [engine compatibility record](https://github.com/rstreamlabs/rstream-engine/blob/codex/quic-reconcile-20261114/roadmap/005-quic-companion-compatibility.md)
+retains release links, reproduction steps and resume criteria. Keep published
+compatible companions as a prerequisite; no library patch or new fork is added.
+Standard compiled graph tests protect both DTLS majors and the exact reviewed
+QUIC/companion tuple, including generated ICE modfiles.
+
+The reconciliation also updates the imported OpenTelemetry core/trace/metric
+tuple to published1.47.0 for
+[GHSA-q7gw-24fr-5p69](https://github.com/open-telemetry/opentelemetry-go/security/advisories/GHSA-q7gw-24fr-5p69).
+A clean source govulncheck result alone must not dismiss a newly published
+advisory concerning an imported package. No telemetry feature is enabled by it.

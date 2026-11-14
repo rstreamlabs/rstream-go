@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	_ "github.com/pion/dtls/v3"
+	_ "github.com/pion/dtls/v4"
 	_ "github.com/quic-go/connect-ip-go"
 	_ "github.com/quic-go/masque-go"
 	_ "github.com/quic-go/quic-go"
@@ -25,6 +26,7 @@ func TestReviewedTransportDependencyGraph(t *testing.T) {
 		"github.com/quic-go/quic-go":         fipsprofile.RequiredQUICModuleVersion,
 		"github.com/quic-go/webtransport-go": fipsprofile.RequiredWebTransportModuleVersion,
 		"github.com/pion/dtls/v3":            "v3.1.15",
+		"github.com/pion/dtls/v4":            "v4.0.2",
 		"github.com/quic-go/masque-go":       "v0.6.0",
 		"github.com/quic-go/connect-ip-go":   "v0.6.0",
 	}
