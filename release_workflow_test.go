@@ -24,6 +24,7 @@ type releaseWorkflowStep struct {
 		Ref                string `yaml:"ref"`
 		Path               string `yaml:"path"`
 		PersistCredentials bool   `yaml:"persist-credentials"`
+		Token              string `yaml:"token"`
 	} `yaml:"with"`
 }
 
@@ -109,10 +110,10 @@ func TestStableReleaseBuildCreatesCandidateWithoutPublishing(t *testing.T) {
 		if strings.HasPrefix(step.Uses, "actions/setup-node@") {
 			nodeFound = step.If == "${{ github.ref_type == 'tag' }}"
 		}
-		if slices.Contains([]string{"rstreamlabs/homebrew", "rstreamlabs/winget"}, step.With.Repository) {
-			t.Fatalf("candidate workflow must not mutate %s", step.With.Repository)
+		if step.With.Repository != "" && step.With.Repository != "${{ secrets.RELEASE_NPM_REPOSITORY }}" {
+			t.Fatal("candidate workflow must not check out publication targets")
 		}
-		if step.With.Repository == "rstreamlabs/npm" {
+		if step.With.Repository == "${{ secrets.RELEASE_NPM_REPOSITORY }}" {
 			npmSourceFound = step.If == "${{ github.ref_type == 'tag' }}" && !step.With.PersistCredentials
 		}
 	}
@@ -120,9 +121,52 @@ func TestStableReleaseBuildCreatesCandidateWithoutPublishing(t *testing.T) {
 		t.Fatalf("candidate workflow is incomplete: package=%t node=%t npm=%t upload=%t", candidateFound, nodeFound, npmSourceFound, uploadFound)
 	}
 	for _, step := range workflow.Jobs["build-macos"].Steps {
-		if strings.HasPrefix(step.Uses, "actions/setup-node@") || step.With.Repository == "rstreamlabs/npm" {
+		if strings.HasPrefix(step.Uses, "actions/setup-node@") || step.With.Repository == "${{ secrets.RELEASE_NPM_REPOSITORY }}" {
 			t.Fatal("macOS binary jobs must not prepare the npm candidate")
 		}
+	}
+}
+
+func TestReleasePackageSourcesValidateBeforeCheckout(t *testing.T) {
+	for _, tc := range []struct {
+		workflow   string
+		job        string
+		repository string
+		tagOnly    bool
+	}{
+		{"cross-compile.yml", "build", "${{ secrets.RELEASE_NPM_REPOSITORY }}", true},
+		{"promote-release.yml", "publish-npm", "${{ secrets.RELEASE_NPM_REPOSITORY }}", false},
+		{"promote-release.yml", "publish-winget", "${{ secrets.RELEASE_WINGET_REPOSITORY }}", false},
+	} {
+		t.Run(tc.job, func(t *testing.T) {
+			workflow := readReleaseWorkflow(t, ".github/workflows/"+tc.workflow)
+			validated := false
+			found := false
+			for _, step := range workflow.Jobs[tc.job].Steps {
+				if step.Run == "./.github/scripts/require-release-repository.sh" && step.Env["RELEASE_REPOSITORY"] == tc.repository {
+					if tc.tagOnly && step.If != "${{ github.ref_type == 'tag' }}" {
+						t.Fatal("release-source validation must use the tag-only checkout condition")
+					}
+					if !tc.tagOnly && step.If != "" {
+						t.Fatal("promotion source validation must not be skipped")
+					}
+					validated = true
+				}
+				if !strings.HasPrefix(step.Uses, "actions/checkout@") || step.With.Repository != tc.repository {
+					continue
+				}
+				found = true
+				if !validated {
+					t.Fatal("release-source validation must run before checkout")
+				}
+				if step.With.Token != "${{ secrets.GIT_TOKEN }}" {
+					t.Fatal("release-source checkout must use its authorized repository token")
+				}
+			}
+			if !found {
+				t.Fatal("release-source checkout is missing")
+			}
+		})
 	}
 }
 
