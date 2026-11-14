@@ -1399,7 +1399,12 @@ func webTTYSessionAttachWorkspaceCredential(ctx context.Context, runtime *resolv
 	if workspaceID == "" || projectID == "" || serverID == "" {
 		return nil
 	}
-	proofItems, err := workspaceDeviceAccessProofsWithDevices(workspaceID, 8)
+	controlClient := newRuntimeControlPlaneClient(runtime.Resolved)
+	identity, err := controlClient.Identity(ctx)
+	if err != nil {
+		return mapControlPlaneError(err)
+	}
+	proofItems, err := workspaceDeviceAccessProofsWithDevices(workspaceID, 8, identity)
 	if err != nil {
 		return fmt.Errorf("load workspace device proof for WebTTY session attach: %w", err)
 	}
@@ -1409,7 +1414,6 @@ func webTTYSessionAttachWorkspaceCredential(ctx context.Context, runtime *resolv
 		proofs = append(proofs, item.proof)
 		localDevices = append(localDevices, item.device)
 	}
-	controlClient := newRuntimeControlPlaneClient(runtime.Resolved)
 	resolved, err := controlClient.ResolveWebTTYServerClient(ctx, projectID, serverID, controlplane.ResolveWebTTYServerClientRequest{
 		DeviceProofs: proofs,
 	})

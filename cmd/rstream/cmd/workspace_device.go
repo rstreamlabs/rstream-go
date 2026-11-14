@@ -33,6 +33,7 @@ import (
 
 const (
 	workspaceDeviceFileVersion          = 1
+	workspaceServiceDeviceFileVersion   = 2
 	workspaceDeviceKindCLI              = "cli"
 	workspaceDeviceKindAgent            = "agent"
 	workspaceDeviceKindService          = "service"
@@ -50,6 +51,7 @@ type workspaceDeviceFile struct {
 	Version              int                                `json:"version"`
 	Kind                 string                             `json:"kind"`
 	WorkspaceID          string                             `json:"workspace_id"`
+	CredentialID         string                             `json:"credential_id,omitempty"`
 	DeviceKeyID          string                             `json:"device_key_id"`
 	Status               string                             `json:"status"`
 	Label                string                             `json:"label,omitempty"`
@@ -104,9 +106,10 @@ type workspaceDeviceAccessProofWithDevice struct {
 }
 
 type workspaceDeviceWorkspaceResolution struct {
-	WorkspaceID     string `json:"workspace_id"`
-	Source          string `json:"source"`
-	ProjectEndpoint string `json:"project_endpoint,omitempty"`
+	WorkspaceID     string                      `json:"workspace_id"`
+	Source          string                      `json:"source"`
+	ProjectEndpoint string                      `json:"project_endpoint,omitempty"`
+	Identity        controlplane.CallerIdentity `json:"-"`
 }
 
 var workspaceDeviceCmd = &cobra.Command{
@@ -193,7 +196,19 @@ func runWorkspaceDeviceEnroll(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	existing, code, found, err := reusableWorkspaceDevice(cmd.Context(), client, workspace.WorkspaceID, kind)
+	lock, err := lockWorkspaceDeviceEnrollment(workspace.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	defer lock.Unlock()
+	kind, err = workspaceDeviceKindForIdentity(cmd, workspace.Identity, kind)
+	if err != nil {
+		return err
+	}
+	if !cmd.Flags().Changed("label") {
+		label = defaultWorkspaceDeviceLabel(kind)
+	}
+	existing, code, found, err := reusableWorkspaceDevice(cmd.Context(), client, workspace.WorkspaceID, kind, workspace.Identity)
 	if err != nil {
 		return err
 	}
@@ -250,7 +265,19 @@ func runWorkspaceDeviceRotate(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	existing, _, found, err := reusableWorkspaceDevice(cmd.Context(), client, workspace.WorkspaceID, kind)
+	lock, err := lockWorkspaceDeviceEnrollment(workspace.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	defer lock.Unlock()
+	kind, err = workspaceDeviceKindForIdentity(cmd, workspace.Identity, kind)
+	if err != nil {
+		return err
+	}
+	if !cmd.Flags().Changed("label") {
+		label = defaultWorkspaceDeviceLabel(kind)
+	}
+	existing, _, found, err := reusableWorkspaceDevice(cmd.Context(), client, workspace.WorkspaceID, kind, workspace.Identity)
 	if err != nil {
 		return err
 	}
@@ -297,7 +324,12 @@ func runWorkspaceDeviceStatus(cmd *cobra.Command) error {
 	if err != nil {
 		return err
 	}
-	devices, err := loadWorkspaceDeviceFiles(workspace.WorkspaceID)
+	lock, err := lockWorkspaceDeviceEnrollment(workspace.WorkspaceID)
+	if err != nil {
+		return err
+	}
+	defer lock.Unlock()
+	devices, err := loadWorkspaceDeviceFilesForIdentity(workspace.WorkspaceID, workspace.Identity)
 	if err != nil {
 		return err
 	}
@@ -308,6 +340,9 @@ func runWorkspaceDeviceStatus(cmd *cobra.Command) error {
 	refreshed := make([]workspaceDeviceFileWithPath, 0, len(devices))
 	for _, item := range devices {
 		updated, _, err := refreshWorkspaceDeviceStatus(cmd, client, item.path, item.device)
+		if errors.Is(err, errWorkspaceDeviceUnavailable) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
@@ -357,10 +392,32 @@ type workspaceDeviceCreation struct {
 	code   string
 }
 
+func lockWorkspaceDeviceEnrollment(workspaceID string) (*config.FileLock, error) {
+	dir, err := defaultWorkspaceDevicesDir(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	return config.LockFile(filepath.Join(dir, ".enrollment.lock"))
+}
+
 func createWorkspaceDevice(ctx context.Context, client *controlplane.Client, workspace workspaceDeviceWorkspaceResolution, kind string, label string, webTTYSuite webtty.KeyEnvelopeSuite, rotatesDeviceKeyID ...string) (workspaceDeviceCreation, error) {
+	if workspace.Identity.Owner.Kind == "workspace" && (workspace.Identity.Owner.WorkspaceID != workspace.WorkspaceID || workspace.Identity.CredentialID == "" || kind != workspaceDeviceKindService) {
+		return workspaceDeviceCreation{}, fmt.Errorf("workspace service device requires its authenticated credential owner and service kind")
+	}
 	material, err := generateWorkspaceDeviceMaterial(workspace.WorkspaceID, kind, label, webTTYSuite)
 	if err != nil {
 		return workspaceDeviceCreation{}, err
+	}
+	if workspace.Identity.Owner.Kind == "workspace" {
+		material.file.Version = workspaceServiceDeviceFileVersion
+		material.file.CredentialID = workspace.Identity.CredentialID
+		material.proofSignature, err = signWorkspacePayload(material.signingPrivate, workspaceDeviceProofPayload(workspace.WorkspaceID, kind, label, material.file.PublicEncryptionKey, material.file.PublicSigningKey, material.file.WebTTYPublicKey, material.file.WebTTYKeyID, material.file.WebTTYKeyAlgorithm, material.file.Fingerprint, material.file.CredentialID))
+		if err != nil {
+			return workspaceDeviceCreation{}, err
+		}
 	}
 	created, err := client.CreateWorkspaceDeviceKey(ctx, workspace.WorkspaceID, controlplane.CreateWorkspaceDeviceKeyRequest{
 		Kind:                material.file.Kind,
@@ -405,8 +462,8 @@ func createWorkspaceDevice(ctx context.Context, client *controlplane.Client, wor
 	return workspaceDeviceCreation{path: path, device: material.file, code: code}, nil
 }
 
-func reusableWorkspaceDevice(ctx context.Context, client *controlplane.Client, workspaceID string, kind string) (workspaceDeviceFileWithPath, string, bool, error) {
-	devices, err := loadWorkspaceDeviceFiles(workspaceID)
+func reusableWorkspaceDevice(ctx context.Context, client *controlplane.Client, workspaceID string, kind string, identity controlplane.CallerIdentity) (workspaceDeviceFileWithPath, string, bool, error) {
+	devices, err := loadWorkspaceDeviceFilesForIdentity(workspaceID, identity)
 	if err != nil {
 		return workspaceDeviceFileWithPath{}, "", false, err
 	}
@@ -415,6 +472,9 @@ func reusableWorkspaceDevice(ctx context.Context, client *controlplane.Client, w
 			continue
 		}
 		updated, code, err := refreshWorkspaceDeviceStatusContext(ctx, client, item.path, item.device)
+		if errors.Is(err, errWorkspaceDeviceUnavailable) {
+			continue
+		}
 		if err != nil {
 			return workspaceDeviceFileWithPath{}, "", false, err
 		}
@@ -489,6 +549,8 @@ func refreshWorkspaceDeviceStatus(cmd *cobra.Command, client *controlplane.Clien
 	return refreshWorkspaceDeviceStatusContext(cmd.Context(), client, path, device)
 }
 
+var errWorkspaceDeviceUnavailable = errors.New("workspace device is unavailable to the current token")
+
 func refreshWorkspaceDeviceStatusContext(ctx context.Context, client *controlplane.Client, path string, device workspaceDeviceFile) (workspaceDeviceFile, string, error) {
 	signingKey, err := parseWorkspaceDeviceSigningKey(device)
 	if err != nil {
@@ -514,12 +576,23 @@ func refreshWorkspaceDeviceStatusContext(ctx context.Context, client *controlpla
 	if err != nil {
 		return device, "", mapControlPlaneError(err)
 	}
+	found := false
 	for _, remote := range lookup.Devices {
 		if remote.ID != device.DeviceKeyID {
 			continue
 		}
+		if remote.CredentialID != device.CredentialID || (device.CredentialID != "" && (remote.Kind != workspaceDeviceKindService || remote.PublicEncryptionKey != device.PublicEncryptionKey || remote.PublicSigningKey == nil || *remote.PublicSigningKey != device.PublicSigningKey || remote.Fingerprint != device.Fingerprint)) {
+			return device, "", fmt.Errorf("workspace device ownership or public keys do not match the local device")
+		}
+		found = true
 		device.Status = remote.Status
 		device.UpdatedAt = time.Now().UTC().Truncate(time.Second)
+	}
+	if !found {
+		return device, "", errWorkspaceDeviceUnavailable
+	}
+	if device.CredentialID != "" && (device.DeviceEnvelope != nil || len(lookup.DeviceEnvelopes) != 0) {
+		return device, "", fmt.Errorf("service workspace devices cannot receive workspace private-key envelopes")
 	}
 	for _, envelope := range lookup.DeviceEnvelopes {
 		if envelope.RecipientID == device.DeviceKeyID && envelope.RecipientKind == "device" {
@@ -584,11 +657,11 @@ func completeWorkspaceDeviceRotations(ctx context.Context, client *controlplane.
 	return devices, nil
 }
 
-func workspaceDeviceAccessProofsWithDevices(workspaceID string, limit int) ([]workspaceDeviceAccessProofWithDevice, error) {
+func workspaceDeviceAccessProofsWithDevices(workspaceID string, limit int, identity controlplane.CallerIdentity) ([]workspaceDeviceAccessProofWithDevice, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
-	devices, err := loadWorkspaceDeviceFiles(workspaceID)
+	devices, err := loadWorkspaceDeviceFilesForIdentity(workspaceID, identity)
 	if err != nil {
 		return nil, err
 	}
@@ -630,13 +703,26 @@ func workspaceDeviceAccessProofsWithDevices(workspaceID string, limit int) ([]wo
 }
 
 func workspaceDeviceWorkspace(cmd *cobra.Command, runtime *resolvedRuntime, client *controlplane.Client) (workspaceDeviceWorkspaceResolution, error) {
+	identity, err := client.Identity(cmd.Context())
+	if err != nil {
+		return workspaceDeviceWorkspaceResolution{}, mapControlPlaneError(err)
+	}
 	workspaceID, _ := cmd.Flags().GetString("workspace")
 	workspaceID = strings.TrimSpace(workspaceID)
 	if workspaceID != "" {
 		if err := validateWorkspaceID(workspaceID); err != nil {
 			return workspaceDeviceWorkspaceResolution{}, err
 		}
-		return workspaceDeviceWorkspaceResolution{WorkspaceID: workspaceID, Source: "flag"}, nil
+		if identity.Owner.Kind == "workspace" && workspaceID != identity.Owner.WorkspaceID {
+			return workspaceDeviceWorkspaceResolution{}, fmt.Errorf("workspace does not match the current token owner")
+		}
+		return workspaceDeviceWorkspaceResolution{WorkspaceID: workspaceID, Source: "flag", Identity: identity}, nil
+	}
+	if identity.Owner.Kind == "workspace" {
+		if err := validateWorkspaceID(identity.Owner.WorkspaceID); err != nil {
+			return workspaceDeviceWorkspaceResolution{}, err
+		}
+		return workspaceDeviceWorkspaceResolution{WorkspaceID: identity.Owner.WorkspaceID, Source: "token", Identity: identity}, nil
 	}
 	if runtime == nil || runtime.Resolved.Context == nil || strings.TrimSpace(runtime.Resolved.Context.ProjectEndpoint) == "" {
 		return workspaceDeviceWorkspaceResolution{}, workspaceDeviceWorkspaceRequiredError()
@@ -656,6 +742,7 @@ func workspaceDeviceWorkspace(cmd *cobra.Command, runtime *resolvedRuntime, clie
 	return workspaceDeviceWorkspaceResolution{
 		WorkspaceID:     workspaceID,
 		Source:          "active_project",
+		Identity:        identity,
 		ProjectEndpoint: projectEndpoint,
 	}, nil
 }
@@ -715,6 +802,37 @@ func workspaceDeviceKind(cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("--kind must be one of: cli, agent, service")
 	}
 	return kind, nil
+}
+
+func workspaceDeviceKindForIdentity(cmd *cobra.Command, identity controlplane.CallerIdentity, kind string) (string, error) {
+	if identity.Owner.Kind != "workspace" {
+		return kind, nil
+	}
+	if cmd.Flags().Changed("kind") && kind != workspaceDeviceKindService {
+		return "", fmt.Errorf("workspace tokens require --kind service")
+	}
+	return workspaceDeviceKindService, nil
+}
+
+func workspaceDeviceMatchesIdentity(device workspaceDeviceFile, identity controlplane.CallerIdentity) bool {
+	if identity.Owner.Kind == "workspace" {
+		return device.WorkspaceID == identity.Owner.WorkspaceID && device.CredentialID != "" && device.CredentialID == identity.CredentialID
+	}
+	return identity.Owner.Kind == "user" && device.CredentialID == ""
+}
+
+func loadWorkspaceDeviceFilesForIdentity(workspaceID string, identity controlplane.CallerIdentity) ([]workspaceDeviceFileWithPath, error) {
+	devices, err := loadWorkspaceDeviceFiles(workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	matched := make([]workspaceDeviceFileWithPath, 0, len(devices))
+	for _, item := range devices {
+		if workspaceDeviceMatchesIdentity(item.device, identity) {
+			matched = append(matched, item)
+		}
+	}
+	return matched, nil
 }
 
 func normalizeWorkspaceDeviceKind(kind string) (string, error) {
@@ -872,6 +990,9 @@ func parseWorkspaceDeviceSigningKey(device workspaceDeviceFile) (*ecdsa.PrivateK
 }
 
 func decryptWorkspaceKeyEnvelope(device workspaceDeviceFile, envelope controlplane.WorkspaceKeyEnvelope) (*workspacePrivateBundle, error) {
+	if device.CredentialID != "" {
+		return nil, fmt.Errorf("service workspace devices cannot decrypt workspace private-key envelopes")
+	}
 	if device.Status != workspaceDeviceStatusActive {
 		return nil, fmt.Errorf("workspace device %s is not active", device.DeviceKeyID)
 	}
@@ -1054,7 +1175,7 @@ func workspacePublicKeyFingerprint(publicEncryptionKey string, publicSigningKey 
 	return "sha256:" + hash, nil
 }
 
-func workspaceDeviceProofPayload(workspaceID string, kind string, label string, publicEncryptionKey string, publicSigningKey string, webttyPublicKey string, webttyKeyID string, webttyKeyAlgorithm string, fingerprint string) map[string]any {
+func workspaceDeviceProofPayload(workspaceID string, kind string, label string, publicEncryptionKey string, publicSigningKey string, webttyPublicKey string, webttyKeyID string, webttyKeyAlgorithm string, fingerprint string, ownerCredentialID ...string) map[string]any {
 	payload := map[string]any{
 		"v":                     1,
 		"type":                  "workspace.device.proof",
@@ -1063,6 +1184,10 @@ func workspaceDeviceProofPayload(workspaceID string, kind string, label string, 
 		"public_encryption_key": publicEncryptionKey,
 		"public_signing_key":    publicSigningKey,
 		"fingerprint":           fingerprint,
+	}
+	if len(ownerCredentialID) > 0 && ownerCredentialID[0] != "" {
+		payload["v"] = 2
+		payload["owner_credential_id"] = ownerCredentialID[0]
 	}
 	if strings.TrimSpace(label) != "" {
 		payload["label"] = label
@@ -1326,8 +1451,11 @@ func loadWorkspaceDeviceFile(path string) (workspaceDeviceFile, error) {
 	if err := decoder.Decode(&device); err != nil {
 		return workspaceDeviceFile{}, fmt.Errorf("decode workspace device file %s: %w", path, err)
 	}
-	if device.Version != workspaceDeviceFileVersion {
+	if device.Version != workspaceDeviceFileVersion && device.Version != workspaceServiceDeviceFileVersion {
 		return workspaceDeviceFile{}, fmt.Errorf("unsupported workspace device file version %d", device.Version)
+	}
+	if (device.Version == workspaceServiceDeviceFileVersion) != (device.CredentialID != "") || (device.CredentialID != "" && (device.Kind != workspaceDeviceKindService || device.DeviceEnvelope != nil)) {
+		return workspaceDeviceFile{}, fmt.Errorf("service workspace device has invalid ownership or a private-key envelope")
 	}
 	if _, err := normalizeWorkspaceDeviceKind(device.Kind); err != nil {
 		return workspaceDeviceFile{}, err
@@ -1461,6 +1589,7 @@ func workspaceDeviceOutput(path string, device workspaceDeviceFile, code string)
 		"webtty_key_id":     device.WebTTYKeyID,
 		"webtty_identity":   device.WebTTYIdentityPath,
 		"has_key_envelope":  device.DeviceEnvelope != nil,
+		"credential_id":     device.CredentialID,
 		"rotates_device_id": device.RotatesDeviceKeyID,
 	}
 	if device.RotationCompletedAt != nil {
@@ -1470,5 +1599,11 @@ func workspaceDeviceOutput(path string, device workspaceDeviceFile, code string)
 }
 
 func workspaceDeviceIsActive(device workspaceDeviceFile) bool {
-	return device.Status == workspaceDeviceStatusActive && device.DeviceEnvelope != nil
+	if device.Status != workspaceDeviceStatusActive {
+		return false
+	}
+	if device.CredentialID != "" {
+		return device.Kind == workspaceDeviceKindService && device.DeviceEnvelope == nil
+	}
+	return device.DeviceEnvelope != nil
 }

@@ -356,6 +356,7 @@ type LookupWorkspaceDeviceKeysRequest struct {
 }
 
 type WorkspaceDeviceKey struct {
+	CredentialID        string  `json:"credentialId,omitempty"`
 	ID                  string  `json:"id"`
 	Kind                string  `json:"kind"`
 	Status              string  `json:"status"`
