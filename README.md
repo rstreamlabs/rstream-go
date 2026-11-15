@@ -94,7 +94,7 @@ func serve() error {
 }
 ```
 
-The runnable [HTTP server example](examples/http-h1-server) adds signal handling and graceful shutdown. The [examples](examples) cover private dialing and other protocols. Applications using the filesystem WebRTC transport should follow the [verified ICE build procedure](tools/icepatch/README.md).
+The runnable [HTTP server example](examples/http-h1-server) adds signal handling and graceful shutdown. The [examples](examples) cover private dialing and other protocols.
 
 ## Documentation
 

@@ -30,6 +30,10 @@ Direct WebRTC file data bypasses Engine; rstream TURN relays when a direct route
 
 ## Qualification
 
+For source builds using this transport, follow the [verified ICE build
+procedure](../tools/icepatch/README.md) before building or testing. Consuming
+modules need their own preparation step; Go does not inherit replacements.
+
 Run the Go suite and race detector, build `filesystem/rtc/testdata/server`, then run the JS filesystem `test:e2e` script with `RSTREAM_FILES_E2E_SERVER` pointing to that binary. The fixture provides real Pion peers and optional local TURN and rejects direct HTTP data in RTC-only mode. Tests cover Go/Node interop, files/WebTTY, CLI/MCP reads and write errors, range hashes, malformed lengths, bounded slow consumers, cancellation, session limits, authorization revocation and ICE restart during transfer. The browser destination test streams more than 4 GiB with a bounded queue; it does not claim to write 4 GiB to disk in that unit test.
 
 Run native qualification for supported Go targets and Node native-provider platforms, plus browser review. Cross-compilation only establishes build compatibility.
