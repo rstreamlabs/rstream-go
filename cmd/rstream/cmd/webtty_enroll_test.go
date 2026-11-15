@@ -542,6 +542,9 @@ func testWorkspaceKeyEnvelopeForDevice(t *testing.T, device workspaceDeviceFile,
 		D:   workspaceBase64URL(keysetEncryptionPrivate.Bytes()),
 		Ext: &ext,
 	}
+	if device.CredentialID != "" {
+		return keysetSigningPrivate, bundle.PublicSigningKey, bundle, controlplane.WorkspaceKeyEnvelope{}
+	}
 	plaintext, err := json.Marshal(bundle)
 	if err != nil {
 		t.Fatalf("marshal bundle: %v", err)

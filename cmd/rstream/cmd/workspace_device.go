@@ -840,10 +840,6 @@ func workspaceDeviceMatchesOwner(device workspaceDeviceFile, owner controlplane.
 	return owner.Kind == "user" && device.CredentialID == ""
 }
 
-func loadWorkspaceDeviceFilesForIdentity(workspaceID string, identity controlplane.CallerIdentity) ([]workspaceDeviceFileWithPath, error) {
-	return loadWorkspaceDeviceFilesForOwner(workspaceID, identity.Owner, identity.CredentialID)
-}
-
 func loadWorkspaceDeviceFilesForOwner(workspaceID string, owner controlplane.CredentialOwner, credentialID string) ([]workspaceDeviceFileWithPath, error) {
 	devices, err := loadWorkspaceDeviceFiles(workspaceID)
 	if err != nil {

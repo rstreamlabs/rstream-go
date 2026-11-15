@@ -217,6 +217,10 @@ func TestWebTTYWorkspaceClientCredentialVerifierRejectsTampering(t *testing.T) {
 }
 
 func testWebTTYWorkspaceClientCredentialFixture(t *testing.T) (*webTTYServerEnrollmentFile, *webtty.WebTTYEndpointIdentity, []byte) {
+	return testWebTTYWorkspaceClientCredentialFixtureForOwner(t, false)
+}
+
+func testWebTTYWorkspaceClientCredentialFixtureForOwner(t *testing.T, service bool) (*webTTYServerEnrollmentFile, *webtty.WebTTYEndpointIdentity, []byte) {
 	t.Helper()
 	testSetWebTTYWorkspaceTrustHome(t)
 	material, err := generateWorkspaceDeviceMaterial("workspace-1", "cli", "test device")
@@ -224,12 +228,19 @@ func testWebTTYWorkspaceClientCredentialFixture(t *testing.T) (*webTTYServerEnro
 		t.Fatalf("generateWorkspaceDeviceMaterial() error = %v", err)
 	}
 	device := material.file
+	if service {
+		device.Version = workspaceServiceDeviceFileVersion
+		device.Kind = workspaceDeviceKindService
+		device.CredentialID = "credential-service"
+	}
 	device.DeviceKeyID = "device-cli"
 	device.Status = workspaceDeviceStatusActive
 	device.CreatedAt = time.Now().UTC()
 	device.UpdatedAt = device.CreatedAt
 	keysetPrivate, _, keysetBundle, envelope := testWorkspaceKeyEnvelopeForDevice(t, device, "keyset-1")
-	device.DeviceEnvelope = &envelope
+	if !service {
+		device.DeviceEnvelope = &envelope
+	}
 	writeTestWorkspaceDeviceWithWebTTYIdentity(t, device, material.webttyIdentity)
 	serverIdentity, err := webtty.GenerateWebTTYEndpointIdentity()
 	if err != nil {

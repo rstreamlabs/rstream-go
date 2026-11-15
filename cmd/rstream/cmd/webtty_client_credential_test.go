@@ -20,8 +20,8 @@ import (
 	"github.com/rstreamlabs/rstream-go/webtty"
 )
 
-func TestPreparedWorkspaceCredentialRetainsItsOwnRecordingRecipient(t *testing.T) {
-	_, identity, credential := testWebTTYWorkspaceClientCredentialFixture(t)
+func TestPreparedWorkspaceCredentialFIPSCompatibleRecordingRecipients(t *testing.T) {
+	_, identity, credential := testWebTTYWorkspaceClientCredentialFixtureForOwner(t, true)
 	envelope, err := decodeWebTTYWorkspaceClientCredential(credential)
 	if err != nil {
 		t.Fatal(err)
@@ -173,8 +173,8 @@ func TestWebTTYClientPreparationRejectsInvalidMaterialBeforeWriting(t *testing.T
 	}
 }
 
-func TestWebTTYClientPreparationPreservesP256ServerSuite(t *testing.T) {
-	_, identity, credential := testWebTTYWorkspaceClientCredentialFixture(t)
+func TestWebTTYClientPreparationFIPSCompatibleServerSuite(t *testing.T) {
+	_, identity, credential := testWebTTYWorkspaceClientCredentialFixtureForOwner(t, true)
 	server, err := webtty.GenerateWebTTYEndpointIdentityForSuite(webtty.KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce)
 	if err != nil {
 		t.Fatal(err)
