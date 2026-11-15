@@ -97,6 +97,103 @@ func TestClientTerminationCancellationInterruptsBlockedWrite(t *testing.T) {
 	}
 }
 
+func TestClientTerminationWaitsForWriterAndSendsOnce(t *testing.T) {
+	conn := &recordingSessionMessageConn{}
+	session := &ClientSession{
+		runtime: &clientRuntime{conn: conn, cfg: &ClientConfig{}, canTerminate: true},
+		done:    make(chan struct{}),
+	}
+	session.runtime.writeMu.Lock()
+	locked := true
+	done := make(chan error, 1)
+	finished := make(chan struct{})
+	defer func() {
+		if locked {
+			session.runtime.writeMu.Unlock()
+		}
+		select {
+		case <-finished:
+		case <-time.After(time.Second):
+			t.Error("termination retained its writer")
+		}
+	}()
+	go func() {
+		defer close(finished)
+		done <- session.RequestTermination(t.Context())
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("termination returned before the writer was released: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if messages := conn.decoded(t); len(messages) != 0 {
+		t.Fatalf("termination bypassed the active writer: %d messages", len(messages))
+	}
+	session.runtime.writeMu.Unlock()
+	locked = false
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("termination did not finish after the writer was released")
+	}
+	if messages := conn.decoded(t); len(messages) != 1 || messages[0].GetTerminate() == nil {
+		t.Fatalf("expected one termination message, got %v", messages)
+	}
+}
+
+func TestClientTerminationBoundsWaitForActiveStdinWriter(t *testing.T) {
+	for _, callerDeadline := range []bool{false, true} {
+		t.Run(fmt.Sprintf("caller_deadline=%t", callerDeadline), func(t *testing.T) {
+			conn := newBlockingSessionMessageConn()
+			writeDone := make(chan struct{})
+			defer func() {
+				_ = conn.Close()
+				select {
+				case <-writeDone:
+				case <-time.After(time.Second):
+					t.Error("stdin writer remained blocked after close")
+				}
+			}()
+			deadline := 50 * time.Millisecond
+			cfg := &ClientConfig{CloseDeadline: &deadline}
+			ctx := t.Context()
+			if callerDeadline {
+				longer := time.Second
+				cfg.CloseDeadline = &longer
+			}
+			session := &ClientSession{
+				runtime: &clientRuntime{conn: conn, cfg: cfg, canTerminate: true},
+				done:    make(chan struct{}),
+			}
+			go func() {
+				defer close(writeDone)
+				_ = session.SendEOF()
+			}()
+			select {
+			case <-conn.writeStarted:
+			case <-time.After(time.Second):
+				t.Fatal("stdin write did not start")
+			}
+			if callerDeadline {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, deadline)
+				defer cancel()
+			}
+			if err := session.RequestTermination(ctx); !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("termination waiting for stdin = %v, want deadline exceeded", err)
+			}
+			select {
+			case <-writeDone:
+			case <-time.After(time.Second):
+				t.Fatal("termination deadline did not release the active stdin writer")
+			}
+		})
+	}
+}
+
 func TestClientSessionNativeResultWinsOverPendingLocalClose(t *testing.T) {
 	session := &ClientSession{
 		loopCancel:  func() {},
