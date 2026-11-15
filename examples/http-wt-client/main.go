@@ -10,10 +10,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -33,15 +35,26 @@ func handleConnection(ctx context.Context, sess *webtransport.Session) error {
 		return fmt.Errorf("OpenStreamSync failed: %w", err)
 	}
 	defer stream.Close()
-	if _, err := stream.Write([]byte("ping")); err != nil {
+	return exchangeStream(stream)
+}
+
+func exchangeStream(stream io.ReadWriter) error {
+	message := []byte("ping")
+	n, err := stream.Write(message)
+	if err != nil {
 		return fmt.Errorf("write failed: %w", err)
 	}
-	buf := make([]byte, 4)
-	n, err := stream.Read(buf)
-	if err != nil {
+	if n != len(message) {
+		return fmt.Errorf("write failed: %w", io.ErrShortWrite)
+	}
+	reply := make([]byte, len(message))
+	if _, err := io.ReadFull(stream, reply); err != nil {
 		return fmt.Errorf("read failed: %w", err)
 	}
-	fmt.Printf("Received: %s\n", string(buf[:n]))
+	if !bytes.Equal(reply, message) {
+		return fmt.Errorf("echo payload does not match the sent message")
+	}
+	fmt.Printf("Received: %s\n", reply)
 	return nil
 }
 
