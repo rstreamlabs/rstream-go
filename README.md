@@ -38,7 +38,7 @@ Replace `my-project-endpoint` with the endpoint of your project. Login opens the
 
 ## Use the Go library
 
-Create a small Go module and add the SDK:
+Use Go 1.27.4 for this walkthrough. Create a small module and add the SDK:
 
 ```sh
 mkdir rstream-hello
@@ -100,7 +100,14 @@ func serve() error {
 }
 ```
 
-Save the program as `main.go` in the module where the SDK was installed, then run `go run .`. Open the printed forwarding address to see `Hello from rstream`; stop the process with an interrupt. A project context must be selected first, as in the CLI setup above.
+Save the program as `main.go` in that module. Resolve its imports, including the configuration package, then run it:
+
+```sh
+go mod tidy
+go run .
+```
+
+Open the printed forwarding address to see `Hello from rstream`; stop the process with an interrupt. Select a project context first, as in the CLI setup above.
 
 The runnable [HTTP server example](examples/README.md#serve-http) adds signal handling and graceful shutdown. The [example catalog](examples/README.md) explains which programs to pair for private connections, other protocols and API integrations.
 
