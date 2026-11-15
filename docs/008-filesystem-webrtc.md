@@ -2,7 +2,7 @@
 
 The shared `filesystem` package composes the same rooted filesystem policy with either WebDAV or WebRTC. `rstream files --backend webrtc` and `webtty server --fs-root ./exports --fs-backend webrtc` select Pion WebRTC v4. Both are opt-in; WebDAV is the default. WebTTY terminal execution and terminal E2E are separate.
 
-File sharing is unavailable in the restricted FIPS build for both WebDAV and WebRTC, including the WebTTY filesystem. See the [FIPS compatibility table](010-fips-140-3-profile.md#file-sharing-compatibility).
+File sharing is unavailable in the restricted FIPS build for both WebDAV and WebRTC, including the WebTTY filesystem. See the [FIPS compatibility table](017-fips-140-3-profile.md#file-sharing-compatibility).
 
 ## Operations and clients
 

@@ -38,7 +38,7 @@ go build -modfile=out/ice-patch/go.mod -o out/rstream.exe ./cmd/rstream
 .\out\rstream.exe --help
 ```
 
-These commands build from this checkout without installing over another CLI. Use the output path when following the [CLI workflow](001-cli-workflow.md), or add that directory to the current process's `PATH`. The direct Go build does not set the release metadata supplied by the Makefile.
+These commands build from this checkout without installing over another CLI. Use the output path when following the [CLI workflow](002-cli-workflow.md), or add that directory to the current process's `PATH`. The direct Go build does not set the release metadata supplied by the Makefile.
 
 The ICE preparation creates an alternate module file under ignored `out/`; it does not modify `go.mod` or the shared module cache. Use that alternate file for subsequent builds and tests. The [ICE build guide](../tools/icepatch/README.md) explains its scope and how external applications adopt it.
 

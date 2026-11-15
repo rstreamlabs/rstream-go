@@ -616,7 +616,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           VERSION: ${{ needs.prepare.outputs.version }}
-          WINGET_GUIDE_URL: https://github.com/rstreamlabs/rstream-go/blob/main/docs/017-cli-releases.md#winget-community-submission
+          WINGET_GUIDE_URL: https://github.com/rstreamlabs/rstream-go/blob/main/docs/019-cli-releases.md#winget-community-submission
         run: |
           set -euo pipefail
           gh release edit "$RELEASE_TAG" \

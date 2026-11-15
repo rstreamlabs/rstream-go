@@ -7,9 +7,9 @@ This repository contains the reference Go SDK and the `rstream` CLI. Embed the S
 | Goal | Start here |
 | --- | --- |
 | Try rstream with an existing service | [Install the CLI](docs/000-installation.md), then follow the CLI example below. |
-| Add connectivity to a Go application | [Use the Go library](#use-the-go-library) or run the [HTTP server example](examples/README.md#serve-http). |
+| Add connectivity to a Go application | [Use the Go library](#use-the-go-library), follow the [SDK integration path](docs/003-go-sdk.md), or run the [HTTP server example](examples/README.md#serve-http). |
 | Explore an integration or protocol | [Example catalog](examples/README.md). |
-| Build or modify this checkout | [Build from source](docs/016-building-from-source.md), then [Contributing](CONTRIBUTING.md). |
+| Build or modify this checkout | [Build from source](docs/001-building-from-source.md), then [Contributing](CONTRIBUTING.md). |
 
 ## Connection model
 
@@ -22,7 +22,7 @@ An agent connects outbound to the edge; services behind it need no inbound port.
 | Bytestream | Carries reliable, ordered bytes for HTTP and stream protocols. |
 | Datagram | Preserves message boundaries for datagram protocols. |
 
-The [client-to-edge transport](docs/002-transport.md) and the [protocol exposed by a tunnel](docs/003-tunnel-properties.md) are separate choices. Go implements TLS and QUIC agent transports and both bytestream and datagram tunnels. The protocols available for publication depend on the deployment and project policy.
+The [client-to-edge transport](docs/004-transport.md) and the [protocol exposed by a tunnel](docs/005-tunnel-properties.md) are separate choices. Go implements TLS and QUIC agent transports and both bytestream and datagram tunnels. The protocols available for publication depend on the deployment and project policy.
 
 ## Start with the CLI
 
@@ -34,7 +34,7 @@ rstream project use my-project-endpoint
 rstream forward 8080
 ```
 
-Replace `my-project-endpoint` with the endpoint of your project. Login opens the browser approval flow. The last command prints the service’s forwarding address and keeps the tunnel open until you stop it. See the [CLI workflow](docs/001-cli-workflow.md) for project-scoped device credentials and certificate authentication.
+Replace `my-project-endpoint` with the endpoint of your project. Login opens the browser approval flow. The last command prints the service’s forwarding address and keeps the tunnel open until you stop it. See the [CLI workflow](docs/002-cli-workflow.md) for project-scoped device credentials and certificate authentication.
 
 ## Use the Go library
 
@@ -115,12 +115,12 @@ The runnable [HTTP server example](examples/README.md#serve-http) adds signal ha
 
 | Task | Start here |
 | --- | --- |
-| Install and configure the CLI | [Installation](docs/000-installation.md) and [CLI workflow](docs/001-cli-workflow.md) |
-| Choose connectivity and tunnel options | [Transport configuration](docs/002-transport.md) and [tunnel properties](docs/003-tunnel-properties.md) |
-| Share files or operate remote terminals | [File sharing](docs/010-file-sharing.md) and [WebTTY](docs/006-webtty.md) |
-| Integrate webhooks or agent tools | [Webhooks](docs/007-webhooks.md) and [MCP](docs/009-mcp.md) |
+| Install and configure the CLI | [Installation](docs/000-installation.md) and [CLI workflow](docs/002-cli-workflow.md) |
+| Choose connectivity and tunnel options | [Transport configuration](docs/004-transport.md) and [tunnel properties](docs/005-tunnel-properties.md) |
+| Share files or operate remote terminals | [File sharing](docs/007-file-sharing.md) and [WebTTY](docs/009-webtty.md) |
+| Integrate webhooks or agent tools | [Webhooks](docs/010-webhooks.md) and [MCP](docs/011-mcp.md) |
 | Find API, security and troubleshooting guides | [Documentation index](docs/README.md) and [Go API reference](https://pkg.go.dev/github.com/rstreamlabs/rstream-go) |
-| Build or contribute | [Source build](docs/016-building-from-source.md), [Contributing](CONTRIBUTING.md) and [coding style](CODING_STYLE.md) |
+| Build or contribute | [Source build](docs/001-building-from-source.md), [Contributing](CONTRIBUTING.md) and [coding style](CODING_STYLE.md) |
 
 ## Security and support
 

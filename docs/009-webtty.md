@@ -9,27 +9,35 @@ Use it for an interactive shell, a bounded automation command or a terminal embe
 | Tunnel WebTTY server | A terminal exposed through a running tunnel; its inventory entry follows the process lifetime. |
 | Registered WebTTY server | A durable project object with enrollment and the managed session features enabled by its policy. |
 
-Install the [CLI](000-installation.md), authenticate and select a project using the [CLI workflow](001-cli-workflow.md). Run server commands on the machine to be accessed and client commands on the operator's machine. Both need credentials permitted for the selected project; server enrollment and workspace protection add the trust steps described below.
+Install the [CLI](000-installation.md), authenticate and select a project using the [CLI workflow](002-cli-workflow.md). Run server commands on the machine to be accessed and client commands on the operator's machine. Both need credentials permitted for the selected project; server enrollment and workspace protection add the trust steps described below.
 
 Start with a tunnel server for a small integration, or follow [registered server enrollment](#enroll-a-registered-webtty-server) for managed access. The [product overview](https://rstream.io/docs/webtty) explains the browser and dashboard workflows. This guide covers CLI setup and the Go runtime contracts.
 
 ## Open a terminal
 
-### Expose a Tunnel WebTTY Server
+### Expose a tunnel WebTTY server
 
-Use this path when you want a terminal quickly through the existing HTTP tunnel
-model. The tunnel is published over HTTP/WebSocket with WebTTY inventory labels.
+On the remote machine, start a published HTTP/WebSocket tunnel:
 
-```bash
+```sh
 rstream webtty server -v --rstream --name shell
 ```
 
-Private tunnel access remains available:
+On the operator's machine, using credentials for that project:
 
-```bash
-rstream webtty server -v --rstream --name shell --no-publish
-rstream webtty client --url rstrm://shell -- whoami
+```sh
+rstream webtty exec --url rstrm://shell -o text -- whoami
 ```
+
+Expect the remote server process's OS username: lightweight servers default to `spawn` mode. Stop the server with Ctrl+C. Native `rstrm://` access uses authenticated private dialing. A published server also has the browser-facing endpoint advertised in inventory. The Go Windows server supports command pipes, not interactive PTYs; use a supported server for Windows interactive terminals.
+
+For a native-only endpoint, the project/deployment must allow unpublished tunnels (hosted Pro/Enterprise). Stop the published copy first, then restart it with:
+
+```sh
+rstream webtty server -v --rstream --name shell --no-publish
+```
+
+Connect with the same operator command. No browser endpoint is created. WebTransport and managed features have their own deployment/profile requirements below.
 
 ### Require E2E Terminal Encryption
 
@@ -37,19 +45,38 @@ Create a server endpoint identity and a client endpoint identity, authorize the
 client signing key on the server, trust the server endpoint identity on the
 client, then run the server in protected mode.
 
-```bash
+On the server host, create its identity and print only the public endpoint value:
+
+```sh
 rstream webtty identity create --name dev-shell
 rstream webtty identity show --name dev-shell --endpoint-identity
+```
+
+On the operator host, create its own identity and print its public endpoint value:
+
+```sh
 rstream webtty identity create --name client-laptop
 rstream webtty identity show --name client-laptop --endpoint-identity
-rstream webtty identity list
 rstream webtty known-server add dev-shell \
-  --key server_endpoint_identity \
+  --key '<server-public-endpoint-value>' \
   --client-identity client-laptop
-rstream webtty authorized-client add client-laptop --identity dev-shell --key client_endpoint_identity
-rstream webtty server -v --rstream --name dev-shell --identity dev-shell
-rstream webtty exec --url rstrm://dev-shell -- whoami
 ```
+
+Replace the quoted placeholder with the public value printed on the server and verify it through your provisioning/trust channel. Transfer only the operator's public endpoint value back to the server:
+
+```sh
+rstream webtty authorized-client add client-laptop --identity dev-shell \
+  --key '<client-public-endpoint-value>'
+rstream webtty server -v --rstream --name dev-shell --identity dev-shell
+```
+
+Then run on the operator host:
+
+```sh
+rstream webtty exec --url rstrm://dev-shell -o text -- whoami
+```
+
+Keep private identity files on their owning hosts. Stop the server with Ctrl+C after validation.
 
 To prepare the same protocol profile used by rstream FIPS builds from a
 standard CLI, add `--crypto-profile=fips-compatible` when creating both endpoint
@@ -146,21 +173,7 @@ permission denial. If list scopes select fields, include `id` for UI rows and
 the protocol, connection fields and discovery labels needed by WebTTY. Objects
 without an exposed ID are omitted from actionable UI rows.
 
-In `rstream ui`, press `c` from the inventory to select another configured
-context or a project discovered through the active Control Plane API. The
-picker separates contexts (`1`) from projects (`2`); `Tab` toggles the views,
-and the `CURRENT` and `DEFAULT` columns make both states explicit. `Enter` uses
-the target only for the current UI process; `d` also saves it as the default
-context. The WebTTY inventory and all subsequent session security resolution
-use the newly selected runtime, including workspace-managed device proofs and
-E2E key resolution. Close an open terminal with `Ctrl+g q` before switching
-context.
-
-The context picker remains usable when Control plane discovery is unavailable.
-Unlinked contexts and project-scoped contexts can therefore switch Engine
-inventory and open directly resolvable WebTTY servers without a Control plane.
-Only workspace-managed trust paths that inherently require Control plane access
-will fail, with the original context and inventory left active.
+The [interactive inventory guide](012-cli-ui.md) covers session-only/default context switching, offline local contexts and closing an active terminal before switching. The UI uses the same WebTTY trust resolution as these commands.
 
 If the workspace requires E2E and the CLI is not trusted, the client fails before
 opening the terminal and prints the enrollment command to run.
@@ -190,6 +203,7 @@ use the single-command path:
 ```bash
 rstream project use project-endpoint
 rstream webtty server create prod-shell --enroll
+rstream webtty server -v --server-id <returned-server-id> --login-user <local-username>
 ```
 
 If the server record is created from another machine, run the printed
@@ -358,41 +372,67 @@ fields are rejected. Label keys and values are trimmed; empty or duplicate keys
 after trimming are errors. Global account/context configuration remains a
 separate file shared with SDKs.
 
-| CLI flag | WebTTY YAML field |
-| --- | --- |
-| `--rstream` | `server.rstream` |
-| `--listen` | `server.listen` |
-| `--name` | `server.name` |
-| `--host` | `server.host` |
-| `--server-id` | `server.serverId` |
-| `--server-enrollment` | `server.serverEnrollment` |
-| `--transport` | `server.transport` |
-| `--execution-mode` | `server.executionMode` |
-| `--login-user` | `server.loginUser` |
-| `--allow-client-user` | `server.allowClientUser` |
-| `--retry`, `--no-retry` | `server.retry` |
-| `--retry-interval` | `server.retryIntervalMs` |
-| `--shutdown-timeout` | `server.shutdownTimeoutMs` |
-| `--publish`, `--no-publish` | `server.publish` |
-| `--auth-token-file` | `server.authTokenFile` |
-| `--allow-unauthenticated` | `server.allowUnauthenticated` |
-| `--allowed-origin` | `server.allowedOrigins` (list) |
-| `--label` | `server.labels` (map) |
-| `--e2e` | `e2e.enabled` |
-| `--identity` | `e2e.identity` |
-| `--identity-file` | `e2e.identityFile` |
-| `--authorized-clients-file` | `e2e.authorizedClientsFile` |
-| `--authorized-client-key` | `e2e.authorizedClientKeys` (list) |
-| `--tls-cert-file` | `tls.certFile` |
-| `--tls-key-file` | `tls.keyFile` |
-| `--fs-root` | `filesystem.root` |
-| `--fs-backend` | `filesystem.backend` |
-| `--fs-read-only` | `filesystem.readOnly` |
-| `--fs-max-upload-size` | `filesystem.maxUploadSizeBytes` |
+| Server option | YAML field | Meaning and format | Default or condition |
+| --- | --- | --- | --- |
+| `--rstream` | `server.rstream` | Boolean; serve through rstream rather than bind a local listener. | false; registration implies true. |
+| `--listen` | `server.listen` | Local `host:port` listener. | 127.0.0.1:8080; local mode only. |
+| `--name` | `server.name` | Tunnel name for inventory/private dial. | Optional, rstream mode only. |
+| `--host` | `server.host` | Stable or verified custom public hostname. | Optional; published rstream endpoint only. |
+| `--server-id` | `server.serverId` | Enrolled registered server identifier. | Loads its enrollment; implies rstream. |
+| `--server-enrollment` | `server.serverEnrollment` | Path to an enrollment YAML file. | Alternative to server-id; normal path is under webtty/enrollments. |
+| `--transport` | `server.transport` | `plain`, `websocket` or `webtransport`. | websocket in standard builds; webtransport in FIPS. |
+| `--execution-mode` | `server.executionMode` | `spawn` uses process identity; `login` resolves an OS account. | login for registered servers, spawn otherwise. |
+| `--login-user` | `server.loginUser` | Existing OS username that owns login sessions. | Required in login mode unless client user selection is enabled. |
+| `--allow-client-user` | `server.allowClientUser` | Boolean permitting the caller to request an OS account. | false; login mode only, host privileges still required. |
+| `--retry`, `--no-retry` | `server.retry` | Boolean enabling reconnection after retryable failures. | true with rstream, false for local servers. |
+| `--retry-interval` | `server.retryIntervalMs` | Positive integer delay in milliseconds. | 5000. |
+| `--shutdown-timeout` | `server.shutdownTimeoutMs` | Integer millisecond budget for graceful session close/drain. | 5000. |
+| `--publish`, `--no-publish` | `server.publish` | Boolean selecting a public endpoint. | true with rstream, except lightweight plain is private; registered WebTransport requires publication. |
+| `--auth-token-file` | `server.authTokenFile` | Path to a nonempty local HTTP bearer token. | Local WebSocket/WebTransport only; replaces environment bearer source. |
+| `--allow-unauthenticated` | `server.allowUnauthenticated` | Boolean explicitly permitting local access without HTTP auth. | false; use only for intentional isolated local service; plain has no HTTP bearer layer. |
+| `--allowed-origin` | `server.allowedOrigins` | Repeatable browser Origin strings / YAML list. | No extra local origins by default; tunneled traffic uses Engine admission. |
+| `--label` | `server.labels` | Repeatable key=value / YAML string map for inventory. | Optional; empty or duplicate trimmed keys fail. |
+| `--e2e` | `e2e.enabled` | Boolean requiring encrypted terminal content. | false unless identity/enrollment policy implies protection; cannot weaken server policy. |
+| `--identity` | `e2e.identity` | Local named endpoint identity. | Alternative to identityFile; never a remote rstream username. |
+| `--identity-file` | `e2e.identityFile` | Path to endpoint identity JSON with private encryption/signing keys. | See identity resolution below; alternative to identity. |
+| `--authorized-clients-file` | `e2e.authorizedClientsFile` | Path to authorized-client JSON generated by CLI. | Server-specific store by default; read on handshake; workspace policy uses trusted devices instead. |
+| `--authorized-client-key` | `e2e.authorizedClientKeys` | Repeatable public signing value / YAML list. | Merged with environment key values; rejected for workspace-managed server authorization. |
+| `--tls-cert-file` | `tls.certFile` | Path to PEM server certificate. | Together with keyFile for local WebTransport; optional pair for local plain TLS. |
+| `--tls-key-file` | `tls.keyFile` | Path to matching PEM server private key. | Local listeners only; separate from agent mTLS and WebTTY E2E identity. |
+| `--fs-root` | `filesystem.root` | Directory exposed by the filesystem sidecar. | Disabled when omitted; WebSocket terminal transport and E2E disabled required. |
+| `--fs-backend` | `filesystem.backend` | `webdav` or `webrtc` transfer backend. | webdav; requires root, WebRTC is read-only. |
+| `--fs-read-only` | `filesystem.readOnly` | Boolean disabling WebDAV mutation. | false for the WebTTY sidecar; WebRTC is always read-only. |
+| `--fs-max-upload-size` | `filesystem.maxUploadSizeBytes` | Positive integer limit per WebDAV upload in bytes. | 67108864 (64 MiB); explicit setting rejected for WebRTC. |
 
 The `--webtty-config` flag and `RSTREAM_WEBTTY_CONFIG` select the runtime file;
 `version: 1` identifies its schema. Global flags such as `--config` and `--context`
 select the connection context separately.
+
+### Client options
+
+Client/exec options are separate from server runtime YAML. Commands after `--` run on the remote host.
+
+| Option | Purpose and format | Default or condition |
+| --- | --- | --- |
+| `--url` | URI from the transport table below. | `ws://127.0.0.1:8080`. |
+| `--transport` | `plain`, `websocket`, `webtransport`; explicit discovery override. | Discovered/inferred in standard builds; WebTransport in FIPS. Must match advertised transport. |
+| `--no-discovery` | Skip Engine inventory and Control plane metadata. | false; requires explicit transport, Engine and local security. |
+| `--interactive`/`-i`, `--no-interactive`/`-I` | Enable/disable interactive input. | Enabled when no command is supplied, otherwise disabled; opposite forms conflict. |
+| `--tty`/`-t`, `--no-tty`/`-T` | Request/disable remote PTY. | Requested when no command is supplied, otherwise disabled; allocation needs a local terminal and server PTY support. |
+| `--env`/`-e` | Repeatable `KEY=VALUE`, or `KEY` copied from client environment. | No overrides by default; server execution policy still applies. |
+| `--workdir`/`-w`, `--user`/`-u` | Remote directory and username/UID. | Server policy/defaults; login mode restricts account selection. |
+| `--output`/`-o` | `text` streaming or `json` bounded capture. | text for client, json for exec. |
+| `--auth-token-file` | File containing local/direct HTTP bearer token. | Overrides `RSTREAM_WEBTTY_AUTH_TOKEN`; not an E2E key. |
+| `--tls-ca-file` | PEM CA bundle verifying the direct WebTTY endpoint. | System roots when omitted; separate from Engine TLS configuration. |
+| `--tls-server-name` | SNI/certificate verification name. | Endpoint hostname when omitted. |
+| `--tls-insecure-skip-verify` | Disable direct endpoint TLS verification for diagnostics. | false; incompatible with explicit CA file and prohibited in FIPS. |
+| `--exec-path` | Origin-relative advertised terminal HTTP path. | Inventory path when discovered, `/` otherwise; unavailable for plain. |
+| `--e2e` | Fail-closed requirement for encrypted terminal content. | Protection also follows resolved identity/server/workspace policy. |
+| `--identity`, `--identity-file` | Local named identity or endpoint JSON file. | Alternative selectors; see source precedence below. |
+| `--known-server` | Named local pinned server entry. | Optional direct-target selector; conflicts with inline known-server key. |
+| `--known-server-key` | Repeatable server public encryption/endpoint value. | Combined with environment key; see formats below. |
+| `--known-servers-file` | JSON trust store. | Explicit flag overrides environment file selection. |
+| `--client-credential-file` | Signed local workspace credential JSON. | Environment fallback; authenticated E2E required. |
 
 ### Public hostname and filesystem backend
 
@@ -649,7 +689,7 @@ hierarchy, not in the global WebTTY subtree:
 ```
 
 The first file is the trusted workspace device record and signing material. The
-second file is the X25519 WebTTY identity bound to that workspace device for
+second file is the profile-selected WebTTY endpoint identity bound to that workspace device for
 workspace-managed terminal decrypt grants. It is intentionally scoped under the
 workspace tree; `~/.rstream/webtty/identities` is reserved for local WebTTY
 server identities and explicit-key/direct WebTTY trust workflows.
@@ -659,110 +699,56 @@ are written with `0600` file permissions on POSIX systems. Runtime reads reject
 files that are accessible by group or others so local trust roots cannot be
 silently weakened after creation.
 
-## Environment Variables
+## Environment variables and local trust sources
 
-Use environment variables for containerized or CI deployments:
+These variables are read by CLI/UI/local MCP paths, not automatically by arbitrary embedded `webtty.SessionConfig` users. Set only the sources intended for that process. The [shared connection variables](002-cli-workflow.md#contexts-and-environments) select Engine identity separately.
 
-```text
-RSTREAM_WEBTTY_CONFIG
-RSTREAM_WEBTTY_AUTH_TOKEN
-RSTREAM_WEBTTY_IDENTITY
-RSTREAM_WEBTTY_IDENTITY_FILE
-RSTREAM_WEBTTY_AUTHORIZED_CLIENT_KEYS
-RSTREAM_WEBTTY_AUTHORIZED_CLIENTS_FILE
-RSTREAM_WEBTTY_KNOWN_SERVER_KEY
-RSTREAM_WEBTTY_KNOWN_SERVERS_FILE
-```
+| Variable | Value and purpose | Default, precedence and condition |
+| --- | --- | --- |
+| `RSTREAM_WEBTTY_CONFIG` | Path to version 1 server runtime YAML. | No runtime file by default; `--webtty-config` overrides. Missing explicit file or unknown field fails. |
+| `RSTREAM_WEBTTY_AUTH_TOKEN` | Nonempty local HTTP bearer token string. | `--auth-token-file` overrides; local WebSocket/WebTransport only. All rstream-backed servers and plain transport reject local bearer configuration. |
+| `RSTREAM_WEBTTY_IDENTITY` | Inline endpoint identity JSON, including encryption and signing private material. | No default inline identity; cannot coexist with a named/file identity or `RSTREAM_WEBTTY_IDENTITY_FILE`. |
+| `RSTREAM_WEBTTY_IDENTITY_FILE` | Path to endpoint identity JSON. | Explicit named/file flags take precedence; registered enrollment supplies its file when no override is selected. |
+| `RSTREAM_WEBTTY_AUTHORIZED_CLIENT_KEYS` | Comma-separated public signing keys or full public endpoint values. | Added to repeatable `--authorized-client-key` values; no default keys. Workspace-managed servers use trusted-device authorization instead. |
+| `RSTREAM_WEBTTY_AUTHORIZED_CLIENTS_FILE` | Path to authorized-client JSON. | `--authorized-clients-file` overrides; otherwise server-specific default file. The file is read for new handshakes. |
+| `RSTREAM_WEBTTY_KNOWN_SERVER_KEY` | One public server encryption value or full endpoint value. | Added to explicit `--known-server-key` values; cannot be combined with `--known-server <name>`. No TOFU. |
+| `RSTREAM_WEBTTY_KNOWN_SERVERS_FILE` | Path to known-server JSON generated by CLI. | `--known-servers-file` overrides; explicit key and file sources can combine. Default local store is used when no explicit source is selected. |
+| `RSTREAM_WEBTTY_CLIENT_CREDENTIAL_FILE` | Path to a signed workspace client credential JSON document. | `--client-credential-file` takes precedence; needs authenticated E2E and a trusted server. Does not enroll/approve the device. |
+| `RSTREAM_DATA_DIR` | Absolute root for WebTTY trust/enrollment and workspace-device state. | `~/.rstream`; relative values fail. Does not relocate the shared config selected by `RSTREAM_CONFIG`. |
 
-`RSTREAM_WEBTTY_AUTH_TOKEN` and `--auth-token-file` protect only local WebTTY
-WebSocket/WebTransport servers. Registered servers use rstream Engine
-authentication and reject local bearer-token configuration.
+Public key components use canonical unpadded base64url. Use CLI-produced values rather than constructing keys or IDs manually:
 
-`RSTREAM_WEBTTY_IDENTITY` contains an inline endpoint identity JSON document.
-Use it for container or secret-manager environments where mounting a separate
-file is inconvenient. Do not combine it with `--identity`, `--identity-file`, or
-`RSTREAM_WEBTTY_IDENTITY_FILE`.
+| Public value | Format | Use |
+| --- | --- | --- |
+| Authorized client signing key | `signing_public_key` or `signing_key_id:signing_public_key` | Server verifies the client's authenticated proof. A full public endpoint value is also accepted. |
+| Server encryption key | `encryption_key_id:encryption_public_key` | Encryption-only recipient information; insufficient to authenticate the server endpoint. |
+| Full public endpoint | `encryption_key_id:encryption_public_key:signing_key_id:signing_public_key` | Authenticated E2E server trust or extraction of a client's public signing identity. |
 
-Server identity file resolution is:
+Server identity file selection is `--identity-file`, then `--identity`, then `RSTREAM_WEBTTY_IDENTITY_FILE`, then the enrollment's identity file. An ad hoc server started with `--e2e` and no identity source uses the default local identity. Inline identity JSON is an alternative source, not a fallback to an invalid file. The document must contain both encryption and signing identities and match any enrollment pin.
 
-```text
---identity-file
---identity
-RSTREAM_WEBTTY_IDENTITY_FILE
-registered server enrollment identityFile
-~/.rstream/webtty/identities/default.identity.json for ad hoc servers started with --e2e and no explicit identity
-```
+Client endpoint identity selection uses the same explicit file/name/environment sources without an enrollment file. Authenticated E2E requires an explicit source or the target known-server entry's `client_identity`; it does not invent a trusted client identity. `--known-server <name>` selects a pinned local entry for a direct URL without a Control plane lookup. Registered workspace resolution instead uses approved workspace-device material.
 
-The identity document must contain both the WebTTY encryption identity and the
-WebTTY signing identity.
-
-E2E servers require an authorized client source. The normal operator path is
-`rstream webtty authorized-client add`, which writes the default server-specific
-file under `~/.rstream/webtty/authorized_clients`. CI and container deployments
-can use `--authorized-client-key`, `RSTREAM_WEBTTY_AUTHORIZED_CLIENT_KEYS`,
-`--authorized-clients-file`, or `RSTREAM_WEBTTY_AUTHORIZED_CLIENTS_FILE`.
-
-Authorized client resolution for a server identity named `dev-shell` is:
-
-```text
---authorized-client-key
-RSTREAM_WEBTTY_AUTHORIZED_CLIENT_KEYS
---authorized-clients-file
-RSTREAM_WEBTTY_AUTHORIZED_CLIENTS_FILE
-~/.rstream/webtty/authorized_clients/dev-shell.json
-```
-
-The file is read at handshake time. Adding or removing clients affects new
-sessions without restarting the WebTTY server.
-
-Client identity file resolution uses the same endpoint identity sources, without
-the registered server enrollment step. For authenticated E2E, the client does
-not invent a default identity; use an explicit source or a target-scoped
-known-server `client_identity` association.
-
-```text
---identity-file
---identity
-RSTREAM_WEBTTY_IDENTITY_FILE
-RSTREAM_WEBTTY_IDENTITY
-known-server client_identity -> ~/.rstream/webtty/identities/<name>.identity.json
-```
-
-Client known server resolution is:
-
-```text
---known-server
---known-server-key
-RSTREAM_WEBTTY_KNOWN_SERVER_KEY
---known-servers-file
-RSTREAM_WEBTTY_KNOWN_SERVERS_FILE
-workspace-managed server resolution for registered servers, when available
-~/.rstream/webtty/known_servers.json when no explicit source was configured
-```
-
-`--known-server <name>` selects one local known-server entry for direct URLs
-without calling the control plane.
-
-`--known-server-key` and `RSTREAM_WEBTTY_KNOWN_SERVER_KEY` accept either
-`encryption_key_id:encryption_public_key` or the full authenticated endpoint
-form
-`encryption_key_id:encryption_public_key:signing_key_id:signing_public_key`.
+For server authorization, inline flag/environment signing keys are combined with the selected file resolver. The file path is selected by flag, then environment, then the server-specific default under `webtty/authorized_clients`. Do not describe this as first-key-wins. Workspace-managed authorization uses pinned public workspace trust and device credentials instead of operator-supplied client signing keys.
 
 ## Transports
 
-Supported Go WebTTY transports are:
+| Transport | Application data path | Requirements |
+| --- | --- | --- |
+| `websocket` | WebSocket messages over a stream. | Standard server default; local HTTP bearer or rstream admission. |
+| `plain` | Framed WebTTY protobuf over TCP, TLS or private bytestream. | No HTTP bearer layer; lightweight rstream servers are private. |
+| `webtransport` | HTTP/3 WebTransport streams. | Local server needs TLS cert/key; registered server requires publication; FIPS requires this transport. |
 
-```text
-plain, websocket, webtransport
-```
+Local plain TLS and local WebTransport use TLS 1.3 minimum. WebTTY's application transport is independent of the TLS/QUIC client-to-Engine transport and of payload E2E.
 
-Local plain TLS and local WebTransport use TLS 1.3 minimum. Published registered
-servers use managed rstream WebTTY through the engine. When WebTransport is
-selected for a published server, the CLI resolves `rstrm://<server>` to the
-published HTTPS endpoint instead of carrying an opaque HTTP/3 session through a
-private datagram stream. This keeps session policy, live state, and encrypted
-recording visible to the engine. A FIPS build fails closed if that published
-endpoint is unavailable.
+| Client URI | Meaning | Condition |
+| --- | --- | --- |
+| `rstrm://<tunnel-id-or-name>` | Resolve inventory/security, then dial through rstream. | Standard live commands use private dial; see exceptions below. No public DNS name is needed. |
+| `ws://host:port/path`, `wss://host:port/path` | Direct WebSocket endpoint. | `wss` verifies TLS; direct E2E needs explicit/local known-server trust. Default CLI URL is `ws://127.0.0.1:8080`. |
+| `tcp://host:port`, `tls://host:port` | Direct plain WebTTY stream, with TLS for the latter. | Plain transport; default ports 80/443, use explicit port for local listeners. |
+| `https://host/path` | Direct WebTransport endpoint. | Requires `--transport webtransport`; port 443 if omitted. `wt://`, `wts://` and `webtransport://` are accepted aliases with the same override. |
+| `wss://host/path` with `--transport webtransport` | Same endpoint rewritten to HTTPS for WebTransport. | The server must actually provide WebTransport. |
+
+For standard live `client`/`exec`, an `rstrm://` target uses a private stream or datagram dial even when the tunnel is published. Registered WebTransport still requires publication at the server. The **FIPS** client instead resolves a published target to its verified public HTTPS/WebTransport endpoint and fails closed when that endpoint is unavailable. **Detached `sessions start`** also uses the published WebSocket/WebTransport endpoint so Engine can acknowledge and own the bounded execution. Neither exception permits weakening admission, E2E or recording policy.
 
 ## Execution Modes
 
@@ -814,27 +800,25 @@ WebTTY E2E keeps the protobuf session envelope visible while encrypting terminal
 payload bytes. The engine can route sessions, record metadata, enforce policy,
 and track lifecycle events without plaintext terminal content.
 
-Current helper suite:
+The Go helpers implement two profiles. Select a profile when creating identities; an existing identity is not silently converted.
 
-```text
-Payload: AES-256-GCM with a fresh 96-bit nonce per WebTTY data message
-Key envelope: HPKE Base mode with DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, AES-256-GCM
-```
+| Profile | Terminal payload suite | Session-key envelope suite | Availability |
+| --- | --- | --- | --- |
+| Standard default | `aes-256-gcm`, fresh 96-bit nonce per message | `hpke-x25519-hkdf-sha256-aes-256-gcm` | Standard build; X25519 encryption identity. |
+| `fips-compatible` | `aes-256-gcm-random-nonce` | `p256-hkdf-sha256-aes-256-gcm-random-nonce` | Standard and FIPS builds; P-256 ECDH, HKDF-SHA256, internally generated nonces. |
 
-The protocol reserves ChaCha20-Poly1305 suite identifiers for future support.
-Current helpers reject those suites until they are implemented and tested.
+ChaCha20-Poly1305 identifiers are reserved, not selectable implementations; the helpers reject unsupported suites. A FIPS build accepts only the second profile over WebTransport. Protocol interoperability, including browser WebCrypto, does not attest a CMVP-validated deployment. See the [FIPS profile](017-fips-140-3-profile.md) for artifact and transport boundaries.
 
 Recorded E2E events expose both `key_context` and `key_context_raw`.
 `key_context` is for inspection and may be represented as JSON. Consumers that
 reconstruct an E2E session envelope for replay, join, or decrypt-material flows
 must use `key_context_raw`, which is the unpadded base64url encoding of the
-exact HPKE/AAD context bytes used by the endpoint.
+exact key-envelope/AAD context bytes used by the endpoint.
 
 Workspace-managed protection uses separate workspace-device envelopes. Those
 envelopes use ECDH P-256 recipient keys, HKDF-SHA-256, and AES-256-GCM for
 browser and CLI device grants so they remain compatible with WebCrypto. That
-workspace envelope suite is distinct from the WebTTY terminal payload HPKE suite
-above.
+workspace envelope is distinct from the per-session terminal key envelope; matching algorithms do not make them interchangeable.
 
 The filesystem sidecar (WebDAV or WebRTC) is rejected when WebTTY E2E payload encryption is
 active, because it is a separate data surface.
@@ -857,6 +841,8 @@ command. It is a repair command, not a way to run a workspace-managed server
 from an untrusted machine.
 
 ## Runtime Checks
+
+Run source checks from the repository root after [ICE preparation](../tools/icepatch/README.md). Engine-backed matrices require a disposable local fixture; the commands below do not provide one.
 
 The WebTTY runtime matrix validates direct Go, JS, and C++ interop across
 WebSocket, plain bytestream, WebTransport, E2E, plaintext rejection, config, and
@@ -886,7 +872,7 @@ test double, opens the session through the same configuration path used by
 `rstream ui`, and verifies decrypted terminal output:
 
 ```bash
-go test ./cmd/rstream/cmd -run 'TestUIRuntime|TestUITarget|TestUIWebTTYSessionConfigRequiresKnownServerForLightweightExplicitKey|TestUIWebTTYSessionConfigRequestsIdentitySelectionWhenKnownServerHasNoClientIdentity|TestUIWebTTYSessionConfigSelectedIdentityCanBeRememberedAfterAck|TestUIWebTTYSessionOpensWorkspaceManagedE2ERuntime$'
+go test -modfile=out/ice-patch/go.mod ./cmd/rstream/cmd -run 'TestUIRuntime|TestUITarget|TestUIWebTTYSessionConfigRequiresKnownServerForLightweightExplicitKey|TestUIWebTTYSessionConfigRequestsIdentitySelectionWhenKnownServerHasNoClientIdentity|TestUIWebTTYSessionConfigSelectedIdentityCanBeRememberedAfterAck|TestUIWebTTYSessionOpensWorkspaceManagedE2ERuntime$'
 ```
 
 The local MCP `rstream_webtty_exec` path builds the same WebTTY client config as
@@ -898,7 +884,7 @@ separate MCP-specific option.
 Current validation commands:
 
 ```bash
-go test ./...
+go test -modfile=out/ice-patch/go.mod ./...
 bash test/e2e/webtty-cli-workflows.sh
 bash test/e2e/webtty-runtime-matrix.sh
 ```
@@ -916,11 +902,7 @@ powershell -NoProfile -ExecutionPolicy Bypass `
   -CppClient C:\path\to\rstream-webtty-client.exe
 ```
 
-The managed engine runtime is validated from the engine repository:
-
-```bash
-bash test/e2e/webtty-managed-engine-runtime.sh
-```
+Managed Engine qualification belongs to the Engine test fixture; this SDK guide does not provide a deployed endpoint or credentials. Use a disposable local fixture and its maintained test instructions.
 
 ## Transport discovery and engine-only access
 
@@ -943,11 +925,11 @@ rstream webtty server --rstream --name shell --transport webtransport
 rstream webtty exec --url rstrm://shell -- whoami
 ```
 
-`rstrm://` always uses a private dial, including when the tunnel is published.
+Standard live `rstrm://` commands use a private dial, including when the tunnel is published; the FIPS and detached-start exceptions are described in [Transports](#transports).
 Lightweight `plain` servers create private raw bytestream tunnels; explicitly
 publishing one is rejected. A browser cannot open this raw transport. Registered
 WebTransport servers currently require publication, but their `rstrm://` address
-also supports a private dial over TLS or QUIC with managed session recording.
+supports standard live private dialing over TLS or QUIC with managed session recording.
 
 Transport discovery uses the engine inventory. Workspace enrollment and online
 credential resolution may use the control plane. An installed device with a
@@ -1019,10 +1001,10 @@ policies enforced by the server and engine.
 
 ## Filesystem transport
 
-For read-only file sharing without a terminal, use [`rstream files`](010-file-sharing.md). WebTTY's filesystem/WebDAV handler retains its write options; SDK embedders must close `NewFileSystemHandler` through `io.Closer` after stopping HTTP requests.
+For read-only file sharing without a terminal, use [`rstream files`](007-file-sharing.md). WebTTY's filesystem/WebDAV handler retains its write options; SDK embedders must close `NewFileSystemHandler` through `io.Closer` after stopping HTTP requests.
 
 `webtty server --fs-root ./exports --fs-backend webdav` retains the existing writable sidecar (unless `--fs-read-only` is set). Select `--fs-backend webrtc` for read-only Pion DataChannel transfers with rstream STUN/TURN. Upload, write, mkdir, rename, copy and delete fail explicitly in that mode; there is no write fallback. `--fs-max-upload-size` cannot be configured for WebRTC. Terminal `--execution-mode` is independent.
 
-CLI `webtty fs` and MCP filesystem tools discover the backend automatically. SDK `WebTTYFileSystem` uses the same `RemoteFileSystem` transport as the standalone file browser. `webtty list -o json` advertises `fs_backend`, `fs_mode` and `fs_path`; missing backend labels on older servers default to WebDAV. Filesystem E2E remains unsupported. See [protocol and qualification](011-filesystem-webrtc.md).
+CLI `webtty fs` and MCP filesystem tools discover the backend automatically. SDK `WebTTYFileSystem` uses the same `RemoteFileSystem` transport as the standalone file browser. `webtty list -o json` advertises `fs_backend`, `fs_mode` and `fs_path`; missing backend labels on older servers default to WebDAV. Filesystem E2E remains unsupported. See [protocol and qualification](008-filesystem-webrtc.md).
 
 The filesystem sidecar currently requires WebSocket terminal transport. The WebTransport server does not yet mount the WebDAV or WebRTC signaling endpoints; selecting WebRTC does not remove this limitation. With `webtty fs --no-discovery`, a restricted stream token can use an explicit tunnel id/name and `--fs-path` without inventory access. The default discovery path also accepts standalone `rstream files` HTTP tunnels.

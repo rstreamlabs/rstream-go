@@ -11,7 +11,7 @@ rstream files ./exports --password-file /path/outside/share/password -o json
 
 Stop the foreground process to close the share. Automatic reconnection follows `forward`; use `--no-retry` to stop after a disconnect. Files are read live, without uploading a stored copy. Changes to the source are visible on refresh. This is not a filesystem snapshot: changing a file during a download or ZIP can interrupt or alter that transfer.
 
-File sharing is unavailable in the restricted FIPS build for both WebDAV and WebRTC, including the WebTTY filesystem. See the [FIPS compatibility table](010-fips-140-3-profile.md#file-sharing-compatibility).
+File sharing is unavailable in the restricted FIPS build for both WebDAV and WebRTC, including the WebTTY filesystem. See the [FIPS compatibility table](017-fips-140-3-profile.md#file-sharing-compatibility).
 
 ## Command surface
 
@@ -59,7 +59,7 @@ With no auth flag, inherit project policy. When it permits public access, CLI an
 
 Local Basic and edge auth both use `Authorization` and cannot be combined. Conflicting explicit flags are rejected locally; a conflicting effective project policy produces a nonretryable error. There is no fallback to public access. Account auth uses browser cookies. Token clients must send the token on every request; the browser UI does not collect or persist tokens.
 
-HTTPS protects transport to the edge, and the tunnel protects the edge-to-agent hop. WebDAV is **not end-to-end encrypted** and uses normal project traffic quota. The optional WebRTC backend encrypts the peer connection and carries file bytes directly between peers when possible; TURN relays when necessary and uses the project's separate TURN quota. Files are not separately encrypted with a recipient-held key. See the [WebRTC protocol](011-filesystem-webrtc.md) for authentication, resource limits and browser compatibility.
+HTTPS protects transport to the edge, and the tunnel protects the edge-to-agent hop. WebDAV is **not end-to-end encrypted** and uses normal project traffic quota. The optional WebRTC backend encrypts the peer connection and carries file bytes directly between peers when possible; TURN relays when necessary and uses the project's separate TURN quota. Files are not separately encrypted with a recipient-held key. See the [WebRTC protocol](008-filesystem-webrtc.md) for authentication, resource limits and browser compatibility.
 
 ## CLI and MCP downloads
 
@@ -180,6 +180,6 @@ Changes to the shared browser client need a regenerated bundle rather than edits
 
 ## Verification
 
-Run the browser regression with `go test -tags browser ./fileserver -run TestCORSBrowser`. It requires Node.js with built-in WebSocket support and Chrome; set `RSTREAM_CHROME_BIN` when Chrome is not installed at the default macOS path. Missing browser dependencies fail the test.
+Run the browser regression with `go test -modfile=out/ice-patch/go.mod -tags browser ./fileserver -run TestCORSBrowser`. It requires Node.js with built-in WebSocket support and Chrome; set `RSTREAM_CHROME_BIN` when Chrome is not installed at the default macOS path. Missing browser dependencies fail the test.
 
-Run `go test ./...`, `go test -race ./...`, `go vet ./...`. Filesystem tests cover encoded names, exclusions, readonly methods, single files, concurrent symlink replacement, ranges, cancellation and a streamed sparse file over 4 GiB. Server tests cover auth on all surfaces, write capabilities, optional UI, upload limits, interrupted uploads, OS permissions, ZIP and concurrency. CLI tests cover password input, option validation, write-mode status, effective policy, CLI/MCP writes and handler shutdown. UI tests check gzip, integrity, CSP and negotiation. Run native filesystem tests on Linux/macOS/Windows in release CI; cross-compilation alone does not qualify native behavior.
+Run `go test -modfile=out/ice-patch/go.mod ./...`, `go test -modfile=out/ice-patch/go.mod -race ./...`, `go vet -modfile=out/ice-patch/go.mod ./...`. Filesystem tests cover encoded names, exclusions, readonly methods, single files, concurrent symlink replacement, ranges, cancellation and a streamed sparse file over 4 GiB. Server tests cover auth on all surfaces, write capabilities, optional UI, upload limits, interrupted uploads, OS permissions, ZIP and concurrency. CLI tests cover password input, option validation, write-mode status, effective policy, CLI/MCP writes and handler shutdown. UI tests check gzip, integrity, CSP and negotiation. Run native filesystem tests on Linux/macOS/Windows in release CI; cross-compilation alone does not qualify native behavior.

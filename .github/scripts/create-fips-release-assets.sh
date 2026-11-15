@@ -64,7 +64,7 @@ for arch in x86_64 arm64; do
   } >>"$metadata"
   install -m 0755 "$binary" "${package_root}/rstream"
   install -m 0644 LICENSE "${package_root}/LICENSE"
-  install -m 0644 docs/010-fips-140-3-profile.md \
+  install -m 0644 docs/017-fips-140-3-profile.md \
     "${package_root}/FIPS-140-3-PROFILE.md"
   (
     cd "$package_root"

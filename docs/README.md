@@ -1,37 +1,44 @@
-# Go SDK and CLI documentation
+# Go SDK and CLI guides
 
-Start with the CLI to establish a working context, or use that same configuration in a Go application. Transport settings describe the client’s connection to the edge; tunnel properties describe the service carried over it.
+Choose the artifact and owner of the connection first. A released CLI forwards an existing process; an embedded SDK makes connections part of your application; a source checkout lets you build or change either.
 
-## Get connected
+| Path | Start here | First result |
+| --- | --- | --- |
+| Use a released CLI | [000 Installation](000-installation.md) → [002 CLI workflow](002-cli-workflow.md) | Publish a known local HTTP response, verify its URL, stop the tunnel. |
+| Build this checkout | [001 Build from source](001-building-from-source.md) | Prepare the verified dependency graph, compile a local CLI and inspect its help. |
+| Embed Go | [003 Go SDK](003-go-sdk.md) → [runnable examples](../examples/README.md) | Serve HTTP with `net.Listener` or dial a private service with `net.Conn`. |
 
-| Guide | Use it to |
+The Go SDK is the reference implementation with the broadest rstream protocol coverage. Availability still depends on Engine version/edition, project policy and plan. A source test does not verify a published package or deployment.
+
+## Connection and service configuration
+
+| Guide | What it explains |
 | --- | --- |
-| [Install the CLI](000-installation.md) | Choose a package or build from source. |
-| [CLI workflow](001-cli-workflow.md) | Authenticate, select a project and forward your first service. |
-| [Transport configuration](002-transport.md) | Choose the engine transport, proxy, DNS and certificate settings. |
-| [Tunnel properties](003-tunnel-properties.md) | Configure published and private services and their access policy. |
-| [Runnable examples](../examples) | Integrate tunnels directly into Go applications. |
+| [004 Transport](004-transport.md) | Agent TLS/QUIC, proxy, DNS, interface binding and certificate verification. |
+| [005 Tunnel properties](005-tunnel-properties.md) | Published/private endpoints, stream/datagram semantics and edge policy. |
+| [006 Declarative command runner](006-cmd-run.md) | Apply YAML or reconcile trusted Docker labels with explicit identity selection. |
+| [007 File sharing](007-file-sharing.md) | Browser/WebDAV shares, transfer limits and optional writes. |
+| [008 Filesystem WebRTC](008-filesystem-webrtc.md) | Read-only peer transfers, authenticated signaling and HTTP fallback. |
 
-## Integrate a workflow
+## Operations and integration
 
-| Guide | Use it to |
+| Guide | What it explains |
 | --- | --- |
-| [WebTTY](006-webtty.md) | Operate remote terminals and command sessions. |
-| [File sharing](010-file-sharing.md) | Serve files through the browser or WebDAV. |
-| [Filesystem WebRTC transport](011-filesystem-webrtc.md) | Configure direct filesystem access and its HTTP fallback. |
-| [Webhooks](007-webhooks.md) | Verify and handle lifecycle notifications. |
-| [Command runner](008-cmd-run.md) and [MCP](009-mcp.md) | Integrate command execution and agent tools. |
-| [Diagnostic API](013-doctor-api.md) | Reuse CLI diagnostics inside a Go application. |
+| [009 WebTTY](009-webtty.md) | First remote command, server enrollment, OS identity, config and trust. |
+| [010 Webhooks](010-webhooks.md) | Durable destinations versus local event forwarding. |
+| [011 MCP and Codex](011-mcp.md) | Agent setup, local/hosted authority, remote exposure and cleanup. |
+| [012 Interactive inventory](012-cli-ui.md) | UI context switching and opening a permitted terminal. |
 
-## Protocol and security reference
+## Protocol, identity and maintenance reference
 
-| Guide | Scope |
+| Guide | What it explains |
 | --- | --- |
-| [HTTP CONNECT](004-http-connect.md) | Authority-form proxy requests. |
-| [Extended CONNECT](005-extended-connect.md) | WebSocket and WebTransport. |
-| [External mTLS signers](012-external-mtls-signer.md) | Connect a certificate identity without exporting its signing key. |
-| [Engine HTTP mTLS and TURN](014-engine-mtls-turn.md) | Certificate discovery, API access and relay credential renewal. |
-| [FIPS profile](010-fips-140-3-profile.md) | The restricted distribution, supported boundary and build requirements. |
-| [Verified ICE build patch](../tools/icepatch/README.md) | Prepare builds using the filesystem WebRTC transport. |
+| [013 HTTP CONNECT](013-http-connect.md) | Authority-form TCP proxy requests and destination policy. |
+| [014 Extended CONNECT](014-extended-connect.md) | WebTransport and MASQUE application protocols. |
+| [015 Engine mTLS and TURN](015-engine-mtls-turn.md) | API discovery, certificate reuse and relay credential renewal. |
+| [016 External mTLS signer](016-external-mtls-signer.md) | A pinned machine identity using a local signing executable. |
+| [017 FIPS profile](017-fips-140-3-profile.md) | Separate artifact, cryptographic boundary and excluded features. |
+| [018 Diagnostic API](018-doctor-api.md) | Invoke the CLI's checks directly from Go. |
+| [019 CLI releases](019-cli-releases.md) | Maintainer integrity/promotion and package-source configuration. |
 
-To work on this checkout, start with [Build from source](016-building-from-source.md), then follow [Contributing](../CONTRIBUTING.md). Maintainers can use [CLI release maintenance](017-cli-releases.md) for package-source configuration and WinGet submission. The [test guide](../test/README.md) describes local fixtures and runtime integration checks.
+[Contributing](../CONTRIBUTING.md), the [test guide](../test/README.md), [ICE build procedure](../tools/icepatch/README.md) and [roadmap](../roadmap/README.md) cover work on this repository. Runtime tests need their documented local fixtures; they do not supply a deployed service or credentials.

@@ -38,23 +38,17 @@ The edge enforces compatibility between these fields. Conceptually: TLS and TCP 
 
 Managed WebTTY can keep the protobuf session envelope visible to the engine while carrying stdin, stdout, and stderr bytes as encrypted payloads. The engine can still route sessions, record metadata, enforce policy, and track lifecycle events, but it does not need plaintext terminal bytes for payload-level end-to-end encryption.
 
-The public SDKs expose crypto metadata and hooks. The Go, JavaScript, and C++ WebTTY SDKs also provide E2E helpers for the nominal suite:
+The SDK exposes crypto metadata and hooks; the Go helpers implement these profiles:
 
-- Payload encryption: AES-256-GCM with a fresh 96-bit nonce per WebTTY data message
-- Key envelopes: HPKE Base mode with DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, and AES-256-GCM
+| Profile | Payload suite | Key-envelope suite | Constraint |
+| --- | --- | --- | --- |
+| Standard default | `aes-256-gcm` | `hpke-x25519-hkdf-sha256-aes-256-gcm` | Fresh96-bit nonce per message; X25519/HPKE wrapping. |
+| FIPS-compatible | `aes-256-gcm-random-nonce` | `p256-hkdf-sha256-aes-256-gcm-random-nonce` | P-256 ECDH, HKDF-SHA256 and AEAD-generated random nonces. |
+| Reserved | `chacha20-poly1305` | ChaCha20 key-envelope identifiers | Not implemented/selectable by the current helpers; rejected. |
 
-For Go direct WebTTY transports, `tls://` plain transport and local WebTransport require TLS 1.3 minimum. This transport TLS is separate from payload E2E encryption: the engine can still decode the WebTTY envelope in managed mode while terminal payload bytes remain encrypted when E2E is enabled.
+Standard Go builds accept both implemented profiles. The [restricted FIPS build](017-fips-140-3-profile.md) accepts only the second profile over WebTransport. Sharing protocol metadata does not imply every language/build implements every suite; use its documented compatibility boundary. See [WebTTY E2E](009-webtty.md#e2e-crypto) for identity selection and endpoint proof requirements.
 
-The WebTTY protobuf contract currently names these suites:
-
-- Payload encryption: `aes-256-gcm`, `chacha20-poly1305`
-- Key envelopes: `hpke-x25519-hkdf-sha256-aes-256-gcm`, `hpke-x25519-hkdf-sha256-chacha20-poly1305`
-
-The Go, JavaScript, and C++ helpers currently implement only the AES-256-GCM
-payload suite and the HPKE/X25519/HKDF-SHA256/AES-256-GCM key-envelope suite.
-ChaCha20-Poly1305 suite identifiers are reserved by the protocol for forward
-compatibility and are rejected by the current helpers until implemented and
-tested.
+Local plain TLS and local WebTransport require TLS 1.3. Transport TLS and terminal payload E2E are separate: an Engine can decode the managed envelope while terminal bytes remain encrypted.
 
 Payload keys must be random key material. Do not derive them from passwords or application strings.
 
@@ -113,7 +107,7 @@ TCP tunnels do not accept `hostname`, HTTP, TLS, or edge authentication options.
 
 HTTP tunnels accept HTTP traffic at the edge and forward HTTP requests to your upstream service. Downstream clients may negotiate HTTP/1.1, HTTP/2, or HTTP/3 with the edge; this is independent from how the edge reaches your upstream.
 
-HTTP tunnels also carry plain authority-form CONNECT and Extended CONNECT protocols when the selected HTTP versions support them. Plain CONNECT follows normal HTTP tunnel version support and is documented in [HTTP_CONNECT.md](004-http-connect.md). WebSocket can be translated across HTTP/1.1 Upgrade, HTTP/2 Extended CONNECT, and HTTP/3 Extended CONNECT. WebTransport, CONNECT-UDP, and CONNECT-IP require an HTTP/3 upstream tunnel, which means `type=datagram`, `protocol=http`, and `http_version=h3` for published endpoints.
+HTTP tunnels also carry plain authority-form CONNECT and Extended CONNECT protocols when the selected HTTP versions support them. Plain CONNECT follows normal HTTP tunnel version support and is documented in [HTTP_CONNECT.md](013-http-connect.md). WebSocket can be translated across HTTP/1.1 Upgrade, HTTP/2 Extended CONNECT, and HTTP/3 Extended CONNECT. WebTransport, CONNECT-UDP, and CONNECT-IP require an HTTP/3 upstream tunnel, which means `type=datagram`, `protocol=http`, and `http_version=h3` for published endpoints.
 
 ### Upstream HTTP mode
 
@@ -203,4 +197,4 @@ rstream.TunnelProperties{
 
 The rstream engine relays MASQUE sessions but does not terminate UDP or IP proxy semantics itself. Your upstream service should implement CONNECT-UDP or CONNECT-IP using a protocol library such as `quic-go/masque-go` or `quic-go/connect-ip-go`.
 
-See [005-extended-connect.md](005-extended-connect.md) for SDK sample layout and runtime test coverage.
+See [014-extended-connect.md](014-extended-connect.md) for SDK sample layout and runtime test coverage.

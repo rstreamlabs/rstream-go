@@ -10,7 +10,7 @@ Planned CLI and protocol work is tracked in the [roadmap](roadmap/).
 
 ## Local setup and checks
 
-Start with [Build from source](docs/016-building-from-source.md) for the required Go, Git and platform tools and a working local CLI. Run the following from the repository root before sending a pull request:
+Start with [Build from source](docs/001-building-from-source.md) for the required Go, Git and platform tools and a working local CLI. Run the following from the repository root before sending a pull request:
 
 ```bash
 make ice-patch
@@ -44,7 +44,7 @@ fallbacks.
 
 ## Stable releases
 
-Follow [CLI release maintenance](docs/017-cli-releases.md) for candidate integrity, protocol compatibility, promotion and package-source configuration. A source check does not authorize publication.
+Follow [CLI release maintenance](docs/019-cli-releases.md) for candidate integrity, protocol compatibility, promotion and package-source configuration. A source check does not authorize publication.
 
 ## Style
 

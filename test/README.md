@@ -65,28 +65,28 @@ make rstream
 make test-bins
 ```
 
-Equivalent manual commands:
+Equivalent manual commands after [source preparation](../docs/001-building-from-source.md):
 
 ```sh
 make rstream
 mkdir -p out/test/{websocket,webtransport,http,stream,datagram,masque,connect,bandwidth}
-go build -o out/test/websocket/server    ./test/websocket/server
-go build -o out/test/websocket/client    ./test/websocket/client
-go build -o out/test/webtransport/server ./test/webtransport/server
-go build -o out/test/webtransport/client ./test/webtransport/client
-go build -o out/test/http/server         ./test/http/server
-go build -o out/test/http/client         ./test/http/client
-go build -o out/test/stream/server       ./test/stream/server
-go build -o out/test/stream/client       ./test/stream/client
-go build -o out/test/datagram/server     ./test/datagram/server
-go build -o out/test/datagram/client     ./test/datagram/client
-go build -o out/test/datagram/self       ./test/datagram/self
-go build -o out/test/masque/server       ./test/masque/server
-go build -o out/test/masque/client       ./test/masque/client
-go build -o out/test/connect/server      ./test/connect/server
-go build -o out/test/connect/client      ./test/connect/client
-go build -o out/test/bandwidth/server    ./test/bandwidth/server
-go build -o out/test/bandwidth/client    ./test/bandwidth/client
+go build -modfile=out/ice-patch/go.mod -o out/test/websocket/server    ./test/websocket/server
+go build -modfile=out/ice-patch/go.mod -o out/test/websocket/client    ./test/websocket/client
+go build -modfile=out/ice-patch/go.mod -o out/test/webtransport/server ./test/webtransport/server
+go build -modfile=out/ice-patch/go.mod -o out/test/webtransport/client ./test/webtransport/client
+go build -modfile=out/ice-patch/go.mod -o out/test/http/server         ./test/http/server
+go build -modfile=out/ice-patch/go.mod -o out/test/http/client         ./test/http/client
+go build -modfile=out/ice-patch/go.mod -o out/test/stream/server       ./test/stream/server
+go build -modfile=out/ice-patch/go.mod -o out/test/stream/client       ./test/stream/client
+go build -modfile=out/ice-patch/go.mod -o out/test/datagram/server     ./test/datagram/server
+go build -modfile=out/ice-patch/go.mod -o out/test/datagram/client     ./test/datagram/client
+go build -modfile=out/ice-patch/go.mod -o out/test/datagram/self       ./test/datagram/self
+go build -modfile=out/ice-patch/go.mod -o out/test/masque/server       ./test/masque/server
+go build -modfile=out/ice-patch/go.mod -o out/test/masque/client       ./test/masque/client
+go build -modfile=out/ice-patch/go.mod -o out/test/connect/server      ./test/connect/server
+go build -modfile=out/ice-patch/go.mod -o out/test/connect/client      ./test/connect/client
+go build -modfile=out/ice-patch/go.mod -o out/test/bandwidth/server    ./test/bandwidth/server
+go build -modfile=out/ice-patch/go.mod -o out/test/bandwidth/client    ./test/bandwidth/client
 ```
 
 ### Run
@@ -341,7 +341,7 @@ From another machine, cross-compile the CLI first, copy both the binary and the
 script to the Windows host, then run the same command there:
 
 ```sh
-GOOS=windows GOARCH=arm64 go build -o /tmp/rstream.exe ./cmd/rstream
+GOOS=windows GOARCH=arm64 go build -modfile=out/ice-patch/go.mod -o /tmp/rstream.exe ./cmd/rstream
 scp /tmp/rstream.exe test/e2e/webtty-windows-runtime.ps1 winhost:C:/Temp/rstream-webtty/
 ssh winhost 'powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\rstream-webtty\webtty-windows-runtime.ps1 -Rstream C:\Temp\rstream-webtty\rstream.exe'
 ```
@@ -386,7 +386,7 @@ export RSTREAM_BIN="$(find out/cmd/rstream -type f -name rstream | sort | tail -
 For a full local validation pass:
 
 ```sh
-go test ./...
+go test -modfile=out/ice-patch/go.mod ./...
 make rstream
 make test-bins
 
@@ -416,7 +416,7 @@ The opt-in `integration` build tag adds direct SDK tests against a running Engin
 RSTREAM_GO_E2E_ENGINE=localhost:55443 \
 RSTREAM_GO_E2E_TOKEN="$RSTREAM_AUTHENTICATION_TOKEN" \
 RSTREAM_GO_E2E_TLS_INSECURE=1 \
-go test -race -tags integration \
+go test -race -modfile=out/ice-patch/go.mod -tags integration \
   -run '^TestRealEngine(PrivateBytestreamLivenessAndConcurrency|ControlChannelSurvivesTemporaryNetworkPartition)$' .
 ```
 

@@ -6,7 +6,7 @@ For complete applications with framework setup and their own lifecycle, see [rst
 
 ## Prepare the checkout
 
-Install the tools in [Build from source](../docs/016-building-from-source.md). Commands on this page run from the repository root, not from an individual example directory. Build only the first pair:
+Install the tools in [Build from source](../docs/001-building-from-source.md). Commands on this page run from the repository root, not from an individual example directory. Build only the first pair:
 
 ```sh
 make http-h1-server http-h1-client
@@ -21,14 +21,14 @@ rstream login
 rstream project use my-project-endpoint
 ```
 
-Replace `my-project-endpoint` with the endpoint from the project dashboard. Reuse that context in both terminals below. A self-hosted engine can instead be selected explicitly; [configuration](../docs/001-cli-workflow.md) explains the credential and endpoint choices.
+Replace `my-project-endpoint` with the endpoint from the project dashboard. Reuse that context in both terminals below. A self-hosted engine can instead be selected explicitly; [configuration](../docs/002-cli-workflow.md) explains the credential and endpoint choices.
 
 | Configuration | When it is needed |
 | --- | --- |
 | Selected CLI context | The usual local-development path; examples load it through `config.NewClientFromEnv()`. |
 | `RSTREAM_ENGINE` | Override the engine address instead of using the selected context. |
-| `RSTREAM_AUTHENTICATION_TOKEN` | Supply token authentication explicitly, including for examples calling the Engine HTTP API. |
-| `RSTREAM_MTLS_CERT_FILE` and `RSTREAM_MTLS_KEY_FILE` | Use an enrolled certificate for an engine control connection that requires agent mTLS. These do not replace API token requirements. |
+| `RSTREAM_AUTHENTICATION_TOKEN` | Supply explicit token authentication; leave unset when using mTLS. |
+| `RSTREAM_MTLS_CERT_FILE` and `RSTREAM_MTLS_KEY_FILE` | Use an enrolled certificate for native Engine connections and Engine HTTP APIs through automatic discovery. Control plane administration still requires a token. |
 
 ## Serve HTTP
 
@@ -77,11 +77,11 @@ Build a selected program with `make <directory-name>`, then use its `-h` output 
 | SCTP | [Server](sctp-echo-server) and [client](sctp-echo-client) | SCTP streams over datagram tunnels or a published DTLS endpoint. |
 | SSH | [Server](tcp-ssh-server) and [client](tcp-ssh-client) | Published TCP with SSH password authentication and explicit host-key verification. |
 | MASQUE | [Server](masque-server) and [client](masque-client) | CONNECT-UDP and CONNECT-IP through private tunnels or a published HTTP/3 endpoint. |
-| Engine API | [List tunnels](api-list-tunnels) | Inventory access using token authentication. |
+| Engine API | [List tunnels](api-list-tunnels) | Engine inventory using a token or enrolled mTLS identity. |
 | TURN credentials | [Credential helper](turn-credentials) | Obtain short-lived relay credentials from the active configuration. |
 | CLI orchestration | [YAML](run-yaml) and [Docker labels](run-docker) | Declarative forwarding with the CLI rather than an embedded SDK. |
 
-The [external mTLS signer guide](../docs/012-external-mtls-signer.md) explains the `mtls-exec-helper` program; it is an authentication helper, not a separate tunnel example.
+The [external mTLS signer guide](../docs/016-external-mtls-signer.md) explains the `mtls-exec-helper` program; it is an authentication helper, not a separate tunnel example.
 
 ## Protocol-specific setup
 
