@@ -56,10 +56,10 @@ func TestResolveSessionConfigDefaults(t *testing.T) {
 func TestClientRuntimeCloseInterruptsBlockedWrite(t *testing.T) {
 	conn := newBlockingSessionMessageConn()
 	closeDeadline := 50 * time.Millisecond
-	runtime := &clientRuntime{conn: conn, cfg: &ClientConfig{CloseDeadline: &closeDeadline}}
+	runtime := &clientRuntime{ctx: t.Context(), conn: conn, cfg: &ClientConfig{CloseDeadline: &closeDeadline}}
 	writeDone := make(chan error, 1)
 	go func() {
-		writeDone <- runtime.writeMessage(&pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: &pb.Heartbeat{}}})
+		writeDone <- runtime.writeMessage(t.Context(), &pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: &pb.Heartbeat{}}})
 	}()
 	select {
 	case <-conn.writeStarted:
@@ -709,7 +709,7 @@ func TestClientSessionRejectsDuplicateEOSAndDataAfterEOS(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			session := newBareClientSession(t)
-			session.runtime = &clientRuntime{cfg: &ClientConfig{}, conn: stdinEOFWriteFailureConn{}}
+			session.runtime = &clientRuntime{ctx: t.Context(), cfg: &ClientConfig{}, conn: stdinEOFWriteFailureConn{}}
 			readEvents := make(chan clientEvent, len(test.events))
 			loopErrCh := make(chan error, 1)
 			for _, event := range test.events {

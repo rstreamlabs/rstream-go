@@ -97,6 +97,32 @@ func TestClientTerminationCancellationInterruptsBlockedWrite(t *testing.T) {
 	}
 }
 
+func TestClientTerminationWaitsForActiveWriterUntilCallerDeadline(t *testing.T) {
+	conn := newBlockingSessionMessageConn()
+	defer conn.Close()
+	runtime := &clientRuntime{conn: conn, cfg: &ClientConfig{}, canTerminate: true}
+	session := &ClientSession{runtime: runtime, done: make(chan struct{})}
+	if err := runtime.writeMu.Lock(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.writeMu.Unlock()
+	ctx, cancel := context.WithTimeout(t.Context(), 25*time.Millisecond)
+	defer cancel()
+	if err := session.RequestTermination(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("queued termination = %v, want caller deadline", err)
+	}
+	select {
+	case <-conn.writeStarted:
+		t.Fatal("queued termination wrote a concurrent frame")
+	default:
+	}
+	select {
+	case <-conn.closed:
+		t.Fatal("cancelling a queued termination closed another writer's transport")
+	default:
+	}
+}
+
 func TestClientSessionNativeResultWinsOverPendingLocalClose(t *testing.T) {
 	session := &ClientSession{
 		loopCancel:  func() {},

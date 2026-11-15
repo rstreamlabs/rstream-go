@@ -43,7 +43,7 @@ func TestStdinEOFWriteFailurePreservesReadableResponse(t *testing.T) {
 	if err := client.CloseWrite(); err != nil {
 		t.Fatal(err)
 	}
-	session := &ClientSession{runtime: &clientRuntime{conn: newPlainMessageConn(client)}}
+	session := &ClientSession{runtime: &clientRuntime{ctx: t.Context(), conn: newPlainMessageConn(client)}}
 	errors := make(chan error, 1)
 	(&clientRuntime{}).stdinSessionLoop(t.Context(), session, errors, func(context.Context, []byte) (int, error) { return 0, io.EOF })
 	select {

@@ -23,6 +23,7 @@ import (
 	"golang.org/x/term"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/rstreamlabs/rstream-go/internal/contextsync"
 	"github.com/rstreamlabs/rstream-go/webtty/pb"
 )
 
@@ -95,11 +96,12 @@ type AttachConfig struct {
 }
 
 type clientRuntime struct {
+	ctx              context.Context
 	conn             messageConn
 	cfg              *ClientConfig
 	logger           *slog.Logger
 	logProto         bool
-	writeMu          sync.Mutex
+	writeMu          contextsync.Mutex
 	closeOnce        sync.Once
 	closing          atomic.Bool
 	stdinFD          int
@@ -142,7 +144,7 @@ func RunClient(ctx context.Context, cfg *ClientConfig) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	runtime := &clientRuntime{cfg: resolved}
+	runtime := &clientRuntime{ctx: ctx, cfg: resolved}
 	restoreTerminal, err := runtime.prepareTerminal()
 	if err != nil {
 		return -1, err
@@ -1184,7 +1186,7 @@ func (c *clientRuntime) heartbeatLoop(ctx context.Context, errCh chan<- error) {
 				return
 			}
 			msg := &pb.Message{Payload: &pb.Message_Heartbeat{Heartbeat: &pb.Heartbeat{}}}
-			if err := c.writeMessage(msg); err != nil {
+			if err := c.writeMessage(ctx, msg); err != nil {
 				if c.closing.Load() {
 					return
 				}
@@ -1218,13 +1220,15 @@ func (c *clientRuntime) sendClientError(err error) error {
 	return c.conn.WriteMessage(websocket.BinaryMessage, payload)
 }
 
-func (c *clientRuntime) writeMessage(msg *pb.Message) error {
+func (c *clientRuntime) writeMessage(ctx context.Context, msg *pb.Message) error {
 	c.logProtoMessage("sending", msg)
 	payload, err := proto.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal protobuf message: %w", err)
 	}
-	c.writeMu.Lock()
+	if err := c.writeMu.Lock(ctx); err != nil {
+		return err
+	}
 	defer c.writeMu.Unlock()
 	if c.closing.Load() {
 		return ErrSessionDisconnected

@@ -244,13 +244,14 @@ func OpenClientSession(ctx context.Context, cfg *SessionConfig) (*ClientSession,
 		conn.SetReadLimit(*resolved.MaxMessageSize)
 	}
 	runtime := &clientRuntime{
+		ctx:      ctx,
 		conn:     conn,
 		cfg:      runtimeCfg,
 		logger:   runtimeCfg.Logger.With("component", "webtty.client"),
 		logProto: stringsEqualFoldTrimmed(rstream.Channel, "dev"),
 	}
 	if endpoint.Transport == WebTTYTransportWebTransport && runtime.cfg.ExpectedServerIdentity != nil {
-		if err := runtime.writeMessage(&pb.Message{Payload: &pb.Message_ClientHello{ClientHello: &pb.ClientHello{ProtocolVersion: pb.ProtocolVersion_PROTOCOL_VERSION_WEBTTY_1}}}); err != nil {
+		if err := runtime.writeMessage(ctx, &pb.Message{Payload: &pb.Message_ClientHello{ClientHello: &pb.ClientHello{ProtocolVersion: pb.ProtocolVersion_PROTOCOL_VERSION_WEBTTY_1}}}); err != nil {
 			runtime.closeConn()
 			return nil, fmt.Errorf("failed to send WebTTY client hello: %w", err)
 		}
@@ -293,7 +294,7 @@ func OpenClientSession(ctx context.Context, cfg *SessionConfig) (*ClientSession,
 	if err != nil {
 		return nil, err
 	}
-	if err := runtime.writeMessage(handshakeMessage); err != nil {
+	if err := runtime.writeMessage(ctx, handshakeMessage); err != nil {
 		return nil, fmt.Errorf("failed to send WebTTY handshake message: %w", err)
 	}
 	if err := runtime.waitForOpen(ctx, readEvents); err != nil {
@@ -629,6 +630,7 @@ func (s *ClientSession) CanTerminate() bool {
 
 // RequestTermination sends an explicit stop request without disconnecting.
 // Only Wait returning a native result confirms process completion. Keep draining Events.
+// Earlier writes finish before the stop frame within the caller/CloseDeadline budget.
 // Cancelling an in-flight write closes the transport because a partial frame cannot be retried.
 func (s *ClientSession) RequestTermination(ctx context.Context) error {
 	if !s.CanTerminate() {
@@ -677,7 +679,7 @@ func (s *ClientSession) SendInputContext(ctx context.Context, data []byte) error
 	if err != nil {
 		return err
 	}
-	return s.runtime.writeStdinMessage(msg)
+	return s.runtime.writeStdinMessage(ctx, msg)
 }
 
 func (s *ClientSession) SendText(text string) error {
@@ -694,7 +696,7 @@ func (s *ClientSession) SendEOF() error {
 		return nil
 	}
 	s.stdinClosed = true
-	return s.runtime.writeStdinMessage(&pb.Message{
+	return s.runtime.writeStdinMessage(s.runtime.ctx, &pb.Message{
 		Payload: &pb.Message_Data{
 			Data: &pb.Data{Type: pb.Data_TYPE_STDIN, Payload: &pb.Data_Eos{Eos: &pb.EndOfStream{}}},
 		},
@@ -705,7 +707,7 @@ func (s *ClientSession) Resize(rows, cols int) error {
 	if rows <= 0 || cols <= 0 {
 		return nil
 	}
-	return s.runtime.writeMessage(&pb.Message{
+	return s.runtime.writeMessage(s.runtime.ctx, &pb.Message{
 		Payload: &pb.Message_Parameter{
 			Parameter: &pb.Parameter{
 				Parameter: &pb.Parameter_TerminalSize{
@@ -747,8 +749,8 @@ func (s *ClientSession) Disconnect(ctx context.Context) error {
 			<-cancelled
 		}
 	}()
-	if !s.runtime.writeMu.TryLock() {
-		return errClientWriteBusy
+	if err := s.runtime.writeMu.Lock(ctx); err != nil {
+		return err
 	}
 	if !s.runtime.closing.Swap(true) {
 		deadline, _ := ctx.Deadline()

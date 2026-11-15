@@ -3,6 +3,7 @@
 package webtty
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net"
@@ -15,8 +16,8 @@ import (
 
 var errClientStdinClosed = errors.New("WebTTY peer closed input")
 
-func (c *clientRuntime) writeStdinMessage(message *pb.Message) error {
-	err := c.writeMessage(message)
+func (c *clientRuntime) writeStdinMessage(ctx context.Context, message *pb.Message) error {
+	err := c.writeMessage(ctx, message)
 	if err != nil && isClientStdinWriteClosed(err) {
 		return errors.Join(errClientStdinClosed, err)
 	}

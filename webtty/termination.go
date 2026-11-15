@@ -20,20 +20,16 @@ const maxTerminationGrace = 30 * time.Second
 var ErrTerminationUnsupported = errors.New("WebTTY server does not support explicit termination")
 
 func (c *clientRuntime) writeTermination(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
+	ctx, cancel := context.WithDeadline(ctx, c.closeWriteDeadline())
+	defer cancel()
+	if err := c.writeMu.Lock(ctx); err != nil {
 		return err
-	}
-	if !c.writeMu.TryLock() {
-		return errClientWriteBusy
 	}
 	defer c.writeMu.Unlock()
 	if c.closing.Load() {
 		return ErrSessionDisconnected
 	}
-	deadline := c.closeWriteDeadline()
-	if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(deadline) {
-		deadline = callerDeadline
-	}
+	deadline, _ := ctx.Deadline()
 	if err := c.conn.SetWriteDeadline(deadline); err != nil {
 		return err
 	}
