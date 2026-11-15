@@ -146,8 +146,6 @@ func TestDetachWebTTYParticipantReconcilesOnlyConfirmedTerminalSessions(t *testi
 
 func TestDetachWebTTYParticipantPreservesCallerDeadline(t *testing.T) {
 	var posts, gets atomic.Int32
-	ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
-	defer cancel()
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			posts.Add(1)
@@ -155,11 +153,16 @@ func TestDetachWebTTYParticipantPreservesCallerDeadline(t *testing.T) {
 			return
 		}
 		gets.Add(1)
-		<-ctx.Done()
+		// Keep verification in flight until the client closes it. Returning when
+		// the caller's timer fires can send an empty 200 before the transport
+		// observes cancellation, testing invalid JSON instead of the deadline.
+		<-r.Context().Done()
 	}))
 	defer server.Close()
 	client := testAPIClient(server, "detach-token")
 	defer client.CloseIdleConnections()
+	ctx, cancel := context.WithTimeout(t.Context(), 250*time.Millisecond)
+	defer cancel()
 	participant, err := client.DetachWebTTYParticipant(ctx, "session-1", "reader-1", DetachWebTTYParticipantRequest{})
 	if participant != nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expired detach = %#v, %v", participant, err)
