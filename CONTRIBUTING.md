@@ -6,6 +6,8 @@ Thanks for considering a contribution to `rstream-go`.
 
 For small fixes, opening a pull request directly is usually fine. For larger changes to the public API, CLI behavior, or transport model, start with an issue or discussion so the shape of the change can be reviewed before implementation.
 
+Planned CLI and protocol work is tracked in the [roadmap](roadmap/).
+
 ## Development checks
 
 Before sending a pull request, run the main local checks:
@@ -39,11 +41,7 @@ fallbacks.
 
 ## Stable releases
 
-A release tag builds every supported target but does not publish packages. Publish the reviewed tag by dispatching `cross-compile, package, and deploy` on that tag with `publish_stable` enabled.
-
-Protocol releases are ordered. The Engine accepts clients on the same protocol minor version at its own patch level or below, and deliberately rejects a newer client patch. When `pb/rstream.proto` advances the protocol version, release and deploy the matching Engine to staging and then production first. Prove that a client built from the SDK tag opens a control channel against both environments before enabling stable publication. A green build or a published Engine image is not evidence that production has been promoted.
-
-npm publication waits for registry metadata to expose the retained archive's exact integrity before updating the package source repository. It allows 120 checks, five seconds apart, with each registry request limited to five seconds. An existing version with different bytes fails immediately. If metadata remains unavailable, rerun the failed promotion job with the same retained candidate; never rebuild or overwrite that version.
+Follow [CLI release maintenance](docs/017-cli-releases.md) for candidate integrity, protocol compatibility, promotion and package-source configuration. A source check does not authorize publication.
 
 ## Style
 
@@ -59,5 +57,7 @@ Keep changes small, explicit, and idiomatic.
 Some files in this repository are generated. If you modify the corresponding source definitions, regenerate the derived files before opening the pull request.
 
 ## Security
+
+WebTTY authentication or cryptographic changes need a security review and shared Go, JavaScript and C++ vectors for the supported suites. Preserve endpoint proofs, freshness, replay and downgrade rejection, and run the affected client/server combinations. Keep audit reports and release evidence outside the source tree.
 
 Please do not disclose vulnerabilities in public issues. See [SECURITY.md](./SECURITY.md) for the reporting guidance used by this repository.
