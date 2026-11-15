@@ -223,8 +223,8 @@ func TestMCPNativeEnrollmentStoresWorkspaceTokenAndReportsItsActualScope(t *test
 			if err := r.ParseForm(); err != nil {
 				t.Error(err)
 			}
-			if r.Form.Get("rstream_credential_owner_version") != "1" || r.Form.Get("scope") != strings.Join(rstreamMCPLoginPermissions, " ") {
-				t.Errorf("MCP requested authority changed: %v", r.Form)
+			if r.Form.Get("rstream_credential_owner_version") != "1" || r.Form.Has("scope") {
+				t.Errorf("default owner-aware MCP login must offer presets: %v", r.Form)
 			}
 			_ = json.NewEncoder(w).Encode(controlplane.OAuthDeviceAuthorizationResponse{DeviceCode: "device", UserCode: "CODE", VerificationURI: serverURL(r, "/approve"), ExpiresIn: 60})
 		case "/oauth/token":

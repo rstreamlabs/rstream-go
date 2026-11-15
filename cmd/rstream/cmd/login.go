@@ -73,9 +73,13 @@ func init() {
 	loginCmd.Flags().String("token-file", "", "read token from file")
 	loginCmd.Flags().String("token-storage", tokenStorageInline, "token storage backend: inline or macos-keychain")
 	loginCmd.Flags().String("auth-flow", loginAuthFlowOAuth, "browser login flow: oauth or legacy")
+	loginCmd.Flags().StringArray("permission", nil, "permission to request during browser login (may be specified multiple times)")
 	loginCmd.Flags().StringP("output", "o", "text", "output mode (text, json)")
 	loginCmd.Flags().Bool("stdin", false, "read token from stdin (deprecated)")
 	loginCmd.MarkFlagsMutuallyExclusive("token-stdin", "token-file", "stdin")
+	for _, tokenFlag := range []string{"token-stdin", "token-file", "stdin"} {
+		loginCmd.MarkFlagsMutuallyExclusive("permission", tokenFlag)
+	}
 	loginCmd.MarkFlagFilename("token-file")
 	loginCmd.Flags().MarkDeprecated("stdin", "use --token-stdin")
 	rootCmd.AddCommand(loginCmd)

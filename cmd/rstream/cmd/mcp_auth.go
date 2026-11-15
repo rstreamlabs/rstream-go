@@ -88,6 +88,9 @@ func mcpCreateAuthSession(ctx context.Context, args map[string]json.RawMessage) 
 	if metadata.DeviceAuthorizationEndpoint == "" || metadata.TokenEndpoint == "" {
 		return nil, errors.New("OAuth device authorization metadata is incomplete")
 	}
+	if permissions == nil && !metadata.SupportsCredentialOwnerVersion(controlplane.NativeCredentialOwnerVersion) {
+		permissions = append([]string(nil), rstreamMCPLoginPermissions...)
+	}
 	request, err := nativeOAuthDeviceLoginRequest(metadata, permissions)
 	if err != nil {
 		return nil, err
@@ -275,7 +278,7 @@ func mcpAuthPermissions(args map[string]json.RawMessage) ([]string, error) {
 		return nil, err
 	}
 	if len(permissions) == 0 {
-		return append([]string(nil), rstreamMCPLoginPermissions...), nil
+		return nil, nil
 	}
 	return mcpUnionPermissions(rstreamMCPLoginPermissions, permissions), nil
 }

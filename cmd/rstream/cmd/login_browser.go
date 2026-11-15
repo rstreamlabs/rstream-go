@@ -127,13 +127,17 @@ func tokenStorageFromFlags(cmd *cobra.Command, apiURL string) (config.TokenStora
 
 func runLegacyDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL string) error {
 	ctx := cmd.Context()
+	permissions, err := loginRequestedPermissions(cmd)
+	if err != nil {
+		return err
+	}
 	env, _ := cfg.FindEnvironment(apiURL)
 	headers, err := config.ResolveControlPlaneHeaders(env, config.ReadEnv().ControlPlaneHeaders)
 	if err != nil {
 		return err
 	}
 	client := controlplane.NewClient(apiURL, "", controlplane.WithHeaders(headers))
-	req := controlplane.RstreamLoginRequest{Permissions: rstreamLoginPermissions, Source: resolveRstreamLoginSource()}
+	req := controlplane.RstreamLoginRequest{Permissions: permissions, Source: resolveRstreamLoginSource()}
 	metadata, err := client.OAuthAuthorizationServerMetadata(ctx)
 	if err != nil {
 		var apiError *controlplane.APIError
@@ -142,7 +146,9 @@ func runLegacyDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, ap
 		}
 	} else if metadata.SupportsCredentialOwnerVersion(controlplane.NativeCredentialOwnerVersion) {
 		req.CredentialOwnerVersion = controlplane.NativeCredentialOwnerVersion
-		req.Permissions = nil
+	}
+	if req.CredentialOwnerVersion == 0 && permissions == nil {
+		req.Permissions = rstreamLoginPermissions
 	}
 	res, err := client.CreateRstreamLogin(ctx, req)
 	if err != nil {
@@ -166,6 +172,10 @@ func runLegacyDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, ap
 }
 
 func runOAuthDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, apiURL string) error {
+	permissions, err := loginRequestedPermissions(cmd)
+	if err != nil {
+		return err
+	}
 	ctx := cmd.Context()
 	env, _ := cfg.FindEnvironment(apiURL)
 	headers, err := config.ResolveControlPlaneHeaders(env, config.ReadEnv().ControlPlaneHeaders)
@@ -180,7 +190,7 @@ func runOAuthDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, api
 	if metadata.DeviceAuthorizationEndpoint == "" || metadata.TokenEndpoint == "" {
 		return errors.New("OAuth device authorization metadata is incomplete")
 	}
-	req, err := nativeOAuthDeviceLoginRequest(metadata, nil)
+	req, err := nativeOAuthDeviceLoginRequest(metadata, permissions)
 	if err != nil {
 		return err
 	}
@@ -210,6 +220,21 @@ func runOAuthDeviceLogin(cmd *cobra.Command, path string, cfg config.Config, api
 		return rstreamLoginCommandError(err)
 	}
 	return rstreamLoginCommandError(completeLogin(cmd, path, cfg, apiURL, token, loginAuthFlowOAuth))
+}
+
+func loginRequestedPermissions(cmd *cobra.Command) ([]string, error) {
+	if !cmd.Flags().Changed("permission") {
+		return nil, nil
+	}
+	values, err := cmd.Flags().GetStringArray("permission")
+	if err != nil {
+		return nil, err
+	}
+	permissions := normalizeTokenCreatePermissions(values)
+	if len(permissions) == 0 {
+		return nil, errors.New("at least one permission must be requested")
+	}
+	return permissions, nil
 }
 
 // Nil permissions selects the server's default on capable servers. Explicit
