@@ -383,6 +383,14 @@ func workspaceCredentialDevicesPath(workspaceID string, credentialID string) str
 	return "/api/workspaces/" + url.PathEscape(workspaceID) + "/credentials/" + url.PathEscape(credentialID) + "/devices"
 }
 
+// RevokeWorkspaceCredentialDeviceKey uses human management authorization and
+// the existing signed device-revocation proof for the selected token's device.
+func (c *Client) RevokeWorkspaceCredentialDeviceKey(ctx context.Context, workspaceID string, credentialID string, deviceKeyID string, request RevokeWorkspaceDeviceKeyRequest) error {
+	path := workspaceCredentialDevicesPath(workspaceID, credentialID) + "/" + url.PathEscape(deviceKeyID) + "/revoke"
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, nil)
+	return err
+}
+
 func (c *Client) RevokeWorkspaceDeviceKey(ctx context.Context, workspaceID string, deviceKeyID string, request RevokeWorkspaceDeviceKeyRequest) error {
 	path := "/api/workspaces/" + url.PathEscape(workspaceID) + "/enterprise/devices/" + url.PathEscape(deviceKeyID) + "/revoke"
 	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, nil)
