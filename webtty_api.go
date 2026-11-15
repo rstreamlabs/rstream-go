@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -505,10 +506,30 @@ func (c *Client) DetachWebTTYParticipant(ctx context.Context, sessionID string, 
 	if err := requireWebTTYID("participant ID", participantID); err != nil {
 		return nil, err
 	}
+	if ctx == nil {
+		return nil, errors.New("API request context is required")
+	}
+	ctx, cancel := context.WithTimeout(ctx, apiRequestTimeout)
+	defer cancel()
 	var out WebTTYParticipant
 	path := "/webtty/sessions/" + url.PathEscape(sessionID) + "/participants/" + url.PathEscape(participantID)
 	if err := c.webTTYAPIPost(ctx, path, req, &out); err != nil {
-		return nil, err
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusServiceUnavailable {
+			return nil, err
+		}
+		// Legacy Engines may lose runtime admission while the session ends. Confirm
+		// durable termination before one idempotent cleanup within the original budget.
+		session, verifyErr := c.GetWebTTYSession(ctx, sessionID)
+		if verifyErr != nil {
+			return nil, errors.Join(verifyErr, err)
+		}
+		if session.ID != sessionID || (session.Status != WebTTYSessionStatusClosed && session.Status != WebTTYSessionStatusErrored) {
+			return nil, err
+		}
+		if err := c.webTTYAPIPost(ctx, path, req, &out); err != nil {
+			return nil, err
+		}
 	}
 	return &out, nil
 }
