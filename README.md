@@ -2,7 +2,7 @@
 
 The Go SDK is rstream’s reference implementation. Use it to accept connections in your application, dial private services or build an agent that maintains outbound connectivity to the rstream edge. The `rstream` CLI lives in the same repository and provides port forwarding, file sharing and remote terminals using the same configuration.
 
-Go offers the broadest protocol coverage in the rstream SDKs. For native applications built around Boost.Asio, see the [C++ SDK](https://github.com/rstreamlabs/rstream-cpp). The [rstream SDKs](https://github.com/rstreamlabs) share the platform model, with capabilities suited to each runtime.
+Go offers the broadest protocol coverage in the rstream SDKs. For native applications built around Boost.Asio, see the [C++ SDK](https://github.com/rstreamlabs/rstream-cpp). The [SDK selection guide](https://rstream.io/sdks) compares the integration paths and capabilities suited to each runtime.
 
 ## Connection model
 
