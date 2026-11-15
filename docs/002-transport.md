@@ -161,11 +161,12 @@ The same DNS path is used for:
 - resolving the edge hostname before dialing when advanced DNS options are enabled;
 - discovering `SVCB` and `HTTPS` records for ECH, using the target host and ALPN in the same way a browser would.
 
-The transport DNS options are:
-- `dns.override` — send DNS queries to a specific resolver address, for example `1.1.1.1:53` or `1.1.1.1:853`.
-- `dns.tls` — use DNS over TLS for these queries. This requires `dns.override`; when the override omits a port, rstream defaults to `853`.
-- `dns.serverName` — set the TLS server name used for DNS over TLS. This is required when `dns.override` is an IP address.
-- `dns.dnssec` — require authenticated DNSSEC answers from the resolver.
+| DNS option | Purpose | Requirement |
+| --- | --- | --- |
+| `dns.override` | Use a resolver such as `1.1.1.1:53` or `1.1.1.1:853`. | Optional resolver address. |
+| `dns.tls` | Protect resolver queries with DNS over TLS. | Requires `dns.override`; an omitted port becomes `853`. |
+| `dns.serverName` | Select the certificate name verified for DNS over TLS. | Required when the TLS resolver address is an IP address. |
+| `dns.dnssec` | Require authenticated DNSSEC answers from the resolver. | Opt-in authentication requirement. |
 
 These options are opt-in. Without them, the client uses the platform resolver configuration for ECH discovery and for direct hostname resolution.
 
@@ -222,14 +223,16 @@ strictQUIC, err := rstream.NewClient(rstream.ClientOptions{
 ```
 
 `QUICTransport` accepts the same network options as the standard `Transport`:
-- `LocalAddr` — bind to a specific local IP.
-- `ForceIPv4` / `ForceIPv6` — constrain address family.
-- `DNSOverride` — use a custom resolver for the edge hostname.
-- `DNSOverTLS` / `DNSServerName` — protect DNS lookups with DNS over TLS.
-- `DNSSECEnabled` — require authenticated DNSSEC answers.
-- `ProxyHTTP` — use an HTTPS MASQUE CONNECT-UDP proxy for the QUIC engine session.
-- `ProxySOCKS5` — use SOCKS5 UDP ASSOCIATE for the QUIC engine session.
-- `ProxyFromEnvironment` — read process proxy variables when no explicit proxy URL is configured.
+| SDK option | Purpose |
+| --- | --- |
+| `LocalAddr` | bind to a specific local IP. |
+| `ForceIPv4` / `ForceIPv6` | constrain address family. |
+| `DNSOverride` | use a custom resolver for the edge hostname. |
+| `DNSOverTLS` / `DNSServerName` | protect DNS lookups with DNS over TLS. |
+| `DNSSECEnabled` | require authenticated DNSSEC answers. |
+| `ProxyHTTP` | use an HTTPS MASQUE CONNECT-UDP proxy for the QUIC engine session. |
+| `ProxySOCKS5` | use SOCKS5 UDP ASSOCIATE for the QUIC engine session. |
+| `ProxyFromEnvironment` | read process proxy variables when no explicit proxy URL is configured. |
 
 For QUIC transport, `ProxyHTTP` must point at an HTTPS MASQUE proxy. If the URL path is empty, the SDK uses `/.well-known/masque/udp/{target_host}/{target_port}/`. A custom path must include both `{target_host}` and `{target_port}`.
 

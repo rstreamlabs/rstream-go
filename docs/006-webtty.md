@@ -1,169 +1,19 @@
-# WebTTY CLI and Runtime Reference
+# WebTTY
 
-For a standalone read-only share, use [`rstream files`](010-file-sharing.md). WebTTY and this command share the Go filesystem/WebDAV implementation. `NewFileSystemHandler` keeps its API and write options and now owns a root handle: SDK embedders should close the returned handler through `io.Closer` after stopping HTTP requests.
+WebTTY provides remote terminal access and command execution through rstream. A process on the remote machine runs the WebTTY server; an operator connects from the CLI or a browser. The server connects outbound, so the remote host does not need an inbound SSH port. The protocol carries terminal input, output, resize events and process completion; it is separate from SSH.
 
-WebTTY exposes remote terminal sessions through rstream. A WebTTY server can run
-as a Tunnel WebTTY server or as a registered server used by managed WebTTY
-features.
+Use it for an interactive shell, a bounded automation command or a terminal embedded in an application. The server's execution mode determines which local operating-system account runs commands. rstream authorization and any configured end-to-end trust must be satisfied before a terminal is opened.
 
-## Disconnect and explicit termination
+| Server model | Use it for |
+| --- | --- |
+| Tunnel WebTTY server | A terminal exposed through a running tunnel; its inventory entry follows the process lifetime. |
+| Registered WebTTY server | A durable project object with enrollment and the managed session features enabled by its policy. |
 
-`ClientSession.Close()` releases the reader. An Engine-managed execution that
-explicitly selected a bounded detached lifetime continues after this disconnect;
-ordinary sessions keep their connection-bound lifetime. Rejoin a live managed
-execution with `Attach`, without sending a new `Open` or repeating the command.
-The session API retains its confirmed result under the existing retention policy.
-After a local close without native completion, `Wait()` now returns
-`ErrSessionDisconnected`. The older `(-1, nil)` local-close result could be
-mistaken for a confirmed process result. `Close()` itself remains idempotent
-and returns nil; a previously confirmed native result is preserved.
+Install the [CLI](000-installation.md), authenticate and select a project using the [CLI workflow](001-cli-workflow.md). Run server commands on the machine to be accessed and client commands on the operator's machine. Both need credentials permitted for the selected project; server enrollment and workspace protection add the trust steps described below.
 
-For a managed reader that has just written input or `SendEOF()`, use
-`Disconnect(ctx)` to finish the transport exchange before releasing it. Continue
-draining `Events()` during this wait. It is bounded by the caller context and
-`CloseDeadline` (five seconds by default); failure forces a local close and does
-not confirm input delivery. An orderly reader disconnect never confirms process
-completion. This matters especially for WebTransport, where an immediate session
-close can discard queued input. `Close()` remains available for immediate release.
+Start with a tunnel server for a small integration, or follow [registered server enrollment](#enroll-a-registered-webtty-server) for managed access. The [product overview](https://rstream.io/docs/webtty) explains the browser and dashboard workflows. This guide covers CLI setup and the Go runtime contracts.
 
-`ClientSession.CanTerminate()` reports native and configured Engine support.
-`RequestTermination(ctx)` sends a separate stop request and leaves the reader
-open for final output. Keep draining `Events()` and use `Wait()` to obtain the
-native exit code. A successful request write is not confirmation that the
-process has exited. An older server returns `ErrTerminationUnsupported`; the
-client does not substitute a disconnect. Cancelling a partially written request
-closes the transport because that frame cannot be retried safely.
-
-For managed sessions, pass the result of `GetWebTTYCapabilities()` in
-`ManagedSessionConfig.Capabilities` and acquire control through the existing
-participant/control APIs. The SDK checks `ExplicitTermination` as well as native
-support. An Attach without Engine capabilities cannot request termination. Native
-capability discovery alone cannot qualify an older Engine relay. Spectators
-and revoked controllers cannot send termination. The session's original
-execution deadline is not extended by detaching or attaching another reader.
-
-### Start and retrieve a detached command
-
-```bash
-rstream webtty sessions start --url rstrm://build-server --execution-seconds 300 -- sh -c 'make check'
-# Save the returned session_id, then inspect or join that same execution:
-rstream webtty sessions show <session-id>
-rstream webtty sessions join <session-id>
-```
-
-`sessions start` returns JSON with the Engine-acknowledged `session_id` and
-disconnects its reader. It requires an explicit budget of 1–86400 seconds,
-within the Engine's advertised maximum. The CLI discovers the target through
-the configured Engine and uses its published WebSocket or WebTransport endpoint;
-private direct dialing cannot provide this managed lifetime. Unpublished
-targets, disabled discovery, interactive/TTY options and unsupported capabilities
-fail before Open. Existing endpoint identity and E2E requirements still apply.
-
-The command receives empty stdin; local piped input is not forwarded. Output is
-not captured by the start operation. Authorized recording export remains subject
-to the server's recording policy and retention. Use ordinary `webtty exec` for
-connection-bound execution and local output capture.
-
-An acknowledged start is not process completion. Read the saved session to find
-its actual result, or attach while it is still running. If the opening response
-is lost, the command may already be running: do not automatically retry start.
-No idempotency key or business-level deduplication is supplied. The start operation
-has a 65-second bound independent of the remote execution budget. In the FIPS
-profile it requires WebTransport, like `webtty exec`; live participant join and
-stop retain their separate restriction below.
-
-### Stop an existing managed command
-
-```bash
-rstream webtty sessions stop <session-id> --reason "maintenance" --timeout 65s
-```
-
-The command joins the existing execution, requests and resolves control using
-Engine's existing session-control permission, then sends Terminate. It never
-reopens the command or forwards stdin. Older Engine/native versions fail
-explicitly; a refused control grant sends no termination request. The CLI
-prints JSON with `session_id` and the confirmed `exit_code`, or null when the
-result is unknown. Successful native completion makes the stop operation
-successful even if the process returned a nonzero code. An already closed
-session returns its stored native result without another attachment.
-If Engine has already removed the stop reader after native completion, its
-cleanup response does not invalidate that confirmed result. Other cleanup
-failures remain errors and preserve the native `exit_code` in the JSON output.
-
-The wait is at most 65 seconds, followed by up to five seconds to release the
-participant record. Cancellation releases the reader; it cannot retract an
-already delivered termination request. Final output is drained without keeping
-an output buffer; read authorized recordings separately with `sessions export`.
-Other readers stay attached until the native process ends. Like `sessions join`,
-`sessions stop` is unavailable in the restricted FIPS profile because live
-participant attachment does not yet support WebTransport.
-
-### Bounded detached execution in the SDK
-
-With an authenticated Engine API client and an already configured terminal
-`SessionConfig`, fetch capabilities from that same Engine and opt in explicitly:
-
-```go
-capabilities, err := api.GetWebTTYCapabilities(ctx)
-if err != nil {
-    return err
-}
-cfg.Managed = &webtty.ManagedSessionConfig{
-    Capabilities: *capabilities,
-    ExecutionSeconds: 300,
-}
-cfg.Interactive, cfg.AllocateTTY = false, false
-session, err := webtty.OpenClientSession(ctx, &cfg)
-if err != nil {
-    return err
-}
-executionID := session.ManagedSessionID()
-// Persist executionID before releasing this reader.
-fmt.Println(executionID)
-return session.Close()
-```
-
-The SDK rejects unsupported capabilities, transports, conflicting URL options
-and excessive durations before opening a connection. `OpenClientSession` returns
-only after the relay confirms the ID. Zero `ExecutionSeconds` preserves the
-ordinary connection-bound lifetime, including when the Engine does not advertise
-the managed protocol. The capability snapshot still prevents unsupported
-termination requests. Detached execution supports WebSocket and
-WebTransport as advertised by the Engine; it cannot extend an existing Attach.
-
-Use the saved ID with the existing session/participant API to inspect the result
-or obtain a fresh authorized Attach grant. A running command is joined without
-another Open. Receiving an ID grants no authority, and a lost opening response
-does not make retrying Open safe. Recording retention and permissions determine
-which historical output is available; this API adds no history/live cursor or
-survival across process or Engine restarts.
-
-JSON command capture and MCP execution return `exit_code: null` when no native
-result was confirmed, including transport loss and local cancellation. Confirmed
-nonzero or negative native codes remain unchanged. Partial stdout and stderr
-remain separate from the local execution error.
-
-`CaptureCommand(ctx, config, maxOutputBytes)` retains stdout and stderr within
-one combined byte limit (zero selects 8 MiB) and returns `CommandResult` alongside
-any local error. CLI JSON output preserves explicit `--interactive` and `--tty`
-options: terminal input, resize events and local terminal restoration match
-streaming output. TTY allocation still requires a local terminal; remote terminal
-stdout and stderr share the terminal's output stream. Without those options,
-SDK capture defaults to empty input when no input reader is supplied. Overflow sets
-`OutputTruncated`, returns `ErrCommandOutputLimit`, requests explicit termination
-when supported, and keeps draining for at most 65 seconds or until caller
-cancellation. Its `ExitCode` remains nil until native completion is confirmed.
-The CLI JSON and MCP collectors use the 8 MiB default and report `truncated`
-and the MCP `output_limit` error kind. Streaming CLI output is not retained.
-
-Unix cleanup retains the group leader's PID until its group has been stopped
-and the native result collected. macOS can return a permission error for an
-already exited group; WebTTY accepts that only after one bounded snapshot of
-up to 256 members confirms that every member, including the leader, is a zombie
-or already has the kernel's irreversible `P_WEXIT` exit flag.
-Live members, incomplete snapshots and query failures retain the error.
-
-## User Journeys
+## Open a terminal
 
 ### Expose a Tunnel WebTTY Server
 
@@ -251,66 +101,6 @@ Remove a local server identity when the server key has been retired:
 rstream webtty identity remove dev-shell
 ```
 
-### Enroll a Registered WebTTY Server
-
-Create the registered server from an authenticated project context, then run
-the enrollment command returned by the CLI, product, or API on the host that
-will run WebTTY.
-
-If the current machine creates and runs the server, select the project once and
-use the single-command path:
-
-```bash
-rstream project use project-endpoint
-rstream webtty server create prod-shell --enroll
-```
-
-If the server record is created from another machine, run the printed
-enrollment command on the runtime host:
-
-```bash
-rstream project use project-endpoint
-rstream webtty server create prod-shell
-```
-
-```bash
-rstream webtty server enroll server_id
-```
-
-Enrollment uses the local authenticated rstream context. It fails before
-writing local state if the account cannot access the target project or if the
-active context points to a different workspace. The generated enrollment file
-defaults to:
-
-```text
-~/.rstream/webtty/enrollments/<server-id>.yaml
-```
-
-Keep that enrollment file and the referenced server identity together. If the
-server identity is lost, create a new registered server and enroll it instead of
-reusing the old server id. This keeps identity replacement explicit rather than
-turning it into a silent key reset path.
-
-Start the registered server with:
-
-```bash
-rstream webtty server -v --server-id server_id --login-user operator
-```
-
-`--server-id` implies `--rstream` and starts a managed `protocol=webtty` tunnel.
-Registered servers publish by default; add `--no-publish` when the server should
-stay reachable only through private rstream dials. Use `--server-enrollment`
-only when the enrollment file is not at the default path.
-
-Registered servers default to `login` execution mode. Configure `--login-user`
-or `--allow-client-user` explicitly, or set `--execution-mode=spawn` when the
-server should intentionally run commands as children of the server process.
-The `--login-user` value is the username of an existing account on the server
-machine. It selects the OS identity, home directory, and shell used for every
-session; it is not the rstream account or the remote caller's username. Run
-`id -un` on the server to discover its current local username, then pass that
-exact value unless the service is deliberately configured to switch accounts.
-
 ### Trust a CLI for Workspace-Managed WebTTY
 
 Workspace-managed registered servers require a trusted workspace browser,
@@ -385,6 +175,68 @@ rstream webtty server trust server_id
 
 `server trust` is a repair path. It does not allow an untrusted machine to run a
 workspace-managed WebTTY server.
+
+### Enroll a Registered WebTTY Server
+
+Complete the [workspace device trust setup](#trust-a-cli-for-workspace-managed-webtty) on the operator and server hosts before enrollment when workspace-managed protection is required.
+
+Create the registered server from an authenticated project context, then run
+the enrollment command returned by the CLI, product, or API on the host that
+will run WebTTY.
+
+If the current machine creates and runs the server, select the project once and
+use the single-command path:
+
+```bash
+rstream project use project-endpoint
+rstream webtty server create prod-shell --enroll
+```
+
+If the server record is created from another machine, run the printed
+enrollment command on the runtime host:
+
+```bash
+rstream project use project-endpoint
+rstream webtty server create prod-shell
+```
+
+```bash
+rstream webtty server enroll server_id
+```
+
+Enrollment uses the local authenticated rstream context. It fails before
+writing local state if the account cannot access the target project or if the
+active context points to a different workspace. The generated enrollment file
+defaults to:
+
+```text
+~/.rstream/webtty/enrollments/<server-id>.yaml
+```
+
+Keep that enrollment file and the referenced server identity together. If the
+server identity is lost, create a new registered server and enroll it instead of
+reusing the old server id. This keeps identity replacement explicit rather than
+turning it into a silent key reset path.
+
+Start the registered server with:
+
+```bash
+rstream webtty server -v --server-id server_id --login-user operator
+```
+
+`--server-id` implies `--rstream` and starts a managed `protocol=webtty` tunnel.
+Registered servers publish by default; add `--no-publish` when the server should
+stay reachable only through private rstream dials. Use `--server-enrollment`
+only when the enrollment file is not at the default path.
+
+Registered servers default to `login` execution mode. Configure `--login-user`
+or `--allow-client-user` explicitly, or set `--execution-mode=spawn` when the
+server should intentionally run commands as children of the server process.
+The `--login-user` value is the username of an existing account on the server
+machine. It selects the OS identity, home directory, and shell used for every
+session; it is not the rstream account or the remote caller's username. Run
+`id -un` on the server to discover its current local username, then pass that
+exact value unless the service is deliberately configured to switch accounts.
 
 ### Inspect Managed Sessions
 
@@ -590,6 +442,164 @@ integrity; it does not restart a process that was loaded before the upgrade.
 Do not reset macOS privacy permissions as a routine upgrade step. Restart and
 test first, then investigate TCC only when the protected resource returns an
 actual privacy denial.
+
+## Disconnect and explicit termination
+
+`ClientSession.Close()` releases the reader. An Engine-managed execution that
+explicitly selected a bounded detached lifetime continues after this disconnect;
+ordinary sessions keep their connection-bound lifetime. Rejoin a live managed
+execution with `Attach`, without sending a new `Open` or repeating the command.
+The session API retains its confirmed result under the existing retention policy.
+After a local close without native completion, `Wait()` now returns
+`ErrSessionDisconnected`. The older `(-1, nil)` local-close result could be
+mistaken for a confirmed process result. `Close()` itself remains idempotent
+and returns nil; a previously confirmed native result is preserved.
+
+For a managed reader that has just written input or `SendEOF()`, use
+`Disconnect(ctx)` to finish the transport exchange before releasing it. Continue
+draining `Events()` during this wait. It is bounded by the caller context and
+`CloseDeadline` (five seconds by default); failure forces a local close and does
+not confirm input delivery. An orderly reader disconnect never confirms process
+completion. This matters especially for WebTransport, where an immediate session
+close can discard queued input. `Close()` remains available for immediate release.
+
+`ClientSession.CanTerminate()` reports native and configured Engine support.
+`RequestTermination(ctx)` sends a separate stop request and leaves the reader
+open for final output. Keep draining `Events()` and use `Wait()` to obtain the
+native exit code. A successful request write is not confirmation that the
+process has exited. An older server returns `ErrTerminationUnsupported`; the
+client does not substitute a disconnect. Cancelling a partially written request
+closes the transport because that frame cannot be retried safely.
+
+For managed sessions, pass the result of `GetWebTTYCapabilities()` in
+`ManagedSessionConfig.Capabilities` and acquire control through the existing
+participant/control APIs. The SDK checks `ExplicitTermination` as well as native
+support. An Attach without Engine capabilities cannot request termination. Native
+capability discovery alone cannot qualify an older Engine relay. Spectators
+and revoked controllers cannot send termination. The session's original
+execution deadline is not extended by detaching or attaching another reader.
+
+### Start and retrieve a detached command
+
+```bash
+rstream webtty sessions start --url rstrm://build-server --execution-seconds 300 -- sh -c 'make check'
+# Save the returned session_id, then inspect or join that same execution:
+rstream webtty sessions show <session-id>
+rstream webtty sessions join <session-id>
+```
+
+`sessions start` returns JSON with the Engine-acknowledged `session_id` and
+disconnects its reader. It requires an explicit budget of 1–86400 seconds,
+within the Engine's advertised maximum. The CLI discovers the target through
+the configured Engine and uses its published WebSocket or WebTransport endpoint;
+private direct dialing cannot provide this managed lifetime. Unpublished
+targets, disabled discovery, interactive/TTY options and unsupported capabilities
+fail before Open. Existing endpoint identity and E2E requirements still apply.
+
+The command receives empty stdin; local piped input is not forwarded. Output is
+not captured by the start operation. Authorized recording export remains subject
+to the server's recording policy and retention. Use ordinary `webtty exec` for
+connection-bound execution and local output capture.
+
+An acknowledged start is not process completion. Read the saved session to find
+its actual result, or attach while it is still running. If the opening response
+is lost, the command may already be running: do not automatically retry start.
+No idempotency key or business-level deduplication is supplied. The start operation
+has a 65-second bound independent of the remote execution budget. In the FIPS
+profile it requires WebTransport, like `webtty exec`; live participant join and
+stop retain their separate restriction below.
+
+### Stop an existing managed command
+
+```bash
+rstream webtty sessions stop <session-id> --reason "maintenance" --timeout 65s
+```
+
+The command joins the existing execution, requests and resolves control using
+Engine's existing session-control permission, then sends Terminate. It never
+reopens the command or forwards stdin. Older Engine/native versions fail
+explicitly; a refused control grant sends no termination request. The CLI
+prints JSON with `session_id` and the confirmed `exit_code`, or null when the
+result is unknown. Successful native completion makes the stop operation
+successful even if the process returned a nonzero code. An already closed
+session returns its stored native result without another attachment.
+If Engine has already removed the stop reader after native completion, its
+cleanup response does not invalidate that confirmed result. Other cleanup
+failures remain errors and preserve the native `exit_code` in the JSON output.
+
+The wait is at most 65 seconds, followed by up to five seconds to release the
+participant record. Cancellation releases the reader; it cannot retract an
+already delivered termination request. Final output is drained without keeping
+an output buffer; read authorized recordings separately with `sessions export`.
+Other readers stay attached until the native process ends. Like `sessions join`,
+`sessions stop` is unavailable in the restricted FIPS profile because live
+participant attachment does not yet support WebTransport.
+
+### Bounded detached execution in the SDK
+
+With an authenticated Engine API client and an already configured terminal
+`SessionConfig`, fetch capabilities from that same Engine and opt in explicitly:
+
+```go
+capabilities, err := api.GetWebTTYCapabilities(ctx)
+if err != nil {
+    return err
+}
+cfg.Managed = &webtty.ManagedSessionConfig{
+    Capabilities: *capabilities,
+    ExecutionSeconds: 300,
+}
+cfg.Interactive, cfg.AllocateTTY = false, false
+session, err := webtty.OpenClientSession(ctx, &cfg)
+if err != nil {
+    return err
+}
+executionID := session.ManagedSessionID()
+// Persist executionID before releasing this reader.
+fmt.Println(executionID)
+return session.Close()
+```
+
+The SDK rejects unsupported capabilities, transports, conflicting URL options
+and excessive durations before opening a connection. `OpenClientSession` returns
+only after the relay confirms the ID. Zero `ExecutionSeconds` preserves the
+ordinary connection-bound lifetime, including when the Engine does not advertise
+the managed protocol. The capability snapshot still prevents unsupported
+termination requests. Detached execution supports WebSocket and
+WebTransport as advertised by the Engine; it cannot extend an existing Attach.
+
+Use the saved ID with the existing session/participant API to inspect the result
+or obtain a fresh authorized Attach grant. A running command is joined without
+another Open. Receiving an ID grants no authority, and a lost opening response
+does not make retrying Open safe. Recording retention and permissions determine
+which historical output is available; this API adds no history/live cursor or
+survival across process or Engine restarts.
+
+JSON command capture and MCP execution return `exit_code: null` when no native
+result was confirmed, including transport loss and local cancellation. Confirmed
+nonzero or negative native codes remain unchanged. Partial stdout and stderr
+remain separate from the local execution error.
+
+`CaptureCommand(ctx, config, maxOutputBytes)` retains stdout and stderr within
+one combined byte limit (zero selects 8 MiB) and returns `CommandResult` alongside
+any local error. CLI JSON output preserves explicit `--interactive` and `--tty`
+options: terminal input, resize events and local terminal restoration match
+streaming output. TTY allocation still requires a local terminal; remote terminal
+stdout and stderr share the terminal's output stream. Without those options,
+SDK capture defaults to empty input when no input reader is supplied. Overflow sets
+`OutputTruncated`, returns `ErrCommandOutputLimit`, requests explicit termination
+when supported, and keeps draining for at most 65 seconds or until caller
+cancellation. Its `ExitCode` remains nil until native completion is confirmed.
+The CLI JSON and MCP collectors use the 8 MiB default and report `truncated`
+and the MCP `output_limit` error kind. Streaming CLI output is not retained.
+
+Unix cleanup retains the group leader's PID until its group has been stopped
+and the native result collected. macOS can return a permission error for an
+already exited group; WebTTY accepts that only after one bounded snapshot of
+up to 256 members confirms that every member, including the leader, is a zombie
+or already has the kernel's irreversible `P_WEXIT` exit flag.
+Live members, incomplete snapshots and query failures retain the error.
+
 
 ## Liveness, Reconnection, and Session Drain
 
@@ -1008,6 +1018,8 @@ policies enforced by the server and engine.
 
 
 ## Filesystem transport
+
+For read-only file sharing without a terminal, use [`rstream files`](010-file-sharing.md). WebTTY's filesystem/WebDAV handler retains its write options; SDK embedders must close `NewFileSystemHandler` through `io.Closer` after stopping HTTP requests.
 
 `webtty server --fs-root ./exports --fs-backend webdav` retains the existing writable sidecar (unless `--fs-read-only` is set). Select `--fs-backend webrtc` for read-only Pion DataChannel transfers with rstream STUN/TURN. Upload, write, mkdir, rename, copy and delete fail explicitly in that mode; there is no write fallback. `--fs-max-upload-size` cannot be configured for WebRTC. Terminal `--execution-mode` is independent.
 

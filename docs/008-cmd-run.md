@@ -1,27 +1,6 @@
 # rstream run
 
-`rstream run` keeps tunnels in sync from a YAML file (`--apply`) or Docker labels (`--docker`), with optional watch/reconcile.
-
-In watch mode the reconciler keeps retrying temporary Engine failures and
-resource conflicts with bounded exponential backoff and downward jitter. The
-jitter prevents a regional recovery from making every agent reconnect at the
-same instant and never exceeds the configured retry ceiling. The first failure
-is logged once, repeated failures are coalesced, and recovery reports the
-number of failed attempts and outage duration before resetting the backoff.
-This matters during container or agent restarts: an earlier control channel can
-lose its route while established customer sessions are still carrying data.
-The command treats each reconnect as a new admission generation: the ended
-generation stops accepting immediately, its established TCP or datagram relays
-remain owned and bounded by the root command lifecycle, and the replacement
-generation opens the route again. A normal process stop still cancels and joins
-every relay. Consequently, a transient control-plane failure does not turn into
-payload loss, and reconnect does not leak goroutines, sockets or transports.
-
-The negotiated heartbeat grace is deliberately much longer than the heartbeat
-interval. Missing heartbeats below that grace do not change the route or active
-sessions. Once it expires, the Engine withdraws the old route and rejects new
-admissions; `rstream run` reconnects with bounded jitter while established
-sessions finish on their original immutable data paths.
+`rstream run` keeps a set of local services connected through tunnels described in YAML or Docker labels. Use it when a daemon should discover and reconcile services over time; `rstream forward` is the simpler path for one foreground tunnel. Install and configure the CLI first with the [CLI workflow](001-cli-workflow.md).
 
 ## Quick Start
 
@@ -38,18 +17,22 @@ rstream -v run --docker --watch
 
 ## Flags
 
-- `--apply <file>`: load tunnels from a YAML file
-- `--docker`: discover tunnels from Docker labels
-- `--watch`: watch the source and reconcile on change
-- `--docker-socket`: Docker socket (default `unix:///var/run/docker.sock`)
-- `--docker-network`: optional, select a specific Docker network when containers have multiple networks
-- `--docker-default-context`: default CLI context for Docker tunnels
+| Option | Purpose | Default or condition |
+| --- | --- | --- |
+| `--apply <file>` | Load tunnel definitions from YAML. | Select a local file. |
+| `--docker` | Discover tunnels from Docker labels. | Requires access to the Docker socket. |
+| `--watch` | Reconcile when the selected source changes. | Without it, apply the initial configuration once. |
+| `--docker-socket` | Select the Docker socket. | `unix:///var/run/docker.sock`. |
+| `--docker-network` | Select a container network for forwarding. | Optional; otherwise use the discovery rules below. |
+| `--docker-default-context` | Select the default CLI context for Docker tunnels. | Individual container context labels can select their context. |
 
 ## Command Modes
 
-- `forward`: creates a single tunnel from CLI args and forwards immediately (single tunnel, interactive).
-- `run --apply`: declarative list of tunnels from YAML, supports watch/reconcile.
-- `run --docker`: discovers tunnels from Docker labels, supports watch/reconcile.
+| Command | Use it for |
+| --- | --- |
+| `forward` | One foreground tunnel configured through command arguments. |
+| `run --apply` | A declared set of tunnels from YAML, with optional watch/reconciliation. |
+| `run --docker` | A set discovered from container labels, with optional watch/reconciliation. |
 
 ## YAML Schema (`--apply`)
 
@@ -146,27 +129,31 @@ labels:
 
 ### Label Reference
 
-- `rstream.tunnel.<name>.forward` (required)
-- `rstream.tunnel.<name>.publish` (true|false, default true)
-- `rstream.tunnel.<name>.protocol` (http|tls|tcp|dtls|quic|webtty, default http)
-- `rstream.tunnel.<name>.type` (bytestream|datagram)
-- `rstream.tunnel.<name>.host` (Stable domain)
-- `rstream.tunnel.<name>.upstream-tls` (true|false)
-- `rstream.tunnel.<name>.label.<k>=<v>` (repeatable)
-- `rstream.tunnel.<name>.trusted-ips` (comma-separated)
-- `rstream.tunnel.<name>.geoip` (comma-separated)
-- `rstream.tunnel.<name>.http.version` (http/1.1|h2c|h3)
-- `rstream.tunnel.<name>.http.auth.token` (true|false)
-- `rstream.tunnel.<name>.http.auth.rstream` (true|false)
-- `rstream.tunnel.<name>.http.gate.challenge` (true|false)
-- `rstream.tunnel.<name>.tls.mode` (terminated|passthrough)
-- `rstream.tunnel.<name>.tls.minVersion` (tls1.2|tls1.3)
-- `rstream.tunnel.<name>.tls.alpns` (comma-separated)
-- `rstream.tunnel.<name>.tls.ciphers` (comma-separated)
-- `rstream.tunnel.<name>.port` (reserved published TCP port)
-- `rstream.tunnel.<name>.allow-cross-region-routing` (true|false)
-- `rstream.tunnel.<name>.datagram-guaranteed-delivery` (true|false, datagram tunnels only)
-- `rstream.tunnel.<name>.tls.mtls` (true|false)
+Each `<name>` identifies one tunnel declared on the container. The label suffix selects a tunnel property:
+
+| Label | Value or requirement |
+| --- | --- |
+| `rstream.tunnel.<name>.forward` | required |
+| `rstream.tunnel.<name>.publish` | true or false, default true |
+| `rstream.tunnel.<name>.protocol` | http or tls or tcp or dtls or quic or webtty, default http |
+| `rstream.tunnel.<name>.type` | bytestream or datagram |
+| `rstream.tunnel.<name>.host` | Stable domain |
+| `rstream.tunnel.<name>.upstream-tls` | true or false |
+| `rstream.tunnel.<name>.label.<k>=<v>` | repeatable |
+| `rstream.tunnel.<name>.trusted-ips` | comma-separated |
+| `rstream.tunnel.<name>.geoip` | comma-separated |
+| `rstream.tunnel.<name>.http.version` | http/1.1 or h2c or h3 |
+| `rstream.tunnel.<name>.http.auth.token` | true or false |
+| `rstream.tunnel.<name>.http.auth.rstream` | true or false |
+| `rstream.tunnel.<name>.http.gate.challenge` | true or false |
+| `rstream.tunnel.<name>.tls.mode` | terminated or passthrough |
+| `rstream.tunnel.<name>.tls.minVersion` | tls1.2 or tls1.3 |
+| `rstream.tunnel.<name>.tls.alpns` | comma-separated |
+| `rstream.tunnel.<name>.tls.ciphers` | comma-separated |
+| `rstream.tunnel.<name>.port` | reserved published TCP port |
+| `rstream.tunnel.<name>.allow-cross-region-routing` | true or false |
+| `rstream.tunnel.<name>.datagram-guaranteed-delivery` | true or false, datagram tunnels only |
+| `rstream.tunnel.<name>.tls.mtls` | true or false |
 
 `http.auth.*` and `http.gate.*` are valid only for HTTP tunnels (`protocol=http`).
 
@@ -188,17 +175,40 @@ For agent authentication, `rstream run` uses the selected CLI context or explici
 
 ## Managed Labels
 
-`rstream run` injects these labels into each created tunnel:
+`rstream run` adds ownership labels to each tunnel:
 
-- `rstream.managed-by: run`
-- `rstream.source: apply` or `rstream.source: docker`
+| Label | Value |
+| --- | --- |
+| `rstream.managed-by` | `run`. |
+| `rstream.source` | `apply` or `docker`, identifying the source. |
 
-## Examples
+The [YAML example](../examples/run-yaml) and [Docker example](../examples/run-docker) contain complete configurations.
 
-See the example folders:
+## Connection lifecycle
 
-- `examples/run-docker`
-- `examples/run-yaml`
+`rstream run` keeps tunnels in sync from a YAML file (`--apply`) or Docker labels (`--docker`), with optional watch/reconcile.
+
+In watch mode the reconciler keeps retrying temporary Engine failures and
+resource conflicts with bounded exponential backoff and downward jitter. The
+jitter prevents a regional recovery from making every agent reconnect at the
+same instant and never exceeds the configured retry ceiling. The first failure
+is logged once, repeated failures are coalesced, and recovery reports the
+number of failed attempts and outage duration before resetting the backoff.
+This matters during container or agent restarts: an earlier control channel can
+lose its route while established customer sessions are still carrying data.
+The command treats each reconnect as a new admission generation: the ended
+generation stops accepting immediately, its established TCP or datagram relays
+remain owned and bounded by the root command lifecycle, and the replacement
+generation opens the route again. A normal process stop still cancels and joins
+every relay. Consequently, a transient control-plane failure does not turn into
+payload loss, and reconnect does not leak goroutines, sockets or transports.
+
+The negotiated heartbeat grace is deliberately much longer than the heartbeat
+interval. Missing heartbeats below that grace do not change the route or active
+sessions. Once it expires, the Engine withdraws the old route and rejects new
+admissions; `rstream run` reconnects with bounded jitter while established
+sessions finish on their original immutable data paths.
+
 
 ## HTTP CORS
 

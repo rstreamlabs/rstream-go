@@ -4,17 +4,6 @@ The CLI runs on Linux, macOS and Windows. Other supported Unix targets are avail
 
 The installation paths in this section install the `rstream` CLI binary and its runtime dependencies. They do not install the Go SDK as a library dependency.
 
-## Local build
-From the repository root, build the CLI for the current platform:
-```bash
-make
-```
-
-The build applies a verified temporary ICE concurrency patch. Applications
-using the SDK's WebRTC filesystem transport must also prepare their own build;
-Go does not inherit dependency replacements. See the
-[ICE patch guide](../tools/icepatch/README.md) for direct Go commands and adoption.
-
 ## Debian/Ubuntu
 For Debian-based distributions, the installer deploys packaged CLI binaries and dependencies:
 ```bash
@@ -57,6 +46,8 @@ docker pull rstream/rstream:latest
 
 Once installed, follow the [CLI workflow](001-cli-workflow.md) to authenticate, select a project and forward a local service. For unattended devices, that guide also covers project-scoped credentials and certificate authentication.
 
-## Build profiles
+## Build from source
 
-See [Contributing](../CONTRIBUTING.md) for development checks and cross-platform builds. The [FIPS profile](010-fips-140-3-profile.md) documents the separate restricted distribution and its cryptographic module boundary.
+To compile the CLI or develop the SDK, follow [Build from source](016-building-from-source.md). It lists the Go, Git and platform-tool requirements, gives direct Go and Makefile commands, and identifies the resulting binaries. Installing the SDK as a library does not install the CLI.
+
+The [FIPS profile](010-fips-140-3-profile.md) is a separate restricted distribution with its own build requirements and cryptographic module boundary.

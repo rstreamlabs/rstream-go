@@ -34,4 +34,4 @@ Start with the CLI to establish a working context, or use that same configuratio
 | [FIPS profile](010-fips-140-3-profile.md) | The restricted distribution, supported boundary and build requirements. |
 | [Verified ICE build patch](../tools/icepatch/README.md) | Prepare builds using the filesystem WebRTC transport. |
 
-For source changes, follow [Contributing](../CONTRIBUTING.md). Maintainers can use [CLI release maintenance](017-cli-releases.md) for package-source configuration and WinGet submission. The [test guide](../test/README.md) describes local fixtures and runtime integration checks.
+To work on this checkout, start with [Build from source](016-building-from-source.md), then follow [Contributing](../CONTRIBUTING.md). Maintainers can use [CLI release maintenance](017-cli-releases.md) for package-source configuration and WinGet submission. The [test guide](../test/README.md) describes local fixtures and runtime integration checks.

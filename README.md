@@ -1,8 +1,15 @@
 # rstream Go SDK and CLI
 
-The Go SDK is rstream’s reference implementation. Use it to accept connections in your application, dial private services or build an agent that maintains outbound connectivity to the rstream edge. The `rstream` CLI lives in the same repository and provides port forwarding, file sharing and remote terminals using the same configuration.
+rstream makes services and devices reachable through outbound connections, without opening inbound ports on the machines running them. Applications can expose an endpoint to ordinary clients or connect privately through an authenticated rstream client.
 
-Go offers the broadest protocol coverage in the rstream SDKs. For native applications built around Boost.Asio, see the [C++ SDK](https://github.com/rstreamlabs/rstream-cpp). The [SDK selection guide](https://rstream.io/sdks) compares the integration paths and capabilities suited to each runtime.
+This repository contains the reference Go SDK and the `rstream` CLI. Embed the SDK when the application should own its connections and tunnels; use the CLI to forward an existing service, share files or operate remote terminals. Go provides the broadest protocol coverage in the stack. The [SDK guide](https://rstream.io/docs/sdks) explains the integration choices across languages.
+
+| Goal | Start here |
+| --- | --- |
+| Try rstream with an existing service | [Install the CLI](docs/000-installation.md), then follow the CLI example below. |
+| Add connectivity to a Go application | [Use the Go library](#use-the-go-library) or run the [HTTP server example](examples/README.md#serve-http). |
+| Explore an integration or protocol | [Example catalog](examples/README.md). |
+| Build or modify this checkout | [Build from source](docs/016-building-from-source.md), then [Contributing](CONTRIBUTING.md). |
 
 ## Connection model
 
@@ -15,7 +22,7 @@ An agent connects outbound to the edge; services behind it need no inbound port.
 | Bytestream | Carries reliable, ordered bytes for HTTP and stream protocols. |
 | Datagram | Preserves message boundaries for datagram protocols. |
 
-The [client-to-edge transport](docs/002-transport.md) and the [protocol exposed by a tunnel](docs/003-tunnel-properties.md) are separate choices. Go supports TLS and QUIC transports, with HTTP, TCP, TLS, DTLS, QUIC and SCTP tunnel workflows subject to deployment and project policy.
+The [client-to-edge transport](docs/002-transport.md) and the [protocol exposed by a tunnel](docs/003-tunnel-properties.md) are separate choices. Go implements TLS and QUIC agent transports and both bytestream and datagram tunnels. The protocols available for publication depend on the deployment and project policy.
 
 ## Start with the CLI
 
@@ -31,13 +38,16 @@ Replace `my-project-endpoint` with the endpoint of your project. Login opens the
 
 ## Use the Go library
 
-Add the SDK to your Go module:
+Create a small Go module and add the SDK:
 
 ```sh
+mkdir rstream-hello
+cd rstream-hello
+go mod init example.com/rstream-hello
 go get github.com/rstreamlabs/rstream-go
 ```
 
-The example below reads the context selected with the CLI. It creates a published HTTP/1.1 tunnel and serves requests directly, without binding a local TCP port.
+[Install the CLI](docs/000-installation.md) and select a project with `rstream login` and `rstream project use my-project-endpoint`. The program reads that context, creates a published HTTP/1.1 tunnel and serves requests directly, without binding a local TCP port.
 
 ```go
 package main
@@ -64,13 +74,11 @@ func serve() error {
 		return err
 	}
 	defer client.Close()
-
 	control, err := client.Connect(context.Background(), nil)
 	if err != nil {
 		return err
 	}
 	defer control.Close()
-
 	tunnel, err := control.CreateTunnel(context.Background(), rstream.TunnelProperties{
 		Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
 		HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP1_1),
@@ -80,13 +88,11 @@ func serve() error {
 		return err
 	}
 	defer tunnel.Close()
-
 	address, err := tunnel.ForwardingAddress()
 	if err != nil {
 		return err
 	}
 	fmt.Println(address)
-
 	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintln(w, "Hello from rstream")
 	})}
@@ -94,7 +100,9 @@ func serve() error {
 }
 ```
 
-The runnable [HTTP server example](examples/http-h1-server) adds signal handling and graceful shutdown. The [examples](examples) cover private dialing and other protocols.
+Save the program as `main.go` in the module where the SDK was installed, then run `go run .`. Open the printed forwarding address to see `Hello from rstream`; stop the process with an interrupt. A project context must be selected first, as in the CLI setup above.
+
+The runnable [HTTP server example](examples/README.md#serve-http) adds signal handling and graceful shutdown. The [example catalog](examples/README.md) explains which programs to pair for private connections, other protocols and API integrations.
 
 ## Documentation
 
@@ -105,7 +113,7 @@ The runnable [HTTP server example](examples/http-h1-server) adds signal handling
 | Share files or operate remote terminals | [File sharing](docs/010-file-sharing.md) and [WebTTY](docs/006-webtty.md) |
 | Integrate webhooks or agent tools | [Webhooks](docs/007-webhooks.md) and [MCP](docs/009-mcp.md) |
 | Find API, security and troubleshooting guides | [Documentation index](docs/README.md) and [Go API reference](https://pkg.go.dev/github.com/rstreamlabs/rstream-go) |
-| Build or contribute | [Contributing](CONTRIBUTING.md) and [coding style](CODING_STYLE.md) |
+| Build or contribute | [Source build](docs/016-building-from-source.md), [Contributing](CONTRIBUTING.md) and [coding style](CODING_STYLE.md) |
 
 ## Security and support
 

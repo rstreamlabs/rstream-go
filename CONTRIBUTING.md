@@ -8,9 +8,9 @@ For small fixes, opening a pull request directly is usually fine. For larger cha
 
 Planned CLI and protocol work is tracked in the [roadmap](roadmap/).
 
-## Development checks
+## Local setup and checks
 
-Before sending a pull request, run the main local checks:
+Start with [Build from source](docs/016-building-from-source.md) for the required Go, Git and platform tools and a working local CLI. Run the following from the repository root before sending a pull request:
 
 ```bash
 make ice-patch
