@@ -5,6 +5,8 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -17,6 +19,83 @@ import (
 	rstream "github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/webtty"
 )
+
+func TestPreparedWorkspaceCredentialRetainsItsOwnRecordingRecipient(t *testing.T) {
+	_, identity, credential := testWebTTYWorkspaceClientCredentialFixture(t)
+	envelope, err := decodeWebTTYWorkspaceClientCredential(credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := webtty.GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := server.Public()
+	for _, existingClientRecipient := range []bool{false, true} {
+		t.Run(fmt.Sprintf("existing-client-recipient-%t", existingClientRecipient), func(t *testing.T) {
+			payloadConfig := webtty.E2EPayloadCryptoConfig{Recipients: []webtty.E2ERecipient{{
+				KeyID: server.Encryption.KeyID, PublicKey: server.Encryption.PublicKey,
+			}}}
+			if existingClientRecipient {
+				payloadConfig.Recipients, err = appendWebTTYE2EClientEndpointRecipient(payloadConfig.Recipients, *identity)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			payloadCrypto, err := webtty.NewE2EClientPayloadCrypto(payloadConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			config, err := withWebTTYWorkspaceRecordingRecipient(webTTYClientCryptoConfig{
+				PayloadCrypto: payloadCrypto, payloadConfig: &payloadConfig,
+				EndpointIdentity: identity, ExpectedServerIdentity: &public,
+			}, envelope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(config.payloadConfig.Recipients) != 2 {
+				t.Fatalf("duplicate or missing recording recipient: %+v", config.payloadConfig.Recipients)
+			}
+			if got := config.payloadConfig.Recipients[1]; got.ID != workspaceTrustString(envelope.Payload, "device_key_id") || got.Kind != webtty.E2ERecipientKindWorkspaceDevice {
+				t.Fatalf("recording recipient does not identify the approved device: %+v", got)
+			}
+			var keyContext map[string]any
+			if err := json.Unmarshal(config.PayloadCrypto.SessionKeyGrant.KeyContext, &keyContext); err != nil {
+				t.Fatal(err)
+			}
+			for _, field := range []string{"workspace_id", "project_id", "server_id"} {
+				if keyContext[field] != envelope.Payload[field] {
+					t.Fatalf("recording context %s = %v, want %v", field, keyContext[field], envelope.Payload[field])
+				}
+			}
+			if _, err := webtty.NewE2EServerPayloadCrypto(config.PayloadCrypto.SessionKeyGrant, identity.Encryption); err != nil {
+				t.Fatalf("approved device cannot decrypt its own recording grant: %v", err)
+			}
+			if _, err := webtty.NewE2EServerPayloadCrypto(config.PayloadCrypto.SessionKeyGrant, server.Encryption); err != nil {
+				t.Fatalf("registered server recipient was lost: %v", err)
+			}
+		})
+	}
+	for _, scenario := range []string{"identity", "workspace", "project", "server"} {
+		t.Run("reject-"+scenario, func(t *testing.T) {
+			payloadConfig := webtty.E2EPayloadCryptoConfig{}
+			client := identity
+			switch scenario {
+			case "identity":
+				client = server
+			case "workspace":
+				payloadConfig.WorkspaceID = "other-workspace"
+			case "project":
+				payloadConfig.ProjectID = "other-project"
+			case "server":
+				payloadConfig.ServerID = "other-server"
+			}
+			if _, err := withWebTTYWorkspaceRecordingRecipient(webTTYClientCryptoConfig{payloadConfig: &payloadConfig, EndpointIdentity: client}, envelope); err == nil {
+				t.Fatal("mismatched prepared credential was accepted")
+			}
+		})
+	}
+}
 
 func TestWebTTYClientPreparationPortableFiles(t *testing.T) {
 	_, identity, credential := testWebTTYWorkspaceClientCredentialFixture(t)
@@ -91,6 +170,22 @@ func TestWebTTYClientPreparationRejectsInvalidMaterialBeforeWriting(t *testing.T
 				t.Fatalf("invalid preparation left files: %v", err)
 			}
 		})
+	}
+}
+
+func TestWebTTYClientPreparationPreservesP256ServerSuite(t *testing.T) {
+	_, identity, credential := testWebTTYWorkspaceClientCredentialFixture(t)
+	server, err := webtty.GenerateWebTTYEndpointIdentityForSuite(webtty.KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := writeWebTTYClientPreparation(filepath.Join(t.TempDir(), "prepared"), "server-p256", *identity, server.Public(), credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := webtty.LoadKnownServerEndpointIdentitiesFile(files["known-servers.json"])
+	if err != nil || len(loaded) != 1 || !reflect.DeepEqual(loaded[0], server.Public()) {
+		t.Fatalf("P-256 trust did not round trip: %v", err)
 	}
 }
 

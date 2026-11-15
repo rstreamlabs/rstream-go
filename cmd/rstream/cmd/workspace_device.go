@@ -665,10 +665,14 @@ func completeWorkspaceDeviceRotations(ctx context.Context, client workspaceDevic
 }
 
 func workspaceDeviceAccessProofsWithDevices(workspaceID string, limit int, identity controlplane.CallerIdentity) ([]workspaceDeviceAccessProofWithDevice, error) {
+	return workspaceDeviceAccessProofsForOwner(workspaceID, limit, identity.Owner, identity.CredentialID)
+}
+
+func workspaceDeviceAccessProofsForOwner(workspaceID string, limit int, owner controlplane.CredentialOwner, credentialID string) ([]workspaceDeviceAccessProofWithDevice, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
-	devices, err := loadWorkspaceDeviceFilesForIdentity(workspaceID, identity)
+	devices, err := loadWorkspaceDeviceFilesForOwner(workspaceID, owner, credentialID)
 	if err != nil {
 		return nil, err
 	}

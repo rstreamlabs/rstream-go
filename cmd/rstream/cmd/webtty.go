@@ -75,9 +75,10 @@ type webTTYClientResult struct {
 }
 
 type webTTYClientRuntimeE2EContext struct {
-	controlClient *controlplane.Client
-	project       controlplane.Project
-	serverID      string
+	controlClient   *controlplane.Client
+	project         controlplane.Project
+	serverID        string
+	forCredentialID string
 }
 
 type webTTYServerPayloadCryptoConfig struct {
@@ -95,6 +96,7 @@ type webTTYKnownServerSource struct {
 
 type webTTYClientCryptoConfig struct {
 	PayloadCrypto          *webtty.PayloadCrypto
+	payloadConfig          *webtty.E2EPayloadCryptoConfig
 	EndpointIdentity       *webtty.WebTTYEndpointIdentity
 	ExpectedServerIdentity *webtty.WebTTYEndpointIdentityPublic
 	ClientCredential       []byte
@@ -1425,6 +1427,12 @@ func webTTYClientCryptoWithRuntimeAndScope(ctx context.Context, cmd *cobra.Comma
 		return webTTYClientCryptoConfig{}, err
 	}
 	credentialFile, _ := cmd.Flags().GetString("client-credential-file")
+	if cryptoConfig.ExpectedServerIdentity != nil && cryptoConfig.EndpointIdentity == nil {
+		cryptoConfig.EndpointIdentity, err = webTTYClientEndpointIdentityForNameOrExplicitSources(cmd, cryptoConfig.ClientIdentityName)
+		if err != nil {
+			return webTTYClientCryptoConfig{}, err
+		}
+	}
 	return withWebTTYClientCredential(cryptoConfig, credentialFile)
 }
 
@@ -1436,6 +1444,12 @@ func webTTYClientCryptoForRuntimeAndScope(ctx context.Context, runtimeE2E *webTT
 	cryptoConfig, err := webTTYClientCryptoFromSources(ctx, false, sources, serverKeysConfigured, runtimeE2E, scope)
 	if err != nil {
 		return webTTYClientCryptoConfig{}, err
+	}
+	if cryptoConfig.ExpectedServerIdentity != nil && cryptoConfig.EndpointIdentity == nil {
+		cryptoConfig.EndpointIdentity, err = webTTYClientEndpointIdentityForNameOrExplicitSources(nil, cryptoConfig.ClientIdentityName)
+		if err != nil {
+			return webTTYClientCryptoConfig{}, err
+		}
 	}
 	return withWebTTYClientCredential(cryptoConfig, "")
 }
@@ -1552,6 +1566,7 @@ func webTTYClientCryptoFromSources(ctx context.Context, e2eRequested bool, sourc
 	}
 	return webTTYClientCryptoConfig{
 		PayloadCrypto:          payloadCrypto,
+		payloadConfig:          &payloadConfig,
 		EndpointIdentity:       endpointIdentity,
 		ExpectedServerIdentity: expectedServerIdentity,
 		ClientCredential:       clientCredential,
@@ -1571,7 +1586,15 @@ func webTTYClientRuntimeE2EServerSources(ctx context.Context, runtimeE2E *webTTY
 		if err != nil {
 			return nil, nil, nil, false, mapControlPlaneError(err)
 		}
-		proofItems, err := workspaceDeviceAccessProofsWithDevices(workspaceID, 8, identity)
+		owner, credentialID := identity.Owner, identity.CredentialID
+		if runtimeE2E.forCredentialID != "" {
+			if identity.Owner.Kind != "user" {
+				return nil, nil, nil, false, fmt.Errorf("service preparation requires a personal token with workspace owner or admin access")
+			}
+			owner = controlplane.CredentialOwner{Kind: "workspace", WorkspaceID: workspaceID}
+			credentialID = runtimeE2E.forCredentialID
+		}
+		proofItems, err := workspaceDeviceAccessProofsForOwner(workspaceID, 8, owner, credentialID)
 		if err != nil {
 			return nil, nil, nil, false, err
 		}
@@ -1583,10 +1606,11 @@ func webTTYClientRuntimeE2EServerSources(ctx context.Context, runtimeE2E *webTTY
 		}
 	}
 	resolved, err := runtimeE2E.controlClient.ResolveWebTTYServerClient(ctx, runtimeE2E.project.ID, runtimeE2E.serverID, controlplane.ResolveWebTTYServerClientRequest{
+		CredentialID: runtimeE2E.forCredentialID,
 		DeviceProofs: proofs,
 	})
 	if err != nil {
-		if errors.Is(err, controlplane.ErrForbidden) && workspaceID != "" {
+		if errors.Is(err, controlplane.ErrForbidden) && workspaceID != "" && runtimeE2E.forCredentialID == "" {
 			return nil, nil, nil, false, fmt.Errorf("workspace-managed WebTTY E2E requires this machine to be a trusted workspace device; %s", workspaceDeviceEnrollmentHint(workspaceID))
 		}
 		return nil, nil, nil, false, mapControlPlaneError(err)

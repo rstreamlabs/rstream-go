@@ -289,6 +289,7 @@ type ApproveWebTTYServerWorkspaceTrustRequest struct {
 }
 
 type ResolveWebTTYServerClientRequest struct {
+	CredentialID string                       `json:"credentialId,omitempty"`
 	DeviceProofs []WorkspaceDeviceAccessProof `json:"deviceProofs"`
 }
 
