@@ -181,6 +181,7 @@ func TestDetachWebTTYParticipantCancellationBoundsReconciliation(t *testing.T) {
 					attempt := posts.Add(1)
 					if stage == "initial" || (stage == "retry" && attempt == 2) {
 						cancel()
+						http.Error(w, "cancelled", http.StatusServiceUnavailable)
 						return
 					}
 					http.Error(w, "runtime ended", http.StatusServiceUnavailable)
@@ -189,6 +190,7 @@ func TestDetachWebTTYParticipantCancellationBoundsReconciliation(t *testing.T) {
 				gets.Add(1)
 				if stage == "verification" {
 					cancel()
+					http.Error(w, "cancelled", http.StatusServiceUnavailable)
 					return
 				}
 				writeWebTTYAPITestJSON(t, w, WebTTYSession{ID: "session-1", Status: WebTTYSessionStatusClosed})
