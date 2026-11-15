@@ -26,7 +26,7 @@ The [client-to-edge transport](docs/004-transport.md) and the [protocol exposed 
 
 ## Start with the CLI
 
-[Install the CLI](docs/000-installation.md), start a local service on port 8080, then run:
+[Install the CLI](docs/000-installation.md), start a local HTTP service on port 8080, then run:
 
 ```sh
 rstream login

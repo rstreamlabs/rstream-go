@@ -8,7 +8,7 @@ Choose the artifact and owner of the connection first. A released CLI forwards a
 | Build this checkout | [001 Build from source](001-building-from-source.md) | Prepare the verified dependency graph, compile a local CLI and inspect its help. |
 | Embed Go | [003 Go SDK](003-go-sdk.md) → [runnable examples](../examples/README.md) | Serve HTTP with `net.Listener` or dial a private service with `net.Conn`. |
 
-The Go SDK is the reference implementation with the broadest rstream protocol coverage. Availability still depends on Engine version/edition, project policy and plan. A source test does not verify a published package or deployment.
+The Go SDK is the reference implementation with the broadest rstream protocol coverage. Availability still depends on Engine version/edition, project policy and plan. A source checkout can contain additions that are not yet in a published package; choose the source-build path when evaluating those additions.
 
 ## Connection and service configuration
 
