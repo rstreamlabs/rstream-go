@@ -850,6 +850,12 @@ func TestWebTTYRenderSessionTextExportResizeMarkers(t *testing.T) {
 
 func testWebTTYKeyGrantMetadata(t *testing.T, grant *webtty.SessionKeyGrant) rstream.WebTTYCryptoMetadata {
 	t.Helper()
+	keyEnvelopeSuite := "hpke-x25519-hkdf-sha256-aes-256-gcm"
+	if grant.KeyEnvelopeSuite == webtty.KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce {
+		keyEnvelopeSuite = "p256-hkdf-sha256-aes-256-gcm-random-nonce"
+	} else if grant.KeyEnvelopeSuite != webtty.KeyEnvelopeSuiteHPKEX25519HKDFSHA256AES256GCM {
+		t.Fatalf("unsupported test key envelope suite %d", grant.KeyEnvelopeSuite)
+	}
 	keyEnvelopes := make([]map[string]string, 0, len(grant.KeyEnvelopes))
 	for _, keyEnvelope := range grant.KeyEnvelopes {
 		keyEnvelopes = append(keyEnvelopes, map[string]string{
@@ -863,9 +869,9 @@ func testWebTTYKeyGrantMetadata(t *testing.T, grant *webtty.SessionKeyGrant) rst
 		t.Fatalf("Marshal() error = %v", err)
 	}
 	return rstream.WebTTYCryptoMetadata{
-		PayloadSuite:     "aes-256-gcm",
+		PayloadSuite:     testWebTTYPayloadSuiteName(t, grant.PayloadSuite),
 		PayloadKeyID:     webtty.EncodeE2EKeyMaterial(grant.PayloadKeyID),
-		KeyEnvelopeSuite: "hpke-x25519-hkdf-sha256-aes-256-gcm",
+		KeyEnvelopeSuite: keyEnvelopeSuite,
 		KeyEnvelopes:     rawKeyEnvelopes,
 		KeyContext:       json.RawMessage(`{"encoding":"base64","value":"` + webtty.EncodeE2EKeyMaterial(grant.KeyContext) + `"}`),
 		KeyContextRaw:    webtty.EncodeE2EKeyMaterial(grant.KeyContext),
@@ -875,11 +881,24 @@ func testWebTTYKeyGrantMetadata(t *testing.T, grant *webtty.SessionKeyGrant) rst
 func testWebTTYPayloadCryptoMetadata(t *testing.T, crypto *webtty.PayloadCryptoMetadata) rstream.WebTTYCryptoMetadata {
 	t.Helper()
 	return rstream.WebTTYCryptoMetadata{
-		PayloadSuite:  "aes-256-gcm",
+		PayloadSuite:  testWebTTYPayloadSuiteName(t, crypto.PayloadSuite),
 		PayloadKeyID:  webtty.EncodeE2EKeyMaterial(crypto.PayloadKeyID),
 		Nonce:         webtty.EncodeE2EKeyMaterial(crypto.Nonce),
 		KeyContext:    json.RawMessage(`{"encoding":"base64","value":"` + webtty.EncodeE2EKeyMaterial(crypto.AADContext) + `"}`),
 		KeyContextRaw: webtty.EncodeE2EKeyMaterial(crypto.AADContext),
+	}
+}
+
+func testWebTTYPayloadSuiteName(t *testing.T, suite webtty.PayloadCipherSuite) string {
+	t.Helper()
+	switch suite {
+	case webtty.PayloadCipherSuiteAES256GCM:
+		return "aes-256-gcm"
+	case webtty.PayloadCipherSuiteAES256GCMRandomNonce:
+		return "aes-256-gcm-random-nonce"
+	default:
+		t.Fatalf("unsupported test payload suite %d", suite)
+		return ""
 	}
 }
 

@@ -211,12 +211,12 @@ func TestWebTTYHostAndBackendEquivalentRuntimeBehavior(t *testing.T) {
 			cmd := newTestWebTTYServerCommand()
 			var cfg *webTTYServerRuntimeConfig
 			if source == "cli" {
-				if err := cmd.ParseFlags([]string{"--rstream", "--transport=websocket", "--host=shell.example.com", "--fs-root=/tmp", "--fs-backend=webrtc"}); err != nil {
+				if err := cmd.ParseFlags([]string{"--rstream", "--transport=websocket", "--host=shell.example.com", "--mtls", "--fs-root=/tmp", "--fs-backend=webrtc"}); err != nil {
 					t.Fatal(err)
 				}
 			} else {
 				var err error
-				cfg, err = loadWebTTYServerRuntimeConfig(writeWebTTYRuntimeConfigFixture(t, "server:\n  rstream: true\n  transport: websocket\n  host: shell.example.com\nfilesystem:\n  root: /tmp\n  backend: webrtc"))
+				cfg, err = loadWebTTYServerRuntimeConfig(writeWebTTYRuntimeConfigFixture(t, "server:\n  rstream: true\n  transport: websocket\n  host: shell.example.com\n  mtls: true\nfilesystem:\n  root: /tmp\n  backend: webrtc"))
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -234,12 +234,15 @@ func TestWebTTYHostAndBackendEquivalentRuntimeBehavior(t *testing.T) {
 			if props.Hostname == nil || *props.Hostname != "shell.example.com" || props.Publish == nil || !*props.Publish {
 				t.Fatalf("incorrect public endpoint: %#v", props)
 			}
+			if props.MTLSAuth == nil || !*props.MTLSAuth || props.TokenAuth == nil || !*props.TokenAuth {
+				t.Fatalf("published certificate and existing token authentication were not preserved: %#v", props)
+			}
 			if backend, _ := cmd.Flags().GetString("fs-backend"); backend != "webrtc" {
 				t.Fatalf("backend=%s", backend)
 			}
 		})
 	}
-	for _, args := range [][]string{{"--host=shell.example.com"}, {"--rstream", "--host="}, {"--rstream", "--host=shell.example.com", "--publish=false"}, {"--rstream", "--host=shell.example.com", "--transport=plain"}, {"--server-id=test", "--login-user=test", "--transport=webtransport", "--publish=false"}} {
+	for _, args := range [][]string{{"--mtls"}, {"--server-id=test", "--no-publish", "--mtls"}, {"--host=shell.example.com"}, {"--rstream", "--host="}, {"--rstream", "--host=shell.example.com", "--publish=false"}, {"--rstream", "--host=shell.example.com", "--transport=plain"}, {"--server-id=test", "--login-user=test", "--transport=webtransport", "--publish=false"}} {
 		cmd := newTestWebTTYServerCommand()
 		if err := cmd.ParseFlags(args); err != nil {
 			t.Fatal(err)

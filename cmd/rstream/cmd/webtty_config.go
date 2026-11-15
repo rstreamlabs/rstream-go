@@ -38,6 +38,7 @@ type webTTYServerRuntimeServerConfig struct {
 	RetryIntervalMS      *int64            `yaml:"retryIntervalMs,omitempty"`
 	ShutdownTimeoutMS    *int64            `yaml:"shutdownTimeoutMs,omitempty"`
 	Publish              *bool             `yaml:"publish,omitempty"`
+	MTLS                 *bool             `yaml:"mtls,omitempty"`
 	AuthTokenFile        *string           `yaml:"authTokenFile,omitempty"`
 	AllowUnauthenticated *bool             `yaml:"allowUnauthenticated,omitempty"`
 	AllowedOrigins       []string          `yaml:"allowedOrigins,omitempty"`
@@ -161,6 +162,7 @@ func webTTYBindings(cfg *webTTYServerRuntimeConfig) webTTYRuntimeBindings {
 			{"allow-client-user", "server.allowClientUser", &cfg.Server.AllowClientUser},
 			{"retry", "server.retry", &cfg.Server.Retry},
 			{"publish", "server.publish", &cfg.Server.Publish},
+			{"mtls", "server.mtls", &cfg.Server.MTLS},
 			{"allow-unauthenticated", "server.allowUnauthenticated", &cfg.Server.AllowUnauthenticated},
 			{"e2e", "e2e.enabled", &cfg.E2E.Enabled},
 			{"fs-read-only", "filesystem.readOnly", &cfg.Filesystem.ReadOnly},

@@ -182,35 +182,15 @@ func writeWebTTYClientPreparation(directory string, serverID string, identity we
 }
 
 func withWebTTYClientCredential(config webTTYClientCryptoConfig, path string) (webTTYClientCryptoConfig, error) {
-	if strings.TrimSpace(path) == "" {
-		path = os.Getenv(webTTYClientCredentialFileEnv)
+	raw, envelope, err := readWebTTYClientCredentialFile(path)
+	if err != nil {
+		return webTTYClientCryptoConfig{}, err
 	}
-	if strings.TrimSpace(path) == "" {
+	if raw == nil {
 		return config, nil
 	}
 	if config.ExpectedServerIdentity == nil || config.PayloadCrypto == nil {
 		return webTTYClientCryptoConfig{}, fmt.Errorf("a WebTTY client credential requires authenticated E2E with a locally trusted server endpoint identity")
-	}
-	path, err := expandWebTTYPath(path)
-	if err != nil {
-		return webTTYClientCryptoConfig{}, err
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return webTTYClientCryptoConfig{}, fmt.Errorf("open WebTTY client credential: %w", err)
-	}
-	defer file.Close()
-	raw, err := io.ReadAll(io.LimitReader(file, webTTYMaxClientCredentialBytes+1))
-	if err != nil {
-		return webTTYClientCryptoConfig{}, fmt.Errorf("read WebTTY client credential: %w", err)
-	}
-	if len(raw) > webTTYMaxClientCredentialBytes {
-		return webTTYClientCryptoConfig{}, fmt.Errorf("WebTTY client credential exceeds %d bytes", webTTYMaxClientCredentialBytes)
-	}
-	raw = bytes.TrimSpace(raw)
-	envelope, err := decodeWebTTYWorkspaceClientCredential(raw)
-	if err != nil {
-		return webTTYClientCryptoConfig{}, fmt.Errorf("invalid WebTTY client credential file")
 	}
 	if config.payloadConfig != nil {
 		config, err = withWebTTYWorkspaceRecordingRecipient(config, envelope)
@@ -222,32 +202,74 @@ func withWebTTYClientCredential(config webTTYClientCryptoConfig, path string) (w
 	return config, nil
 }
 
+func readWebTTYClientCredentialFile(path string) ([]byte, webTTYWorkspaceClientCredentialEnvelope, error) {
+	if strings.TrimSpace(path) == "" {
+		path = os.Getenv(webTTYClientCredentialFileEnv)
+	}
+	if strings.TrimSpace(path) == "" {
+		return nil, webTTYWorkspaceClientCredentialEnvelope{}, nil
+	}
+	path, err := expandWebTTYPath(path)
+	if err != nil {
+		return nil, webTTYWorkspaceClientCredentialEnvelope{}, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, webTTYWorkspaceClientCredentialEnvelope{}, fmt.Errorf("open WebTTY client credential: %w", err)
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(io.LimitReader(file, webTTYMaxClientCredentialBytes+1))
+	if err != nil {
+		return nil, webTTYWorkspaceClientCredentialEnvelope{}, fmt.Errorf("read WebTTY client credential: %w", err)
+	}
+	if len(raw) > webTTYMaxClientCredentialBytes {
+		return nil, webTTYWorkspaceClientCredentialEnvelope{}, fmt.Errorf("WebTTY client credential exceeds %d bytes", webTTYMaxClientCredentialBytes)
+	}
+	raw = bytes.TrimSpace(raw)
+	envelope, err := decodeWebTTYWorkspaceClientCredential(raw)
+	if err != nil {
+		return nil, webTTYWorkspaceClientCredentialEnvelope{}, fmt.Errorf("invalid WebTTY client credential file")
+	}
+	return raw, envelope, nil
+}
+
 func withWebTTYWorkspaceRecordingRecipient(config webTTYClientCryptoConfig, credential webTTYWorkspaceClientCredentialEnvelope) (webTTYClientCryptoConfig, error) {
-	identity := config.EndpointIdentity
+	payloadConfig, err := webTTYWorkspaceRecordingConfig(*config.payloadConfig, credential, config.EndpointIdentity)
+	if err != nil {
+		return webTTYClientCryptoConfig{}, err
+	}
+	config.PayloadCrypto, err = webtty.NewE2EClientPayloadCrypto(payloadConfig)
+	if err != nil {
+		return webTTYClientCryptoConfig{}, err
+	}
+	config.payloadConfig = &payloadConfig
+	return config, nil
+}
+
+func webTTYWorkspaceRecordingConfig(payloadConfig webtty.E2EPayloadCryptoConfig, credential webTTYWorkspaceClientCredentialEnvelope, identity *webtty.WebTTYEndpointIdentity) (webtty.E2EPayloadCryptoConfig, error) {
 	if identity == nil {
-		return webTTYClientCryptoConfig{}, fmt.Errorf("a WebTTY client credential requires its approved endpoint identity")
+		return webtty.E2EPayloadCryptoConfig{}, fmt.Errorf("a WebTTY client credential requires its approved endpoint identity")
 	}
 	payload := credential.Payload
 	if workspaceTrustString(payload, "webtty_key_id") != webtty.EncodeE2EKeyMaterial(identity.Encryption.KeyID) ||
 		workspaceTrustString(payload, "webtty_public_key") != webtty.EncodeE2EKeyMaterial(identity.Encryption.PublicKey) ||
 		workspaceTrustString(payload, "client_signing_key_id") != webtty.EncodeE2EKeyMaterial(identity.Signing.KeyID) ||
 		workspaceTrustString(payload, "client_signing_public_key") != webtty.EncodeE2EKeyMaterial(identity.Signing.PublicKey) {
-		return webTTYClientCryptoConfig{}, fmt.Errorf("WebTTY client credential does not match the approved endpoint identity")
+		return webtty.E2EPayloadCryptoConfig{}, fmt.Errorf("WebTTY client credential does not match the approved endpoint identity")
 	}
 	deviceID := workspaceTrustString(payload, "device_key_id")
 	workspaceID := workspaceTrustString(payload, "workspace_id")
 	projectID := workspaceTrustString(payload, "project_id")
 	serverID := workspaceTrustString(payload, "server_id")
 	if deviceID == "" || workspaceID == "" || projectID == "" || serverID == "" {
-		return webTTYClientCryptoConfig{}, fmt.Errorf("WebTTY client credential is missing its recording scope")
+		return webtty.E2EPayloadCryptoConfig{}, fmt.Errorf("WebTTY client credential is missing its recording scope")
 	}
 	// This describes the encrypted recording recipient; it grants no authority.
 	// Engine and the server still verify the signed credential on admission.
-	payloadConfig := *config.payloadConfig
 	if payloadConfig.WorkspaceID != "" && payloadConfig.WorkspaceID != workspaceID ||
 		payloadConfig.ProjectID != "" && payloadConfig.ProjectID != projectID ||
 		payloadConfig.ServerID != "" && payloadConfig.ServerID != serverID {
-		return webTTYClientCryptoConfig{}, fmt.Errorf("WebTTY client credential does not match the resolved recording scope")
+		return webtty.E2EPayloadCryptoConfig{}, fmt.Errorf("WebTTY client credential does not match the resolved recording scope")
 	}
 	payloadConfig.WorkspaceID, payloadConfig.ProjectID, payloadConfig.ServerID = workspaceID, projectID, serverID
 	payloadConfig.Recipients = append([]webtty.E2ERecipient(nil), payloadConfig.Recipients...)
@@ -258,7 +280,7 @@ func withWebTTYWorkspaceRecordingRecipient(config webTTYClientCryptoConfig, cred
 		KeyID:            identity.Encryption.KeyID, PublicKey: identity.Encryption.PublicKey,
 	})
 	if err != nil {
-		return webTTYClientCryptoConfig{}, err
+		return webtty.E2EPayloadCryptoConfig{}, err
 	}
 	for index := range payloadConfig.Recipients {
 		if bytes.Equal(payloadConfig.Recipients[index].KeyID, identity.Encryption.KeyID) {
@@ -266,10 +288,5 @@ func withWebTTYWorkspaceRecordingRecipient(config webTTYClientCryptoConfig, cred
 			payloadConfig.Recipients[index].Kind = webtty.E2ERecipientKindWorkspaceDevice
 		}
 	}
-	config.PayloadCrypto, err = webtty.NewE2EClientPayloadCrypto(payloadConfig)
-	if err != nil {
-		return webTTYClientCryptoConfig{}, err
-	}
-	config.payloadConfig = &payloadConfig
-	return config, nil
+	return payloadConfig, nil
 }

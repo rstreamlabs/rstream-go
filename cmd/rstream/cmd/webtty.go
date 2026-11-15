@@ -859,6 +859,7 @@ func addWebTTYServerFlags(cmd *cobra.Command) {
 	cmd.Flags().String("webtty-config", "", "WebTTY server runtime config file; may contain serverId or serverEnrollment")
 	cmd.Flags().Bool("publish", false, "publish the tunnel when using --rstream")
 	cmd.Flags().Bool("no-publish", false, "do not publish the tunnel when using --rstream")
+	cmd.Flags().Bool("mtls", false, "allow client-certificate authentication on the published tunnel")
 	cmd.MarkFlagsMutuallyExclusive("publish", "no-publish")
 	cmd.Flags().Bool("retry", false, "enable automatic reconnection on disconnect")
 	cmd.Flags().Bool("no-retry", false, "disable automatic reconnection on disconnect")
@@ -971,6 +972,9 @@ func validateWebTTYServerFlags(cmd *cobra.Command) error {
 	}
 	if useRstream && cmd.Flags().Changed("auth-token-file") {
 		return fmt.Errorf("--auth-token-file is only used by local WebTTY WebSocket/WebTransport servers")
+	}
+	if mtls, _ := cmd.Flags().GetBool("mtls"); mtls && (!useRstream || !webTTYServerPublish(cmd)) {
+		return fmt.Errorf("--mtls requires a published rstream WebTTY endpoint")
 	}
 	identityName, _ := cmd.Flags().GetString("identity")
 	if strings.TrimSpace(identityName) != "" {
@@ -2293,6 +2297,7 @@ func newWebTTYServerTunnelProperties(cmd *cobra.Command, enrollment *webTTYServe
 			}
 		}
 		props.TokenAuth = rstream.BoolPtr(true)
+		props.MTLSAuth = getBoolPtr(cmd, "mtls")
 	}
 	return props
 }
@@ -2558,7 +2563,11 @@ func resolveWebTTYClientRstream(ctx context.Context, runtime *resolvedRuntime, r
 			return webTTYClientRstreamResolution{}, err
 		}
 	}
-	if serverInfo != nil && !webTTYClientRstreamNeedsControlPlane(serverInfo) {
+	engineOnly := runtime != nil && runtime.Resolved.HasMTLS()
+	if engineOnly && serverInfo == nil {
+		return webTTYClientRstreamResolution{}, fmt.Errorf("WebTTY server %q was not found in Engine inventory; verify that it is online and the certificate has inventory access", target)
+	}
+	if serverInfo != nil && (!webTTYClientRstreamNeedsControlPlane(serverInfo) || engineOnly) {
 		return webTTYClientRstreamResolution{URL: urlValue, Server: serverInfo, PublishedHost: publishedHost, Scope: scope}, nil
 	}
 	if runtime == nil || runtime.Resolved.Context == nil || strings.TrimSpace(runtime.Resolved.Context.ProjectEndpoint) == "" {
