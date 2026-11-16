@@ -34,18 +34,18 @@ curl -fsS http://127.0.0.1:8080/
 rstream forward 8080
 ```
 
-Use `curl.exe` in Windows PowerShell to avoid its legacy `curl` alias. The local curl should print `Hello from rstream`. `forward` prints an HTTPS forwarding address and keeps the tunnel online. In another terminal, run `curl -fsS https://<printed-host>/`; expect the same body. Stop `forward` and the Python server with Ctrl+C when finished. Any local **HTTP** service can replace the demonstration. Other protocols need the matching [tunnel properties](005-tunnel-properties.md).
+Use `curl.exe` in Windows PowerShell to avoid its legacy `curl` alias. The local curl should print `Hello from rstream`. `forward` prints an HTTPS forwarding address and keeps the tunnel online. In another terminal, run `curl -fsS https://<printed-host>/`; expect the same body. Stop `forward` and the Python server with Ctrl+C when finished. Any local **HTTP** service can replace the demonstration. Other protocols need the matching [tunnel properties](005-tunnel-configuration.md).
 
 A selected project creates a named local context. The CLI and `config.NewClientFromEnv()` in Go reuse that context. Creating an unpublished tunnel and other gated features require a project/deployment that permits them; they are separate from this published HTTP trial.
 
 ## Choose an identity
 
-| Situation | Identity and setup | Boundary |
-| --- | --- | --- |
-| Developer workstation | `login`, then `project use` | Account token stored for the selected Control plane API; contexts can share it. |
-| Server, CI or device | Create a context with a project-scoped token | No account-wide login needed; choose only permissions required by the service. Scoped does not mean short-lived. |
-| Certificate-authenticated agent | Enrolled mTLS certificate and key or a supported signer | Native Engine and Engine HTTP API identity; Control plane administration still needs a token. |
-| Browser or immediate handoff | Short-lived delegated token from a trusted issuer | Not the durable credential for a workstation or service. |
+| Situation                       | Identity and setup                                      | Boundary                                                                                                         |
+| ------------------------------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Developer workstation           | `login`, then `project use`                             | Account token stored for the selected Control plane API; contexts can share it.                                  |
+| Server, CI or device            | Create a context with a project-scoped token            | No account-wide login needed; choose only permissions required by the service. Scoped does not mean short-lived. |
+| Certificate-authenticated agent | Enrolled mTLS certificate and key or a supported signer | Native Engine and Engine HTTP API identity; Control plane administration still needs a token.                    |
+| Browser or immediate handoff    | Short-lived delegated token from a trusted issuer       | Not the durable credential for a workstation or service.                                                         |
 
 ### Import an existing account token
 
@@ -93,38 +93,38 @@ Engine listing, watch and session APIs reuse the certificate through [automatic 
 
 ## Contexts and environments
 
-| Concept | Stored values and purpose |
-| --- | --- |
-| Environment | One Control plane `apiUrl`, account token and transport defaults. |
-| Project endpoint | Hosted project identifier used by `project use` to resolve its Engine and create a context. |
-| Context | Named Engine endpoint, authentication and transport overrides. Optional `apiUrl` links it to an environment. |
-| Default context | A context name used unless an explicit selector overrides it. Use unique names or `--api-url` to disambiguate duplicates. |
+| Concept          | Stored values and purpose                                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| Environment      | One Control plane `apiUrl`, account token and transport defaults.                                                         |
+| Project endpoint | Hosted project identifier used by `project use` to resolve its Engine and create a context.                               |
+| Context          | Named Engine endpoint, authentication and transport overrides. Optional `apiUrl` links it to an environment.              |
+| Default context  | A context name used unless an explicit selector overrides it. Use unique names or `--api-url` to disambiguate duplicates. |
 
 Unlinked contexts have no `apiUrl` and do not inherit Control plane tokens. Linked contexts can inherit environment token and transport defaults; a context mTLS identity replaces an inherited token as a complete identity.
 
-| Operation | Command |
-| --- | --- |
-| Select another hosted project | `rstream project use <project-endpoint>` |
+| Operation                            | Command                                                        |
+| ------------------------------------ | -------------------------------------------------------------- |
+| Select another hosted project        | `rstream project use <project-endpoint>`                       |
 | Choose a local name for that project | `rstream project use <project-endpoint> --name <context-name>` |
-| List or inspect local contexts | `rstream context list`, `rstream context get <name>` |
-| Save a default context | `rstream context use <name>` |
-| Remove local context | `rstream context delete <name>` |
-| Select for one command | `rstream --context <name> tunnel list` |
+| List or inspect local contexts       | `rstream context list`, `rstream context get <name>`           |
+| Save a default context               | `rstream context use <name>`                                   |
+| Remove local context                 | `rstream context delete <name>`                                |
+| Select for one command               | `rstream --context <name> tunnel list`                         |
 
 The process environment can override configuration. Empty/unset values below do not select an override.
 
-| Variable | Format and purpose | Default or condition |
-| --- | --- | --- |
-| `RSTREAM_CONFIG` | Path to the shared CLI/SDK YAML file | `~/.rstream/config.yaml`; `--config` overrides it. |
-| `RSTREAM_API_URL` | Absolute Control plane API URL | Uses selected environment/configuration when omitted. |
-| `RSTREAM_CONTEXT` | Local context name | Overrides the configured default. |
-| `RSTREAM_ENGINE` | Engine `host:port` | Explicit runtime destination; do not substitute a project name. |
-| `RSTREAM_AUTHENTICATION_TOKEN` | Bearer token string for the selected runtime | Cannot be combined with explicit mTLS material. |
-| `RSTREAM_MTLS_CERT_FILE`, `RSTREAM_MTLS_KEY_FILE` | Paths to the agent's PEM certificate and private key | Both required; override the stored runtime identity. |
-| `RSTREAM_REGION` | Region selector resolved through the Control plane | Requires project metadata; omit for explicit Engine-only devices. |
-| `RSTREAM_TUNNEL_TRANSPORT` | `auto`, `tls` or `quic` | `auto`; see [transport configuration](004-transport.md). |
-| `RSTREAM_QUIC_TRANSPORT` | Legacy selector: `1` for QUIC, any other nonempty value for TLS | Compatibility input; use `RSTREAM_TUNNEL_TRANSPORT` in new setups. |
-| `RSTREAM_CONTROL_PLANE_HEADERS` | JSON object of string HTTP headers | Optional trusted backend headers; never apply them to anonymous Engine discovery. |
+| Variable                                          | Format and purpose                                              | Default or condition                                                              |
+| ------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `RSTREAM_CONFIG`                                  | Path to the shared CLI/SDK YAML file                            | `~/.rstream/config.yaml`; `--config` overrides it.                                |
+| `RSTREAM_API_URL`                                 | Absolute Control plane API URL                                  | Uses selected environment/configuration when omitted.                             |
+| `RSTREAM_CONTEXT`                                 | Local context name                                              | Overrides the configured default.                                                 |
+| `RSTREAM_ENGINE`                                  | Engine `host:port`                                              | Explicit runtime destination; do not substitute a project name.                   |
+| `RSTREAM_AUTHENTICATION_TOKEN`                    | Bearer token string for the selected runtime                    | Cannot be combined with explicit mTLS material.                                   |
+| `RSTREAM_MTLS_CERT_FILE`, `RSTREAM_MTLS_KEY_FILE` | Paths to the agent's PEM certificate and private key            | Both required; override the stored runtime identity.                              |
+| `RSTREAM_REGION`                                  | Region selector resolved through the Control plane              | Requires project metadata; omit for explicit Engine-only devices.                 |
+| `RSTREAM_TUNNEL_TRANSPORT`                        | `auto`, `tls` or `quic`                                         | `auto`; see [transport configuration](004-transport.md).                          |
+| `RSTREAM_QUIC_TRANSPORT`                          | Legacy selector: `1` for QUIC, any other nonempty value for TLS | Compatibility input; use `RSTREAM_TUNNEL_TRANSPORT` in new setups.                |
+| `RSTREAM_CONTROL_PLANE_HEADERS`                   | JSON object of string HTTP headers                              | Optional trusted backend headers; never apply them to anonymous Engine discovery. |
 
 ## Automation, diagnostics and logout
 

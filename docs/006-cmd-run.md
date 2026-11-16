@@ -17,23 +17,23 @@ rstream -v run --docker --watch
 
 ## Flags
 
-| Option | Purpose | Default or condition |
-| --- | --- | --- |
-| `--apply <file>` | Load tunnel definitions from YAML. | Select a local file. |
-| `--docker` | Discover tunnels from Docker labels. | Requires access to the Docker socket. |
-| `--watch` | Reconcile when the selected source changes. | Without it, apply the initial configuration once. |
-| `--docker-socket` | Select the Docker socket. | `unix:///var/run/docker.sock`. |
-| `--docker-network` | Select a container network for forwarding. | Optional; otherwise use the discovery rules below. |
+| Option                     | Purpose                                            | Default or condition                                                                                       |
+| -------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `--apply <file>`           | Load tunnel definitions from YAML.                 | Select a local file.                                                                                       |
+| `--docker`                 | Discover tunnels from Docker labels.               | Requires access to the Docker socket.                                                                      |
+| `--watch`                  | Reconcile when the selected source changes.        | Without it, apply the initial configuration once.                                                          |
+| `--docker-socket`          | Select the Docker socket.                          | `unix:///var/run/docker.sock`.                                                                             |
+| `--docker-network`         | Select a container network for forwarding.         | Optional; otherwise use the discovery rules below.                                                         |
 | `--docker-default-context` | Select the default CLI context for Docker tunnels. | Defaults to the normal selected context; containers cannot override it unless the opt-in below is enabled. |
 
 | `--docker-allow-context-labels` | Allow `rstream.context` labels to select a configured identity. | `false`; delegate only to trusted container owners. |
 
 ## Command Modes
 
-| Command | Use it for |
-| --- | --- |
-| `forward` | One foreground tunnel configured through command arguments. |
-| `run --apply` | A declared set of tunnels from YAML, with optional watch/reconciliation. |
+| Command        | Use it for                                                                  |
+| -------------- | --------------------------------------------------------------------------- |
+| `forward`      | One foreground tunnel configured through command arguments.                 |
+| `run --apply`  | A declared set of tunnels from YAML, with optional watch/reconciliation.    |
 | `run --docker` | A set discovered from container labels, with optional watch/reconciliation. |
 
 ## YAML Schema (`--apply`)
@@ -73,31 +73,31 @@ Forward targets accept a bare port, `host:port` or bracketed IPv6 such as
 
 The first example deliberately uses the selected context. Optional `contexts` entries can reference a central identity with `{external: true, name: service}` or define an inline `engine`, `token` and `transport`. Inline contexts require a token; use an external central context for mTLS and signers. Do not combine all protocol-specific settings in one tunnel.
 
-| Field | Format and purpose | Default or condition |
-| --- | --- | --- |
-| `version` | Integer schema version | Required: `1`. |
-| `tunnels` | List of tunnel entries | Required; unique nonempty names. |
-| `name`, `forward` | Operational name and bare port, `host:port` or `[IPv6]:port` target | Required on each entry. |
-| `context` | Named key in `contexts`, or inline object | Omit to reuse the selected CLI context. |
-| `tunnel` | Object containing the properties below | Required. |
-| `tunnel.publish` | Boolean; expose an ordinary public endpoint | Omit to use API defaults; `false` requests private access permitted by the plan. |
-| `tunnel.protocol`, `tunnel.type` | Protocol `http/tls/tcp/dtls/quic/webtty`; semantics `bytestream/datagram` | Must be compatible; see [tunnel properties](005-tunnel-properties.md). |
-| `tunnel.host`, `tunnel.port` | Public hostname; reserved TCP port as integer 1–65535 | Port applies to published TCP; do not set a hostname on TCP. |
-| `tunnel.labels` | String key/value map | Optional inventory metadata. |
-| `tunnel.upstreamTLS` | Boolean controlling upstream TLS | At tunnel level, never under `http`; incompatible with TLS passthrough. |
-| `tunnel.trustedIPs`, `tunnel.geoip` | Lists of CIDRs and ISO two-letter country codes | Optional edge restrictions. |
-| `tunnel.allowCrossRegionRouting` | Boolean permitting cross-region routing | Subject to Engine policy. |
-| `tunnel.datagramGuaranteedDelivery` | Boolean selecting reliable datagram framing | Datagram tunnels only; do not enable blindly for latency-sensitive RTP. |
-| `tunnel.http.version` | `http/1.1`, `h2c` or `h3` | HTTP only; upstream TLS/ALPN has its own rules. |
-| `tunnel.http.auth.token`, `.rstream` | Booleans enabling machine token or account authentication | HTTP only; project policy and availability apply. |
-| `tunnel.http.gate.challenge` | Boolean browser challenge gate | HTTP only; does not replace authentication. |
-| `tunnel.http.cors` | Object of origin/method/header lists and credentials/cache policy | Published HTTP only; see the example below. |
-| `tunnel.tls.mode` | `terminated` or `passthrough` | TLS tunnel behavior. |
-| `tunnel.tls.minVersion` | `tls1.2` or `tls1.3` | Terminated TLS/DTLS policy. |
-| `tunnel.tls.alpns`, `.ciphers` | Lists of ALPN names and cipher-suite names | Protocol/Engine validation still applies. |
-| `tunnel.tls.mtls` | Boolean requiring published client certificates | Separate from the agent's own authentication. |
-| `contexts.<key>.external`, `.name` | Boolean reference plus optional local context name | `external: true` loads the central context; name defaults to the key. |
-| `contexts.<key>.engine`, `.token`, `.transport` | Inline `host:port`, token string and shared transport object | Engine and token required unless external; see [transport fields](004-transport.md). |
+| Field                                           | Format and purpose                                                        | Default or condition                                                                 |
+| ----------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `version`                                       | Integer schema version                                                    | Required: `1`.                                                                       |
+| `tunnels`                                       | List of tunnel entries                                                    | Required; unique nonempty names.                                                     |
+| `name`, `forward`                               | Operational name and bare port, `host:port` or `[IPv6]:port` target       | Required on each entry.                                                              |
+| `context`                                       | Named key in `contexts`, or inline object                                 | Omit to reuse the selected CLI context.                                              |
+| `tunnel`                                        | Object containing the properties below                                    | Required.                                                                            |
+| `tunnel.publish`                                | Boolean; expose an ordinary public endpoint                               | Omit to use API defaults; `false` requests private access permitted by the plan.     |
+| `tunnel.protocol`, `tunnel.type`                | Protocol `http/tls/tcp/dtls/quic/webtty`; semantics `bytestream/datagram` | Must be compatible; see [tunnel properties](005-tunnel-configuration.md).            |
+| `tunnel.host`, `tunnel.port`                    | Public hostname; reserved TCP port as integer 1–65535                     | Port applies to published TCP; do not set a hostname on TCP.                         |
+| `tunnel.labels`                                 | String key/value map                                                      | Optional inventory metadata.                                                         |
+| `tunnel.upstreamTLS`                            | Boolean controlling upstream TLS                                          | At tunnel level, never under `http`; incompatible with TLS passthrough.              |
+| `tunnel.trustedIPs`, `tunnel.geoip`             | Lists of CIDRs and ISO two-letter country codes                           | Optional edge restrictions.                                                          |
+| `tunnel.allowCrossRegionRouting`                | Boolean permitting cross-region routing                                   | Subject to Engine policy.                                                            |
+| `tunnel.datagramGuaranteedDelivery`             | Boolean selecting reliable datagram framing                               | Datagram tunnels only; do not enable blindly for latency-sensitive RTP.              |
+| `tunnel.http.version`                           | `http/1.1`, `h2c` or `h3`                                                 | HTTP only; upstream TLS/ALPN has its own rules.                                      |
+| `tunnel.http.auth.token`, `.rstream`            | Booleans enabling machine token or account authentication                 | HTTP only; project policy and availability apply.                                    |
+| `tunnel.http.gate.challenge`                    | Boolean browser challenge gate                                            | HTTP only; does not replace authentication.                                          |
+| `tunnel.http.cors`                              | Object of origin/method/header lists and credentials/cache policy         | Published HTTP only; see the example below.                                          |
+| `tunnel.tls.mode`                               | `terminated` or `passthrough`                                             | TLS tunnel behavior.                                                                 |
+| `tunnel.tls.minVersion`                         | `tls1.2` or `tls1.3`                                                      | Terminated TLS/DTLS policy.                                                          |
+| `tunnel.tls.alpns`, `.ciphers`                  | Lists of ALPN names and cipher-suite names                                | Protocol/Engine validation still applies.                                            |
+| `tunnel.tls.mtls`                               | Boolean requiring published client certificates                           | Separate from the agent's own authentication.                                        |
+| `contexts.<key>.external`, `.name`              | Boolean reference plus optional local context name                        | `external: true` loads the central context; name defaults to the key.                |
+| `contexts.<key>.engine`, `.token`, `.transport` | Inline `host:port`, token string and shared transport object              | Engine and token required unless external; see [transport fields](004-transport.md). |
 
 ### Context Resolution Order
 
@@ -133,29 +133,29 @@ Only that mode accepts `rstream.context: "prod"`. The label selects an existing 
 
 Each `<name>` identifies one tunnel declared on the container. The label suffix selects a tunnel property:
 
-| Label | Value or requirement |
-| --- | --- |
-| `rstream.tunnel.<name>.forward` | Required target port or discovered container host:port; see address rules below. |
-| `rstream.tunnel.<name>.publish` | true or false, default true |
-| `rstream.tunnel.<name>.protocol` | http or tls or tcp or dtls or quic or webtty, default http |
-| `rstream.tunnel.<name>.type` | bytestream or datagram |
-| `rstream.tunnel.<name>.host` | Requested stable or verified custom public domain; optional, not allowed for TCP. |
-| `rstream.tunnel.<name>.upstream-tls` | Boolean enabling upstream TLS; not TLS passthrough. |
-| `rstream.tunnel.<name>.label.<k>` | String value for inventory metadata key k; one label per key. |
-| `rstream.tunnel.<name>.trusted-ips` | Comma-separated source CIDRs permitted by edge policy. |
-| `rstream.tunnel.<name>.geoip` | Comma-separated ISO two-letter country codes restricting edge access. |
-| `rstream.tunnel.<name>.http.version` | http/1.1 or h2c or h3 |
-| `rstream.tunnel.<name>.http.auth.token` | Boolean enabling HTTP token access. |
-| `rstream.tunnel.<name>.http.auth.rstream` | Boolean enabling edge account access, subject to plan. |
-| `rstream.tunnel.<name>.http.gate.challenge` | Boolean browser challenge gate; does not grant authorization. |
-| `rstream.tunnel.<name>.tls.mode` | terminated or passthrough |
-| `rstream.tunnel.<name>.tls.minVersion` | tls1.2 or tls1.3 |
-| `rstream.tunnel.<name>.tls.alpns` | comma-separated |
-| `rstream.tunnel.<name>.tls.ciphers` | comma-separated |
-| `rstream.tunnel.<name>.port` | reserved published TCP port |
-| `rstream.tunnel.<name>.allow-cross-region-routing` | true or false |
-| `rstream.tunnel.<name>.datagram-guaranteed-delivery` | true or false, datagram tunnels only |
-| `rstream.tunnel.<name>.tls.mtls` | true or false |
+| Label                                                | Value or requirement                                                              |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `rstream.tunnel.<name>.forward`                      | Required target port or discovered container host:port; see address rules below.  |
+| `rstream.tunnel.<name>.publish`                      | true or false, default true                                                       |
+| `rstream.tunnel.<name>.protocol`                     | http or tls or tcp or dtls or quic or webtty, default http                        |
+| `rstream.tunnel.<name>.type`                         | bytestream or datagram                                                            |
+| `rstream.tunnel.<name>.host`                         | Requested stable or verified custom public domain; optional, not allowed for TCP. |
+| `rstream.tunnel.<name>.upstream-tls`                 | Boolean enabling upstream TLS; not TLS passthrough.                               |
+| `rstream.tunnel.<name>.label.<k>`                    | String value for inventory metadata key k; one label per key.                     |
+| `rstream.tunnel.<name>.trusted-ips`                  | Comma-separated source CIDRs permitted by edge policy.                            |
+| `rstream.tunnel.<name>.geoip`                        | Comma-separated ISO two-letter country codes restricting edge access.             |
+| `rstream.tunnel.<name>.http.version`                 | http/1.1 or h2c or h3                                                             |
+| `rstream.tunnel.<name>.http.auth.token`              | Boolean enabling HTTP token access.                                               |
+| `rstream.tunnel.<name>.http.auth.rstream`            | Boolean enabling edge account access, subject to plan.                            |
+| `rstream.tunnel.<name>.http.gate.challenge`          | Boolean browser challenge gate; does not grant authorization.                     |
+| `rstream.tunnel.<name>.tls.mode`                     | terminated or passthrough                                                         |
+| `rstream.tunnel.<name>.tls.minVersion`               | tls1.2 or tls1.3                                                                  |
+| `rstream.tunnel.<name>.tls.alpns`                    | comma-separated                                                                   |
+| `rstream.tunnel.<name>.tls.ciphers`                  | comma-separated                                                                   |
+| `rstream.tunnel.<name>.port`                         | reserved published TCP port                                                       |
+| `rstream.tunnel.<name>.allow-cross-region-routing`   | true or false                                                                     |
+| `rstream.tunnel.<name>.datagram-guaranteed-delivery` | true or false, datagram tunnels only                                              |
+| `rstream.tunnel.<name>.tls.mtls`                     | true or false                                                                     |
 
 `http.auth.*` and `http.gate.*` are valid only for HTTP tunnels (`protocol=http`).
 
@@ -179,10 +179,10 @@ For agent authentication, `rstream run` uses the selected CLI context or explici
 
 `rstream run` adds ownership labels to each tunnel:
 
-| Label | Value |
-| --- | --- |
-| `rstream.managed-by` | `run`. |
-| `rstream.source` | `apply` or `docker`, identifying the source. |
+| Label                | Value                                        |
+| -------------------- | -------------------------------------------- |
+| `rstream.managed-by` | `run`.                                       |
+| `rstream.source`     | `apply` or `docker`, identifying the source. |
 
 The [YAML example](../examples/run-yaml) and [Docker example](../examples/run-docker) contain complete configurations.
 
@@ -211,10 +211,9 @@ sessions. Once it expires, the Engine withdraws the old route and rejects new
 admissions; `rstream run` reconnects with bounded jitter while established
 sessions finish on their original immutable data paths.
 
-
 ## HTTP CORS
 
-`forward` uses the six `--cors-*` options documented in [Tunnel properties](005-tunnel-properties.md#cross-origin-browser-access-cors). The equivalent `run --apply` configuration is:
+`forward` uses the six `--cors-*` options documented in [Tunnel properties](020-http-tunnels.md#cross-origin-browser-access-cors). The equivalent `run --apply` configuration is:
 
 ```yaml
 version: 1
@@ -238,13 +237,13 @@ tunnels:
 
 YAML fields below live under `tunnel.http.cors`; Docker labels use the same field after `rstream.tunnel.<name>.http.cors.`. Docker lists are comma-separated; YAML uses arrays.
 
-| Field suffix | Meaning and format | Default or condition |
-| --- | --- | --- |
-| `allowedOrigins` | Explicit HTTP(S) origins, without paths, credentials, query or fragment. | Required when CORS is configured; no wildcard or null origin. |
-| `allowedMethods` | Allowed HTTP method names. | GET, HEAD, POST. |
-| `allowedHeaders` | Allowed request header names. | Authorization, Content-Type. |
-| `exposedHeaders` | Response headers browser scripts may read. | No extra headers by default. |
-| `allowCredentials` | Boolean permitting browser-managed credentials. | false; not needed for an explicit delegated bearer with credentials omitted. |
-| `maxAge` | Integer preflight cache lifetime in seconds. | 0; range 0–86400. |
+| Field suffix       | Meaning and format                                                       | Default or condition                                                         |
+| ------------------ | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| `allowedOrigins`   | Explicit HTTP(S) origins, without paths, credentials, query or fragment. | Required when CORS is configured; no wildcard or null origin.                |
+| `allowedMethods`   | Allowed HTTP method names.                                               | GET, HEAD, POST.                                                             |
+| `allowedHeaders`   | Allowed request header names.                                            | Authorization, Content-Type.                                                 |
+| `exposedHeaders`   | Response headers browser scripts may read.                               | No extra headers by default.                                                 |
+| `allowCredentials` | Boolean permitting browser-managed credentials.                          | false; not needed for an explicit delegated bearer with credentials omitted. |
+| `maxAge`           | Integer preflight cache lifetime in seconds.                             | 0; range 0–86400.                                                            |
 
 An explicitly supplied list replaces its defaults. Omitting `cors` leaves upstream CORS unchanged; an empty policy is invalid. These options require a published HTTP tunnel. A preflight cannot authorize a subsequent request; normal authentication and resource constraints still apply. Unknown spellings are rejected.

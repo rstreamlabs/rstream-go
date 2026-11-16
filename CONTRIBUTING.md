@@ -27,6 +27,10 @@ If a change affects examples, documentation, or generated output, update the cor
 
 Public pull requests do not automatically run the repository release/build workflows. Maintainers run CI after reviewing the change; include the local commands you ran in the PR description.
 
+The [Go SDK engineering guide](docs/022-sdk-engineering.md) explains ownership,
+synchronization, cancellation, protocol maintenance and the tests expected for
+those changes.
+
 ## CLI configuration changes
 
 Tunnel options from `forward`, apply YAML and Docker labels must use
