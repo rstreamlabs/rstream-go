@@ -18,6 +18,7 @@ import (
 	"encoding/pem"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net/http"
@@ -57,6 +58,12 @@ func generateTLSConfig() (*tls.Config, error) {
 		return nil, err
 	}
 	return &tls.Config{Certificates: []tls.Certificate{tlsCert}, NextProtos: []string{"h3"}}, nil
+}
+
+func echoStream(stream io.ReadWriteCloser) error {
+	defer stream.Close()
+	_, err := io.Copy(stream, stream)
+	return err
 }
 
 func run(ctx context.Context, client *rstream.Client, publish bool, publishedProtocol string) error {
@@ -127,17 +134,7 @@ func run(ctx context.Context, client *rstream.Client, publish bool, publishedPro
 					return
 				}
 				go func() {
-					defer stream.Close()
-					buf := make([]byte, 4096)
-					for {
-						n, err := stream.Read(buf)
-						if err != nil {
-							return
-						}
-						if _, err := stream.Write(buf[:n]); err != nil {
-							return
-						}
-					}
+					_ = echoStream(stream)
 				}()
 			}
 		}()
@@ -161,6 +158,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Configuration error: %v", err)
 	}
+	defer client.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	sigChan := make(chan os.Signal, 1)

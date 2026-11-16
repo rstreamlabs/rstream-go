@@ -411,7 +411,7 @@ func dialWebTransportWebTTYMessageConn(ctx context.Context, cfg *SessionConfig, 
 	if cfg.AuthToken != nil && strings.TrimSpace(*cfg.AuthToken) != "" {
 		header.Set("Authorization", "Bearer "+strings.TrimSpace(*cfg.AuthToken))
 	}
-	dialer := &webtransport.Dialer{
+	dialer := &webtransport.Transport{
 		TLSClientConfig: tlsConfig,
 		QUICConfig:      webTransportClientQUICConfig(endpoint.RequiresCustomDial),
 	}
@@ -629,7 +629,8 @@ func (s *ClientSession) CanTerminate() bool {
 
 // RequestTermination sends an explicit stop request without disconnecting.
 // Only Wait returning a native result confirms process completion. Keep draining Events.
-// Cancelling an in-flight write closes the transport because a partial frame cannot be retried.
+// The caller context and CloseDeadline bound waiting for a writer and sending.
+// Cancellation closes the transport because a partial frame cannot be retried.
 func (s *ClientSession) RequestTermination(ctx context.Context) error {
 	if !s.CanTerminate() {
 		return ErrTerminationUnsupported

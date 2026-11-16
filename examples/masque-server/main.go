@@ -104,7 +104,7 @@ func writeParseError(w http.ResponseWriter, err error) {
 		http.Error(w, udpErr.Error(), udpErr.HTTPStatus)
 		return
 	}
-	var ipErr *connectip.RequestParseError
+	var ipErr *connectip.ProxyRequestParseError
 	if errors.As(err, &ipErr) {
 		http.Error(w, ipErr.Error(), ipErr.HTTPStatus)
 		return
@@ -137,7 +137,7 @@ func handleConnectIP(proxy *connectip.Proxy) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		req, err := connectip.ParseRequest(r, tpl)
+		req, err := connectip.ParseProxyRequest(r, tpl)
 		if err != nil {
 			writeParseError(w, err)
 			return
@@ -148,14 +148,13 @@ func handleConnectIP(proxy *connectip.Proxy) http.HandlerFunc {
 			return
 		}
 		defer conn.Close()
-		ctx := r.Context()
 		clientPrefix := netip.MustParsePrefix("10.77.0.2/32")
 		serverIP := netip.MustParseAddr("10.77.0.1")
-		if err := conn.AssignAddresses(ctx, []netip.Prefix{clientPrefix}); err != nil {
+		if err := conn.AssignAddresses([]netip.Prefix{clientPrefix}); err != nil {
 			log.Printf("CONNECT-IP address assignment error: %v", err)
 			return
 		}
-		if err := conn.AdvertiseRoute(ctx, []connectip.IPRoute{{StartIP: serverIP, EndIP: serverIP, IPProtocol: 1}}); err != nil {
+		if err := conn.AdvertiseRoute([]connectip.IPRoute{{StartIP: serverIP, EndIP: serverIP, IPProtocol: 1}}); err != nil {
 			log.Printf("CONNECT-IP route advertisement error: %v", err)
 			return
 		}

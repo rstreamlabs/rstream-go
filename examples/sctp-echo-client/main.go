@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pion/dtls/v3"
+	"github.com/pion/dtls/v4"
 	"github.com/pion/sctp"
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
@@ -92,7 +92,7 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 		if err != nil {
 			return fmt.Errorf("failed to resolve published host: %w", err)
 		}
-		dtlsConn, err := dtls.DialWithOptions("udp", udpAddr, dtls.WithServerName(hostname))
+		dtlsConn, err := dtls.Dial("udp", udpAddr, dtls.WithServerName(hostname))
 		if err != nil {
 			return fmt.Errorf("failed to dial published DTLS host: %w", err)
 		}

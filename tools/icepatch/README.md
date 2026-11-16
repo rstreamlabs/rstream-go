@@ -1,11 +1,12 @@
 # Verified ICE build patch
 
-`icepatch` prepares a temporary source patch for `github.com/pion/ice/v4 v4.4.2`.
+`icepatch` prepares a temporary source patch for `github.com/pion/ice/v4 v4.4.9`.
 Updating STUN/TURN URLs while gathering candidates otherwise races with the
 background gathering workers. Each gathering cycle must use a URL snapshot
 captured on the agent event loop; continual gathering takes a fresh snapshot.
 
-The patch is the `gather.go` change originally proposed in
+The patch preserves the v4.4.9 gathering generation checks. Its URL snapshot
+change was originally proposed in
 [pion/ice#957](https://github.com/pion/ice/pull/957). It changes no public API.
 A [new proposal against v4](https://github.com/pion/ice/pull/1049) includes
 stronger race regressions. Keep this workaround until
@@ -38,7 +39,7 @@ GOFLAGS="-modfile=$PWD/out/ice-patch/go.mod" go test -race ./...
 go build -modfile=out/ice-patch/go.mod ./cmd/application
 ```
 
-The [video samples](https://github.com/rstreamlabs/rstream-examples/tree/bc9339d7f1b4d4c81822e0018d4097e985839bdc/webrtc-video/ice-patch)
+The [video samples](https://github.com/rstreamlabs/rstream-examples/tree/516157ba4dd95b89d1dcaa948e2965ad1607847c/webrtc-video/ice-patch)
 ship their own helper and `ice-patch.sh`; use those together when adopting a
 sample. They require neither a separate SDK checkout nor a new SDK release.
 

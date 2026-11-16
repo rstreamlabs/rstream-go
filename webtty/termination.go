@@ -23,20 +23,8 @@ func (c *clientRuntime) writeTermination(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if !c.writeMu.TryLock() {
-		return errClientWriteBusy
-	}
-	defer c.writeMu.Unlock()
-	if c.closing.Load() {
-		return ErrSessionDisconnected
-	}
-	deadline := c.closeWriteDeadline()
-	if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(deadline) {
-		deadline = callerDeadline
-	}
-	if err := c.conn.SetWriteDeadline(deadline); err != nil {
-		return err
-	}
+	ctx, cancel := context.WithDeadline(ctx, c.closeWriteDeadline())
+	defer cancel()
 	cancelled := make(chan struct{})
 	stop := context.AfterFunc(ctx, func() {
 		defer close(cancelled)
@@ -46,8 +34,20 @@ func (c *clientRuntime) writeTermination(ctx context.Context) error {
 		if !stop() {
 			<-cancelled
 		}
-		_ = c.conn.SetWriteDeadline(time.Time{})
 	}()
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if c.closing.Load() {
+		return ErrSessionDisconnected
+	}
+	deadline, _ := ctx.Deadline()
+	if err := c.conn.SetWriteDeadline(deadline); err != nil {
+		return err
+	}
+	defer func() { _ = c.conn.SetWriteDeadline(time.Time{}) }()
 	payload, err := proto.Marshal(&pb.Message{Payload: &pb.Message_Terminate{Terminate: &pb.Terminate{}}})
 	if err != nil {
 		return err
