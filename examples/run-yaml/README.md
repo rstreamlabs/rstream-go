@@ -8,10 +8,12 @@ This example runs `rstream -v run --apply` on the host and forwards to a local `
 
 ## Run
 
+Run these commands from the repository root after [building the CLI](../../docs/001-building-from-source.md). Use `./out/rstream` instead of `rstream` when testing that checkout.
+
 Terminal 1 (whoami):
 
 ```bash
-go run ./cmd/whoami --listen :8080
+go run -modfile=out/ice-patch/go.mod ./cmd/whoami --listen :8080
 ```
 
 Terminal 2 (rstream -v run):
@@ -30,9 +32,11 @@ tunnels:
     tunnel:
       publish: true
       protocol: "http"
+      upstreamTLS: false
       http:
-        upstreamTLS: false
         version: "http/1.1"
       labels:
         app: "whoami"
 ```
+
+Request the printed forwarding URL with `curl -fsS https://<printed-host>/`; expect the whoami service response. Stop both foreground processes with Ctrl+C.

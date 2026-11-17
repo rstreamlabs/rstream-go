@@ -279,7 +279,11 @@ func runConnectIP(ctx context.Context, client *rstream.Client, publish bool, nam
 	if err != nil {
 		return err
 	}
-	conn, resp, err := connectip.Dial(ctx, h3conn, tpl)
+	request, err := connectip.NewRequest(ctx, tpl)
+	if err != nil {
+		return err
+	}
+	conn, resp, err := connectip.NewClientConn(h3conn).Dial(request)
 	if err != nil {
 		if resp != nil {
 			return fmt.Errorf("CONNECT-IP status %s: %w", resp.Status, err)
@@ -287,7 +291,7 @@ func runConnectIP(ctx context.Context, client *rstream.Client, publish bool, nam
 		return err
 	}
 	defer conn.Close()
-	if _, err := conn.LocalPrefixes(ctx); err != nil {
+	if _, err := conn.ReceiveAddressAssignment(ctx); err != nil {
 		return err
 	}
 	if _, err := conn.Routes(ctx); err != nil {
