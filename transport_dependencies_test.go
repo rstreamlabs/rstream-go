@@ -25,8 +25,8 @@ func TestReviewedTransportDependencyGraph(t *testing.T) {
 		"github.com/quic-go/quic-go":         fipsprofile.RequiredQUICModuleVersion,
 		"github.com/quic-go/webtransport-go": fipsprofile.RequiredWebTransportModuleVersion,
 		"github.com/pion/dtls/v3":            "v3.1.15",
-		"github.com/quic-go/masque-go":       "v0.6.0",
-		"github.com/quic-go/connect-ip-go":   "v0.6.0",
+		"github.com/quic-go/masque-go":       "v0.4.0",
+		"github.com/quic-go/connect-ip-go":   "v0.1.0",
 	}
 	for _, dependency := range info.Deps {
 		version, required := expected[dependency.Path]

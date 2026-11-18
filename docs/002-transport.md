@@ -8,14 +8,13 @@ Transport configuration is independent from tunnel properties. Tunnel properties
 
 | Module | Version |
 | --- | --- |
-| `github.com/quic-go/quic-go` | `v0.64.1` |
-| `github.com/quic-go/webtransport-go` | `v0.13.0` |
-| `github.com/quic-go/masque-go` | `v0.6.0` |
-| `github.com/quic-go/connect-ip-go` | `v0.6.0` |
+| `github.com/quic-go/quic-go` | `v0.60.0` |
+| `github.com/quic-go/webtransport-go` | `v0.11.1` |
+| `github.com/quic-go/masque-go` | `v0.4.0` |
+| `github.com/quic-go/connect-ip-go` | `v0.1.0` |
 
-These companion versions are qualified together. WebTransport v0.13.0 requires
-the HTTP/3 streaming API provided by this QUIC line; upgrading QUIC independently
-to v0.65 requires a compatible WebTransport release and new qualification.
+Review the resolved versions of these companion libraries together when
+upgrading QUIC.
 The dependency upgrade preserves transport defaults, certificate verification,
 project admission policy and the existing early-data behavior.
 

@@ -20,7 +20,7 @@ func TestDiscardMASQUECapsulesConsumesFragmentedUnknownCapsules(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := discardMASQUECapsules(iotest.OneByteReader(&wire)); !errors.Is(err, io.EOF) {
+	if err := discardMASQUECapsules(quicvarint.NewReader(iotest.OneByteReader(&wire))); !errors.Is(err, io.EOF) {
 		t.Fatalf("discard capsules: %v, want clean EOF", err)
 	}
 }
@@ -37,7 +37,7 @@ func TestDiscardMASQUECapsulesRejectsTruncation(t *testing.T) {
 		{name: "partial body", wire: []byte{1, 2, 3}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := discardMASQUECapsules(iotest.OneByteReader(bytes.NewReader(tc.wire))); !errors.Is(err, io.ErrUnexpectedEOF) {
+			if err := discardMASQUECapsules(quicvarint.NewReader(iotest.OneByteReader(bytes.NewReader(tc.wire)))); !errors.Is(err, io.ErrUnexpectedEOF) {
 				t.Fatalf("discard truncated capsule: %v, want unexpected EOF", err)
 			}
 		})
@@ -45,7 +45,7 @@ func TestDiscardMASQUECapsulesRejectsTruncation(t *testing.T) {
 }
 
 func TestDiscardMASQUECapsulesPreservesReadError(t *testing.T) {
-	if err := discardMASQUECapsules(iotest.ErrReader(io.ErrClosedPipe)); !errors.Is(err, io.ErrClosedPipe) {
+	if err := discardMASQUECapsules(quicvarint.NewReader(iotest.ErrReader(io.ErrClosedPipe))); !errors.Is(err, io.ErrClosedPipe) {
 		t.Fatalf("discard capsules: %v, want closed pipe", err)
 	}
 }
