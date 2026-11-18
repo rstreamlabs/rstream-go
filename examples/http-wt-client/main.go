@@ -59,7 +59,7 @@ func exchangeStream(stream io.ReadWriter) error {
 }
 
 func run(ctx context.Context, client *rstream.Client, publish bool) error {
-	dialer := webtransport.Transport{}
+	dialer := webtransport.Dialer{}
 	name := "wt-example"
 	var url *string
 	if publish {
