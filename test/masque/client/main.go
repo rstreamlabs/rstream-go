@@ -146,11 +146,7 @@ func runConnectIP(ctx context.Context, addr string) error {
 	if err != nil {
 		return err
 	}
-	request, err := connectip.NewRequest(ctx, tpl)
-	if err != nil {
-		return err
-	}
-	conn, resp, err := connectip.NewClientConn(h3conn).Dial(request)
+	conn, resp, err := connectip.Dial(ctx, h3conn, tpl)
 	if err != nil {
 		if resp != nil {
 			return fmt.Errorf("CONNECT-IP failed with status %s: %w", resp.Status, err)
@@ -158,7 +154,7 @@ func runConnectIP(ctx context.Context, addr string) error {
 		return err
 	}
 	defer conn.Close()
-	if _, err := conn.ReceiveAddressAssignment(ctx); err != nil {
+	if _, err := conn.LocalPrefixes(ctx); err != nil {
 		return fmt.Errorf("waiting for address assignment: %w", err)
 	}
 	if _, err := conn.Routes(ctx); err != nil {

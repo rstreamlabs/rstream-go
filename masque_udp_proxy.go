@@ -214,7 +214,7 @@ func newMASQUEUDPPacketConn(stream masqueUDPStream, localAddr net.Addr, remoteAd
 
 func (c *masqueUDPPacketConn) discardCapsules() {
 	defer close(c.readDone)
-	_ = discardMASQUECapsules(c.stream)
+	_ = discardMASQUECapsules(quicvarint.NewReader(c.stream))
 	_ = c.stream.Close()
 }
 
@@ -376,10 +376,9 @@ func (c *masqueUDPPacketConn) shouldRestartExpiredRead() bool {
 	return time.Now().Before(c.readDeadline)
 }
 
-func discardMASQUECapsules(reader io.Reader) error {
-	parser := http3.NewCapsuleParser(reader)
+func discardMASQUECapsules(reader quicvarint.Reader) error {
 	for {
-		_, capsule, err := parser.Next()
+		_, capsule, err := http3.ParseCapsule(reader)
 		if err != nil {
 			return err
 		}
