@@ -19,7 +19,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/pion/dtls/v3"
+	"github.com/pion/dtls/v4"
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
 )
@@ -77,11 +77,11 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 						}
 						return p
 					}()}
-				packetConn, err := dtls.DialWithOptions("udp", raddr, dtls.WithServerName(hostname))
+				packetConn, err := dtls.Dial("udp", raddr, dtls.WithServerName(hostname))
 				if err != nil {
 					return fmt.Errorf("failed to dial published host: %w", err)
 				}
-				return handleConnection(rstream.PacketConnFromDTLSConn(packetConn), raddr)
+				return handleConnection(rstream.PacketConnFromConn(packetConn, nil, rstream.PacketModeRaw), raddr)
 			}
 		}
 		return fmt.Errorf("tunnel %q not found or not published", name)
