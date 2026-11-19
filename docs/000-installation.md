@@ -17,9 +17,10 @@ sudo /bin/bash -i -c "$(curl -fsSL https://rstream.io/scripts/install-debian.sh)
 ```
 
 ## macOS
-Requires Homebrew. On macOS, the Homebrew tap provides the standard CLI installation path:
+Use the rstream Homebrew tap. Homebrew 6 and later require one-time approval of the tap. On older Homebrew releases, skip `brew trust`.
 ```bash
 brew tap rstreamlabs/rstream
+brew trust rstreamlabs/rstream
 brew install rstreamlabs/rstream/rstream
 ```
 
@@ -60,7 +61,7 @@ rstream --help
 
 ## First connection
 
-Once installed, follow the [CLI workflow](002-cli-workflow.md) to authenticate, select a project and forward a local service. For unattended devices, that guide also covers project-scoped credentials and certificate authentication.
+Follow the [CLI workflow](002-cli-workflow.md#connect-the-cli) to choose a hosted project or a direct Engine context, then verify a first HTTP request.
 
 ## Build from source
 

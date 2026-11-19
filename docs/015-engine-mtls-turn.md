@@ -1,8 +1,10 @@
 # Engine HTTP mTLS and TURN credentials
 
-An enrolled client certificate can authenticate native rstream connections and
-Engine HTTPS APIs from the same Go client. TURN credentials let the application
-connect to the relay when a direct peer connection is unavailable.
+Use an [enrolled certificate](#use-a-certificate-with-the-engine-api) to
+authenticate native agent connections and Engine HTTPS requests from the same
+Go client. For peer-to-peer applications,
+[request TURN credentials](#request-turn-credentials-in-go) to connect to the
+relay when peers cannot establish a direct path.
 
 ## Use a certificate with the Engine API
 
@@ -10,8 +12,7 @@ Start with a [certificate-authenticated context](002-cli-workflow.md#authenticat
 Use the normal project Engine address. The SDK discovers the project's
 certificate-authenticated HTTPS endpoint before sending credentials. For an
 explicitly provisioned endpoint, configure `ClientOptions.MTLSAPIURL` instead.
-The client verifies the server certificate and project binding. Choose either
-token or certificate identity for the Engine request.
+The client verifies the server certificate and project binding. Send one Engine identity per request, either a token or an enrolled certificate.
 
 The API uses HTTP/1.1 or HTTP/2 over TLS/TCP, or HTTP/3 through QUIC. In
 automatic transport mode, an unavailable QUIC handshake can fall back to TCP
@@ -48,9 +49,9 @@ Automatic API issuance has a ten-second total budget by default, with up to
 five seconds for the Control plane. The config helper uses the configured
 Control plane when present.
 
-Both issuers accept empty JSON or `{ "ttlSeconds": 600 }`, integer 1..3600,
-with default 600. They return `username`, `credential`, `urls` and effective
-`ttl`; Go exposes response `TTL` as integer seconds; the requested option uses a duration. Managed issuance needs
+Use a duration between one second and one hour for the request (default ten
+minutes). Go returns the effective `TTL` in seconds with the relay URLs, username
+and credential. Managed issuance needs
 `turn.credentials.create` on either API. Local PAT/APP derivation needs
 `turn.relay.allocate`. Project scope, membership, status, credential revocation
 and expiry remain enforced. Usernames are opaque. Never log TURN passwords.

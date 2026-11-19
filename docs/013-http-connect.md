@@ -32,13 +32,12 @@ The upstream service behind the tunnel must be a real forward proxy. The rstream
 
 ## Security model
 
-The `CONNECT` authority is the final TCP target, not the rstream tunnel host. The engine therefore binds plain CONNECT to the tunnel selected by the downstream TLS or QUIC connection and does not use the target authority for tunnel routing.
+The downstream TLS or QUIC connection selects the rstream tunnel. The
+`CONNECT` authority names the final TCP target that the upstream proxy will
+dial. Configure authentication, destination allowlists and logging in that
+proxy. rstream preserves `Proxy-Authorization` and `Proxy-Authenticate` so
+the proxy can authenticate the caller.
 
-On HTTP/2 and HTTP/3, multiple CONNECT streams can share one connection. To prevent accidental cross-use of a reused connection, the engine separates normal reverse HTTP traffic from proxy egress traffic:
-
-- normal HTTP requests use reverse HTTP mode;
-- plain `CONNECT`, `CONNECT-UDP`, and `CONNECT-IP` use proxy egress mode.
-
-Once a connection enters one mode, requests from the other mode are rejected with `421 Misdirected Request`. Destination policy remains the upstream proxy's responsibility; keep target allowlists, authentication, and audit logging in that proxy.
-
-`Proxy-Authorization` and `Proxy-Authenticate` are preserved for plain CONNECT so the upstream proxy can authenticate clients. Sensitive proxy credentials are still redacted from engine logs.
+Open a dedicated connection for proxy traffic over HTTP/2 or HTTP/3. The Engine
+returns `421 Misdirected Request` if a connection already used for reverse
+HTTP is reused for CONNECT egress, or the reverse.

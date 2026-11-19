@@ -1,18 +1,19 @@
 # Build the Go SDK and CLI from source
 
-Build this checkout to test a local change or run the SDK examples. For a packaged executable, follow [Install the CLI](000-installation.md). You can compile without an account. Running a tunnel requires an Engine connection and credentials.
+From a fresh checkout, build a local `rstream` executable and check that it
+starts. This uses the source in the checkout. For a released executable, follow
+[Install the CLI](000-installation.md).
 
-| Prerequisite | When you need it |
+| Tool | When you need it |
 | --- | --- |
-| Go | Use the version declared in [`go.mod`](../go.mod) or a compatible newer toolchain. |
-| Git | Clone the checkout and prepare its pinned build dependencies. |
-| Network | Download modules on a fresh checkout. |
-| Make and a POSIX shell | Use the targets below on macOS or Linux. They also use standard utilities such as `find`, `awk` and `sed`. |
-| C toolchain | Build with cgo or run the race detector. On macOS install the Xcode Command Line Tools with `xcode-select --install`. |
+| Go | Use the minimum version in [`go.mod`](../go.mod) or a compatible newer toolchain. |
+| Git and network access | Clone the repository and download its Go modules. |
+| Make and a POSIX shell | Build on Linux or macOS with the Makefile. It also uses `find`, `awk` and `sed`. |
+| C toolchain | Required for builds using cgo and for the race detector. On macOS, install the Xcode Command Line Tools with `xcode-select --install`. |
 
-## Build the CLI
+## Build on Linux or macOS
 
-From a terminal with the tools above, clone the repository and run:
+From a terminal with the tools above:
 
 ```sh
 git clone https://github.com/rstreamlabs/rstream-go.git
@@ -21,9 +22,33 @@ go version
 make rstream
 ```
 
-The build writes the executable below `out/cmd/rstream/<channel>/<version>/<os>/<arch>/release/bin/`. On a fresh checkout, `find out/cmd/rstream -type f -name rstream` locates it. Run that executable with `--help` to verify the build. For the [CLI walkthrough](002-cli-workflow.md), use the resulting executable explicitly or put its directory on your current shell's `PATH`.
+On a fresh checkout, find the executable and check it runs:
 
-On Windows with native PowerShell, follow the [direct Windows build](../tools/icepatch/README.md#build-the-cli-with-native-powershell). It produces `out\rstream.exe`.
+```sh
+cli="$(find out/cmd/rstream -type f -name rstream -path '*/release/bin/*')"
+"$cli" --version
+```
+
+The executable reports the version built from the checkout. Store its full path
+if you also have a released CLI installed. To connect to an Engine, follow the
+[CLI workflow](002-cli-workflow.md#connect-the-cli) using the executable you built.
+
+## Build on Windows
+
+Install Go and Git, clone the repository, and run these commands from its root
+in PowerShell:
+
+```powershell
+go run ./tools/icepatch -output out/ice-patch
+go build -modfile=out/ice-patch/go.mod -o out/rstream.exe ./cmd/rstream
+.\out\rstream.exe --version
+```
+
+The first command prepares an alternate Go module file with the selected ICE
+dependency. Use that file for subsequent direct builds and tests. The direct
+build omits the release metadata supplied by Make. See the
+[build tool reference](../tools/icepatch/README.md) for its behavior and
+consumer-module instructions.
 
 ## Build examples and test changes
 
@@ -31,6 +56,8 @@ On Windows with native PowerShell, follow the [direct Windows build](../tools/ic
 | --- | --- |
 | `make http-h1-server http-h1-client` | Build the first [HTTP example pair](../examples/README.md#serve-http). |
 | `make examples` | Build the Go example catalog under `out/examples/`. |
-| `make tests` | Run unit and package tests against the prepared dependency graph. |
+| `make tests` | Run the package tests. |
 
-See [Contributing](../CONTRIBUTING.md) for race detection, static checks and repository practices, and the [test guide](../test/README.md) for cases that need an Engine fixture. The [FIPS profile](017-fips-140-3-profile.md) has its own build procedure.
+See [Contributing](../CONTRIBUTING.md) for race detection, static checks and
+repository practices. The [test guide](../test/README.md) covers Engine-backed
+tests. The [FIPS profile](017-fips-140-3-profile.md) has its own build procedure.

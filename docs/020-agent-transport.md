@@ -27,15 +27,32 @@ transport:
 
 ## Configure a context
 
-Transport settings live in the YAML config file and can be defined at:
+Set defaults under an environment in the shared YAML. A context linked to that
+Control plane through its `apiUrl` inherits those defaults and can override
+individual fields. Fields omitted from the context retain their environment
+value. Explicit `false` overrides `true`, and HTTP proxy headers merge by name.
 
-- **Environment level** (`environments[].transport`) for defaults tied to a Control plane API `apiUrl`
-- **Context level** (`contexts[].transport`) for overrides on a specific runtime profile
+For example, share an HTTP CONNECT proxy across an environment while letting
+one context set its own transport mode:
 
-The effective transport used by the CLI is a safe merge: start from the environment transport (if the
-context is linked to that `apiUrl`), then merge the context transport over it. Override values are applied
-only when explicitly set (non-empty strings, non-nil pointers, non-empty maps). Proxy headers are merged
-by key and never cleared unless explicitly overridden.
+```yaml
+environments:
+  - apiUrl: https://rstream.io
+    transport:
+      proxy:
+        http: http://proxy.corp:3128
+contexts:
+  - name: service
+    apiUrl: https://rstream.io
+    engine: project.engine.example:443
+    transport:
+      mode: tls
+```
+
+Use an existing context with admission credentials for your project.
+`rstream doctor -o json` probes TLS and QUIC independently. Its
+`tunnel_transport` check reports the configured and selected modes. In `auto`,
+working TLS with unavailable QUIC is a fallback warning.
 
 ### Shared YAML fields
 
@@ -66,54 +83,20 @@ Paths below are relative to `environments[].transport` or `contexts[].transport`
 | `proxy.tls.serverName`             | Proxy SNI/certificate verification name.                 | Proxy hostname when omitted.                                                           |
 | `proxy.tls.insecureSkipVerify`     | Boolean disabling proxy-hop verification.                | false; diagnostics only.                                                               |
 
-Example:
-
-```yaml
-environments:
-  - apiUrl: "https://rstream.io"
-    transport:
-      dns:
-        override: "1.1.1.1:53"
-        tls: true
-        serverName: "cloudflare-dns.com"
-        dnssec: true
-      proxy:
-        http: "http://proxy.corp:3128"
-        fromEnvironment: false
-        headers:
-          X-Company: "acme"
-contexts:
-  - name: "acme"
-    apiUrl: "https://rstream.io"
-    engine: "project.engine.example:443"
-    transport:
-      bind:
-        mode: "interface"
-        interface: "en0"
-      proxy:
-        headers:
-          X-Env: "ci"
-```
-
 ## Engine identity and admission
 
-The client-to-edge session is always negotiated over TLS 1.3. Transport settings never downgrade this requirement and do not change the cryptographic guarantees; they only influence which network path carries the TLS 1.3 session.
-
-When an HTTP CONNECT proxy is used, the proxy only provides a TCP tunnel to the edge. The rstream TLS 1.3 session is then established through that tunnel and remains end-to-end between the rstream client and the edge.
-
-Admission is how the edge decides whether to accept the upstream session.
-
-Token admission is the default. The token is presented inside the rstream protocol handshake within the TLS 1.3 session. It is not an HTTP header and is not related to request-level token access control on HTTP tunnels.
-
-Certificate admission uses a TLS client certificate. This mode is typically used in enterprise environments where identity, rotation, and device provisioning are managed through PKI. The client authenticates at session establishment time, using mutual TLS at the transport layer.
+The agent and Engine use TLS 1.3, either directly over TCP or within QUIC.
+Token admission presents a credential in the native rstream handshake.
+Certificate admission uses the agent's enrolled client certificate during TLS.
+These credentials establish the agent's identity. To authorize callers of a
+published service separately, configure [HTTP tunnel access](005-http-tunnels.md).
 
 ## Connect through a proxy or a private CA
 
-Direct connectivity opens a TCP connection to the edge destination and negotiates the rstream TLS 1.3 session on top of it. This is the normal mode on networks with standard outbound connectivity.
-
-HTTP CONNECT proxy connectivity first connects to an HTTP proxy, issues a CONNECT request to create a TCP tunnel to the edge, and then negotiates the rstream TLS 1.3 session through that tunnel. This mode is designed for environments where outbound Internet access is restricted and only allowed through a proxy, or where direct outbound TCP is blocked.
-
-The proxy hop itself may be plain TCP or protected with TLS depending on whether the proxy endpoint is configured as HTTP or HTTPS. Regardless of the proxy hop, the client-to-edge session remains TLS 1.3 once the CONNECT tunnel is established.
+An HTTP or HTTPS forward proxy creates a TCP connection to the Engine with HTTP
+CONNECT. The rstream TLS session is established through it. An HTTPS proxy
+also encrypts the first hop between the agent and the proxy. QUIC through an
+HTTP proxy requires HTTPS MASQUE, which can carry UDP.
 
 SOCKS5 proxy connectivity is available with `proxy.socks5`. The TCP/TLS transport uses SOCKS5 CONNECT. QUIC transport uses SOCKS5 UDP ASSOCIATE.
 
@@ -136,7 +119,8 @@ transport:
     serverName: "engine.internal.example"
 ```
 
-The engine TLS block follows the usual TLS client shape: `caFile` adds a PEM trust bundle for the Engine certificate, `serverName` overrides the SNI and verification name, and `insecureSkipVerify` disables Engine certificate verification. `insecureSkipVerify` is intended for short diagnostics only; production agents should use `caFile` or the system trust store.
+Use `caFile` to trust a private CA and `serverName` when the verification name
+differs from the address. Keep verification enabled in deployed agents.
 
 The same settings are available when creating or updating a context:
 
@@ -161,17 +145,11 @@ transport:
       insecureSkipVerify: false
 ```
 
-The proxy TLS block follows the usual TLS client shape: `caFile` adds a PEM trust bundle for the proxy certificate, `serverName` overrides the SNI and verification name, and `insecureSkipVerify` disables proxy certificate verification. `insecureSkipVerify` is intended for diagnostics and controlled labs; production agents should use `caFile` or the system trust store.
-
-`proxy.fromEnvironment: true` lets the SDK read the standard process proxy environment when no explicit `proxy.http` or `proxy.socks5` value is configured. The lookup honors `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, and `NO_PROXY` in upper- and lower-case forms. HTTP and HTTPS proxy URLs map to `proxy.http`; `socks5://` and `socks5h://` URLs map to `proxy.socks5`.
-
-```yaml
-transport:
-  proxy:
-    fromEnvironment: true
-```
-
-The SDK does not read macOS System Settings, Windows Internet Options, or desktop-session proxy stores directly. Long-lived agents and service processes need reproducible transport configuration; configure process environment variables or set the YAML proxy fields explicitly.
+Use `proxy.fromEnvironment: true` to resolve a proxy from process environment
+variables. Supported names include `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`
+and `NO_PROXY` in upper- or lowercase. An explicit proxy URL takes precedence.
+To configure an agent running as a service, set the variables in its process
+environment or use the YAML proxy settings.
 
 ## Select the outbound address
 
@@ -183,19 +161,12 @@ IPv4-only or IPv6-only dialing can be enforced when one address family is filter
 
 DNS override allows the client to use a dedicated resolver for edge name resolution instead of the system resolver. This is useful when system DNS is constrained, inconsistent across environments, or must follow a specific egress route.
 
-The same DNS path is used for:
-
-- resolving the edge hostname before dialing when advanced DNS options are enabled;
-- discovering `SVCB` and `HTTPS` records for ECH, using the target host and ALPN in the same way a browser would.
-
-| DNS option       | Purpose                                                 | Requirement                                              |
-| ---------------- | ------------------------------------------------------- | -------------------------------------------------------- |
-| `dns.override`   | Use a resolver such as `1.1.1.1:53` or `1.1.1.1:853`.   | Optional resolver address.                               |
-| `dns.tls`        | Protect resolver queries with DNS over TLS.             | Requires `dns.override`; an omitted port becomes `853`.  |
-| `dns.serverName` | Select the certificate name verified for DNS over TLS.  | Required when the TLS resolver address is an IP address. |
-| `dns.dnssec`     | Require authenticated DNSSEC answers from the resolver. | Opt-in authentication requirement.                       |
-
-These options are opt-in. Without them, the client uses the platform resolver configuration for ECH discovery and for direct hostname resolution.
+rstream uses the resolver for Engine lookup and for the `HTTPS` and `SVCB`
+records used in ECH discovery. The operating system`s resolver configuration
+is the default. To configure DNS over TLS, set `dns.tls` and provide a
+`dns.override`; the default port is `853`. When the resolver`s address is an
+IP, use `dns.serverName` to verify its certificate. Set `dns.dnssec` to require
+authenticated answers.
 
 On macOS, rstream reads the active resolver configuration from the system DNS state so scoped per-domain resolvers are respected. On Linux and other Unix targets, the fallback source remains `/etc/resolv.conf`.
 
@@ -239,8 +210,6 @@ strictQUIC, err := rstream.NewClient(rstream.ClientOptions{
 | `ProxyFromEnvironment`         | read process proxy variables when no explicit proxy URL is configured. |
 
 For QUIC transport, `ProxyHTTP` must point at an HTTPS MASQUE proxy. If the URL path is empty, the SDK uses `/.well-known/masque/udp/{target_host}/{target_port}/`. A custom path must include both `{target_host}` and `{target_port}`.
-
-`rstream doctor -o json` probes TLS and QUIC independently. Its `tunnel_transport` result reports the configured and selected modes; in `auto`, unavailable QUIC with working TLS is a fallback warning rather than a connection failure.
 
 ### Lifecycle
 

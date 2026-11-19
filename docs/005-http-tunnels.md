@@ -4,8 +4,11 @@ HTTP tunnels accept HTTP traffic at the edge and forward HTTP requests to your u
 
 ## Forward an HTTP service
 
-Start a local HTTP service on port 8080 and select a project as shown in the
-[CLI walkthrough](002-cli-workflow.md#publish-a-first-http-service). Then run:
+Use a [configured CLI context](002-cli-workflow.md#connect-the-cli) and an
+HTTP service listening on port 8080. Test the local service first so you know
+its expected response. For a disposable upstream, use the
+[CLI walkthrough](002-cli-workflow.md#publish-a-first-http-service). Set
+[HTTP authentication](#http-authentication) first if the service requires it.
 
 ```sh
 rstream forward 127.0.0.1:8080 --http
@@ -37,57 +40,39 @@ the wire); conflicting values for the two fields are rejected.
 
 ## HTTP authentication
 
-HTTP policy selects which proof the edge requires before forwarding a request.
-Keep edge access and application authentication separate: the application's
-`Authorization` header can serve its own purpose.
+The Engine applies HTTP access policy before forwarding the request. The
+application can still authenticate the requests it receives.
 
-| Option                             | Effect                                                                                                       |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `TokenAuth` / `token_auth`         | Accept a scoped edge token from `Authorization: Bearer ...` or the reserved `rstream.token` query parameter. |
-| `RstreamAuth` / `rstream_auth`     | Use an authenticated rstream account and browser session.                                                    |
-| `ChallengeMode` / `challenge_mode` | Require the configured interactive challenge before forwarding.                                              |
-| `MTLSAuth` / `mtls_auth`           | Require the project's admitted client-certificate identity on the public TLS connection.                     |
+| Go property | Who can reach the upstream |
+| --- | --- |
+| `TokenAuth` | A client with a scoped rstream tunnel token. |
+| `RstreamAuth` | A signed-in rstream user who has access to the tunnel. |
+| `ChallengeMode` | A client that completes the configured browser challenge and any other required checks. |
+| `MTLSAuth` | A client presenting a certificate admitted for the project. |
 
-With token authentication enabled, a reserved query token takes precedence over
-an Authorization bearer and browser cookie. A malformed, empty, repeated,
-invalid or unauthorized explicit token is rejected; a browser cookie cannot
-rescue it. When no token is supplied, rstream Auth may use the browser session
-if enabled. The query form lets an application keep its own Authorization
-header while authenticating separately at the edge.
-
-Client-certificate admission has a separate proof path and rejects conflicting
-edge credentials. Network, project and resource permissions still apply to the
-chosen identity. Follow the [HTTP authentication reference](https://rstream.io/docs/tunnels/http-tunnels/authentication)
-for policy setup. Valid CORS preflights are handled before authentication and
-cannot reach the upstream application.
+Use [HTTP tunnel authentication](https://rstream.io/docs/tunnels/http-tunnels/authentication)
+for CLI flags and a request that verifies the chosen policy. That reference
+also explains credential precedence and the difference between a tunnel token
+and an application token.
 
 ## Cross-origin browser access (CORS)
 
-CORS allows browser applications on another origin to access a published HTTP tunnel. Without a CORS configuration, the upstream application's CORS behavior is preserved. A configured policy applies to upstream responses and tunnel errors, including authentication failures. Responses preserve existing `Vary` values and add `Vary: Origin`.
+Use CORS when a browser on another origin must call your published HTTP
+service. For CLI flags, preflight behavior and verification, see
+[HTTP advanced options](https://rstream.io/docs/tunnels/http-tunnels/advanced-options#cross-origin-browser-access-cors).
 
-| Option                          | Meaning                                                                                                                |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `--cors-allow-origin <origin>`  | Enable CORS for an explicit HTTP(S) origin; repeat for each origin. No wildcard, path, credentials, query or fragment. |
-| `--cors-allow-method <method>`  | Repeatable allowed method. Default: GET, HEAD, POST.                                                                   |
-| `--cors-allow-header <header>`  | Repeatable allowed request header. Default: Authorization, Content-Type.                                               |
-| `--cors-expose-header <header>` | Repeatable response header made readable by browser scripts. Default: none beyond browser defaults.                    |
-| `--cors-allow-credentials`      | Allow browser-managed credentials for the listed origins. Default: false.                                              |
-| `--cors-max-age <seconds>`      | Preflight cache lifetime, 0–86400 seconds. Default: 0.                                                                 |
+In Go, set `TunnelProperties.HTTPCORS` to an `*httpcors.Config` from
+`github.com/rstreamlabs/rstream-go/httpcors`. An omitted configuration leaves
+the application in control of CORS. A configured policy needs at least one
+explicit origin. Authentication still applies to the browser's actual request.
 
-```bash
-rstream forward 8080 --http --token-auth \
-  --cors-allow-origin https://dashboard.example \
-  --cors-allow-method GET --cors-allow-method PUT \
-  --cors-expose-header ETag
-```
-
-Each list option replaces that list's defaults. Origins must be explicit, such as `https://dashboard.example` or `http://localhost:3000`; `*` and opaque `null` origins are rejected. Configuration is limited to 128 entries per list and 16 KiB of strings in total. Same-origin requests continue to work. Cross-origin requests outside the configured policy are rejected; requests without an Origin header still follow the existing authentication rules.
-
-Valid browser preflights are answered without a token and cannot access the upstream application. Actual requests, including ordinary `OPTIONS` requests, still follow the tunnel's authentication and authorization rules. CORS does not make an authenticated tunnel public.
-
-A browser can send a delegated tunnel token using `Authorization: Bearer …` with `credentials: "omit"`; the preflight does not need a token. The token can also be passed in the `rstream.token` query parameter. `--cors-allow-credentials` is not needed for either of these token forms with `credentials: "omit"`. It is required when intentionally using browser-managed credentials and `credentials: "include"`.
-
-The Go API exposes `TunnelProperties.HTTPCORS` as `*httpcors.Config` from `github.com/rstreamlabs/rstream-go/httpcors`. Wire/JSON fields are `http_cors.allowed_origins`, `allowed_methods`, `allowed_headers`, `exposed_headers`, `allow_credentials` and `max_age` (seconds). A nil policy is omitted; a non-nil policy requires at least one origin.
+| Go setting | Purpose |
+| --- | --- |
+| `AllowedOrigins` | Exact origins permitted to read responses. |
+| `AllowedMethods` and `AllowedHeaders` | Methods and request headers allowed in preflight. |
+| `ExposedHeaders` | Response headers readable by the browser. |
+| `AllowCredentials` | Permit browser-managed credentials from allowed origins. |
+| `MaxAge` | Cache duration in seconds for a preflight result. |
 
 ## WebSockets and proxy protocols
 

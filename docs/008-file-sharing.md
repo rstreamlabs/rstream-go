@@ -2,17 +2,32 @@
 
 `rstream files [path]` publishes a file or directory through one HTTPS tunnel. The path defaults to the current directory. It runs an embedded HTTP service, read-only by default, directly on the tunnel listener; there is no Python process, local port, Node runtime, or runtime asset download.
 
-[Select a project](002-cli-workflow.md), then create a small directory with
-a file you intend to share. Run this from its parent directory:
+Select a [CLI context](002-cli-workflow.md#connect-the-cli). Use a small
+directory containing a file you intend to share. Access is decided before
+opening the share.
+
+| Project policy | Access to use |
+| --- | --- |
+| A disposable project that allows public requests | Add a local password with `--password`. |
+| A project that requires edge authentication | Use its required sign-in or tunnel token. The file server's local password cannot be combined with edge authentication. |
+
+For the password case, run from the parent of `exports`:
 
 ```sh
 rstream files ./exports --password
 ```
 
-Open the printed URL and sign in with the username `rstream` and the password
-you chose in the terminal. Verify that you can download the file.
+Open the printed URL. Sign in as `rstream` with the password you entered and
+download the sample file. A fresh request without credentials should be
+denied. For a token-protected share, use the
+[product access examples](https://rstream.io/docs/tunnels/file-sharing#choose-access).
+Stop the process with Ctrl+C to close the share.
 
-Stop the foreground process to close the share. Automatic reconnection follows `forward`; use `--no-retry` to stop after a disconnect. Files are read live, without uploading a stored copy. Changes to the source are visible on refresh. This is not a filesystem snapshot: changing a file during a download or ZIP can interrupt or alter that transfer.
+The Go client and CLI can also read this standalone share through the same
+filesystem client used by WebTTY. A WebTTY server is only needed when the
+files belong to its sidecar.
+
+Automatic reconnection follows `forward`; use `--no-retry` to stop after a disconnect. Files are read live, without uploading a stored copy. Changes to the source are visible on refresh. This is not a filesystem snapshot: changing a file during a download or ZIP can interrupt or alter that transfer.
 
 File sharing is unavailable in the restricted FIPS build for both WebDAV and WebRTC, including the WebTTY filesystem. See the [FIPS compatibility table](017-fips-140-3-profile.md#file-sharing-compatibility).
 

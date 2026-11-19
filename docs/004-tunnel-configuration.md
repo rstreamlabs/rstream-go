@@ -32,6 +32,31 @@ The engine assigns `ID`. An optional `Name` gives private peers a lookup key
 that the application can reuse when recreating the tunnel. Names belong to the
 project; check that the requested name is available.
 
+## Try a private connection
+
+Use a project that permits private tunnels (hosted Pro or Enterprise), or a
+direct Community Edition Engine. Configure both terminals for the same project
+or Engine. In a managed project, the tunnel owner needs
+`tunnels.tunnels.create-delete` and the dialing client needs
+`tunnels.streams.create-delete` on the tunnel.
+
+With an HTTP service listening on `127.0.0.1:8080`, forward it through a private tunnel:
+
+```sh
+rstream forward 127.0.0.1:8080 --no-publish --name internal-api
+```
+
+In a second terminal, dial the named tunnel through a loopback listener:
+
+```sh
+rstream nc -L 127.0.0.1:8081 -R rstrm://internal-api
+```
+
+Request `http://127.0.0.1:8081/` from a browser or with curl. Expect the same
+response as the upstream service. Stop the listener and the forwarder with
+Ctrl+C. Use the [private Go example pair](../examples/README.md#connect-privately)
+when both endpoints are Go programs.
+
 ## Client transport, stream type and service protocol
 
 Three choices describe different parts of the path:

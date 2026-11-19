@@ -52,32 +52,20 @@ standard CLI, add `--crypto-profile=fips-compatible` when creating both endpoint
 identities and select WebTransport on the server and client.
 See the [FIPS profile](../017-fips-140-3-profile.md#webtty-profile) for compatible algorithms and deployment requirements.
 
-If explicit server key material is provided to the client, E2E is implied. If
-server identity material is provided to the server, protected mode is implied.
-In the normal operator workflow, the server identity and local known-server
-store are enough for `rstrm://...` targets; the user does not pass an E2E flag
-on every client command. Direct `ws://...` targets do not have inventory labels,
-so they need a local known-server selector or explicit server trust material.
-`--e2e` remains useful as a fail-closed assertion for scripts: the client exits
-before connecting if no known server key or workspace-managed server key can be
-resolved.
+The server identity and the client's known-server entry enable protection for
+the named rstream target. Use `--e2e` in a script to require that the client
+resolves trusted endpoint material before it opens a session.
 
-For authenticated end-to-end encryption, configure the server's public identity before opening a session. The client stops before sending terminal content if it cannot establish endpoint trust.
+For a direct local WebSocket listener already configured with the same server
+identity, select the pinned server in the client command:
 
-For a direct local WebSocket endpoint, select the same pinned server explicitly
-because no rstream inventory labels are available:
-
-```bash
+```sh
 rstream webtty exec --url ws://127.0.0.1:8080 --known-server dev-shell -- whoami
 ```
 
-The full known-server endpoint value is public server identity material. It
-lets the client verify the server proof and wrap the terminal session key for
-that server. The authorized-client value is public client signing material
-extracted from the client endpoint identity. It lets the server verify the
-client proof before starting any process. Passing only
-`encryption_key_id:encryption_public_key` remains useful for encryption-only
-clients, but authenticated E2E requires the full endpoint value.
+Authenticated E2E uses the full public endpoint value. Its encryption key
+protects the session key and its signing key identifies the peer. Use the
+public-only values printed by `webtty identity show --endpoint-identity`.
 
 Remove a local server identity when the server key has been retired:
 
@@ -115,8 +103,8 @@ that acts on behalf of a workspace user, and `--kind service` for a
 non-interactive daemon or service-account recipient. Browsers are trusted from
 the workspace protection page, not with this command.
 
-After approval, regular clients resolve E2E at runtime. The user does not need
-to decide whether a server is encrypted before connecting:
+After approval, the CLI resolves protection from the selected server and
+workspace policy:
 
 ```bash
 rstream webtty exec --url rstrm://prod-shell -- whoami
@@ -147,7 +135,8 @@ rstream webtty server create prod-shell --enroll
 rstream webtty server -v --server-id 'my-server-id' --login-user 'local-user'
 ```
 
-Replace 'my-server-id' with the returned server ID and 'local-user' with the operating system account that runs the commands.
+Use the returned server ID and an existing operating system account that
+will run the commands.
 
 If the server record is created from another machine, run the printed
 enrollment command on the runtime host:
@@ -215,9 +204,7 @@ id -un
 $env:USERNAME
 ```
 
-rstream does not create this account. A fixed `--login-user` is resolved when
-the server starts, so an unknown or unsupported username fails immediately
-instead of waiting for the first remote session.
+Create the local account before starting WebTTY. The server checks a fixed `--login-user` at startup.
 
 On Unix-like systems, switching to a different account applies the target uid,
 primary gid, and supplementary groups and requires the server process to have
@@ -385,19 +372,14 @@ keys:
 ~/.rstream/webtty/known_servers.json
 ```
 
-Workspace keys are broader product keys and are stored in the workspace key
-hierarchy, not in the global WebTTY subtree:
+Workspace trust has its own directory. The device record establishes
+workspace trust, and its separate WebTTY identity opens workspace-managed
+terminal grants:
 
 ```text
 ~/.rstream/workspaces/<workspace-id>/devices/<device-id>.json
 ~/.rstream/workspaces/<workspace-id>/webtty/identities/<device-id>.identity.json
 ```
-
-The first file is the trusted workspace device record and signing material. The
-second file is the profile-selected WebTTY endpoint identity bound to that workspace device for
-workspace-managed terminal decrypt grants. It is intentionally scoped under the
-workspace tree; `~/.rstream/webtty/identities` is reserved for local WebTTY
-server identities and explicit-key/direct WebTTY trust workflows.
 
 Local WebTTY identity, enrollment, known-server, and workspace-device files
 are written with `0600` file permissions on POSIX systems. Runtime reads reject
@@ -448,8 +430,5 @@ changes after enrollment, refresh the pin:
 rstream webtty server trust server_id
 ```
 
-That pin lets the server verify workspace-managed WebTTY client proofs against
-public workspace trust material. It does not copy workspace private keys to the
-remote host, and clients still connect without passing WebTTY keys on each
-command. It is a repair command, not a way to run a workspace-managed server
-from an untrusted machine.
+The refreshed pin lets the server verify client proofs with public workspace
+trust material. Keep workspace private keys on their trusted devices.

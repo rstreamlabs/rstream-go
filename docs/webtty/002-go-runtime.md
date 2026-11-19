@@ -1,6 +1,38 @@
 # Embed and connect WebTTY in Go
 
-Use this reference when your application creates WebTTY sessions directly. See [WebTTY configuration](000-configuration.md) for CLI setup and identity management.
+Use `webtty.CaptureCommand` for a bounded result from one command.
+Use `webtty.OpenClientSession` to stream output or control the session
+lifecycle. [WebTTY configuration](000-configuration.md) covers servers and
+endpoint trust.
+
+## Capture command output
+
+This function runs `whoami` on a local WebTTY WebSocket listener configured
+with a bearer token. Pass the same token to the function. For a remote
+listener, use its verified `wss://` address.
+
+```go
+func captureAccount(ctx context.Context, token string) (webtty.CommandResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	return webtty.CaptureCommand(ctx, &webtty.ClientConfig{
+		URL:       "ws://127.0.0.1:8080",
+		AuthToken: &token,
+		CmdArgs:   []string{"whoami"},
+	}, 64*1024)
+}
+```
+
+Import `context`, `time` and `github.com/rstreamlabs/rstream-go/webtty`.
+If the command succeeds, `Stdout` contains the account name and `ExitCode`
+points to zero. A nonzero code is a confirmed remote process result.
+A local capture error can still return partial `Stdout` and `Stderr`.
+`ExitCode` is nil until the process reports a final code.
+
+The byte limit applies to both streams together. Zero selects 8 MiB. If
+the limit is reached, check `OutputTruncated` and `ErrCommandOutputLimit`.
+The SDK requests termination when supported and bounds the wait for
+remaining output. A TTY combines stdout and stderr in its output stream.
 
 ## Disconnect and explicit termination
 
@@ -77,24 +109,6 @@ does not make retrying Open safe. Recording retention and permissions determine
 which historical output is available; this API adds no history/live cursor or
 survival across process or Engine restarts.
 
-JSON command capture and MCP execution return `exit_code: null` when no native
-result was confirmed, including transport loss and local cancellation. Confirmed
-nonzero or negative native codes remain unchanged. Partial stdout and stderr
-remain separate from the local execution error.
-
-`CaptureCommand(ctx, config, maxOutputBytes)` retains stdout and stderr within
-one combined byte limit (zero selects 8 MiB) and returns `CommandResult` alongside
-any local error. CLI JSON output preserves explicit `--interactive` and `--tty`
-options: terminal input, resize events and local terminal restoration match
-streaming output. TTY allocation still requires a local terminal; remote terminal
-stdout and stderr share the terminal's output stream. Without those options,
-SDK capture defaults to empty input when no input reader is supplied. Overflow sets
-`OutputTruncated`, returns `ErrCommandOutputLimit`, requests explicit termination
-when supported, and keeps draining for at most 65 seconds or until caller
-cancellation. Its `ExitCode` remains nil until native completion is confirmed.
-The CLI JSON and MCP collectors use the 8 MiB default and report `truncated`
-and the MCP `output_limit` error kind. Streaming CLI output is not retained.
-
 ## Transports
 
 | Transport | Application data path | Requirements |
@@ -136,10 +150,9 @@ reconstruct an E2E session envelope for replay, join, or decrypt-material flows
 must use `key_context_raw`, which is the unpadded base64url encoding of the
 exact key-envelope/AAD context bytes used by the endpoint.
 
-Workspace-managed protection uses separate workspace-device envelopes. Those
-envelopes use ECDH P-256 recipient keys, HKDF-SHA-256, and AES-256-GCM for
-browser and CLI device grants so they remain compatible with WebCrypto. That
-workspace envelope is distinct from the per-session terminal key envelope; matching algorithms do not make them interchangeable.
+Workspace-managed protection uses a separate device grant to control
+access to encrypted terminal data. See [workspace device trust](000-configuration.md#trust-a-cli-for-workspace-managed-webtty)
+for provisioning those identities.
 
 The filesystem sidecar (WebDAV or WebRTC) is rejected when WebTTY E2E payload encryption is
 active, because it is a separate data surface.

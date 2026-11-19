@@ -2,13 +2,34 @@
 
 Use Go when your application should own the Engine connection, accept or dial streams, or compose datagram protocols. This is rstream's reference SDK, with broad protocol coverage and standard Go network interfaces.
 
-Use a released Go module for an application. To modify the SDK or run its
-examples from a checkout, follow [Build from source](001-building-from-source.md).
-You can also [forward an existing process](002-cli-workflow.md) with the CLI.
+Use a released module to add rstream to an application. The SDK opens the
+connection in your process and delivers traffic over standard Go interfaces.
+Use the CLI to [forward a service that already has a listener](002-cli-workflow.md#publish-a-first-http-service).
+
+## Prepare a connection
+
+| Where you connect | Before running Go code |
+| --- | --- |
+| Hosted rstream | [Install the CLI](000-installation.md) and use the commands below to select a project. Basic can publish HTTP. Choose Pro or Enterprise to create a private tunnel. |
+| Self-hosted Community Edition | [Configure a CLI context for the Engine](https://rstream.io/docs/tunnels/self-hosted/deployment#agent-context) using its hostname, CA if needed, and JWT. CE supports published HTTP and private bytestreams. |
+| An existing deployment | Select the context provided by your operator. See [editions and plans](https://rstream.io/docs/support/editions) for listener and policy requirements. |
+
+For a hosted project, sign in and copy the `ENDPOINT` from the project list:
+
+```sh
+rstream login
+rstream project list
+rstream project use 'my-project-endpoint'
+```
+
+Replace the example endpoint with that value. If you need a project, follow
+[hosted project setup](https://rstream.io/docs/getting-started/quickstart-guide#select-a-project).
+The program below reads the saved context through `config.NewClientFromEnv()`.
 
 ## Serve a published HTTP route
 
-Check `go version` against the Go requirement declared in the SDK release's `go.mod`. Create a small module and add the SDK:
+The published SDK declares its Go requirement in its module metadata. For the
+source checkout, see [`go.mod`](../go.mod). Create a module for this program:
 
 ```sh
 mkdir rstream-hello
@@ -17,7 +38,10 @@ go mod init example.com/rstream-hello
 go get github.com/rstreamlabs/rstream-go
 ```
 
-[Install the CLI](000-installation.md), then [sign in and select your project](002-cli-workflow.md#publish-a-first-http-service). The program reads that context, creates a published HTTP/1.1 tunnel and serves requests directly, without binding a local TCP port.
+The program publishes a disposable HTTP response. It uses the project or
+Engine selected above and serves the handler directly on the tunnel.
+Set up [HTTP access control](005-http-tunnels.md#http-authentication) before
+replacing the example handler with a service that needs restricted access.
 
 ```go
 package main
@@ -83,7 +107,12 @@ The runnable [HTTP server example](../examples/README.md#serve-http) adds signal
 
 ## Run a private client and server
 
-The CLI context supplies Engine credentials to both programs. Build and run the [private HTTP example pair](../examples/README.md#connect-privately) to see the server accept connections on a tunnel and the client use rstream as its HTTP dialer. Both programs must use the same project. To serve a public route instead, use the [published walkthrough](#serve-a-published-http-route) in a new module.
+Use the [private HTTP pair](../examples/README.md#connect-privately) to see
+the same integration from both sides. The server opens a Go listener
+called `h1-example`. The client uses a regular `http.Client` with a
+`DialContext` callback that dials that tunnel name. Choose a deployment that
+permits private bytestreams and let both sides use the same project or direct
+CE Engine.
 
 ## Network interfaces and ownership
 
@@ -104,7 +133,7 @@ Pass contexts/deadlines for bounded setup and requests. A context used to establ
 | TLS/QUIC client transport, proxy, private CA, DNS and interface binding | [Transport configuration](020-agent-transport.md).                                                                        |
 | HTTP/1.1, h2c, HTTP/3, published TCP/TLS/DTLS/QUIC or private access    | [Tunnel configuration](004-tunnel-configuration.md), [example catalog](../examples/README.md).                      |
 | WebSocket or WebTransport, CONNECT-UDP/IP                               | [Extended CONNECT](014-extended-connect.md); application protocol code stays in its library.                        |
-| Inventory/watch/session APIs with token or certificate                  | [Engine API mTLS/TURN](015-engine-mtls-turn.md). Control plane administration still needs its own authorized token. |
+| Inventory, watch and session APIs with token or certificate                  | [Engine API mTLS/TURN](015-engine-mtls-turn.md). Control plane administration still needs its own authorized token. |
 | Restricted cryptographic distribution                                   | [FIPS profile](017-fips-140-3-profile.md); its exclusions are intentional.                                          |
 
-Coverage still depends on Engine version, edition, listeners, project permissions and plan. Applications using native datagrams must handle loss. Use a reliable path when the service needs ordered delivery.
+To diagnose an application connection, use the [Go diagnostic API](018-doctor-api.md). For CLI and Engine checks, see [Troubleshooting](https://rstream.io/docs/support/troubleshooting).

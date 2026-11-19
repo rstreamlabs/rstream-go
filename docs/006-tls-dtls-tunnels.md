@@ -12,19 +12,44 @@ before configuring the upstream connection.
 
 ## Forward a TLS service
 
-For a local service accepting clear bytes on port 9000, select a project that
-allows published TLS tunnels and run:
+This example terminates public TLS on the Engine and forwards a clear byte
+stream to a disposable local service. Use a [configured CLI context](002-cli-workflow.md#connect-the-cli)
+on Community Edition or a hosted Pro or Enterprise project that allows
+published TLS. Use an Engine with a certificate trusted by your client.
+
+In a new directory, create a single demo file and start a local HTTP server.
+Python provides the example's clear byte stream. On Windows use `py -3` in
+place of `python3`.
+
+```sh
+mkdir rstream-tls-demo
+cd rstream-tls-demo
+python3 -c "from pathlib import Path; Path('index.html').write_text('Hello through TLS')"
+python3 -m http.server 9000 --bind 127.0.0.1
+```
+
+In another terminal, run:
 
 ```sh
 rstream forward 127.0.0.1:9000 --tls --tls-mode terminated
 ```
 
-Connect your TLS client to the printed hostname and port and verify the
-certificate against that hostname. If the local service already handles public
-TLS, use `--tls-mode passthrough` instead and configure the certificate
-and minimum version on that service. Stop forwarding with Ctrl+C. The
-[bytestream echo example](../examples/README.md#choose-another-example) shows
-the SDK side of a published TLS endpoint.
+Use the hostname and port printed by the CLI in the following request. Use
+`curl.exe` on Windows.
+
+```sh
+curl -fsS --http1.1 'https://tls-demo.example.com:443/'
+```
+
+The client verifies the certificate and returns `Hello through TLS`. If you
+use a private CA, [supply the CA and verify the public hostname](https://rstream.io/guides/self-host-rstream-engine-ce-with-docker-compose#verify-the-engine-and-tunnel).
+Stop the tunnel and the demo server with Ctrl+C.
+
+Use this mode for a service whose TLS endpoint belongs at the Engine.
+For an end-to-end TLS session, use `--tls-mode passthrough` when project
+policy permits it. The upstream presents the certificate. When you need HTTP routing or request-level
+authentication in front of an HTTPS origin, choose
+[an HTTP tunnel with upstream TLS](005-http-tunnels.md#upstream-http-mode).
 
 ## Client certificate authentication
 

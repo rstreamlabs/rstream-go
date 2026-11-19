@@ -6,25 +6,34 @@ workspace-managed access or session operations supported by your deployment.
 
 ## Open a terminal
 
-### Start a tunnel server
+[Configure the CLI](002-cli-workflow.md#connect-the-cli) on the server and
+operator machines. Use the same project or direct Engine on both. The server
+in this example runs commands as the operating system user that starts it.
+Use a dedicated account for a server that will stay running.
 
-Select an authorized project on both machines. On the remote machine, start a WebSocket server with a private tunnel. The project must allow private tunnels.
+| Mode | When to use it |
+| --- | --- |
+| Published WebSocket | Use a project that permits published HTTP, including hosted Basic. The server requests token protection for the public endpoint. A browser opening the endpoint needs an authorized session. |
+| Private WebSocket | Use a project that permits private tunnels, or a direct Community Edition Engine. Only rstream clients can dial the endpoint. |
+
+On the server, start the published mode:
 
 ```sh
-rstream webtty server --rstream --name shell --no-publish
+rstream webtty server --rstream --name shell
 ```
 
-On the operator's machine, using credentials for that project:
+For private mode, add `--no-publish` to that command. In a second terminal with
+the operator context, run:
 
 ```sh
 rstream webtty exec --url rstrm://shell -o text -- whoami
 ```
 
-Expect the username of the operating system account running the server.
-Stop the server with Ctrl+C. On a project that allows publication, omit
-`--no-publish` to enable a browser endpoint as well. Use a dedicated service
-account and configure access for any server kept running beyond this example.
-The Go server on Windows supports command execution through pipes.
+Expect the username of the account running the server. Stop the server with
+Ctrl+C. If your token permits inventory, run `rstream webtty list` to verify
+that the lightweight server is gone. The Go server on Windows supports command
+execution through pipes. See [browser access](https://rstream.io/docs/webtty/quickstart#publish-through-rstream)
+for the published endpoint.
 
 ## Configure and operate a server
 

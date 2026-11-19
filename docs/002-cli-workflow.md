@@ -1,12 +1,40 @@
 # CLI workflow
 
-Use the CLI to connect an existing service. A Go application can instead [embed the SDK](003-go-sdk.md) and own the tunnel directly. [Install a released CLI](000-installation.md) or [build this checkout](001-building-from-source.md) before following these commands.
+Use the CLI to forward a service that already runs locally. The following
+walkthrough publishes a disposable HTTP service and verifies the public
+response. [Install the CLI](000-installation.md) before starting.
+
+## Connect the CLI
+
+| Where you connect | How to get a context |
+| --- | --- |
+| Hosted rstream | Sign in, then select a project as shown below. A Basic project can publish the HTTP example. |
+| Self-hosted Community Edition | Configure the direct Engine hostname, trusted certificate and locally signed JWT using the [CE agent context](https://rstream.io/docs/tunnels/self-hosted/deployment#agent-context). |
+| An existing deployment | Use the context and credentials provided by your operator. See [identity options](#choose-an-identity) when provisioning a device or CI runner. |
+
+For hosted rstream, approve sign-in in your browser. Copy the value in the
+`ENDPOINT` column of `rstream project list` and substitute it in the last command:
+
+```sh
+rstream login
+rstream project list
+rstream project use 'my-project-endpoint'
+```
+
+If the list is empty, create a project in your workspace or ask its owner to
+give you access. See [hosted project setup](https://rstream.io/docs/getting-started/quickstart-guide#select-a-project).
+The CLI saves the choice as its default context. Go programs that use
+`config.NewClientFromEnv()` can reuse it.
 
 ## Publish a first HTTP service
 
-Use two terminals on the same machine. You need a rstream account, a project and a local HTTP service. For a disposable demonstration, Python 3 can serve an otherwise empty directory; this example publishes its contents to the Internet.
+You need a working CLI context, Python 3 and curl. The printed forwarding
+address is reachable from the Internet. Use a new directory containing only
+this demo file. To publish an existing service with restricted access,
+[configure HTTP authentication](005-http-tunnels.md#http-authentication)
+before forwarding it.
 
-In terminal 1 on a POSIX shell (Python 3 required):
+In the first terminal, start the service on loopback.
 
 ```sh
 mkdir rstream-demo
@@ -15,34 +43,33 @@ printf 'Hello from rstream\n' > index.html
 python3 -m http.server 8080 --bind 127.0.0.1
 ```
 
-On Windows PowerShell with Python 3 installed, use this equivalent server command instead:
+In Windows PowerShell, use:
 
 ```powershell
 New-Item -ItemType Directory rstream-demo
 Set-Location rstream-demo
 Set-Content -Encoding ASCII index.html 'Hello from rstream'
-python -m http.server 8080 --bind 127.0.0.1
+py -3 -m http.server 8080 --bind 127.0.0.1
 ```
 
-In terminal 2, sign in and select the project. Replace 'my-project-endpoint' in the command with the endpoint shown in your project settings. `rstream login` opens the browser signup/sign-in and approval flow, then stores the approved personal or workspace Token locally.
+In a second terminal, check the local response and forward the port. Use
+`curl.exe` in Windows PowerShell.
 
 ```sh
-rstream login
-rstream project list
-rstream project use 'my-project-endpoint'
 curl -fsS http://127.0.0.1:8080/
-rstream forward 8080
+rstream forward 127.0.0.1:8080 --http
 ```
 
-Use `curl.exe` in Windows PowerShell. The local request should print `Hello from rstream`. In a third terminal, request the HTTPS address printed by `forward`:
+Open the HTTPS address printed by the CLI. Expect `Hello from rstream` at
+both addresses and a request in the local server log. For a CE Engine using a
+private certificate authority, use the [CE verification instructions](https://rstream.io/guides/self-host-rstream-engine-ce-with-docker-compose#verify-the-engine-and-tunnel)
+to check the public hostname and certificate.
 
-```sh
-curl -fsS 'https://my-tunnel.example.com/'
-```
+Stop the forwarder, then the local server, with Ctrl+C. The CLI context is
+ready for the next command.
 
-Expect the same response body. Stop `forward` and the Python server with Ctrl+C when finished. Any local **HTTP** service can replace the demonstration. Other protocols need the matching [tunnel properties](004-tunnel-configuration.md).
-
-A selected project creates a named local context. The CLI and `config.NewClientFromEnv()` in Go reuse that context. Creating an unpublished tunnel and other gated features require a project/deployment that permits them; they are separate from this published HTTP trial.
+To carry traffic without a public address, follow the [private CLI example](004-tunnel-configuration.md#try-a-private-connection).
+If connecting or routing fails, start with [the troubleshooting guide](https://rstream.io/docs/support/troubleshooting).
 
 ## Choose an identity
 
@@ -78,10 +105,9 @@ rstream context create service \
   --engine 'engine.example.com:443' \
   --token-file /path/to/project-token \
   --no-api-url --default
-rstream forward 8080
 ```
 
-`context create` also accepts `--token-stdin` or `--token`; prefer file/stdin for secret injection. These three inputs are mutually exclusive. An unlinked context does not inherit the workstation's account token. Replace 'engine.example.com:443' with the Engine hostname and port for that project. A private CA can be supplied with `--engine-tls-ca-file /path/to/engine-ca.pem`.
+`context create` also accepts `--token-stdin` or `--token`; prefer file/stdin for secret injection. These three inputs are mutually exclusive. An unlinked context does not inherit the workstation's account token. Replace 'engine.example.com:443' with the Engine hostname and port for that project. Use `--engine-tls-ca-file /path/to/engine-ca.pem` for a private CA. Run `rstream doctor` to check the context before using it.
 
 ### Authenticate an agent with mTLS
 

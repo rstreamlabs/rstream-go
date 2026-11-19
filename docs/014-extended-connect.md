@@ -49,17 +49,43 @@ The upstream server owns IP proxy behavior: route scoping, address assignment, r
 
 ## Samples
 
-Build the [MASQUE programs](../examples/README.md#protocol-specific-setup) with `make masque-server masque-client`. Start a UDP service on port 9000 before running the client. Use separate terminals for the server and client. Choose the private pair or the published pair:
+Use a project that allows datagram tunnels, with an Engine that supports
+the selected protocol. On hosted rstream, use Pro or Enterprise. The
+following demo dials a private tunnel. Add `--publish` to both sample
+programs to use a published HTTP/3 endpoint on a compatible deployment.
 
-```bash
-./out/examples/masque-server --variant connect-udp
-./out/examples/masque-client --variant connect-udp --target 127.0.0.1:9000
+Build the pair from the repository root:
 
-./out/examples/masque-server --variant connect-udp --publish
-./out/examples/masque-client --variant connect-udp --publish --target 127.0.0.1:9000
+```sh
+make masque-server masque-client
 ```
 
-CONNECT-IP uses the same flags with `--variant connect-ip`. Published clients can pass `--addr` to skip tunnel lookup and connect to a specific published forwarding address.
+For CONNECT-UDP, start an echo service on the machine running the MASQUE
+server. Save this as `udp_echo.py` and run it with Python 3:
+
+```python
+import socket
+
+with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server:
+    server.bind(("127.0.0.1", 9000))
+    while True:
+        message, address = server.recvfrom(65535)
+        server.sendto(message, address)
+```
+
+Start `./out/examples/masque-server --variant connect-udp` in a second
+terminal. With the same project context, run the client:
+
+```sh
+./out/examples/masque-client --variant connect-udp --target 127.0.0.1:9000
+```
+
+Expect `CONNECT-UDP echo ok` and the returned payload. Stop the server
+and the echo process with Ctrl+C.
+
+For CONNECT-IP, run both programs with `--variant connect-ip` and omit
+`--target`. The programs exchange a test IP packet directly. Expect
+`CONNECT-IP packet echo ok`. Stop the server after the test.
 
 ## Browser support
 

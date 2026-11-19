@@ -1,8 +1,7 @@
 # Go diagnostic API
 
 Import `github.com/rstreamlabs/rstream-go/doctor` to run the same diagnostics as
-`rstream doctor` inside a Go process. No CLI binary, Cobra command or subprocess
-is required.
+`rstream doctor` inside a Go process. Use the selected CLI context or a configuration supplied by the application. The Go process runs the checks itself.
 
 ```go
 import (
@@ -14,9 +13,7 @@ import (
 )
 
 func diagnose(ctx context.Context) (doctor.Report, error) {
-    resolution, err := config.ResolveFromEnv(config.ClientEnvOptions{
-        Context: "production",
-    })
+    resolution, err := config.ResolveFromEnv(config.ClientEnvOptions{})
     if err != nil {
         return doctor.Report{}, err
     }

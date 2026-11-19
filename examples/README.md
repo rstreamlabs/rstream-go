@@ -6,29 +6,29 @@ For complete applications with framework setup and their own lifecycle, see [rst
 
 ## Prepare the checkout
 
-Install the tools in [Build from source](../docs/001-building-from-source.md). Commands on this page run from the repository root, not from an individual example directory. Build only the first pair:
+Install the tools in [Build from source](../docs/001-building-from-source.md).
+From the repository root on Linux or macOS, build the HTTP server and client:
 
 ```sh
 make http-h1-server http-h1-client
 ```
 
-The binaries are written to `out/examples/`. `make examples` builds the complete catalog. On Windows, the corresponding binary names end in `.exe`.
+The binaries are written to `out/examples/`. `make examples` builds the
+complete catalog. On Windows, [prepare the source checkout](../docs/001-building-from-source.md#build-on-windows),
+then build the pair in PowerShell:
 
-The programs also need access to an engine and permission to create or dial the selected tunnel. With an installed CLI and a managed project, select a context:
-
-```sh
-rstream login
-rstream project use my-project-endpoint
+```powershell
+go build -modfile=out/ice-patch/go.mod -o out/examples/http-h1-server.exe ./examples/http-h1-server
+go build -modfile=out/ice-patch/go.mod -o out/examples/http-h1-client.exe ./examples/http-h1-client
 ```
 
-Replace `my-project-endpoint` with the endpoint from the project dashboard. Reuse that context in both terminals below. A self-hosted engine can instead be selected explicitly; [configuration](../docs/002-cli-workflow.md) explains the credential and endpoint choices.
+Use `.\out\examples\http-h1-server.exe` and
+`.\out\examples\http-h1-client.exe` for the commands below.
 
-| Configuration | When it is needed |
-| --- | --- |
-| Selected CLI context | The usual local-development path; examples load it through `config.NewClientFromEnv()`. |
-| `RSTREAM_ENGINE` | Override the engine address instead of using the selected context. |
-| `RSTREAM_AUTHENTICATION_TOKEN` | Supply explicit token authentication; leave unset when using mTLS. |
-| `RSTREAM_MTLS_CERT_FILE` and `RSTREAM_MTLS_KEY_FILE` | Use an enrolled certificate for native Engine connections and Engine HTTP APIs through automatic discovery. Control plane administration still requires a token. |
+The examples use an existing [CLI context](../docs/002-cli-workflow.md#connect-the-cli)
+through `config.NewClientFromEnv()`. On hosted rstream, choose a project with
+the protocol and access mode you intend to try. Community Edition uses a
+context for the direct Engine hostname and its locally signed token.
 
 ## Serve HTTP
 
@@ -41,6 +41,11 @@ In the first terminal, publish the example server:
 It prints `Server listening on` followed by the forwarding address. Open that address in a browser or request it with `curl`; the response body is the server's hostname. The Go handler receives connections directly through the tunnel, without a local TCP listening port. Stop the server with an interrupt.
 
 ## Connect privately
+
+Private bytestreams are available on hosted Pro and Enterprise or through
+a direct Community Edition Engine. Both processes need the same project or
+Engine. On managed projects, grant tunnel creation to the server and private
+dialing to the client.
 
 Run the server without publication in the first terminal:
 
@@ -56,7 +61,7 @@ In a second terminal using the same project context, run:
 
 The client dials the tunnel named `h1-example` through rstream and prints the HTTP status and hostname. This path needs no public service address. Stop the first server before starting another copy with the same tunnel name.
 
-Publication and private dialing are separate choices. The agent-to-engine connection remains authenticated in both cases. Each protocol example has its own requirements; engine edition, project settings and permissions still determine what can be created or reached.
+See [editions and plans](https://rstream.io/docs/support/editions) before running a protocol that requires an additional listener or project entitlement.
 
 ## Choose another example
 
@@ -99,14 +104,5 @@ For SSH, set `RSTREAM_SSH_PASSWORD` in both processes. Start the server, then pa
 
 SSH supplies encryption and peer authentication for this TCP example. Raw published TCP by itself does not add those properties.
 
-For MASQUE CONNECT-UDP, provide a reachable UDP target. These commands use private dialing:
-
-```sh
-./out/examples/masque-server --variant connect-udp
-```
-
-```sh
-./out/examples/masque-client --variant connect-udp --target 127.0.0.1:9000
-```
-
-Add `--publish` to both commands for the published HTTP/3 path. For CONNECT-IP, run both programs with `--variant connect-ip` and omit `--target`. This sample exchanges an IP packet in the programs themselves.
+For MASQUE, follow the [CONNECT-UDP and CONNECT-IP examples](../docs/014-extended-connect.md#samples).
+The page shows the matching programs and the required echo target.

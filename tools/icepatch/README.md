@@ -24,15 +24,8 @@ go build -modfile=out/ice-patch/go.mod ./cmd/rstream
 
 ## Build the CLI with native PowerShell
 
-Run from the repository root with Go and Git installed:
-
-```powershell
-go run ./tools/icepatch -output out/ice-patch
-go build -modfile=out/ice-patch/go.mod -o out/rstream.exe ./cmd/rstream
-.\out\rstream.exe --help
-```
-
-This direct build omits the release metadata set by Make. Use the alternate module file for subsequent direct builds and tests.
+Follow the [Windows source build](../../docs/001-building-from-source.md#build-on-windows).
+Use the alternate module file for subsequent direct Go commands.
 
 ## Build a consuming module
 

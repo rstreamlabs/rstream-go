@@ -2,33 +2,6 @@
 
 `rstream run` keeps a set of local services connected through tunnels described in YAML or Docker labels. Use it when a daemon should discover and reconcile services over time; `rstream forward` is the simpler path for one foreground tunnel. Install and configure the CLI first with the [CLI workflow](002-cli-workflow.md).
 
-## Apply YAML or discover Docker services
-
-From the repository root, start an HTTP service on port 8080 and select the
-project and credentials for this run. Apply the bundled example and open the
-forwarding address it prints:
-
-```sh
-rstream -v run --apply ./examples/run-yaml/tunnels.yaml
-```
-
-Stop the process with Ctrl+C. Add `--watch` when the runner should reconcile
-changes to the file. For container discovery, use the
-[Docker example](../examples/run-docker/README.md), which starts an upstream
-service with matching labels.
-
-## Flags
-
-| Option                     | Purpose                                            | Default or condition                                                                                       |
-| -------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `--apply <file>`           | Load tunnel definitions from YAML.                 | Select a local file.                                                                                       |
-| `--docker`                 | Discover tunnels from Docker labels.               | Requires access to the Docker socket.                                                                      |
-| `--watch`                  | Reconcile when the selected source changes.        | Without it, apply the initial configuration once.                                                          |
-| `--docker-socket`          | Select the Docker socket.                          | `unix:///var/run/docker.sock`.                                                                             |
-| `--docker-network`         | Select a container network for forwarding.         | Optional; otherwise use the discovery rules below.                                                         |
-| `--docker-default-context` | Select the default CLI context for Docker tunnels. | Defaults to the normal selected context; containers cannot override it unless the opt-in below is enabled. |
-| `--docker-allow-context-labels` | Allow `rstream.context` labels to select a configured identity. | `false`; delegate only to trusted container owners. |
-
 ## Choose how to run
 
 | Command        | Use it for                                                                  |
@@ -36,6 +9,23 @@ service with matching labels.
 | `forward`      | One foreground tunnel configured through command arguments.                 |
 | `run --apply`  | A declared set of tunnels from YAML, with optional watch/reconciliation.    |
 | `run --docker` | A set discovered from container labels, with optional watch/reconciliation. |
+
+## Apply YAML or discover Docker services
+
+From the repository root, start the upstream in the [YAML example](../examples/run-yaml/README.md)
+on port 8080. Use a context that permits published HTTP tunnels. If your project
+requires authorization on published HTTP, set a compatible access policy in the
+YAML before applying it. Then run:
+
+```sh
+rstream -v run --apply ./examples/run-yaml/tunnels.yaml
+```
+
+Open the forwarding URL it prints to see the upstream response. Stop the process
+with Ctrl+C. Add `--watch` when the runner should reconcile
+changes to the file. For container discovery, use the
+[Docker example](../examples/run-docker/README.md), which starts an upstream
+service with matching labels.
 
 ## YAML Schema (`--apply`)
 
@@ -67,12 +57,11 @@ in the CLI, `tunnel.upstreamTLS` in YAML and `upstream-tls` in Docker labels.
 Docker defaults to `publish: true` and `protocol: http`; forward/apply leave
 unspecified exposure settings to the tunnel API.
 
-Forward targets accept a bare port, `host:port` or bracketed IPv6 such as
-`[2001:db8::1]:8080`.
+Forward targets accept a bare port, `host:port` or an IPv6 address in brackets.
 
 ### Apply fields
 
-The first example deliberately uses the selected context. Optional `contexts` entries can reference a central identity with `{external: true, name: service}` or define an inline `engine`, `token` and `transport`. Inline contexts require a token; use an external central context for mTLS and signers. Do not combine all protocol-specific settings in one tunnel.
+The example uses the selected context. Optional `contexts` entries can reference a central identity with `{external: true, name: service}` or define an inline `engine`, `token` and `transport`. Inline contexts require a token; use an external central context for mTLS and signers. Choose the fields that apply to each tunnel's protocol.
 
 | Field                                           | Format and purpose                                                        | Default or condition                                                                 |
 | ----------------------------------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
@@ -176,6 +165,18 @@ For agent authentication, `rstream run` uses the selected CLI context or explici
   or one of its discovered network addresses. Arbitrary external/internal hosts
   remain rejected; use `--apply` for those targets.
 
+## Flags
+
+| Option                     | Purpose                                            | Default or condition                                                                                       |
+| -------------------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `--apply <file>`           | Load tunnel definitions from YAML.                 | Select a local file.                                                                                       |
+| `--docker`                 | Discover tunnels from Docker labels.               | Requires access to the Docker socket.                                                                      |
+| `--watch`                  | Reconcile when the selected source changes.        | Without it, apply the initial configuration once.                                                          |
+| `--docker-socket`          | Select the Docker socket.                          | `unix:///var/run/docker.sock`.                                                                             |
+| `--docker-network`         | Select a container network for forwarding.         | Optional; otherwise use the discovery rules below.                                                         |
+| `--docker-default-context` | Select the default CLI context for Docker tunnels. | Defaults to the normal selected context; containers cannot override it unless the opt-in below is enabled. |
+| `--docker-allow-context-labels` | Allow `rstream.context` labels to select a configured identity. | `false`; delegate only to trusted container owners. |
+
 ## Managed Labels
 
 `rstream run` adds ownership labels to each tunnel:
@@ -199,7 +200,7 @@ reopens the route. Stopping the runner closes its forwarding sessions.
 
 ## HTTP CORS
 
-`forward` uses the six `--cors-*` options documented in [Tunnel properties](005-http-tunnels.md#cross-origin-browser-access-cors). The equivalent `run --apply` configuration is:
+`forward` uses the six `--cors-*` options covered in [HTTP tunnels](005-http-tunnels.md#cross-origin-browser-access-cors). The equivalent `run --apply` configuration is:
 
 ```yaml
 version: 1

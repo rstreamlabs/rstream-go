@@ -6,10 +6,10 @@ HSM exposes a vendor API instead of PKCS#11. The executable supplies the public
 certificate chain and signatures. TLS, certificate verification, connections
 and tunnel traffic stay in rstream.
 
-This backend does not export a private key, change Engine admission policy, or
-enroll a credential. Enroll the public certificate with the intended project
-first. It does not configure WebTTY end-to-end identities, local WebTTY HTTPS
-certificates, published tunnel client admission, or TURN credentials.
+Enroll the public leaf certificate in the project first. Use this backend for
+agent mTLS. [WebTTY endpoint trust](webtty/000-configuration.md) and
+[published client admission](005-http-tunnels.md#http-authentication) each
+have separate identities.
 
 ## Configure an identity
 
@@ -136,9 +136,9 @@ requests a client certificate.
 
 ## Protocol v1
 
-When implementing a hardware or vendor-backed helper, follow the
+Implement hardware and vendor-backed helpers using the
 [external signer protocol](../internal/mtlsexec/README.md). Enroll each
-replacement certificate before switching the local identity configuration.
+replacement certificate before switching the local identity.
 
 ## Compatibility and example
 
