@@ -114,10 +114,15 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
+      - name: Check npm release source
+        if: ${{ github.ref_type == 'tag' }}
+        env:
+          RELEASE_REPOSITORY: ${{ secrets.RELEASE_NPM_REPOSITORY }}
+        run: ./.github/scripts/require-release-repository.sh
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: ${{ github.ref_type == 'tag' }}
         with:
-          repository: rstreamlabs/npm
+          repository: ${{ secrets.RELEASE_NPM_REPOSITORY }}
           token: ${{ secrets.GIT_TOKEN }}
           path: npm
           persist-credentials: false

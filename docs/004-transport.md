@@ -1,37 +1,14 @@
 # Transport Configuration
 
-Transport settings define how an rstream client establishes its upstream session to the rstream edge. This layer is about getting a reliable, policy-compliant network path from the client environment to the edge, and about how the client is admitted when the session is established.
-
-Transport configuration is independent from tunnel properties. Tunnel properties control how traffic is exposed and forwarded once an upstream session exists; transport controls how that upstream session is created in the first place.
-
-## Reviewed dependency baseline
-
-| Module | Version |
-| --- | --- |
-| `github.com/quic-go/quic-go` | `v0.60.0` |
-| `github.com/quic-go/webtransport-go` | `v0.11.1` |
-| `github.com/quic-go/masque-go` | `v0.4.0` |
-| `github.com/quic-go/connect-ip-go` | `v0.1.0` |
-
-Review the resolved versions of these companion libraries together when
-upgrading QUIC.
-The dependency upgrade preserves transport defaults, certificate verification,
-project admission policy and the existing early-data behavior.
-
-`TestReviewedTransportDependencyGraph` inspects the compiled dependency metadata
-in standard tests, including generated modfile builds. It rejects another version
-or a replacement for these libraries and the DTLS v3 security baseline. The
-required Pion ICE replacement remains separate. Downstream modules must update
-their SDK requirement and verify their resolved graph; updating this repository
-alone does not update an already published SDK or its consumers.
-
-The [FIPS profile](010-fips-140-3-profile.md) adds its exact frozen-module and
-startup requirements. The [Linux benchmark](../test/performance/README.md) covers
-repeatable local performance comparisons without changing production settings.
+Transport configuration controls the connection from an rstream process to the
+engine: TLS or QUIC, local routing, proxies, DNS and certificate trust. The
+[tunnel configuration](005-tunnel-configuration.md) selects the service carried
+through that authenticated connection.
 
 ## Configuration
 
 Transport settings live in the YAML config file and can be defined at:
+
 - **Environment level** (`environments[].transport`) for defaults tied to a Control plane API `apiUrl`
 - **Context level** (`contexts[].transport`) for overrides on a specific runtime profile
 
@@ -39,6 +16,35 @@ The effective transport used by the CLI is a safe merge: start from the environm
 context is linked to that `apiUrl`), then merge the context transport over it. Override values are applied
 only when explicitly set (non-empty strings, non-nil pointers, non-empty maps). Proxy headers are merged
 by key and never cleared unless explicitly overridden.
+
+### Shared YAML fields
+
+Paths below are relative to `environments[].transport` or `contexts[].transport`. Omitted context values inherit linked environment settings; boolean pointers preserve explicit false. Defaults apply after that merge.
+
+| Field                              | Format and purpose                                       | Default or condition                                                                   |
+| ---------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `mode`                             | `auto`, `tls`, `quic`; agent connection selection.       | auto; explicit mode takes precedence over legacy useQuic.                              |
+| `useQuic`                          | Legacy boolean transport selector.                       | Omit in new configurations; true selects QUIC, false TLS.                              |
+| `bind.mode`                        | `interface` or `address` local binding.                  | Omit the bind block for OS routing; an omitted mode with address uses address binding. |
+| `bind.interface`                   | Local interface name such as en0.                        | Used with mode=interface; selected address must fit first-hop family.                  |
+| `bind.address`                     | Local IP literal.                                        | Used with mode=address; not the remote Engine.                                         |
+| `ipFamily`                         | `ipv4`, `ipv6` or omitted.                               | Omitted permits both; selects destination family, not DNS-server family.               |
+| `dns.override`                     | Resolver IP/host with optional port.                     | Platform resolvers when omitted; DNS-over-TLS requires an override.                    |
+| `dns.tls`                          | Boolean enabling DNS over TLS.                           | false; omitted port becomes 853.                                                       |
+| `dns.serverName`                   | TLS resolver verification name.                          | Needed when DoT resolver address is an IP.                                             |
+| `dns.dnssec`                       | Boolean requiring authenticated DNSSEC answers.          | false; a validation requirement, not a separate resolver.                              |
+| `mptcp`                            | Boolean requesting MPTCP on TCP connections.             | false; requires OS support, does not alter QUIC.                                       |
+| `tls.caFile`                       | PEM CA bundle for the Engine.                            | System roots when omitted.                                                             |
+| `tls.serverName`                   | Engine SNI/certificate verification name.                | Original Engine hostname when omitted.                                                 |
+| `tls.insecureSkipVerify`           | Boolean disabling Engine certificate verification.       | false; diagnostics only, rejected by FIPS.                                             |
+| `proxy.http`                       | HTTP/HTTPS CONNECT proxy URL.                            | No explicit proxy by default; QUIC requires HTTPS MASQUE.                              |
+| `proxy.socks5`                     | socks5/socks5h URL.                                      | Alternative to proxy.http; TCP CONNECT or QUIC UDP ASSOCIATE.                          |
+| `proxy.username`, `proxy.password` | Proxy credentials as strings.                            | Optional; keep secret values out of logs.                                              |
+| `proxy.headers`                    | String map of HTTP proxy headers.                        | Empty; merged by key from environment/context.                                         |
+| `proxy.fromEnvironment`            | Boolean enabling standard process proxy-variable lookup. | Opt-in; explicit proxy URL takes precedence.                                           |
+| `proxy.tls.caFile`                 | PEM CA bundle for an HTTPS/MASQUE proxy.                 | System roots; independent from Engine roots.                                           |
+| `proxy.tls.serverName`             | Proxy SNI/certificate verification name.                 | Proxy hostname when omitted.                                                           |
+| `proxy.tls.insecureSkipVerify`     | Boolean disabling proxy-hop verification.                | false; diagnostics only.                                                               |
 
 Example:
 
@@ -59,7 +65,7 @@ environments:
 contexts:
   - name: "acme"
     apiUrl: "https://rstream.io"
-    engine: "e7e8a732.aws-eu-west-3-1.c.rstream.io:8443"
+    engine: "project.engine.example:443"
     transport:
       bind:
         mode: "interface"
@@ -74,29 +80,6 @@ contexts:
 The client-to-edge session is always negotiated over TLS 1.3. Transport settings never downgrade this requirement and do not change the cryptographic guarantees; they only influence which network path carries the TLS 1.3 session.
 
 When an HTTP CONNECT proxy is used, the proxy only provides a TCP tunnel to the edge. The rstream TLS 1.3 session is then established through that tunnel and remains end-to-end between the rstream client and the edge.
-
-## Private QUIC datagram self-dial
-
-`Client.PacketDial` can dial a private datagram tunnel owned by the same client,
-including two clients sharing a QUIC transport. Both roles use the same QUIC
-connection. Protocol 1.4.7 negotiates a separate dialer routing identifier in
-the existing `StreamReq` / `StreamRsp` exchange. This adds no round trip, extra
-connection, or bytes to the datagram prefix. TLS and guaranteed-delivery
-datagrams continue to use stream framing.
-
-The dialer sets `StreamReq.independent_datagram_channel` and uses the returned
-12-byte `StreamRsp.datagram_channel_id` for datagram routing. The tunnel owner
-keeps the identifier derived from `stream_id`. Lifecycle messages, including
-channel closure, continue to refer to `stream_id`. A response without the new
-field retains legacy routing; malformed, zero, or non-independent identifiers
-are rejected.
-
-Upgrade the Engine to protocol 1.4.7 before using SDK builds that advertise
-1.4.7. The Engine continues to accept existing 1.4.6 clients without requiring
-SDK releases together. Their separate-connection datagram flows are unchanged;
-an unsupported legacy self-dial receives an explicit error before allocating a
-channel. Older Engines reject clients advertising a newer protocol patch under
-the existing admission rule.
 
 ## Admission
 
@@ -183,14 +166,16 @@ IPv4-only or IPv6-only dialing can be enforced when one address family is filter
 DNS override allows the client to use a dedicated resolver for edge name resolution instead of the system resolver. This is useful when system DNS is constrained, inconsistent across environments, or must follow a specific egress route.
 
 The same DNS path is used for:
+
 - resolving the edge hostname before dialing when advanced DNS options are enabled;
 - discovering `SVCB` and `HTTPS` records for ECH, using the target host and ALPN in the same way a browser would.
 
-The transport DNS options are:
-- `dns.override` — send DNS queries to a specific resolver address, for example `1.1.1.1:53` or `1.1.1.1:853`.
-- `dns.tls` — use DNS over TLS for these queries. This requires `dns.override`; when the override omits a port, rstream defaults to `853`.
-- `dns.serverName` — set the TLS server name used for DNS over TLS. This is required when `dns.override` is an IP address.
-- `dns.dnssec` — require authenticated DNSSEC answers from the resolver.
+| DNS option       | Purpose                                                 | Requirement                                              |
+| ---------------- | ------------------------------------------------------- | -------------------------------------------------------- |
+| `dns.override`   | Use a resolver such as `1.1.1.1:53` or `1.1.1.1:853`.   | Optional resolver address.                               |
+| `dns.tls`        | Protect resolver queries with DNS over TLS.             | Requires `dns.override`; an omitted port becomes `853`.  |
+| `dns.serverName` | Select the certificate name verified for DNS over TLS.  | Required when the TLS resolver address is an IP address. |
+| `dns.dnssec`     | Require authenticated DNSSEC answers from the resolver. | Opt-in authentication requirement.                       |
 
 These options are opt-in. Without them, the client uses the platform resolver configuration for ECH discovery and for direct hostname resolution.
 
@@ -247,14 +232,17 @@ strictQUIC, err := rstream.NewClient(rstream.ClientOptions{
 ```
 
 `QUICTransport` accepts the same network options as the standard `Transport`:
-- `LocalAddr` — bind to a specific local IP.
-- `ForceIPv4` / `ForceIPv6` — constrain address family.
-- `DNSOverride` — use a custom resolver for the edge hostname.
-- `DNSOverTLS` / `DNSServerName` — protect DNS lookups with DNS over TLS.
-- `DNSSECEnabled` — require authenticated DNSSEC answers.
-- `ProxyHTTP` — use an HTTPS MASQUE CONNECT-UDP proxy for the QUIC engine session.
-- `ProxySOCKS5` — use SOCKS5 UDP ASSOCIATE for the QUIC engine session.
-- `ProxyFromEnvironment` — read process proxy variables when no explicit proxy URL is configured.
+
+| SDK option                     | Purpose                                                                |
+| ------------------------------ | ---------------------------------------------------------------------- |
+| `LocalAddr`                    | bind to a specific local IP.                                           |
+| `ForceIPv4` / `ForceIPv6`      | constrain address family.                                              |
+| `DNSOverride`                  | use a custom resolver for the edge hostname.                           |
+| `DNSOverTLS` / `DNSServerName` | protect DNS lookups with DNS over TLS.                                 |
+| `DNSSECEnabled`                | require authenticated DNSSEC answers.                                  |
+| `ProxyHTTP`                    | use an HTTPS MASQUE CONNECT-UDP proxy for the QUIC engine session.     |
+| `ProxySOCKS5`                  | use SOCKS5 UDP ASSOCIATE for the QUIC engine session.                  |
+| `ProxyFromEnvironment`         | read process proxy variables when no explicit proxy URL is configured. |
 
 For QUIC transport, `ProxyHTTP` must point at an HTTPS MASQUE proxy. If the URL path is empty, the SDK uses `/.well-known/masque/udp/{target_host}/{target_port}/`. A custom path must include both `{target_host}` and `{target_port}`.
 
@@ -296,3 +284,15 @@ including a connection opened after the QUIC transport is closed.
 MASQUE URI templates encode IPv6 target addresses once during expansion. A
 proxy that accepts its connection but never returns a CONNECT-UDP response is
 also interrupted by the setup deadline or cancellation.
+
+## Private datagram self-dial
+
+`Client.PacketDial` can dial a private datagram tunnel owned by the same client,
+including clients sharing one QUIC transport. The owner and dialer use separate
+routing identifiers on that connection. Stream-framed datagrams use their own
+framing path. Packet loss on the native unreliable path should be assessed with
+the [datagram qualification procedure](../test/performance/000-datagram-qualification.md).
+
+For changes to framing, admission or transport dependencies, follow the
+[SDK engineering guide](022-sdk-engineering.md). The [FIPS profile](017-fips-140-3-profile.md)
+adds its cryptographic module and startup requirements.
