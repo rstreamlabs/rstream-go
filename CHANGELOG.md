@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.38.0](https://github.com/rstreamlabs/rstream-go/compare/v1.37.0...v1.38.0) (2026-11-19)
+
+
+### Features
+
+* **auth:** support workspace caller identity in SDK and CLI validation ([a16ede0](https://github.com/rstreamlabs/rstream-go/commit/a16ede092bb5b193a63890dfc802d71169653aee))
+* **cli:** enroll service device keys under their workspace token ([16aa7ba](https://github.com/rstreamlabs/rstream-go/commit/16aa7bafbf2f266d598d3705c80352cdac16d2b3))
+* **cli:** negotiate owner-aware enrollment and preserve token identities ([a56d844](https://github.com/rstreamlabs/rstream-go/commit/a56d8448e382c56667b910644f9b0f442b51b639))
+* **transport:** qualify the Go DTLS 1.3 samples ([c087f0d](https://github.com/rstreamlabs/rstream-go/commit/c087f0d8adebb99b9ed785ddabd9c39e79115cc0))
+
+
+### Bug Fixes
+
+* preserve explicit login rights and use server presets by default ([1ea09c6](https://github.com/rstreamlabs/rstream-go/commit/1ea09c6b38b5fae9f8240995d35da1b4146e8786))
+* require Go 1.27.4 for the HTTP security patch ([6bf7874](https://github.com/rstreamlabs/rstream-go/commit/6bf787402dfde647085fa9ad4453e1e30bbab68c))
+* **security:** require Go 1.27.4 for HTTP clients and servers ([22873d8](https://github.com/rstreamlabs/rstream-go/commit/22873d8b9216a794cc2ea8d950dbc4abf677dcf5))
+* **transport:** qualify Go transport recovery with reviewed dependencies ([7b64123](https://github.com/rstreamlabs/rstream-go/commit/7b6412387b64f0be5ba26846b97ee91ca20d8b4b))
+
 ## [1.37.0](https://github.com/rstreamlabs/rstream-go/compare/v1.36.4...v1.37.0) (2026-11-06)
 
 
