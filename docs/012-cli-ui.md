@@ -1,6 +1,6 @@
 # Interactive CLI inventory
 
-Run `rstream ui` after selecting a context with the [CLI workflow](002-cli-workflow.md). It watches visible clients, tunnels and WebTTY servers in one terminal. Engine permissions determine which categories and fields are available; an empty result alone does not prove a permission denial.
+Run `rstream ui` after selecting a context with the [CLI workflow](002-cli-workflow.md). It watches visible clients, tunnels and WebTTY servers in one terminal. Engine permissions determine which categories and fields are available. Check the active context and its permissions if expected resources are missing.
 
 ## Switch context or project
 

@@ -38,7 +38,7 @@ Three choices describe different parts of the path:
 
 | Choice                    | Field or API                     | Meaning                                                                                                                 |
 | ------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Client → engine transport | `Client` transport configuration | TLS or QUIC for the authenticated agent connection. [Transport configuration](004-transport.md) covers this connection. |
+| Agent transport | `Client` transport configuration | TLS or QUIC for the authenticated agent connection. [Transport configuration](020-agent-transport.md) covers this connection. |
 | Tunnel data model         | `Type`                           | `bytestream` preserves an ordered byte stream; `datagram` preserves messages.                                           |
 | Service protocol          | `Protocol`                       | The protocol the public edge accepts, or the parser used for an explicitly declared private protocol.                   |
 
@@ -76,52 +76,6 @@ service's HTTP/TLS properties. Certificate-only devices can use a known regional
 engine address; resolving a region through the Control plane requires its own
 authorized API credential.
 
-## Start with an HTTP service
-
-For an application serving HTTP/1.1 on the tunnel, use:
-
-```go
-properties := rstream.TunnelProperties{
-	Publish:     rstream.BoolPtr(true),
-	Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
-	HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP1_1),
-}
-```
-
-Ordinary clients reach the edge over HTTPS. The upstream HTTP variant is the
-variant the application implements; edge negotiation with a browser is a
-separate hop. A Go `http.Server` can serve a bytestream tunnel as a `net.Listener`.
-The [first HTTP program](../README.md#use-the-go-library) shows the complete lifecycle.
-
-Continue with [HTTP tunnels](020-http-tunnels.md) for upstream TLS, HTTP/2/3,
-WebSocket/CONNECT and browser access policy.
-
-## Publish TCP or TLS
-
-| Service requirement                                                         | Choice                            |
-| --------------------------------------------------------------------------- | --------------------------------- |
-| Carry a protocol that already supplies its own security, such as SSH        | Published `tcp`.                  |
-| Let the edge terminate TLS and enforce public TLS/client-certificate policy | `tls` with `TLSMode=terminated`.  |
-| Let the application own the public TLS handshake and certificate            | `tls` with `TLSMode=passthrough`. |
-
-For published TCP, leave `Port` unset for an ephemeral port or request one
-already reserved by the project. The application supplies downstream encryption
-and authentication. TCP accepts its port and routing policy; HTTP, TLS and
-hostname options belong to their respective protocols.
-
-The TCP creation properties for a reserved project port are:
-
-```go
-properties := rstream.TunnelProperties{
-	Publish:  rstream.BoolPtr(true),
-	Protocol: rstream.ProtocolPtr(rstream.ProtocolTCP),
-	Port:     rstream.Uint32Ptr(10042),
-}
-```
-
-[TLS and DTLS configuration](021-tls-dtls-tunnels.md) explains termination,
-client certificates, minimum versions and cryptographic project policy.
-
 ## Hostnames, domains and ports
 
 | Property                   | Use                                                                                              |
@@ -149,5 +103,13 @@ DNS and registration workflows.
 
 Agent credentials authenticate the creating/dialing process. Public edge policy
 authenticates the service's callers. Configure the latter for the selected
-protocol in [HTTP](020-http-tunnels.md) or [TLS/DTLS](021-tls-dtls-tunnels.md).
-Managed terminal payload encryption belongs to [WebTTY](009-webtty.md#e2e-crypto).
+protocol in [HTTP](005-http-tunnels.md) or [TLS/DTLS](006-tls-dtls-tunnels.md).
+Managed terminal payload encryption belongs to [WebTTY](009-webtty.md#end-to-end-encryption).
+
+## Continue with the service protocol
+
+| Service | Guide |
+| --- | --- |
+| Website, API or WebSocket | [HTTP tunnels](005-http-tunnels.md) covers forwarding, upstream HTTP versions and access policy. |
+| TLS or DTLS service | [TLS and DTLS tunnels](006-tls-dtls-tunnels.md) explains termination, passthrough and certificate requirements. |
+| A TCP service with its own security, such as SSH | Select TCP and let the Engine assign a port, or request a port reserved for the project. See the [SSH client and server](../examples/README.md#choose-another-example). |

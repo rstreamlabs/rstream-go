@@ -1,6 +1,6 @@
 # Plain HTTP CONNECT
 
-The Go SDK can publish HTTP tunnels that carry plain authority-form `CONNECT` requests. This is the standard TCP proxy mechanism used by forward proxies and system proxy integrations. It is not Extended CONNECT and it does not use a `:protocol` token.
+The Go SDK can publish HTTP tunnels that carry plain authority-form `CONNECT` requests. This is the standard TCP proxy mechanism used by forward proxies and system proxy integrations. For WebSocket, WebTransport or MASQUE, see [Extended CONNECT](014-extended-connect.md).
 
 ## Tunnel setup
 
@@ -42,14 +42,3 @@ On HTTP/2 and HTTP/3, multiple CONNECT streams can share one connection. To prev
 Once a connection enters one mode, requests from the other mode are rejected with `421 Misdirected Request`. Destination policy remains the upstream proxy's responsibility; keep target allowlists, authentication, and audit logging in that proxy.
 
 `Proxy-Authorization` and `Proxy-Authenticate` are preserved for plain CONNECT so the upstream proxy can authenticate clients. Sensitive proxy credentials are still redacted from engine logs.
-
-## Runtime coverage
-
-The runtime forwarding suite includes a real CONNECT proxy and TCP echo target:
-
-```sh
-make test-bins
-bash test/e2e/runtime-forward.sh
-```
-
-The cases are listed as `forward/http connect h1`, `forward/http connect h2`, and `forward/http connect h3`.

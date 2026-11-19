@@ -58,14 +58,12 @@ rstream --version
 rstream --help
 ```
 
-These commands prove local availability, not Engine connectivity or package provenance. Installers select released artifacts; the source path below builds the current checkout.
-
 ## First connection
 
 Once installed, follow the [CLI workflow](002-cli-workflow.md) to authenticate, select a project and forward a local service. For unattended devices, that guide also covers project-scoped credentials and certificate authentication.
 
 ## Build from source
 
-To compile the CLI or develop the SDK, follow [Build from source](001-building-from-source.md). It lists the Go, Git and platform-tool requirements, gives direct Go and Makefile commands, and identifies the resulting binaries. Installing the SDK as a library does not install the CLI.
+To compile the CLI or develop the SDK, follow [Build from source](001-building-from-source.md). It lists the Go, Git and platform-tool requirements, gives platform-specific build instructions, and identifies the resulting binaries. Installing the SDK as a library does not install the CLI.
 
 The [FIPS profile](017-fips-140-3-profile.md) is a separate restricted distribution with its own build requirements and cryptographic module boundary.

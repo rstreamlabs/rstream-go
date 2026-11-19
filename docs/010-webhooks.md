@@ -1,6 +1,6 @@
-# Webhooks
+# Receive live events and webhooks
 
-The Go SDK and CLI separate live events from durable delivery:
+Use the event stream to observe changes while your client is connected. Configure a project webhook when a receiver needs durable delivery and retry history.
 
 | Surface | Purpose |
 | --- | --- |

@@ -27,10 +27,6 @@ If a change affects examples, documentation, or generated output, update the cor
 
 Public pull requests do not automatically run the repository release/build workflows. Maintainers run CI after reviewing the change; include the local commands you ran in the PR description.
 
-The [Go SDK engineering guide](docs/022-sdk-engineering.md) explains ownership,
-synchronization, cancellation, protocol maintenance and the tests expected for
-those changes.
-
 ## CLI configuration changes
 
 Tunnel options from `forward`, apply YAML and Docker labels must use
@@ -46,9 +42,42 @@ an explicit, justified exclusion in the inventory. Keep the CLI/YAML reference
 tables current and reject unsupported spellings instead of adding compatibility
 fallbacks.
 
+## SDK development
+
+### Ownership and synchronization
+
+| Concern                | Repository practice                                                                                                               |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Mutable state          | Give each field an owner or explicit synchronization rule. State whether a mutex, channel loop or immutable snapshot protects it. |
+| Locks                  | Keep critical sections small. Release shared-state locks before blocking I/O, waiting for workers or invoking external callbacks. |
+| Goroutines and timers  | Attach them to a bounded lifecycle with a stop signal and a join/completion path. The owner observes errors and shutdown.         |
+| Channels               | Define who sends, closes and drains them, and bound buffered work. Cancellation must unblock blocked senders/receivers.           |
+| Contexts and deadlines | Propagate them through setup and I/O. Retain the operation's resources until cancellation has completed.                          |
+| Close/retry/revoke     | Make concurrent and repeated calls safe; prevent a retired generation from affecting its successor.                               |
+
+For connection code, track partial reads/writes, final bytes returned with an
+error and the difference between message boundaries and stream framing. Reuse
+buffers in hot paths only while their previous operation has released ownership.
+Choose limits for peers, pending operations, queues and leases before adding
+background work.
+
+### Tests for changed behavior
+
+| Change                | Required evidence                                                                                                              |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Bug fix               | A regression through the owning public entry point that fails on the old behavior.                                             |
+| Configuration choice  | Representative coverage of each path and source-parity tests where inputs share normalization.                                 |
+| Concurrency/lifecycle | Parallel use, failure, cancellation, retry and shutdown under the race detector. Assert resource bounds as well as completion. |
+| Protocol framing      | Partial/final I/O, malformed input, peer loss and supported stream/datagram paths.                                             |
+| External dependency   | A real configured integration fixture for required backend behavior; keep optional skips explicit.                             |
+
+Use deterministic barriers/channels to control concurrency tests rather than
+sleeps for ordering. Follow the [test guide](test/README.md) for fixture setup,
+then run the owning suites, race checks and vet from the prepared source graph.
+
 ## Stable releases
 
-Follow [CLI release maintenance](docs/019-cli-releases.md) for candidate integrity, protocol compatibility, promotion and package-source configuration. A source check does not authorize publication.
+Follow [CLI release maintenance](.github/scripts/README.md) for candidate integrity, protocol compatibility, promotion and package-source configuration. A source check does not authorize publication.
 
 ## Style
 
@@ -58,6 +87,18 @@ Keep changes small, explicit, and idiomatic.
 - prefer focused pull requests over broad refactors
 - keep public API changes intentional and documented
 - update README or docs when user-facing behavior changes
+
+## Protocol and dependency changes
+
+The wire schema lives in `pb/rstream.proto`. Check the resolved QUIC,
+WebTransport and MASQUE graph together when upgrading transport dependencies.
+The [ICE build procedure](tools/icepatch/README.md) explains how to use the
+prepared dependency graph for local builds and tests.
+
+For FIPS dependency changes, confirm the module certificate and operating
+environments, review the Security Policy and transport integration, and rerun
+the standard and profile-specific checks (`make tests` and `make fips-test`). Rebuild both Linux architectures
+and record their build metadata with the release.
 
 ## Generated code
 

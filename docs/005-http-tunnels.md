@@ -2,7 +2,19 @@
 
 HTTP tunnels accept HTTP traffic at the edge and forward HTTP requests to your upstream service. Downstream clients may negotiate HTTP/1.1, HTTP/2, or HTTP/3 with the edge; this is independent from how the edge reaches your upstream.
 
-HTTP tunnels also carry plain authority-form CONNECT and Extended CONNECT protocols when the selected HTTP versions support them. Plain CONNECT follows normal HTTP tunnel version support and is documented in [HTTP CONNECT](013-http-connect.md). WebSocket can be translated across HTTP/1.1 Upgrade, HTTP/2 Extended CONNECT, and HTTP/3 Extended CONNECT. WebTransport, CONNECT-UDP, and CONNECT-IP require an HTTP/3 upstream tunnel, which means `type=datagram`, `protocol=http`, and `http_version=h3` for published endpoints.
+## Forward an HTTP service
+
+Start a local HTTP service on port 8080 and select a project as shown in the
+[CLI walkthrough](002-cli-workflow.md#publish-a-first-http-service). Then run:
+
+```sh
+rstream forward 127.0.0.1:8080 --http
+```
+
+Open the printed HTTPS address and confirm it returns the response from your
+local service. Stop the forwarder with Ctrl+C. For an application that owns its
+tunnel, the [Go HTTP server example](../examples/README.md#serve-http) uses a
+bytestream tunnel directly as a listener.
 
 ## Upstream HTTP mode
 
@@ -77,21 +89,11 @@ A browser can send a delegated tunnel token using `Authorization: Bearer …` wi
 
 The Go API exposes `TunnelProperties.HTTPCORS` as `*httpcors.Config` from `github.com/rstreamlabs/rstream-go/httpcors`. Wire/JSON fields are `http_cors.allowed_origins`, `allowed_methods`, `allowed_headers`, `exposed_headers`, `allow_credentials` and `max_age` (seconds). A nil policy is omitted; a non-nil policy requires at least one origin.
 
-## Extended CONNECT and MASQUE
+## WebSockets and proxy protocols
 
-Published HTTP/3 datagram tunnels can carry WebTransport, CONNECT-UDP, and CONNECT-IP. WebTransport is an HTTP/3 session protocol with browser and native client implementations when draft versions match. CONNECT-UDP and CONNECT-IP are MASQUE protocols for UDP and IP proxying over HTTP, defined on top of HTTP Datagrams and the Capsule Protocol.
-
-The tunnel configuration for published MASQUE endpoints is:
-
-```go
-rstream.TunnelProperties{
-	Type:        rstream.TunnelTypePtr(rstream.TunnelTypeDatagram),
-	Publish:     rstream.BoolPtr(true),
-	Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
-	HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP3),
-}
-```
-
-The rstream engine relays MASQUE sessions but does not terminate UDP or IP proxy semantics itself. Your upstream service should implement CONNECT-UDP or CONNECT-IP using a protocol library such as `quic-go/masque-go` or `quic-go/connect-ip-go`.
-
-See [014-extended-connect.md](014-extended-connect.md) for the application protocols and runnable SDK examples.
+An HTTP tunnel can translate WebSocket upgrades between HTTP/1.1, HTTP/2 and
+HTTP/3 when the deployment supports the selected versions. Use the
+[WebSocket examples](../examples/README.md#choose-another-example) to choose an
+upstream HTTP variant. See [HTTP CONNECT](013-http-connect.md) for TCP proxy
+requests and [Extended CONNECT](014-extended-connect.md) for WebTransport
+and the UDP and IP proxy protocols under MASQUE.

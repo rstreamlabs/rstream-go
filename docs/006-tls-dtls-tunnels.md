@@ -1,10 +1,30 @@
 # TLS and DTLS tunnels
 
-TLS tunnels accept TLS at the edge. TLS behavior depends on `tls_mode`.
+A TLS tunnel carries a byte stream. DTLS uses datagrams and has its own version
+and project policy requirements. Choose which endpoint owns the public handshake
+before configuring the upstream connection.
 
-With `tls_mode=terminated`, the edge terminates TLS and forwards a clear bytestream upstream. In this mode you can set `tls_min_version` (`tls1.2` or `tls1.3`) and optionally require client certificates via mTLS.
+| Mode | What reaches the application | Where to enforce public TLS policy |
+| --- | --- | --- |
+| Terminated TLS | A clear byte stream by default. | The Engine presents the public certificate and applies the minimum TLS version and optional client certificate policy. |
+| TLS passthrough | The original TLS handshake and encrypted byte stream. | The application presents the certificate and enforces peer identity and version requirements. |
+| Published DTLS | Datagrams after the public DTLS negotiation. | The Engine negotiates the DTLS version and applies applicable project policy. |
 
-With `tls_mode=passthrough`, the edge forwards encrypted bytes upstream without decrypting. Because the edge does not terminate the TLS session, it cannot enforce TLS policy (such as minimum TLS version) and cannot validate client certificates. Those constraints must be enforced by the upstream.
+## Forward a TLS service
+
+For a local service accepting clear bytes on port 9000, select a project that
+allows published TLS tunnels and run:
+
+```sh
+rstream forward 127.0.0.1:9000 --tls --tls-mode terminated
+```
+
+Connect your TLS client to the printed hostname and port and verify the
+certificate against that hostname. If the local service already handles public
+TLS, use `--tls-mode passthrough` instead and configure the certificate
+and minimum version on that service. Stop forwarding with Ctrl+C. The
+[bytestream echo example](../examples/README.md#choose-another-example) shows
+the SDK side of a published TLS endpoint.
 
 ## Client certificate authentication
 
@@ -50,3 +70,8 @@ protocol. Use the connection adapter matching the imported Pion type:
 
 The DTLS examples use the latter adapter. WebRTC can use its own DTLS
 dependency in the same module.
+
+To exercise a published DTLS tunnel, use the published mode of the
+[datagram echo pair](../examples/README.md#choose-another-example) against an
+Engine that enables DTLS. Confirm that the client uses the advertised
+hostname and that the requested version complies with the project policy.

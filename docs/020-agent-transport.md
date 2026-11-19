@@ -1,11 +1,31 @@
-# Transport Configuration
+# Configure the agent transport
 
 Transport configuration controls the connection from an rstream process to the
 engine: TLS or QUIC, local routing, proxies, DNS and certificate trust. The
-[tunnel configuration](005-tunnel-configuration.md) selects the service carried
+[tunnel configuration](004-tunnel-configuration.md) selects the service carried
 through that authenticated connection.
 
-## Configuration
+## Choose TLS, QUIC or automatic selection
+
+The default `auto` mode gives QUIC a brief head start, then starts TLS if QUIC has not connected. The first transport that connects is pinned for the lifetime of the client and its control channel. Later streams and datagram sessions do not switch transport independently. Create a new client to run selection again.
+
+Fallback covers transport establishment only. Once QUIC has connected, an authentication or rstream protocol error is returned as-is; it does not trigger a second control channel over TLS.
+
+Select a mode through the CLI flag, environment, or shared YAML configuration:
+
+```bash
+rstream --tunnel-transport auto forward 8080
+export RSTREAM_TUNNEL_TRANSPORT=quic
+```
+
+```yaml
+transport:
+  mode: auto # auto, tls, or quic
+```
+
+`RSTREAM_QUIC_TRANSPORT=1` and `transport.useQuic` remain supported for compatibility. New configurations should use the canonical mode setting.
+
+## Configure a context
 
 Transport settings live in the YAML config file and can be defined at:
 
@@ -75,13 +95,11 @@ contexts:
           X-Env: "ci"
 ```
 
-## Security Invariant
+## Engine identity and admission
 
 The client-to-edge session is always negotiated over TLS 1.3. Transport settings never downgrade this requirement and do not change the cryptographic guarantees; they only influence which network path carries the TLS 1.3 session.
 
 When an HTTP CONNECT proxy is used, the proxy only provides a TCP tunnel to the edge. The rstream TLS 1.3 session is then established through that tunnel and remains end-to-end between the rstream client and the edge.
-
-## Admission
 
 Admission is how the edge decides whether to accept the upstream session.
 
@@ -89,7 +107,7 @@ Token admission is the default. The token is presented inside the rstream protoc
 
 Certificate admission uses a TLS client certificate. This mode is typically used in enterprise environments where identity, rotation, and device provisioning are managed through PKI. The client authenticates at session establishment time, using mutual TLS at the transport layer.
 
-## Connectivity Paths
+## Connect through a proxy or a private CA
 
 Direct connectivity opens a TCP connection to the edge destination and negotiates the rstream TLS 1.3 session on top of it. This is the normal mode on networks with standard outbound connectivity.
 
@@ -155,13 +173,13 @@ transport:
 
 The SDK does not read macOS System Settings, Windows Internet Options, or desktop-session proxy stores directly. Long-lived agents and service processes need reproducible transport configuration; configure process environment variables or set the YAML proxy fields explicitly.
 
-## Deterministic Egress
+## Select the outbound address
 
 Transport settings can bind the outbound connection to a specific local IP address or select an address from a specific network interface. This is useful on multi-homed hosts, split-routing setups, and environments where the default route is not the route you want for reaching the edge.
 
 IPv4-only or IPv6-only dialing can be enforced when one address family is filtered, unstable, or operationally undesirable. This is an address-selection constraint; it does not change the security model. The constraint applies to destination records (A or AAAA), independently of the DNS server connection: an IPv6 destination can be resolved through an IPv4 DNS server, or vice versa. The same separation applies to UDP queries, TCP fallback and DNS over TLS. DNS-over-TLS certificate verification still uses `dns.serverName`.
 
-## DNS Resolution
+## Choose a resolver
 
 DNS override allows the client to use a dedicated resolver for edge name resolution instead of the system resolver. This is useful when system DNS is constrained, inconsistent across environments, or must follow a specific egress route.
 
@@ -185,37 +203,13 @@ When a proxy is configured without explicit DNS settings or address-family const
 
 Interface binding and address-family settings are applied to the client side of the proxy path. For TCP/TLS, the selected local address is used for the TCP connection to the HTTP or SOCKS5 proxy. For QUIC over SOCKS5, the same local address is used for the SOCKS5 control TCP connection and UDP socket. For QUIC over MASQUE, the local selection applies to the QUIC connection to the MASQUE proxy. Custom DNS settings and address-family constraints apply before dialing the proxy path and therefore also control which IP address is sent as the engine target.
 
-## Resilience Options
+## Use multipath TCP
 
 Optional MPTCP support can be enabled where available to improve resilience when multiple network paths exist. This affects how the underlying TCP connectivity behaves; it does not change the TLS 1.3 requirement.
 
-## Tunnel Transport Selection
-
-The default `auto` mode gives QUIC a brief head start, then starts TLS if QUIC has not connected. The first transport that connects is pinned for the lifetime of the client and its control channel. Later streams and datagram sessions do not switch transport independently. Create a new client to run selection again.
-
-Fallback covers transport establishment only. Once QUIC has connected, an authentication or rstream protocol error is returned as-is; it does not trigger a second control channel over TLS.
-
-Select a mode through the CLI flag, environment, or shared YAML configuration:
-
-```bash
-rstream --tunnel-transport auto forward 8080
-export RSTREAM_TUNNEL_TRANSPORT=quic
-```
-
-```yaml
-transport:
-  mode: auto # auto, tls, or quic
-```
-
-`RSTREAM_QUIC_TRANSPORT=1` and `transport.useQuic` remain supported for compatibility. New configurations should use the canonical mode setting.
-
-### Explicit transport in Go
+## Select the transport in a Go application
 
 Use `AutoTransport` when constructing a client directly, or select a strict transport when fallback is not desired:
-
-```bash
-export RSTREAM_TUNNEL_TRANSPORT=quic
-```
 
 ```go
 client, err := rstream.NewClient(rstream.ClientOptions{
@@ -252,47 +246,17 @@ For QUIC transport, `ProxyHTTP` must point at an HTTPS MASQUE proxy. If the URL 
 
 `AutoTransport` and `QUICTransport` are stateful and are designed to be held for the lifetime of the client. Create fresh instances when reconnecting after a connection failure.
 
-## Published and Private Tunnels
+## Address selection and private dialing
 
-For published tunnels, transport configuration primarily concerns the publishing client that maintains the upstream session to the edge. Downstream users connect with standard clients and do not use rstream transport settings.
+The SDK tries available IPv4 and IPv6 destinations in order of preference.
+A caller deadline covers DNS, proxy and transport setup. It also cancels
+connection attempts that are still in progress. When the caller supplies no
+deadline, the SDK bounds setup to 30 seconds. The logical Engine hostname
+continues to determine TLS name verification.
 
-For private tunnels, transport configuration applies on both sides. The publishing client must maintain its upstream session, and any rstream client dialing the private tunnel must also establish its own upstream session to the edge. Private connectivity therefore depends on both clients being able to reach the edge under their respective network constraints.
-
-### Alternate destination and proxy addresses
-
-Connection setup tries all resolved addresses, alternating IPv4 and IPv6 while
-preserving the order within each family. An unanswered first address does not
-consume the entire connection budget: a second complete connection attempt
-starts after 250 ms, and failures immediately make room for another address.
-At most two attempts run concurrently, including proxy and TLS handshakes. The
-losing connections are canceled, closed and joined before the dial returns.
-
-An explicit context deadline bounds the whole operation, including DNS. When
-no deadline is supplied, setup has a 30-second budget. Each attempt receives a
-share of the remaining budget (at least two seconds unless the total deadline
-is earlier). Cancellation interrupts blocked proxy handshakes as well as TCP
-and QUIC connection setup.
-
-Local addresses and interface bindings still restrict the usable routes. An
-interface address is selected for the address family of the current first hop.
-TLS server names, certificate verification, proxy URL identity, environment
-proxy selection and QUIC pooling use the original logical destination. Proxy
-remote DNS remains the default; custom DNS or forced IP-family options resolve
-proxy targets locally. Each new underlying connection resolves addresses again,
-including a connection opened after the QUIC transport is closed.
-
-MASQUE URI templates encode IPv6 target addresses once during expansion. A
-proxy that accepts its connection but never returns a CONNECT-UDP response is
-also interrupted by the setup deadline or cancellation.
-
-## Private datagram self-dial
-
-`Client.PacketDial` can dial a private datagram tunnel owned by the same client,
-including clients sharing one QUIC transport. The owner and dialer use separate
-routing identifiers on that connection. Stream-framed datagrams use their own
-framing path. Packet loss on the native unreliable path should be assessed with
-the [datagram qualification procedure](../test/performance/000-datagram-qualification.md).
-
-For changes to framing, admission or transport dependencies, follow the
-[SDK engineering guide](022-sdk-engineering.md). The [FIPS profile](017-fips-140-3-profile.md)
-adds its cryptographic module and startup requirements.
+For a published tunnel, these settings apply to the agent. For a private
+tunnel, its owner and each dialing client need their own Engine connectivity.
+A Go client can use `Client.PacketDial` to dial a private datagram tunnel it owns.
+Native datagrams may be lost; opt into reliable delivery when the application
+needs it. See [tunnel configuration](004-tunnel-configuration.md) and the
+[FIPS profile](017-fips-140-3-profile.md) for deployment constraints.

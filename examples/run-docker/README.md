@@ -1,49 +1,22 @@
-# Run Docker Example
+# Forward a Docker service from labels
 
-This example runs `rstream -v run --docker` alongside a `whoami` container, Traefik-style, using Docker labels.
+This example runs a `whoami` container and uses the rstream CLI to publish it. The CLI discovers labeled containers and updates their tunnels as Docker reports changes.
 
-## Prerequisites
+| Prerequisite | Purpose |
+| --- | --- |
+| Docker with Compose | Runs both services and provides the Docker socket used for discovery. |
+| Engine endpoint and project token | Authorize the agent to publish HTTP tunnels. Use a token scoped to this example's project. |
+| Container images | The [Compose file](docker-compose.yml) uses `rstream/rstream:latest` and `rstream/whoami:latest`. |
 
-- A configured engine and token in `examples/run-docker/.env`.
-- `rstream/rstream:latest` and `rstream/whoami:latest` images available (from registry or your local build).
+From this directory, copy [`.env.example`](.env.example) to `.env` and set these values. Keep the file private.
 
-## Run
+| Variable | Value |
+| --- | --- |
+| `RSTREAM_ENGINE` | Engine hostname and port for the project, such as `engine.example.com:443`. |
+| `RSTREAM_AUTHENTICATION_TOKEN` | Token with the required permissions on that project. |
 
-```bash
+```sh
 docker compose up
 ```
 
-The `rstream` service watches Docker events and reconciles tunnels automatically.
-
-## docker-compose.yml
-
-```yaml
-services:
-  whoami:
-    image: rstream/whoami:latest
-    networks:
-      - rstream
-    labels:
-      rstream.tunnel.web.forward: "8080"
-      rstream.tunnel.web.publish: "true"
-      rstream.tunnel.web.protocol: "http"
-      rstream.tunnel.web.http.version: "http/1.1"
-      rstream.tunnel.web.label.app: "whoami"
-  rstream:
-    image: rstream/rstream:latest
-    user: root
-    command:
-      - -v
-      - run
-      - --docker
-      - --watch
-    networks:
-      - rstream
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-    env_file:
-      - .env
-networks:
-  rstream:
-    name: rstream
-```
+Open the forwarding URL from the rstream service logs and check that `whoami` returns JSON. Stop Compose when finished. The discovery container can access the Docker socket, so run this example on a host where you trust the container and the owners of its service labels. See [declarative tunnels](../../docs/007-declarative-tunnels.md) for label options.

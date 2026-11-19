@@ -22,7 +22,7 @@ An agent connects outbound to the edge; services behind it need no inbound port.
 | Bytestream       | Carries reliable, ordered bytes for HTTP and stream protocols.                            |
 | Datagram         | Preserves message boundaries for datagram protocols.                                      |
 
-The [client-to-edge transport](docs/004-transport.md) and the [protocol exposed by a tunnel](docs/005-tunnel-configuration.md) are separate choices. Go implements TLS and QUIC agent transports and both bytestream and datagram tunnels. The protocols available for publication depend on the deployment and project policy.
+The [client-to-edge transport](docs/020-agent-transport.md) and the [protocol exposed by a tunnel](docs/004-tunnel-configuration.md) are separate choices. Go implements TLS and QUIC agent transports and both bytestream and datagram tunnels. The protocols available for publication depend on the deployment and project policy.
 
 ## Start with the CLI
 
@@ -38,7 +38,7 @@ Replace `my-project-endpoint` with the endpoint of your project. Login opens the
 
 ## Use the Go library
 
-Use Go 1.27.4 for this walkthrough. Create a small module and add the SDK:
+Use the Go toolchain required by the SDK release. Create a small module and add the SDK:
 
 ```sh
 mkdir rstream-hello
@@ -116,8 +116,8 @@ The runnable [HTTP server example](examples/README.md#serve-http) adds signal ha
 | Task                                          | Start here                                                                                                            |
 | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | Install and configure the CLI                 | [Installation](docs/000-installation.md) and [CLI workflow](docs/002-cli-workflow.md)                                 |
-| Choose connectivity and tunnel options        | [Transport configuration](docs/004-transport.md) and [tunnel configuration](docs/005-tunnel-configuration.md)         |
-| Share files or operate remote terminals       | [File sharing](docs/007-file-sharing.md) and [WebTTY](docs/009-webtty.md)                                             |
+| Choose a tunnel or service protocol        | [Tunnel configuration](docs/004-tunnel-configuration.md), [HTTP](docs/005-http-tunnels.md) and [TLS/DTLS](docs/006-tls-dtls-tunnels.md)         |
+| Share files or operate remote terminals       | [File sharing](docs/008-file-sharing.md) and [WebTTY](docs/009-webtty.md)                                             |
 | Integrate webhooks or agent tools             | [Webhooks](docs/010-webhooks.md) and [MCP](docs/011-mcp.md)                                                           |
 | Find API, security and troubleshooting guides | [Documentation index](docs/README.md) and [Go API reference](https://pkg.go.dev/github.com/rstreamlabs/rstream-go)    |
 | Build or contribute                           | [Source build](docs/001-building-from-source.md), [Contributing](CONTRIBUTING.md) and [coding style](CODING_STYLE.md) |

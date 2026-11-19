@@ -7,15 +7,19 @@ Use Go when your application should own the Engine connection, accept or dial st
 | Path                         | Preparation                                                                                      | First result                                                                                                                         |
 | ---------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
 | Consume the published module | Create a Go module, add `github.com/rstreamlabs/rstream-go`, select an authorized CLI context.   | Follow the complete [HTTP program in the README](../README.md#use-the-go-library): save main.go, tidy, run and curl its printed URL. |
-| Run or modify these examples | [Build this checkout](001-building-from-source.md); Make prepares the verified dependency graph. | [HTTP server/client pair](../examples/README.md#serve-http) from the repository root.                                                |
+| Run or modify these examples | [Build this checkout](001-building-from-source.md). | [HTTP server/client pair](../examples/README.md#serve-http) from the repository root.                                                |
 | Forward an existing process  | No application code change.                                                                      | [CLI workflow](002-cli-workflow.md).                                                                                                 |
+
+## Run a private client and server
+
+The CLI context supplies Engine credentials to both programs. Build and run the [private HTTP example pair](../examples/README.md#connect-privately) to see the server accept connections on a tunnel and the client use rstream as its HTTP dialer. Both programs must use the same project. To serve a public route instead, use the [standalone first program](../README.md#use-the-go-library) in a new module.
 
 ## Network interfaces and ownership
 
 | Object/API                                       | Go integration                                                        | Owner closes                                                                                             |
 | ------------------------------------------------ | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | `Client`                                         | Shared authenticated runtime and Engine HTTP APIs.                    | Close after its controls and application operations stop; this releases owned transports and HTTP pools. |
-| `Client.Connect` → `ControlChannel`              | Create tunnels and receive their connections.                         | Close the channel after tunnels/accept loops stop.                                                       |
+| `Client.Connect`              | Returns a control channel that creates tunnels and receives their connections.                         | Close the channel after tunnels/accept loops stop.                                                       |
 | `BytestreamTunnel`                               | `net.Listener`; accepted streams implement `net.Conn`.                | Close accepted connections, tunnel and channel. `http.Server.Serve` accepts the tunnel directly.         |
 | `Client.Dial`                                    | `net.Conn` for a private tunnel selected by name/ID.                  | Close each connection, including on request cancellation.                                                |
 | `DatagramTunnel`, `PacketListener`, `PacketDial` | Packet sessions and `net.PacketConn` adapters for protocol libraries. | Close sessions/listeners and stop owned workers before their client.                                     |
@@ -26,10 +30,10 @@ Pass contexts/deadlines for bounded setup and requests. A context used to establ
 
 | Requirement                                                             | Reference or sample                                                                                                 |
 | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| TLS/QUIC client transport, proxy, private CA, DNS and interface binding | [Transport configuration](004-transport.md).                                                                        |
-| HTTP/1.1, h2c, HTTP/3, published TCP/TLS/DTLS/QUIC or private access    | [Tunnel configuration](005-tunnel-configuration.md), [example catalog](../examples/README.md).                      |
+| TLS/QUIC client transport, proxy, private CA, DNS and interface binding | [Transport configuration](020-agent-transport.md).                                                                        |
+| HTTP/1.1, h2c, HTTP/3, published TCP/TLS/DTLS/QUIC or private access    | [Tunnel configuration](004-tunnel-configuration.md), [example catalog](../examples/README.md).                      |
 | WebSocket or WebTransport, CONNECT-UDP/IP                               | [Extended CONNECT](014-extended-connect.md); application protocol code stays in its library.                        |
 | Inventory/watch/session APIs with token or certificate                  | [Engine API mTLS/TURN](015-engine-mtls-turn.md). Control plane administration still needs its own authorized token. |
 | Restricted cryptographic distribution                                   | [FIPS profile](017-fips-140-3-profile.md); its exclusions are intentional.                                          |
 
-Coverage still depends on Engine version, edition, listeners, project permissions and plan. Native unreliable datagrams preserve message boundaries and allow loss; the [qualification procedure](../test/performance/000-datagram-qualification.md) explains how to attribute it. Applications own their protocol authorization and recovery.
+Coverage still depends on Engine version, edition, listeners, project permissions and plan. Native unreliable datagrams preserve message boundaries and can be lost. Applications own their protocol authorization and recovery.

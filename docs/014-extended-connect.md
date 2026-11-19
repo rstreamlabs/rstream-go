@@ -1,6 +1,6 @@
 # Extended CONNECT and MASQUE
 
-The Go SDK can publish and dial HTTP/3 datagram tunnels that carry Extended CONNECT protocols such as WebTransport, CONNECT-UDP, and CONNECT-IP. Plain authority-form CONNECT is not Extended CONNECT and is documented separately in [HTTP_CONNECT.md](013-http-connect.md). The SDK does not implement MASQUE itself; the samples and runtime tests use the upstream protocol libraries directly:
+The Go SDK can publish and dial HTTP/3 datagram tunnels that carry Extended CONNECT protocols such as WebTransport, CONNECT-UDP, and CONNECT-IP. Plain authority-form CONNECT is not Extended CONNECT and is documented separately in [HTTP CONNECT](013-http-connect.md). The SDK does not implement MASQUE itself; the samples and runtime tests use the upstream protocol libraries directly:
 
 - `github.com/quic-go/masque-go` for CONNECT-UDP.
 - `github.com/quic-go/connect-ip-go` for CONNECT-IP.
@@ -49,14 +49,14 @@ The upstream server owns IP proxy behavior: route scoping, address assignment, r
 
 ## Samples
 
-Prepare this checkout with [Build from source](001-building-from-source.md), then run from its root. The MASQUE samples follow the same published/private flag shape as other examples:
+Build the [MASQUE programs](../examples/README.md#protocol-specific-setup) with `make masque-server masque-client`. Start a UDP service on port 9000 before running the client. Use separate terminals for the server and client. Choose the private pair or the published pair:
 
 ```bash
-go run -modfile=out/ice-patch/go.mod ./examples/masque-server --variant connect-udp
-go run -modfile=out/ice-patch/go.mod ./examples/masque-client --variant connect-udp --target 127.0.0.1:9000
+./out/examples/masque-server --variant connect-udp
+./out/examples/masque-client --variant connect-udp --target 127.0.0.1:9000
 
-go run -modfile=out/ice-patch/go.mod ./examples/masque-server --variant connect-udp --publish
-go run -modfile=out/ice-patch/go.mod ./examples/masque-client --variant connect-udp --publish --target 127.0.0.1:9000
+./out/examples/masque-server --variant connect-udp --publish
+./out/examples/masque-client --variant connect-udp --publish --target 127.0.0.1:9000
 ```
 
 CONNECT-IP uses the same flags with `--variant connect-ip`. Published clients can pass `--addr` to skip tunnel lookup and connect to a specific published forwarding address.
@@ -64,14 +64,3 @@ CONNECT-IP uses the same flags with `--variant connect-ip`. Published clients ca
 ## Browser support
 
 WebTransport is exposed to browsers through the WebTransport API. CONNECT-UDP and CONNECT-IP are not exposed as general-purpose browser JavaScript APIs. They are intended for native clients, system proxy integrations, VPN-like clients, or application runtimes that can open HTTP/3 Extended CONNECT sessions directly.
-
-## Runtime tests
-
-The runtime MASQUE suite publishes an HTTP/3 datagram tunnel and verifies both CONNECT-UDP and CONNECT-IP end-to-end against a live engine:
-
-```bash
-make test-bins
-BIN=out/test bash test/e2e/runtime-forward.sh
-```
-
-The cases are listed as `forward/connect udp` and `forward/connect ip` in the runtime forwarding output.

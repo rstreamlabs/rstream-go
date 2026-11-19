@@ -1,19 +1,21 @@
-# rstream run
+# Manage declarative tunnels
 
 `rstream run` keeps a set of local services connected through tunnels described in YAML or Docker labels. Use it when a daemon should discover and reconcile services over time; `rstream forward` is the simpler path for one foreground tunnel. Install and configure the CLI first with the [CLI workflow](002-cli-workflow.md).
 
-## Quick Start
+## Apply YAML or discover Docker services
 
-```bash
-# Apply a YAML spec once
-rstream -v run --apply ./tunnels.yaml
+From the repository root, start an HTTP service on port 8080 and select the
+project and credentials for this run. Apply the bundled example and open the
+forwarding address it prints:
 
-# Watch the YAML for changes and reconcile
-rstream -v run --apply ./tunnels.yaml --watch
-
-# Discover tunnels from Docker labels
-rstream -v run --docker --watch
+```sh
+rstream -v run --apply ./examples/run-yaml/tunnels.yaml
 ```
+
+Stop the process with Ctrl+C. Add `--watch` when the runner should reconcile
+changes to the file. For container discovery, use the
+[Docker example](../examples/run-docker/README.md), which starts an upstream
+service with matching labels.
 
 ## Flags
 
@@ -25,10 +27,9 @@ rstream -v run --docker --watch
 | `--docker-socket`          | Select the Docker socket.                          | `unix:///var/run/docker.sock`.                                                                             |
 | `--docker-network`         | Select a container network for forwarding.         | Optional; otherwise use the discovery rules below.                                                         |
 | `--docker-default-context` | Select the default CLI context for Docker tunnels. | Defaults to the normal selected context; containers cannot override it unless the opt-in below is enabled. |
-
 | `--docker-allow-context-labels` | Allow `rstream.context` labels to select a configured identity. | `false`; delegate only to trusted container owners. |
 
-## Command Modes
+## Choose how to run
 
 | Command        | Use it for                                                                  |
 | -------------- | --------------------------------------------------------------------------- |
@@ -81,7 +82,7 @@ The first example deliberately uses the selected context. Optional `contexts` en
 | `context`                                       | Named key in `contexts`, or inline object                                 | Omit to reuse the selected CLI context.                                              |
 | `tunnel`                                        | Object containing the properties below                                    | Required.                                                                            |
 | `tunnel.publish`                                | Boolean; expose an ordinary public endpoint                               | Omit to use API defaults; `false` requests private access permitted by the plan.     |
-| `tunnel.protocol`, `tunnel.type`                | Protocol `http/tls/tcp/dtls/quic/webtty`; semantics `bytestream/datagram` | Must be compatible; see [tunnel properties](005-tunnel-configuration.md).            |
+| `tunnel.protocol`, `tunnel.type`                | Protocol `http/tls/tcp/dtls/quic/webtty`; semantics `bytestream/datagram` | Must be compatible; see [tunnel properties](004-tunnel-configuration.md).            |
 | `tunnel.host`, `tunnel.port`                    | Public hostname; reserved TCP port as integer 1–65535                     | Port applies to published TCP; do not set a hostname on TCP.                         |
 | `tunnel.labels`                                 | String key/value map                                                      | Optional inventory metadata.                                                         |
 | `tunnel.upstreamTLS`                            | Boolean controlling upstream TLS                                          | At tunnel level, never under `http`; incompatible with TLS passthrough.              |
@@ -97,7 +98,7 @@ The first example deliberately uses the selected context. Optional `contexts` en
 | `tunnel.tls.alpns`, `.ciphers`                  | Lists of ALPN names and cipher-suite names                                | Protocol/Engine validation still applies.                                            |
 | `tunnel.tls.mtls`                               | Boolean requiring published client certificates                           | Separate from the agent's own authentication.                                        |
 | `contexts.<key>.external`, `.name`              | Boolean reference plus optional local context name                        | `external: true` loads the central context; name defaults to the key.                |
-| `contexts.<key>.engine`, `.token`, `.transport` | Inline `host:port`, token string and shared transport object              | Engine and token required unless external; see [transport fields](004-transport.md). |
+| `contexts.<key>.engine`, `.token`, `.transport` | Inline `host:port`, token string and shared transport object              | Engine and token required unless external; see [transport fields](020-agent-transport.md). |
 
 ### Context Resolution Order
 
@@ -213,7 +214,7 @@ sessions finish on their original immutable data paths.
 
 ## HTTP CORS
 
-`forward` uses the six `--cors-*` options documented in [Tunnel properties](020-http-tunnels.md#cross-origin-browser-access-cors). The equivalent `run --apply` configuration is:
+`forward` uses the six `--cors-*` options documented in [Tunnel properties](005-http-tunnels.md#cross-origin-browser-access-cors). The equivalent `run --apply` configuration is:
 
 ```yaml
 version: 1

@@ -16,7 +16,7 @@ system assessment.
 
 The upstream Go behavior and limitations are defined in [Go FIPS 140-3 compliance](https://go.dev/doc/security/fips140).
 
-## Product Claim and Delivery Evidence
+## What the profile covers
 
 FIPS 140-3 levels 1 through 4 describe the assurance level of a validated
 cryptographic module. They are not graduated self-attestation levels for the
@@ -41,7 +41,7 @@ description and must follow the NIST logo requirements.
 
 ## Supported Scope
 
-The implemented phase-one through phase-three profile covers:
+The profile covers these Go runtime and transport capabilities.
 
 - Go 1.27;
 - Linux x86-64 and arm64;
@@ -60,7 +60,7 @@ The implemented phase-one through phase-three profile covers:
 - P-256 ECDH, HKDF-SHA256, and AES-256-GCM with internally generated random
   nonces for WebTTY session-key envelopes and terminal payloads.
 
-The current phase excludes:
+The profile excludes these capabilities.
 
 - external mTLS signers (`auth.mtls.storage.kind: exec`); arbitrary provider executables are outside the reviewed module boundary and are rejected before execution;
 
@@ -147,28 +147,16 @@ CGO_ENABLED=0
 
 `GOFIPS140` selects a frozen Go Cryptographic Module and enables FIPS mode by default. The `rstream_fips` build tag enables the rstream feature policy and fail-closed runtime checks. Both are required.
 
-The phase-three profile freezes `github.com/quic-go/quic-go` at `v0.60.0` and
-`github.com/quic-go/webtransport-go` at `v0.11.1`.
-The FIPS build fails its metadata check, and the executable fails closed at
-startup, if that reviewed dependency identity changes.
+The [Makefile](../Makefile) pins the reviewed Go cryptographic module,
+QUIC and WebTransport identities. The build checks artifact metadata, and the
+CLI checks the same identities and the enabled FIPS runtime at startup.
+Setting `GODEBUG=fips140=off` causes the restricted binary to exit before executing a
+command.
 
-## Runtime Verification
+## Verify an artifact
 
-A FIPS-profile CLI identifies itself and the exact linked module build:
-
-```text
-rstream version <version> (FIPS 140-3 profile, Go module v1.0.0-c2097c7c, quic-go v0.60.0, webtransport-go v0.11.1)
-```
-
-At process startup, the CLI verifies that:
-
-- the rstream FIPS profile was compiled in;
-- Go reports FIPS 140-3 mode as enabled;
-- the linked Go module is the exact frozen build;
-- the linked `quic-go` module is the reviewed phase-two version;
-- the linked `webtransport-go` module is the reviewed phase-three version.
-
-The process exits before command execution when any condition is false. In particular, a caller cannot silently downgrade a FIPS-profile binary with `GODEBUG=fips140=off`.
+Run `rstream --version` with the FIPS binary. Its output identifies the profile and
+the exact module, QUIC and WebTransport versions.
 
 Build metadata provides an independent artifact check:
 
@@ -270,35 +258,4 @@ Normal Go TLS defaults remain controlled by the linked Go Cryptographic Module i
 
 QUIC always requires TLS 1.3. `quic-go` uses the Go FIPS-aware TLS cipher
 selection, rejects ChaCha20 in FIPS mode, delegates QUIC packet AES-GCM to the
-Go cryptographic module, and uses AES for header protection. The strict test
-performs a real `QUICTransport` stream exchange and verifies that this exact
-integration remains operational.
-
-## Test Mode
-
-`make fips-test` adds `GODEBUG=fips140=only` while running the profile-specific
-test set. It exercises real TLS 1.3 and QUIC exchanges in addition to the
-policy checks. Go documents `fips140=only` as an assessment and debugging aid
-that can intentionally return errors or panic for non-approved operations. It
-is not a production setting.
-
-Standard tests continue to run without the profile:
-
-```bash
-make tests
-```
-
-Both test modes are required because the standard build retains the complete protocol surface while the FIPS build intentionally rejects excluded features.
-
-## Module Upgrade Procedure
-
-Changing `FIPS_GO_MODULE`, Go itself, `quic-go`, or `webtransport-go` is a security-relevant
-release change. The Makefile values are intentionally not caller-overridable.
-An upgrade requires:
-
-1. confirming the module's CMVP certificate status and applicable operating environments;
-2. reviewing the module Security Policy, Go release notes, and the `quic-go`
-   and `webtransport-go` FIPS integration;
-3. running the standard and FIPS-specific test suites;
-4. rebuilding both Linux architectures and checking their build metadata;
-5. updating this document, release evidence, and product documentation with the exact module version.
+Go cryptographic module, and uses AES for header protection.

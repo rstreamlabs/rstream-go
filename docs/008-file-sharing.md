@@ -1,19 +1,22 @@
-# File sharing
+# Share files over HTTPS
 
 `rstream files [path]` publishes a file or directory through one HTTPS tunnel. The path defaults to the current directory. It runs an embedded HTTP service, read-only by default, directly on the tunnel listener; there is no Python process, local port, Node runtime, or runtime asset download.
 
+[Select a project](002-cli-workflow.md), then create a small directory with
+a file you intend to share. Run this from its parent directory:
+
 ```sh
-rstream files ./exports
-rstream files ./backup.tar.zst --password
-rstream files ./exports --exclude '*.log' --exclude private --rstream-auth
-rstream files ./exports --password-file /path/outside/share/password -o json
+rstream files ./exports --password
 ```
+
+Open the printed URL and sign in with the username `rstream` and the password
+you chose in the terminal. Verify that you can download the file.
 
 Stop the foreground process to close the share. Automatic reconnection follows `forward`; use `--no-retry` to stop after a disconnect. Files are read live, without uploading a stored copy. Changes to the source are visible on refresh. This is not a filesystem snapshot: changing a file during a download or ZIP can interrupt or alter that transfer.
 
 File sharing is unavailable in the restricted FIPS build for both WebDAV and WebRTC, including the WebTTY filesystem. See the [FIPS compatibility table](017-fips-140-3-profile.md#file-sharing-compatibility).
 
-## Command surface
+## Share and access options
 
 | Option | Behavior |
 | --- | --- |
@@ -59,7 +62,7 @@ With no auth flag, inherit project policy. When it permits public access, CLI an
 
 Local Basic and edge auth both use `Authorization` and cannot be combined. Conflicting explicit flags are rejected locally; a conflicting effective project policy produces a nonretryable error. There is no fallback to public access. Account auth uses browser cookies. Token clients must send the token on every request; the browser UI does not collect or persist tokens.
 
-HTTPS protects transport to the edge, and the tunnel protects the edge-to-agent hop. WebDAV is **not end-to-end encrypted** and uses normal project traffic quota. The optional WebRTC backend encrypts the peer connection and carries file bytes directly between peers when possible; TURN relays when necessary and uses the project's separate TURN quota. Files are not separately encrypted with a recipient-held key. See the [WebRTC protocol](008-filesystem-webrtc.md) for authentication, resource limits and browser compatibility.
+HTTPS protects transport to the edge, and the tunnel protects the edge-to-agent hop. WebDAV is **not end-to-end encrypted** and uses normal project traffic quota. The optional WebRTC backend encrypts the peer connection and carries file bytes directly between peers when possible; TURN relays when necessary and uses the project's separate TURN quota. Files are not separately encrypted with a recipient-held key. See [WebRTC file access](021-filesystem-webrtc.md) for authentication, resource limits and browser compatibility.
 
 ## CLI and MCP downloads
 
@@ -87,15 +90,16 @@ Go embedders can use `fileserver.Config{Root: "./maintenance", ReadWrite: true, 
 
 The browser UI still only browses and downloads, even on a writable share. Uploads and other mutations are available through WebDAV clients, the filesystem CLI and MCP. With public access, any client that can reach the share can use its enabled write operations. Authentication protects the same endpoints in either mode.
 
-Uploads stream to a private sibling file with bounded memory. A successful PUT publishes the complete file by renaming it into place. Readers retain the previous file until that commit. An interrupted request, upload limit, failed write or digest mismatch preserves the original; creating a new file does not expose a fragment. The destination must be writable, and replacement preserves its permission bits. Replacement changes the inode, so existing open handles and hard links still refer to the previous file. Staging names beginning with `.rstream-upload-` are reserved and unavailable through the share.
+A successful upload replaces the destination atomically. If the request is
+interrupted before publication or its content digest fails, the previous file
+remains available. A lost response can leave the publication outcome unknown.
+Use a durable upload ID when the caller must recover that outcome after a restart.
 
-The 64 MiB default limit can be increased with `--max-upload-size`; it limits each request body, not total disk usage or server-side copies. Both known-length and chunked oversized bodies return HTTP 413. Partial PUT requests with `Content-Range` return HTTP 400. Uploads are not resumable. An optional `Content-Digest: sha-256=:BASE64_DIGEST:` validates the content before publication; malformed digests return 400 and mismatches return 422. Without a durable upload identity, a missing response does not establish whether the rename happened.
-
-WebDAV mutations honor `If-Match` and `If-None-Match` against the resource's ETag. A stale revision or failed create-only condition returns 412 without changing the resource. Mutation admission covers all handlers and independently opened services for the same exported root, including aliases within that root and ancestor moves/deletions. A cancellable OS lock holds the precondition and mutation together; process exit releases it. Unix locks the rooted directory inode. Windows retains a reserved `.rstream-upload-mutation-lock` file, which is never listed or remotely accessible. The lock remains held throughout body reception and publication: a slow upload delays mutations to other paths in the same export. Waiting requests respect cancellation; reads continue while an upload is staged. This is namespace serialization, not parallel per-file upload admission. An unavailable OS lock refuses mutation rather than proceeding without coordination.
-
-Regular-file ETags identify the SHA-256 of the content. GET, PUT, PROPFIND and conditional mutations use the same revision; equal sizes and timestamps do not mask changed bytes. Hashing uses bounded memory and respects request cancellation. Existence-only conditions (`If-Match: *` and `If-None-Match: *`) use metadata without reading the content. Conditions containing entity tags hash the current content once per admission; no size-and-timestamp cache substitutes for that comparison. GET hashes its open descriptor, keeping its revision and bytes together during an atomic replacement. Directory ETags still use modification time and size. A revision is not a persistent identifier for the file or its name.
-
-The namespace lock coordinates these services, not arbitrary local writers or separately exported overlapping roots. Keep writable export namespaces under one ownership discipline; application writers must not concurrently modify them when relying on conditional writes. COPY still uses the existing WebDAV copy behavior and is not an atomic PUT.
+The per-request upload limit defaults to 64 MiB. Oversized uploads return HTTP
+413. A PUT request replaces the whole file. Use a content digest to verify the
+received bytes and an ETag precondition to guard against concurrent changes.
+Other mutations can wait behind a slow upload to the same export. Independent
+reads can continue while the upload is staged.
 
 ### Recoverable uploads
 
@@ -133,25 +137,25 @@ By default, durable uploads keep `.rstream-upload-receipts`, `.rstream-upload-pe
 
 ```sh
 mkdir -m 700 /writable-volume/rstream-state
-rstream files / --read-write --no-ui --token-auth --state-dir /writable-volume/rstream-state
+rstream files /srv/exports --read-write --no-ui --token-auth --state-dir /writable-volume/rstream-state
 # Alternatively, set RSTREAM_FILES_STATE_DIR=/writable-volume/rstream-state.
 ```
 
 The directory must already exist. The CLI flag overrides the environment variable; an explicitly empty flag is rejected. The library does not read this environment variable: embedders set `fileserver.Config.StateDir` or `filesystem.Policy.StateDir` when opening a `filesystem.Local`. Each export needs its own state directory. Omit the option to preserve the existing layout; there is no automatic fallback to a temporary directory or user home.
 
-The service creates a private `.rstream-upload-state` child with owner-only permissions. It binds the journal to the canonical export root and its filesystem identity, rejects reuse by another export, and checks journal writes and synchronization before opening a writable service. A missing, inaccessible, invalid or unsupported configured state directory fails startup. Read-only services can reopen existing state to retrieve receipts. This option is unavailable on Windows until durable directory synchronization is supported there.
+Each export needs one dedicated, persistent state directory used by every
+process serving that export. The daemon checks ownership and write access
+before opening a writable share. External journal storage is unavailable
+on Windows.
 
-All processes serving the same export **must use the same persistent state directory**, including after restart. New state directories also coordinate mutations there, so an AppArmor profile may deny locking the export root while allowing the private state directory. All mutation paths, including ordinary conditional writes, share this coordination. The state directory must survive for as long as upload IDs can be retried; do not use an automatically cleaned `/tmp` directory for durable operation. Changing or deleting the directory can discard idempotence history. A read-only export has no writable place to remember the selected external path, so independent processes using different state directories cannot detect every configuration mismatch. There is no additional global registry or hidden writable-path dependency. Deploy the state location as part of the export's persistent configuration.
+Keep the same directory when restarting. Changing or removing the state can
+lose the ability to recover earlier uploads. Shut down all writers before
+moving an existing journal. For the storage and locking contract, see the
+[filesystem maintainer reference](../filesystem/README.md#durable-upload-state).
 
-Previously created external journals retain their original export-root locking behavior, preserving coordination with older processes and their receipts. They are not silently upgraded while writers may still be active. New journals use owner format version 2, which older SDKs reject. Moving an existing journal to private coordination requires an offline migration with all writers stopped; do not edit its owner metadata or discard its receipts during a rolling upgrade.
-
-The server refuses to hide an existing journal at the export root when external state is requested. Automatic migration of existing receipts is not provided; retain their current location until an offline migration has been designed for that deployment. Relocating or replacing an export root, changing its mount identity, or copying state between hosts requires reviewing its ownership binding rather than silently creating a fresh history.
-
-Files cannot list, read, overwrite, remove or move the reserved state subtree, including through an enclosing export, a symlink alias, ZIP, or an ancestor directory mutation. Selecting the state subtree itself as an export is also rejected. The enclosing user-selected directory may contain other ordinary files; only the reserved child contains private state.
-
-Only journal metadata moves. Upload content is still staged beside its destination and atomically renamed on the destination filesystem. Journal and destination may reside on different filesystems; each is synchronized independently, and interrupted commits are reconciled through the same durable receipts. Protocol capabilities describe supported operations rather than a live disk-health guarantee: each durable upload still checks journal admission before modifying content, including receipt-directory write access. A later storage failure can still require receipt lookup and produce an explicitly uncertain outcome.
-
-The process needs OS permissions for the requested operation. Hidden paths and exclusions apply to writes as well as reads, including symlink targets. Removing, moving or replacing a directory that contains filtered children is rejected. Filtered subtree checks examine at most 10,000 entries and 64 levels; larger mutations must be split. A selected single-file share permits changes only to that file, never its siblings. Capabilities advertise enabled protocol operations; they do not override OS permissions or filters.
+The process also needs permission to write to the exported destination. Hidden
+paths and exclusions still apply. Large directory mutations can require smaller
+operations when subtree inspection reaches its limits.
 
 ## HTTP and backend contract
 
@@ -171,15 +175,3 @@ Listing rejects directories with more than 10,000 raw entries, including filtere
 The shared Go filesystem and selected transport also back `webtty.NewFileSystemHandler`; existing config, paths, writes and upload limit remain supported with WebDAV. `webtty server --fs-root ./exports --fs-backend webrtc` selects read-only WebRTC; all writes fail with 403, without WebDAV fallback. That returned handler implements `io.Closer`; embedders must close it after serving. WebTTY's filesystem remains incompatible with WebTTY E2E payload encryption.
 
 The JS package `@rstreamlabs/filesystem` defines `FileSystemBackend` (list/stat/readStream/archiveStream/downloadURL) independently from `WebDAVFileSystem`. `WebTTYFileSystem` preserves its existing exports through a compatibility wrapper. Capabilities describe transport functionality and encryption separately, while `RemoteFileSystem` discovers WebDAV or WebRTC and `WebRTCFileSystem` explicitly requires WebRTC. Both reuse the same operations.
-
-## Embedded browser UI
-
-The CLI embeds a generated browser bundle; normal Go builds require no JavaScript toolchain. The HTML, gzip and integrity manifest are committed together. The manifest records the contract version, content hash and inline CSP hashes; `fileserver/ui` verifies them in tests.
-
-Changes to the shared browser client need a regenerated bundle rather than edits to compressed assets. Coordinate that update with the maintainers. The public [`@rstreamlabs/filesystem`](https://github.com/rstreamlabs/rstream-js/tree/main/packages/filesystem) package documents the filesystem API used by browser integrations.
-
-## Verification
-
-Run the browser regression with `go test -modfile=out/ice-patch/go.mod -tags browser ./fileserver -run TestCORSBrowser`. It requires Node.js with built-in WebSocket support and Chrome; set `RSTREAM_CHROME_BIN` when Chrome is not installed at the default macOS path. Missing browser dependencies fail the test.
-
-Run `go test -modfile=out/ice-patch/go.mod ./...`, `go test -modfile=out/ice-patch/go.mod -race ./...`, `go vet -modfile=out/ice-patch/go.mod ./...`. Filesystem tests cover encoded names, exclusions, readonly methods, single files, concurrent symlink replacement, ranges, cancellation and a streamed sparse file over 4 GiB. Server tests cover auth on all surfaces, write capabilities, optional UI, upload limits, interrupted uploads, OS permissions, ZIP and concurrency. CLI tests cover password input, option validation, write-mode status, effective policy, CLI/MCP writes and handler shutdown. UI tests check gzip, integrity, CSP and negotiation. Run native filesystem tests on Linux/macOS/Windows in release CI; cross-compilation alone does not qualify native behavior.

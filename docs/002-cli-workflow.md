@@ -24,17 +24,23 @@ Set-Content -Encoding ASCII index.html 'Hello from rstream'
 python -m http.server 8080 --bind 127.0.0.1
 ```
 
-In terminal 2, authenticate and select the endpoint shown in your project's Dashboard settings. `rstream login` opens the browser signup/sign-in and approval flow, then stores the approved personal or workspace Token locally.
+In terminal 2, sign in and select the project. Replace 'my-project-endpoint' in the command with the endpoint shown in your project settings. `rstream login` opens the browser signup/sign-in and approval flow, then stores the approved personal or workspace Token locally.
 
 ```sh
 rstream login
 rstream project list
-rstream project use <project-endpoint>
+rstream project use 'my-project-endpoint'
 curl -fsS http://127.0.0.1:8080/
 rstream forward 8080
 ```
 
-Use `curl.exe` in Windows PowerShell to avoid its legacy `curl` alias. The local curl should print `Hello from rstream`. `forward` prints an HTTPS forwarding address and keeps the tunnel online. In another terminal, run `curl -fsS https://<printed-host>/`; expect the same body. Stop `forward` and the Python server with Ctrl+C when finished. Any local **HTTP** service can replace the demonstration. Other protocols need the matching [tunnel properties](005-tunnel-configuration.md).
+Use `curl.exe` in Windows PowerShell to avoid its legacy `curl` alias. The local curl should print `Hello from rstream`. `forward` prints an HTTPS forwarding address and keeps the tunnel online. Request the HTTPS forwarding address from a third terminal. Replace the example address with the one printed by the CLI:
+
+```sh
+curl -fsS 'https://my-tunnel.example.com/'
+```
+
+Expect the same response body. Stop `forward` and the Python server with Ctrl+C when finished. Any local **HTTP** service can replace the demonstration. Other protocols need the matching [tunnel properties](004-tunnel-configuration.md).
 
 A selected project creates a named local context. The CLI and `config.NewClientFromEnv()` in Go reuse that context. Creating an unpublished tunnel and other gated features require a project/deployment that permits them; they are separate from this published HTTP trial.
 
@@ -69,13 +75,13 @@ Select **Service or application** during browser login on a compatible Control p
 
 ```sh
 rstream context create service \
-  --engine <project-engine-host:port> \
+  --engine 'engine.example.com:443' \
   --token-file /path/to/project-token \
   --no-api-url --default
 rstream forward 8080
 ```
 
-`context create` also accepts `--token-stdin` or `--token`; prefer file/stdin for secret injection. These three inputs are mutually exclusive. An unlinked context does not inherit the workstation's account token. Use the actual Engine endpoint, not a project display name. A private CA can be supplied with `--engine-tls-ca-file /path/to/engine-ca.pem`.
+`context create` also accepts `--token-stdin` or `--token`; prefer file/stdin for secret injection. These three inputs are mutually exclusive. An unlinked context does not inherit the workstation's account token. Replace 'engine.example.com:443' with the Engine hostname and port for that project. A private CA can be supplied with `--engine-tls-ca-file /path/to/engine-ca.pem`.
 
 ### Authenticate an agent with mTLS
 
@@ -93,7 +99,7 @@ contexts:
 
 Select it with `rstream context use service-mtls`. File paths and inline `certificate`/`key` are alternatives; complete pairs are required. `RSTREAM_MTLS_CERT_FILE` and `RSTREAM_MTLS_KEY_FILE` explicitly select mTLS instead of a stored context token. Combining those variables with `RSTREAM_AUTHENTICATION_TOKEN` fails before connection. One native connection cannot authenticate with both a token and a certificate.
 
-Engine listing, watch and session APIs reuse the certificate through [automatic Engine API discovery](015-engine-mtls-turn.md). Workspace/project administration, enrollment and region resolution still require Control plane token access. Certificate-only devices should use an explicit regional Engine address without a region selector. [External signers](016-external-mtls-signer.md) and [transport settings](004-transport.md) cover hardware keys and private CAs.
+Engine listing, watch and session APIs reuse the certificate through [automatic Engine API discovery](015-engine-mtls-turn.md). Workspace/project administration, enrollment and region resolution still require Control plane token access. Certificate-only devices should use an explicit regional Engine address without a region selector. [External signers](016-external-mtls-signer.md) and [transport settings](020-agent-transport.md) cover hardware keys and private CAs.
 
 ## Contexts and environments
 
@@ -126,7 +132,7 @@ The process environment can override configuration. Empty/unset values below do 
 | `RSTREAM_AUTHENTICATION_TOKEN`                    | Bearer token string for the selected runtime                    | Cannot be combined with explicit mTLS material.                                   |
 | `RSTREAM_MTLS_CERT_FILE`, `RSTREAM_MTLS_KEY_FILE` | Paths to the agent's PEM certificate and private key            | Both required; override the stored runtime identity.                              |
 | `RSTREAM_REGION`                                  | Region selector resolved through the Control plane              | Requires project metadata; omit for explicit Engine-only devices.                 |
-| `RSTREAM_TUNNEL_TRANSPORT`                        | `auto`, `tls` or `quic`                                         | `auto`; see [transport configuration](004-transport.md).                          |
+| `RSTREAM_TUNNEL_TRANSPORT`                        | `auto`, `tls` or `quic`                                         | `auto`; see [transport configuration](020-agent-transport.md).                          |
 | `RSTREAM_QUIC_TRANSPORT`                          | Legacy selector: `1` for QUIC, any other nonempty value for TLS | Compatibility input; use `RSTREAM_TUNNEL_TRANSPORT` in new setups.                |
 | `RSTREAM_CONTROL_PLANE_HEADERS`                   | JSON object of string HTTP headers                              | Optional trusted backend headers; never apply them to anonymous Engine discovery. |
 
@@ -142,4 +148,4 @@ rstream logout
 
 Logout removes locally stored authentication for the current environment; it does not delete contexts or revoke their independent device credentials.
 
-For the next task, use [declarative forwarding](006-cmd-run.md), [file sharing](007-file-sharing.md), [WebTTY](009-webtty.md), the [interactive inventory](012-cli-ui.md), [webhooks](010-webhooks.md) or [Codex/MCP](011-mcp.md).
+For the next task, use [declarative forwarding](007-declarative-tunnels.md), [file sharing](008-file-sharing.md), [WebTTY](009-webtty.md), the [interactive inventory](012-cli-ui.md), [webhooks](010-webhooks.md) or [Codex/MCP](011-mcp.md).

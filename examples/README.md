@@ -81,7 +81,7 @@ Build a selected program with `make <directory-name>`, then use its `-h` output 
 | TURN credentials | [Credential helper](turn-credentials) | Obtain short-lived relay credentials from the active configuration. |
 | CLI orchestration | [YAML](run-yaml) and [Docker labels](run-docker) | Declarative forwarding with the CLI rather than an embedded SDK. |
 
-The [external mTLS signer guide](../docs/016-external-mtls-signer.md) explains the `mtls-exec-helper` program; it is an authentication helper, not a separate tunnel example.
+The [external mTLS signer guide](../docs/016-external-mtls-signer.md) explains the [signing helper example](mtls-exec-helper).
 
 ## Protocol-specific setup
 
@@ -109,4 +109,4 @@ For MASQUE CONNECT-UDP, provide a reachable UDP target. These commands use priva
 ./out/examples/masque-client --variant connect-udp --target 127.0.0.1:9000
 ```
 
-Add `--publish` to both commands for the published HTTP/3 path. CONNECT-IP additionally requires the host privileges and routing setup described by the programs; it is not a first-connection prerequisite.
+Add `--publish` to both commands for the published HTTP/3 path. For CONNECT-IP, run both programs with `--variant connect-ip` and omit `--target`. This sample exchanges an IP packet in the programs themselves.

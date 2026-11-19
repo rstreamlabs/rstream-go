@@ -19,7 +19,7 @@ import (
 )
 
 func TestDocumentedDockerLabelsRespectIdentitySelection(t *testing.T) {
-	guides, err := filepath.Glob(filepath.Join("..", "..", "..", "..", "docs", "*-cmd-run.md"))
+	guides, err := filepath.Glob(filepath.Join("..", "..", "..", "..", "docs", "*-declarative-tunnels.md"))
 	if err != nil || len(guides) != 1 {
 		t.Fatalf("find command runner guide: %v, %v", guides, err)
 	}
