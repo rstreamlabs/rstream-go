@@ -41,7 +41,9 @@ the wire); conflicting values for the two fields are rejected.
 ## HTTP authentication
 
 The Engine applies HTTP access policy before forwarding the request. The
-application can still authenticate the requests it receives.
+application can still authenticate the requests it receives. Edge
+authentication requires a compatible managed deployment. With Community
+Edition, the upstream application authenticates public callers.
 
 | Go property | Who can reach the upstream |
 | --- | --- |

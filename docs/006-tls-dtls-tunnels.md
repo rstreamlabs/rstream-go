@@ -17,15 +17,28 @@ stream to a disposable local service. Use a [configured CLI context](002-cli-wor
 on Community Edition or a hosted Pro or Enterprise project that allows
 published TLS. Use an Engine with a certificate trusted by your client.
 
-In a new directory, create a single demo file and start a local HTTP server.
-Python provides the example's clear byte stream. On Windows use `py -3` in
-place of `python3`.
+Start a loopback HTTP server in a fresh temporary directory. The HTTP
+response gives this TLS tunnel a disposable byte stream to forward.
+
+On Linux or macOS:
 
 ```sh
-mkdir rstream-tls-demo
-cd rstream-tls-demo
-python3 -c "from pathlib import Path; Path('index.html').write_text('Hello through TLS')"
-python3 -m http.server 9000 --bind 127.0.0.1
+demo_dir="$(mktemp -d)" &&
+  cd "$demo_dir" &&
+  printf 'Hello through TLS\n' > index.html &&
+  python3 -m http.server 9000 --bind 127.0.0.1
+```
+
+In Windows PowerShell:
+
+```powershell
+& {
+  $demo = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
+  New-Item -ItemType Directory -Path $demo -ErrorAction Stop | Out-Null
+  Set-Location $demo -ErrorAction Stop
+  Set-Content -Encoding ASCII index.html 'Hello through TLS'
+  py -3 -m http.server 9000 --bind 127.0.0.1
+}
 ```
 
 In another terminal, run:
@@ -41,8 +54,8 @@ Use the hostname and port printed by the CLI in the following request. Use
 curl -fsS --http1.1 'https://tls-demo.example.com:443/'
 ```
 
-The client verifies the certificate and returns `Hello through TLS`. If you
-use a private CA, [supply the CA and verify the public hostname](https://rstream.io/guides/self-host-rstream-engine-ce-with-docker-compose#verify-the-engine-and-tunnel).
+The client verifies the certificate and returns `Hello through TLS`. For a
+private CA, pass its certificate with `--cacert /path/to/ca.pem`.
 Stop the tunnel and the demo server with Ctrl+C.
 
 Use this mode for a service whose TLS endpoint belongs at the Engine.
@@ -76,7 +89,8 @@ The tunnel and project minimum use the existing values `tls1.2` and `tls1.3`;
 for DTLS these select a DTLS 1.2-or-newer or DTLS 1.3 minimum.
 
 Project post-quantum (PQ) key exchange and Encrypted Client Hello (ECH) settings
-can narrow the allowed connections.
+can narrow the allowed connections. For the equivalent TLS and QUIC behavior,
+see [project transport compatibility](https://rstream.io/docs/security/access-policies#transport-compatibility).
 
 | Project setting        | Published DTLS behavior                                          |
 | ---------------------- | ---------------------------------------------------------------- |

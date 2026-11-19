@@ -67,7 +67,7 @@ rstream forward 127.0.0.1:8080 --http
 
 Open the HTTPS address printed by the CLI. Expect `Hello from rstream` at
 both addresses and a request in the local server log. If the project enforces
-HTTP token authentication, [send a scoped token](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication). For a CE Engine using a
+HTTP token authentication, [follow the protected HTTP example](https://rstream.io/docs/tunnels/http-tunnels/authentication#enable-access-control). For a CE Engine using a
 private certificate authority, verify the printed HTTPS address with curl and the CA file:
 
 ```sh

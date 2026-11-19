@@ -29,11 +29,9 @@ The program below reads the saved context through `config.NewClientFromEnv()`.
 ## Serve a published HTTP route
 
 The published SDK declares its Go requirement in its module metadata. For the
-source checkout, see [`go.mod`](../go.mod). Create a module for this program:
+source checkout, see [`go.mod`](../go.mod). Open an empty directory in a terminal and create a module for the program:
 
 ```sh
-mkdir rstream-hello
-cd rstream-hello
 go mod init example.com/rstream-hello
 go get github.com/rstreamlabs/rstream-go
 ```

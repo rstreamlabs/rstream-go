@@ -39,8 +39,9 @@ for WebTTY events.
 ## Control plane methods in Go
 
 Use the authenticated Control plane client to manage a destination or inspect
-the lifecycle of a project event. `ProjectEvent` returns the retained event;
-webhook deliveries record each destination's attempts, status and retry state.
+the lifecycle of a project event. `ListProjectEvents` returns retained
+`ProjectEvent` records. Delivery records track a destination's attempts,
+status and retry state.
 
 | Task | Control plane methods |
 | --- | --- |
