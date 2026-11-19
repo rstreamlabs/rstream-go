@@ -26,20 +26,8 @@ import (
 
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
-	buf := make([]byte, 2048)
-	for {
-		n, err := conn.Read(buf)
-		if err != nil {
-			if err != io.EOF {
-				log.Printf("Read error from %s: %v", conn.RemoteAddr(), err)
-			}
-			return
-		}
-		log.Printf("Received %d bytes from %s: %s\n", n, conn.RemoteAddr(), buf[:n])
-		if _, err := conn.Write(buf[:n]); err != nil {
-			log.Printf("Write error to %s: %v", conn.RemoteAddr(), err)
-			return
-		}
+	if _, err := io.Copy(conn, conn); err != nil {
+		log.Printf("Echo error from %s: %v", conn.RemoteAddr(), err)
 	}
 }
 

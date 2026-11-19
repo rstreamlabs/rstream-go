@@ -10,11 +10,11 @@ This directory contains end-to-end tests for the rstream Go SDK. Each subdirecto
 | `webtransport` | 2 | Private SDK-dialer and published HTTP/3 reverse-proxy runs covering bidirectional streams, unidirectional streams, datagrams, multi-stream, close codes, and same-origin validation |
 | `http` | 3 | HTTP tunnels over H1, H2C, and H3, including GET and SSE streaming |
 | `stream` | 8 | Bytestream tunnel: plain (unpublished), raw TCP and TLS via engine listeners (published), TLS via SDK dialer (unpublished), TLS passthrough, TLS with upstream TLS, and ALPN rejection checks |
-| `datagram` | 16 | Datagram tunnel: private self-dial, shared transport, guaranteed self-dial, DTLS via SDK dialer (unpublished), DTLS via engine listener (published, with and without upstream DTLS), QUIC via SDK dialer (unpublished), QUIC via engine listener (published), SCTP via pion/sctp over SDK datagrams and published DTLS, and ALPN rejection checks |
+| `datagram` | 22 | Datagram tunnel: private self-dial, shared transport, guaranteed self-dial, DTLS via SDK dialer (unpublished), DTLS via engine listener (published, with and without upstream DTLS), forced DTLS 1.2/1.3 and fragmented DTLS 1.3, QUIC via SDK dialer (unpublished), QUIC via engine listener (published), SCTP via pion/sctp over SDK datagrams and published DTLS, and ALPN rejection checks |
 | `masque` | 2 | Published HTTP/3 datagram tunnels carrying CONNECT-UDP and CONNECT-IP Extended CONNECT sessions end-to-end, including public authority preservation |
 | `connect` | 9 | All upstream × downstream HTTP version combinations for published authority-form CONNECT (H1, H2C, H3) |
 
-The primary `run-e2e.sh` matrix executes 37 cases. Each WebTransport runner case
+The primary `run-e2e.sh` matrix executes 43 cases. Each WebTransport runner case
 contains multiple protocol subcases internally. Additional runtime suites cover
 MASQUE, the nine-case CONNECT matrix, and the six bandwidth-limit cases described below.
 
@@ -65,28 +65,28 @@ make rstream
 make test-bins
 ```
 
-Equivalent manual commands:
+Equivalent manual commands after [source preparation](../docs/001-building-from-source.md):
 
 ```sh
 make rstream
 mkdir -p out/test/{websocket,webtransport,http,stream,datagram,masque,connect,bandwidth}
-go build -o out/test/websocket/server    ./test/websocket/server
-go build -o out/test/websocket/client    ./test/websocket/client
-go build -o out/test/webtransport/server ./test/webtransport/server
-go build -o out/test/webtransport/client ./test/webtransport/client
-go build -o out/test/http/server         ./test/http/server
-go build -o out/test/http/client         ./test/http/client
-go build -o out/test/stream/server       ./test/stream/server
-go build -o out/test/stream/client       ./test/stream/client
-go build -o out/test/datagram/server     ./test/datagram/server
-go build -o out/test/datagram/client     ./test/datagram/client
-go build -o out/test/datagram/self       ./test/datagram/self
-go build -o out/test/masque/server       ./test/masque/server
-go build -o out/test/masque/client       ./test/masque/client
-go build -o out/test/connect/server      ./test/connect/server
-go build -o out/test/connect/client      ./test/connect/client
-go build -o out/test/bandwidth/server    ./test/bandwidth/server
-go build -o out/test/bandwidth/client    ./test/bandwidth/client
+go build -modfile=out/ice-patch/go.mod -o out/test/websocket/server    ./test/websocket/server
+go build -modfile=out/ice-patch/go.mod -o out/test/websocket/client    ./test/websocket/client
+go build -modfile=out/ice-patch/go.mod -o out/test/webtransport/server ./test/webtransport/server
+go build -modfile=out/ice-patch/go.mod -o out/test/webtransport/client ./test/webtransport/client
+go build -modfile=out/ice-patch/go.mod -o out/test/http/server         ./test/http/server
+go build -modfile=out/ice-patch/go.mod -o out/test/http/client         ./test/http/client
+go build -modfile=out/ice-patch/go.mod -o out/test/stream/server       ./test/stream/server
+go build -modfile=out/ice-patch/go.mod -o out/test/stream/client       ./test/stream/client
+go build -modfile=out/ice-patch/go.mod -o out/test/datagram/server     ./test/datagram/server
+go build -modfile=out/ice-patch/go.mod -o out/test/datagram/client     ./test/datagram/client
+go build -modfile=out/ice-patch/go.mod -o out/test/datagram/self       ./test/datagram/self
+go build -modfile=out/ice-patch/go.mod -o out/test/masque/server       ./test/masque/server
+go build -modfile=out/ice-patch/go.mod -o out/test/masque/client       ./test/masque/client
+go build -modfile=out/ice-patch/go.mod -o out/test/connect/server      ./test/connect/server
+go build -modfile=out/ice-patch/go.mod -o out/test/connect/client      ./test/connect/client
+go build -modfile=out/ice-patch/go.mod -o out/test/bandwidth/server    ./test/bandwidth/server
+go build -modfile=out/ice-patch/go.mod -o out/test/bandwidth/client    ./test/bandwidth/client
 ```
 
 ### Run
@@ -341,7 +341,7 @@ From another machine, cross-compile the CLI first, copy both the binary and the
 script to the Windows host, then run the same command there:
 
 ```sh
-GOOS=windows GOARCH=arm64 go build -o /tmp/rstream.exe ./cmd/rstream
+GOOS=windows GOARCH=arm64 go build -modfile=out/ice-patch/go.mod -o /tmp/rstream.exe ./cmd/rstream
 scp /tmp/rstream.exe test/e2e/webtty-windows-runtime.ps1 winhost:C:/Temp/rstream-webtty/
 ssh winhost 'powershell -NoProfile -ExecutionPolicy Bypass -File C:\Temp\rstream-webtty\webtty-windows-runtime.ps1 -Rstream C:\Temp\rstream-webtty\rstream.exe'
 ```
@@ -386,7 +386,7 @@ export RSTREAM_BIN="$(find out/cmd/rstream -type f -name rstream | sort | tail -
 For a full local validation pass:
 
 ```sh
-go test ./...
+go test -modfile=out/ice-patch/go.mod ./...
 make rstream
 make test-bins
 
@@ -416,7 +416,7 @@ The opt-in `integration` build tag adds direct SDK tests against a running Engin
 RSTREAM_GO_E2E_ENGINE=localhost:55443 \
 RSTREAM_GO_E2E_TOKEN="$RSTREAM_AUTHENTICATION_TOKEN" \
 RSTREAM_GO_E2E_TLS_INSECURE=1 \
-go test -race -tags integration \
+go test -race -modfile=out/ice-patch/go.mod -tags integration \
   -run '^TestRealEngine(PrivateBytestreamLivenessAndConcurrency|ControlChannelSurvivesTemporaryNetworkPartition)$' .
 ```
 
@@ -507,6 +507,9 @@ test/
 | `--variant` | `dtls` | `dtls`, `quic`, or `sctp` |
 | `--addr` | — | Engine edge address for direct (published) connections |
 | `--tls-alpn` | — | Custom ALPN for published DTLS, QUIC, or SCTP connections |
+| `--dtls-version` | auto | Force published DTLS/SCTP to `1.2` or `1.3` |
+| `--dtls-mtu` | Pion default | Handshake MTU; use `160` to exercise fragmentation |
+| `--dtls-curve` | Pion default | Restrict the group to `x25519`, `p256`, `p384`, or `x25519mlkem768` for policy tests |
 | `--tunnel` | `datagram-matrix` | Tunnel name prefix for SDK dialer |
 
 ### masque/server

@@ -1,7 +1,7 @@
 // See LICENSE file in the project root for license information.
 
 // quic-echo-server starts a raw QUIC echo server behind an rstream
-// DatagramTunnel. It echoes every stream message and datagram back to the
+// DatagramTunnel. It echoes stream bytes and datagrams back to the
 // sender. rstream enables custom QUIC protocols to be published at a managed
 // edge endpoint without requiring the server to have a reachable UDP address.
 //

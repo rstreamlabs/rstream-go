@@ -252,11 +252,11 @@ SDKs without this backend must reject the selected storage kind explicitly;
 sharing the YAML file does not imply sharing backend capabilities.
 The rstream FIPS distribution rejects this backend before execution: an
 arbitrary external signer is outside its reviewed cryptographic boundary.
-See [the FIPS profile](010-fips-140-3-profile.md).
+See [the FIPS profile](017-fips-140-3-profile.md).
 
 [The example helper](../examples/mtls-exec-helper) is a standalone Go program
 using a software PEM key for development and protocol testing. Build it with
-`go build -o /absolute/path/mtls-exec-helper ./examples/mtls-exec-helper`, then
+`go build -modfile=out/ice-patch/go.mod -o /absolute/path/mtls-exec-helper ./examples/mtls-exec-helper`, then
 configure arguments `["--cert", "/path/client.pem", "--key",
 "/path/client-key.pem", "--message-only"]`. It is not a hardware security
 implementation. Replace key access/signing with the vendor API in a device
@@ -264,33 +264,15 @@ adapter; no vendor code belongs in rstream.
 
 ## Validate an integration
 
-`go test ./internal/mtlsexec ./config ./cmd/rstream/...` covers the protocol,
+Run from the repository root after [source preparation](001-building-from-source.md).
+
+`go test -modfile=out/ice-patch/go.mod ./internal/mtlsexec ./config ./cmd/rstream/...` covers the protocol,
 real TLS 1.2/1.3 and QUIC handshakes, all supported key families, cancellation,
-process cleanup, and CLI/configuration propagation. Run `go test -race ./...`
+process cleanup, and CLI/configuration propagation. Run `go test -modfile=out/ice-patch/go.mod -race ./...`
 for the complete concurrency suite and `make fips-test` for profile rejection.
 
-For an actual standalone CLI WebTTY session with an EE engine and two private
-tunnels, run the opt-in fixture:
-
-```sh
-RSTREAM_ENGINE_REPO=/path/to/rstream-engine \
-RSTREAM_NEXT_REPO=/path/to/rstream-nextjs \
-test/e2e/external-mtls-webtty.sh
-```
-
-Install the Next.js checkout's npm dependencies first; the fixture applies its
-product schema only to a fresh isolated PostgreSQL database. It builds the CLI,
-the portable example helper and the EE engine, generates a P-521 test identity,
-registers its fingerprint locally, and checks TLS, QUIC, reconnection and
-`doctor`. It needs Go, Python 3, OpenSSL and Docker. To use an isolated local
-PostgreSQL process instead of Docker, set `RSTREAM_TEST_POSTGRES_BIN` to the
-absolute directory containing `initdb`, `pg_ctl`, `createdb` and `psql`.
-The helper advertises message signing only, so the test exercises the HSM
-integration path without depending on hardware or existing account credentials.
-Generated artifacts are kept on failure, or with `RSTREAM_KEEP_RUNTIME=1`.
-
 Measure launch/signature cost on the target device; it depends on the helper and
-HSM. `go test ./internal/mtlsexec -run '^$' -bench ExecMessageSigning` measures a
+HSM. `go test -modfile=out/ice-patch/go.mod ./internal/mtlsexec -run '^$' -bench ExecMessageSigning` measures a
 software P-521 signing operation including subprocess startup and local
 verification. Hardware qualification still requires the vendor implementation,
 its device permissions and its actual enrolled certificate.

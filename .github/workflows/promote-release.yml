@@ -357,9 +357,13 @@ jobs:
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: tar -xzf "metadata/package-metadata-${VERSION}.tar.gz"
+      - name: Check winget release source
+        env:
+          RELEASE_REPOSITORY: ${{ secrets.RELEASE_WINGET_REPOSITORY }}
+        run: ./.github/scripts/require-release-repository.sh
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: rstreamlabs/winget
+          repository: ${{ secrets.RELEASE_WINGET_REPOSITORY }}
           token: ${{ secrets.GIT_TOKEN }}
           path: winget
       - name: Update source manifests
@@ -413,9 +417,13 @@ jobs:
       - uses: ./.promotion-policy/.github/actions/restore-release-candidate
         with:
           version: ${{ needs.prepare.outputs.version }}
+      - name: Check npm release source
+        env:
+          RELEASE_REPOSITORY: ${{ secrets.RELEASE_NPM_REPOSITORY }}
+        run: ./.github/scripts/require-release-repository.sh
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: rstreamlabs/npm
+          repository: ${{ secrets.RELEASE_NPM_REPOSITORY }}
           token: ${{ secrets.GIT_TOKEN }}
           path: npm
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -608,7 +616,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
           VERSION: ${{ needs.prepare.outputs.version }}
-          WINGET_GUIDE_URL: https://github.com/rstreamlabs/winget/blob/main/README.md#official-community-repository
+          WINGET_GUIDE_URL: https://github.com/rstreamlabs/rstream-go/blob/main/docs/019-cli-releases.md#winget-community-submission
         run: |
           set -euo pipefail
           gh release edit "$RELEASE_TAG" \

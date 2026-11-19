@@ -5,8 +5,8 @@ tunnels:
     tunnel:
       publish: true
       protocol: "http"
+      upstreamTLS: false
       http:
-        upstreamTLS: false
         version: "http/1.1"
       labels:
         app: "whoami"

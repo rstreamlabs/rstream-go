@@ -1,8 +1,8 @@
 # Filesystem WebRTC transport
 
-The shared `filesystem` package composes the same rooted filesystem policy with either WebDAV or WebRTC. `rstream files --backend webrtc` and `webtty server --fs-root ./exports --fs-backend webrtc` select Pion WebRTC v4. Both are opt-in; WebDAV is the default. WebTTY terminal execution and terminal E2E are separate.
+The shared `filesystem` package composes the same rooted filesystem policy with either WebDAV or WebRTC. `rstream files --backend webrtc` and `webtty server --fs-root ./exports --fs-backend webrtc` select the WebRTC backend. Both are opt-in; WebDAV is the default. WebTTY terminal execution and terminal E2E are separate.
 
-File sharing is unavailable in the restricted FIPS build for both WebDAV and WebRTC, including the WebTTY filesystem. See the [FIPS compatibility table](010-fips-140-3-profile.md#file-sharing-compatibility).
+File sharing is unavailable in the restricted FIPS build for both WebDAV and WebRTC, including the WebTTY filesystem. See the [FIPS compatibility table](017-fips-140-3-profile.md#file-sharing-compatibility).
 
 ## Operations and clients
 
@@ -10,7 +10,7 @@ WebRTC supports listing, stat, streamed file reads, ranges and the standalone se
 
 Go `filesystem.NewHTTPClient` wraps the existing authenticated HTTP client and tunnel dialer. CLI and MCP share that client. JS `RemoteFileSystem` discovers the backend; `WebRTCFileSystem` explicitly requires it; `WebTTYFileSystem` uses the same adapter and preserves its error type. Old servers with a missing discovery endpoint continue to use WebDAV. In Node, the optional `@roamhq/wrtc` provider must be available, or callers supply `createPeerConnection`; a missing provider raises a clear error. Browsers use their native RTCPeerConnection.
 
-## Version 1 wire contract
+## Signaling and data channel
 
 The filesystem prefix (normally `/fs`) exposes `/.rstream/files/v1`. GET returns `version: 1`, `backend`, `ice_servers`, `lease_seconds` and `restart_seconds`. POST accepts `offer`, `renew`, `restart` or `close`. An offer includes SDP and a read request (`method`, origin-relative `uri`, header arrays, optional XML body). The answer contains a random session identifier and SDP. Signaling is bounded to 128 KiB, request XML to 16 KiB and SDP to 64 KiB. Redirects and cross-origin browser signaling are rejected.
 
@@ -30,6 +30,10 @@ Direct WebRTC file data bypasses Engine; rstream TURN relays when a direct route
 
 ## Qualification
 
-Run the Go suite and race detector, build `filesystem/rtc/testdata/server`, then run the JS filesystem `test:e2e` script with `RSTREAM_FILES_E2E_SERVER` pointing to that binary. The fixture provides real Pion peers and optional local TURN and rejects direct HTTP data in RTC-only mode. Tests cover Go/Node interop, files/WebTTY, CLI/MCP reads and write errors, range hashes, malformed lengths, bounded slow consumers, cancellation, session limits, authorization revocation and ICE restart during transfer. The browser destination test streams more than 4 GiB with a bounded queue; it does not claim to write 4 GiB to disk in that unit test.
+For source builds using this transport, follow the [verified ICE build
+procedure](../tools/icepatch/README.md) before building or testing. Consuming
+modules need their own preparation step; Go does not inherit replacements.
+
+Run the Go suite and race detector, build `filesystem/rtc/testdata/server`, then run the JS filesystem `test:e2e` script with `RSTREAM_FILES_E2E_SERVER` pointing to that binary. The fixture provides real Pion peers and optional local TURN and rejects direct HTTP data in RTC-only mode. Tests cover Go/Node interop, files/WebTTY, CLI/MCP reads and write errors, range hashes, malformed lengths, bounded slow consumers, cancellation, session limits, authorization revocation and ICE restart during transfer. The browser destination test verifies bounded-queue streaming beyond 4 GiB using an in-memory destination; target-browser file writes need their own runtime check.
 
 Run native qualification for supported Go targets and Node native-provider platforms, plus browser review. Cross-compilation only establishes build compatibility.

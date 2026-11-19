@@ -1,22 +1,21 @@
 # Webhooks
 
-The Go SDK and CLI expose two related event surfaces:
+The Go SDK and CLI separate live events from durable delivery:
 
-- `rstream events` watches live engine events over SSE or WebSocket.
-- Control plane webhook methods manage durable webhook destinations and delivery history.
+| Surface | Purpose |
+| --- | --- |
+| `rstream events` | Watch live engine events over SSE or WebSocket. |
+| Control plane webhook methods | Manage durable destinations, retries and delivery history. |
+| `rstream events --webhook` | Forward signed client/tunnel events to a local receiver during development. |
 
 `rstream.Event` preserves canonical live-event metadata (`id`, `created_at`, `workspace_id`, `project_id`, `cluster_id`, and `user_id`) in addition to the event `type` and raw `object`. Control plane `ProjectEvent` responses use the durable API shape: `eventId`, `eventType`, `eventCategory`, `payload`, `createdAt`, and retention metadata.
 
-Control plane methods include:
-
-- `ListProjectEvents`
-- `ListProjectWebhooks`
-- `CreateProjectWebhook`
-- `UpdateProjectWebhook`
-- `DeleteProjectWebhook`
-- `RotateProjectWebhookSecret`
-- `ListProjectWebhookDeliveries`
-- `GetProjectWebhookDelivery`
+| Task | Control plane methods |
+| --- | --- |
+| Inspect project lifecycle events | `ListProjectEvents` |
+| Manage destinations | `ListProjectWebhooks`, `CreateProjectWebhook`, `UpdateProjectWebhook`, `DeleteProjectWebhook` |
+| Rotate receiver credentials | `RotateProjectWebhookSecret` |
+| Inspect delivery attempts | `ListProjectWebhookDeliveries`, `GetProjectWebhookDelivery` |
 
 `CreateProjectWebhook` and `UpdateProjectWebhook` accept
 `ProjectWebhookEndpointConfig` for HTTPS endpoint destinations. The SDK rejects
@@ -49,6 +48,17 @@ provided, the CLI generates a `whsec_...` secret and prints it to stderr. Use th
 same value in the receiving backend for local verification. Local forwarding can
 target `http://` receivers such as a Next.js development server, or `https://`
 receivers when testing a deployed backend.
+
+The local webhook catalog contains `client.created`, `client.deleted`,
+`tunnel.created` and `tunnel.deleted`. WebTTY events are filtered out in this
+mode. Use configured project destinations with a compatible receiver for those
+events; the [product guide](https://rstream.io/docs/integrations/webhooks#receiver-compatibility)
+describes parser support across SDKs. This restriction applies to local webhook
+conversion, not the ordinary live watch stream.
+
+The Go SDK exposes signing and event-conversion helpers; it does not provide a
+combined receiver signature verifier/parser. Verify signatures before acting on
+the body in application receivers.
 
 For stdout inspection, add `--include-webhook-headers`. The output becomes an
 envelope containing the generated headers and body. The envelope is for local
