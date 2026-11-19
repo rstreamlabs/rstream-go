@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/pion/transport/v4"
-	"github.com/pion/transport/v4/stdnet"
+	"github.com/pion/transport/v5"
+	"github.com/pion/transport/v5/stdnet"
 )
 
 const packetWriteTimeout = 100 * time.Millisecond

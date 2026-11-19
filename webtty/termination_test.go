@@ -123,6 +123,55 @@ func TestClientTerminationWaitsForActiveWriterUntilCallerDeadline(t *testing.T) 
 	}
 }
 
+func TestClientTerminationWaitsForWriterAndSendsOnce(t *testing.T) {
+	conn := &recordingSessionMessageConn{}
+	session := &ClientSession{
+		runtime: &clientRuntime{conn: conn, cfg: &ClientConfig{}, canTerminate: true},
+		done:    make(chan struct{}),
+	}
+	if err := session.runtime.writeMu.Lock(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	locked := true
+	done := make(chan error, 1)
+	finished := make(chan struct{})
+	defer func() {
+		if locked {
+			session.runtime.writeMu.Unlock()
+		}
+		select {
+		case <-finished:
+		case <-time.After(time.Second):
+			t.Error("termination retained its writer")
+		}
+	}()
+	go func() {
+		defer close(finished)
+		done <- session.RequestTermination(t.Context())
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("termination returned before the writer was released: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if messages := conn.decoded(t); len(messages) != 0 {
+		t.Fatalf("termination bypassed the active writer: %d messages", len(messages))
+	}
+	session.runtime.writeMu.Unlock()
+	locked = false
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("termination did not finish after the writer was released")
+	}
+	if messages := conn.decoded(t); len(messages) != 1 || messages[0].GetTerminate() == nil {
+		t.Fatalf("expected one termination message, got %v", messages)
+	}
+}
+
 func TestClientSessionNativeResultWinsOverPendingLocalClose(t *testing.T) {
 	session := &ClientSession{
 		loopCancel:  func() {},

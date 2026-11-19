@@ -1210,7 +1210,7 @@ func newTestQUICMultiplexServer(t *testing.T, idleTimeout time.Duration) testQUI
 	}
 }
 
-func testQUICServerTLSConfig(t *testing.T, alpn string) *tls.Config {
+func testQUICServerTLSConfig(t testing.TB, alpn string) *tls.Config {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {

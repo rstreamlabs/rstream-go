@@ -110,7 +110,7 @@ func TestPrepareConsumer(t *testing.T) {
 	t.Setenv("GOFLAGS", "")
 	t.Setenv("GOWORK", "off")
 	t.Chdir(t.TempDir())
-	mod := []byte("module example.org/consumer\n\ngo 1.27.0\n\nrequire github.com/pion/ice/v4 v4.4.2\n")
+	mod := []byte("module example.org/consumer\n\ngo 1.27.0\n\nrequire github.com/pion/ice/v4 v4.4.9\n")
 	if err := os.WriteFile("go.mod", mod, 0600); err != nil {
 		t.Fatal(err)
 	}

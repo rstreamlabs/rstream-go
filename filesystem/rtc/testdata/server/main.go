@@ -46,14 +46,18 @@ func run() error {
 	}
 	config := rtc.ServerConfig{LeaseDuration: *lease, RestartInterval: *restart}
 	if *relay {
-		listener, err := net.ListenPacket("udp4", "127.0.0.1:0")
+		relayIP, err := localRelayIP()
+		if err != nil {
+			return err
+		}
+		listener, err := net.ListenPacket("udp4", net.JoinHostPort(relayIP.String(), "0"))
 		if err != nil {
 			return err
 		}
 		defer listener.Close()
 		server, err := turn.NewServer(turn.ServerConfig{Realm: "files-fixture", AuthHandler: func(request *turn.RequestAttributes) (string, []byte, bool) {
 			return request.Username, turn.GenerateAuthKey("reader", "files-fixture", "fixture-password"), request.Username == "reader"
-		}, PacketConnConfigs: []turn.PacketConnConfig{{PacketConn: listener, RelayAddressGenerator: &turn.RelayAddressGeneratorStatic{RelayAddress: net.ParseIP("127.0.0.1"), Address: "127.0.0.1"}}}})
+		}, PacketConnConfigs: []turn.PacketConnConfig{{PacketConn: listener, RelayAddressGenerator: &turn.RelayAddressGeneratorStatic{RelayAddress: relayIP, Address: relayIP.String()}}}})
 		if err != nil {
 			return err
 		}

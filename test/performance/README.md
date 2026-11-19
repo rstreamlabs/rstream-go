@@ -1,24 +1,10 @@
-# Transport benchmark
+# Local transport qualification
 
-The Linux-only `transport` program measures verified private stream/datagram
-tunnels through actual engines, using explicit TLS or QUIC and direct/cross-region
-routing. It is a test utility, not a load generator or production capacity test.
+These procedures use disposable fixtures and retain logs/results outside the repository. They do not establish deployed-service performance or change delivery guarantees.
 
-Build with `CGO_ENABLED=0 GOOS=linux go build -o /absolute/output/transport-benchmark
-./test/performance/transport` in one shell line. Run with `--owner`, `--peer`,
-`--ca`, `--transport=tls|quic`, `--workload=stream|datagram` and optionally
-`--cross-region=true`. `RSTREAM_AUTHENTICATION_TOKEN` must contain a fixture token.
-Certificates and payloads are verified; 0-RTT is disabled. The invocation has a
-90-second deadline and closes its owned tunnel, clients and echo worker.
+| Guide | Use it to |
+| --- | --- |
+| [000 Datagram qualification](000-datagram-qualification.md) | Separate receive-history rejection, queue overflow and delivery-window misses under controlled impairment. |
+| [001 Transport probes](001-transport-probes.md) | Build the maintained Linux probe and compare streams, datagrams, cancellation and resource use. |
 
-JSON reports process CPU, allocation deltas, transferred bytes, latency quantiles,
-and datagram delivery/duplicate/reordering counts. CPU includes both SDK peers in
-one process; setup is excluded. Stream measurements cover bulk transfer after
-latency pings. Datagrams use 1 ms pacing and a three-second drain, so missing
-packets are delivery-deadline misses rather than a physical loss measurement.
-
-The engine repository's `test/performance/README.md` describes the isolated Docker
-fixture, forwarding-router impairment, repeated comparison and metric limits.
-Use identical helper sources/compiler/settings with each version's SDK module
-graph; retain `go version -m` for both binaries. Run Linux unit/race tests with
-`go test -race ./test/performance/transport`.
+Start with [Build from source](../../docs/001-building-from-source.md) for the toolchain and verified dependency graph.

@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pion/webrtc/v4"
 	"github.com/rstreamlabs/rstream-go/internal/fipsprofile"
@@ -55,7 +54,7 @@ func RoundTrip(request *http.Request, config ClientConfig) (*http.Response, erro
 		return nil, err
 	}
 	ctx, cancel := context.WithCancelCause(request.Context())
-	body := &responseBody{ctx: ctx, cancel: cancel, peer: peer, packets: make(chan []byte, Window), header: make(chan Response, 1), ended: make(chan struct{}), closed: make(chan struct{}), expected: -1, head: request.Method == http.MethodHead}
+	body := &responseBody{ctx: ctx, cancel: cancel, peer: peer, packets: make(chan []byte, Window), header: make(chan Response, 1), ended: make(chan struct{}), closed: make(chan struct{}), expected: -1, recovery: make(chan struct{}, 1), head: request.Method == http.MethodHead}
 	channel, err := peer.CreateDataChannel(Protocol, nil)
 	if err != nil {
 		cancel(err)
@@ -63,6 +62,7 @@ func RoundTrip(request *http.Request, config ClientConfig) (*http.Response, erro
 		return nil, err
 	}
 	body.channel = channel
+	body.selection = observeICESelection(peer)
 	channel.OnMessage(body.message)
 	channel.OnError(func(err error) { cancel(err) })
 	channel.OnClose(func() {
@@ -113,22 +113,27 @@ func RoundTrip(request *http.Request, config ClientConfig) (*http.Response, erro
 }
 
 type responseBody struct {
-	ctx       context.Context
-	cancel    context.CancelCauseFunc
-	peer      *webrtc.PeerConnection
-	channel   *webrtc.DataChannel
-	packets   chan []byte
-	header    chan Response
-	ended     chan struct{}
-	closed    chan struct{}
-	complete  atomic.Bool
-	hasHeader atomic.Bool
-	closeOnce sync.Once
-	workers   sync.WaitGroup
-	current   []byte
-	head      bool
-	expected  int64
-	received  int64
+	ctx        context.Context
+	cancel     context.CancelCauseFunc
+	peer       *webrtc.PeerConnection
+	channel    *webrtc.DataChannel
+	selection  *iceSelection
+	progress   atomic.Int64
+	recovering atomic.Bool
+	recoveryAt atomic.Int64
+	recovery   chan struct{}
+	packets    chan []byte
+	header     chan Response
+	ended      chan struct{}
+	closed     chan struct{}
+	complete   atomic.Bool
+	hasHeader  atomic.Bool
+	closeOnce  sync.Once
+	workers    sync.WaitGroup
+	current    []byte
+	head       bool
+	expected   int64
+	received   int64
 }
 
 func (b *responseBody) connect(ctx context.Context, request *http.Request, config ClientConfig, input Request) (Answer, error) {
@@ -163,6 +168,8 @@ func (b *responseBody) message(message webrtc.DataChannelMessage) {
 		}
 		select {
 		case b.packets <- message.Data:
+			b.progress.Add(int64(len(message.Data)))
+			b.recovering.Store(false)
 		default:
 			b.cancel(fmt.Errorf("filesystem receive window exceeded"))
 		}
@@ -186,6 +193,7 @@ func (b *responseBody) message(message webrtc.DataChannelMessage) {
 			b.cancel(io.ErrUnexpectedEOF)
 			return
 		}
+		b.recovering.Store(false)
 		close(b.ended)
 		return
 	}
@@ -207,75 +215,6 @@ func (b *responseBody) message(message webrtc.DataChannelMessage) {
 	b.header <- response
 }
 
-func (b *responseBody) lease(config ClientConfig, headers http.Header, session string) {
-	ticker := time.NewTicker(max(time.Second, time.Duration(config.Info.LeaseSeconds)*time.Second/3))
-	defer ticker.Stop()
-	restarted := time.Now()
-	interval := time.Duration(config.Info.RestartSeconds) * time.Second
-	if interval <= 0 {
-		interval = 5 * time.Minute
-	}
-	for {
-		select {
-		case <-b.ctx.Done():
-			return
-		case <-ticker.C:
-			ctx, cancel := boundedContext(b.ctx)
-			var err error
-			if b.hasHeader.Load() && time.Since(restarted) >= interval {
-				err = b.restart(ctx, config, headers, session)
-				restarted = time.Now()
-			} else {
-				err = SignalHTTP(ctx, config.HTTP, config.Endpoint, headers, Signal{Action: "renew", Session: session}, nil)
-			}
-			cancel()
-			if err != nil {
-				b.cancel(fmt.Errorf("filesystem authorization renewal: %w", err))
-				return
-			}
-		}
-	}
-}
-
-func (b *responseBody) restart(ctx context.Context, config ClientConfig, headers http.Header, session string) error {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, config.Endpoint, nil)
-	if err != nil {
-		return err
-	}
-	request.Header = headers.Clone()
-	request.Header.Del("Range")
-	response, err := HTTPDo(config.HTTP, request)
-	if err != nil {
-		return err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("filesystem ICE refresh failed (%d)", response.StatusCode)
-	}
-	var info Info
-	if err := Decode(response.Body, &info); err != nil {
-		return err
-	}
-	configuration := b.peer.GetConfiguration()
-	configuration.ICEServers = info.ICEServers
-	if err := b.peer.SetConfiguration(configuration); err != nil {
-		return err
-	}
-	offer, err := b.peer.CreateOffer(&webrtc.OfferOptions{ICERestart: true})
-	if err != nil {
-		return err
-	}
-	sdp, err := Gather(ctx, b.peer, offer)
-	if err != nil {
-		return err
-	}
-	var answer Answer
-	if err := SignalHTTP(ctx, config.HTTP, config.Endpoint, headers, Signal{Action: "restart", Session: session, SDP: sdp}, &answer); err != nil {
-		return err
-	}
-	return b.peer.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: answer.SDP})
-}
-
 func (b *responseBody) Read(target []byte) (int, error) {
 	if err := context.Cause(b.ctx); err != nil {
 		return 0, err
@@ -284,22 +223,11 @@ func (b *responseBody) Read(target []byte) (int, error) {
 		return 0, nil
 	}
 	if len(b.current) == 0 {
-		select {
-		case b.current = <-b.packets:
-		default:
-			select {
-			case b.current = <-b.packets:
-			case <-b.ctx.Done():
-				return 0, context.Cause(b.ctx)
-			case <-b.ended:
-				select {
-				case b.current = <-b.packets:
-				default:
-					_ = b.channel.SendText("done")
-					return 0, io.EOF
-				}
-			}
+		packet, err := b.nextPacket()
+		if err != nil {
+			return 0, err
 		}
+		b.current = packet
 	}
 	count := copy(target, b.current)
 	b.current = b.current[count:]
