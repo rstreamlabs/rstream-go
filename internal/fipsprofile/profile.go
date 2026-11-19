@@ -108,12 +108,16 @@ func dependencyVersion(path string) string {
 	if !ok {
 		return ""
 	}
-	for _, dependency := range info.Deps {
+	return unreplacedModuleVersion(info.Deps, path)
+}
+
+func unreplacedModuleVersion(dependencies []*debug.Module, path string) string {
+	for _, dependency := range dependencies {
 		if dependency.Path != path {
 			continue
 		}
 		if dependency.Replace != nil {
-			return dependency.Replace.Version
+			return ""
 		}
 		return dependency.Version
 	}
