@@ -45,7 +45,7 @@ credentials, err := config.CreateTURNCredentialsFromEnv(ctx, config.TURNCredenti
 | Available identity or configuration | Where the client obtains credentials |
 | --- | --- |
 | Eligible personal access token or application identity with relay coordinates | Automatic mode derives credentials locally. A token needs allocation rights, a reference and a valid expiry. |
-| Other token or application identity with a Control plane URL | The config helper asks the Control plane when it has a project endpoint. It falls back to the Engine for connection or DNS failures, timeouts and HTTP 502, 503 or 504. Authorization, certificate and quota failures stop the request. |
+| Other token or application identity with a Control plane URL | The config helper asks the Control plane with a project ID or endpoint. Engine fallback requires a project endpoint and applies to connection or DNS failures, timeouts and HTTP 502, 503 or 504. Authorization, certificate and quota failures stop the request. |
 | Enrolled client certificate | The client asks its discovered Engine HTTPS API. |
 | Programmatic client configured with an Engine only | The client asks the Engine directly. |
 | Explicit `api`, `engine`, `pat` or `app` mode | The specified issuer or derivation method is used. Local application derivation uses the client ID, PKCS#8 DER-hex secret and a relay realm key. |
@@ -63,7 +63,9 @@ and expiry remain enforced. Usernames are opaque. Never log TURN passwords.
 
 For Engine-only issuance, call `Client.CreateTURNCredentials` directly
 with the default options. The config helper loads the Control plane URL,
-project and relay settings needed for the other modes.
+project and relay settings. To derive credentials directly from an
+application key, pass its client ID and secret to the package function
+`rstream.CreateTURNCredentials`.
 
 ## CLI access with a certificate
 

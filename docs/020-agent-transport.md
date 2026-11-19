@@ -11,10 +11,11 @@ The default `auto` mode gives QUIC a brief head start, then starts TLS if QUIC h
 
 Fallback covers transport establishment only. Once QUIC has connected, an authentication or rstream protocol error is returned as-is; it does not trigger a second control channel over TLS.
 
-Select a mode through the CLI flag, environment, or shared YAML configuration:
+Use the CLI flag or environment variable to check a transport. Save a mode
+in YAML to apply it to subsequent connections.
 
 ```bash
-rstream --tunnel-transport auto forward 8080
+rstream --tunnel-transport auto doctor -o json
 export RSTREAM_TUNNEL_TRANSPORT=quic
 ```
 

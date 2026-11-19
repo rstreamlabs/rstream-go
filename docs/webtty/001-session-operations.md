@@ -56,9 +56,10 @@ The FIPS profile requires WebTransport for starting a session.
 
 ## Stop an existing managed command
 
-Use a session you control. Its Engine and WebTTY server must support
-explicit termination, and the Engine must support live attachment and
-control transfer.
+Use an identity that can grant a new control request for the session. Its
+Engine and server must support explicit termination, and the Engine must
+support live attachment and control transfer. See
+[collaboration permissions](https://rstream.io/docs/webtty/live-collaboration#product-permissions).
 
 ```sh
 rstream webtty sessions stop 'my-session-id' --reason 'maintenance' --timeout 65s

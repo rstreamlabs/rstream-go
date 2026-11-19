@@ -36,7 +36,7 @@ Replace the quoted placeholder with the public value printed on the server and v
 ```sh
 rstream webtty authorized-client add client-laptop --identity dev-shell \
   --key '<client-public-endpoint-value>'
-rstream webtty server -v --rstream --name dev-shell --identity dev-shell
+rstream webtty server -v --rstream --no-publish --name dev-shell --identity dev-shell
 ```
 
 Then run on the operator host:
@@ -51,9 +51,10 @@ identity to run a command. Check that a second client without that trust
 fails before opening a session. Keep private identity files on their owning
 hosts and stop the test server with Ctrl+C.
 
-To prepare the same protocol profile used by rstream FIPS builds from a
-standard CLI, add `--crypto-profile=fips-compatible` when creating both endpoint
-identities and select WebTransport on the server and client.
+To provision FIPS-compatible endpoint keys with the standard CLI, add
+`--crypto-profile=fips-compatible` when creating both identities. A FIPS
+deployment uses a verified published WebTransport endpoint on a compatible
+managed Engine.
 See the [FIPS profile](../017-fips-140-3-profile.md#webtty-profile) for compatible algorithms and deployment requirements.
 
 The server identity and the client's known-server entry enable protection for

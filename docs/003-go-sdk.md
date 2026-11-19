@@ -103,6 +103,11 @@ go run .
 
 Open the printed forwarding address to see `Hello from rstream`; stop the process with an interrupt.
 
+For a direct Engine using a private CA, pass that CA to the client that
+checks the published address. In curl, use `--cacert /path/to/engine-ca.pem`
+with the printed HTTPS hostname. The CLI context trusts the Engine for the
+SDK connection.
+
 The runnable [HTTP server example](../examples/README.md#serve-http) adds signal handling and graceful shutdown. The [example catalog](../examples/README.md) explains which programs to pair for private connections, other protocols and API integrations.
 
 ## Run a private client and server

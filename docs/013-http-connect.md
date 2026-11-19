@@ -34,10 +34,11 @@ The upstream service behind the tunnel must be a real forward proxy. The rstream
 
 Configure the upstream proxy's authentication and destination allowlist.
 Choose an HTTPS target that proxy is allowed to reach. Use the tunnel's
-printed HTTPS address as the proxy URL, then make a request to the target.
+printed HTTPS hostname and port as the proxy URL. Include port 443 when
+the address omits the standard HTTPS port.
 
 ```sh
-curl --proxy 'https://proxy-tunnel.example.com' 'https://allowed-origin.example.com/'
+curl --proxy 'https://proxy-tunnel.example.com:443' 'https://allowed-origin.example.com/'
 ```
 
 Supply the credentials required by your proxy. curl verifies both server

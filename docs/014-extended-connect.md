@@ -55,7 +55,8 @@ The upstream server owns IP proxy behavior: route scoping, address assignment, r
 Use a project that allows datagram tunnels, with an Engine that supports
 the selected protocol. On hosted rstream, use Pro or Enterprise. The
 following demo uses a private test tunnel and a self-signed upstream
-certificate. Keep the examples in an isolated test environment. For a
+certificate. The demo client accepts that certificate for the test. Run both
+programs in an isolated test environment. For a
 published proxy, configure caller authentication and restrict the targets or
 routes it can reach. Configure TLS trust in the clients that will use it.
 
