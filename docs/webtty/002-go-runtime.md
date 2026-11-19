@@ -1,4 +1,4 @@
-# Embed and connect WebTTY in Go
+# Control WebTTY sessions in Go
 
 Use `webtty.CaptureCommand` for a bounded result from one command.
 Use `webtty.OpenClientSession` to stream output or control the session
@@ -7,9 +7,15 @@ endpoint trust.
 
 ## Capture command output
 
-This function runs `whoami` on a local WebTTY WebSocket listener configured
-with a bearer token. Pass the same token to the function. For a remote
-listener, use its verified `wss://` address.
+Use a local file containing a bearer token to start a loopback WebSocket
+listener.
+
+```sh
+rstream webtty server --listen 127.0.0.1:8080 --auth-token-file ./webtty-token
+```
+
+Pass the same token to the Go function to execute `whoami`. For a remote
+listener, configure the client with its verified `wss://` address.
 
 ```go
 func captureAccount(ctx context.Context, token string) (webtty.CommandResult, error) {
@@ -71,28 +77,45 @@ execution deadline is not extended by detaching or attaching another reader.
 
 ## Bounded detached execution in the SDK
 
-With an authenticated Engine API client and an already configured terminal
-`SessionConfig`, fetch capabilities from that same Engine and opt in explicitly:
+Use a `SessionConfig` that already contains the server's verified published
+WebSocket or WebTransport endpoint, terminal credential and command. Query
+capabilities with an authenticated client on the Engine that serves it.
 
 ```go
-capabilities, err := api.GetWebTTYCapabilities(ctx)
-if err != nil {
-    return err
+func startDetached(ctx context.Context, api *rstream.Client, cfg webtty.SessionConfig) (string, error) {
+	capabilities, err := api.GetWebTTYCapabilities(ctx)
+	if err != nil {
+		return "", err
+	}
+	cfg.Managed = &webtty.ManagedSessionConfig{
+		Capabilities:     *capabilities,
+		ExecutionSeconds: 300,
+	}
+	cfg.Interactive, cfg.AllocateTTY = false, false
+	session, err := webtty.OpenClientSession(ctx, &cfg)
+	if err != nil {
+		return "", err
+	}
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		for range session.Events() {
+		}
+	}()
+	defer func() {
+		_ = session.Close()
+		<-drained
+	}()
+	id := session.ManagedSessionID()
+	if err := session.SendEOF(); err != nil {
+		return id, err
+	}
+	return id, session.Disconnect(ctx)
 }
-cfg.Managed = &webtty.ManagedSessionConfig{
-    Capabilities: *capabilities,
-    ExecutionSeconds: 300,
-}
-cfg.Interactive, cfg.AllocateTTY = false, false
-session, err := webtty.OpenClientSession(ctx, &cfg)
-if err != nil {
-    return err
-}
-executionID := session.ManagedSessionID()
-// Persist executionID before releasing this reader.
-fmt.Println(executionID)
-return session.Close()
 ```
+
+Keep any returned ID, including when the function reports an error while
+closing stdin or disconnecting. Use it to inspect the acknowledged execution.
 
 The SDK rejects unsupported capabilities, transports, conflicting URL options
 and excessive durations before opening a connection. `OpenClientSession` returns

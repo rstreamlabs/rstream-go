@@ -16,6 +16,11 @@ system assessment.
 
 The upstream Go behavior and limitations are defined in [Go FIPS 140-3 compliance](https://go.dev/doc/security/fips140).
 
+[Verify an artifact](#verify-an-artifact) if you already have a CLI binary.
+[Build the profile](#build) to produce the restricted binary from this
+checkout. Use [FIPS 140-3 Profiles](https://rstream.io/docs/security/fips-140-3)
+to select a deployment.
+
 ## What the profile covers
 
 FIPS 140-3 levels 1 through 4 describe the assurance level of a validated
@@ -44,7 +49,7 @@ description and must follow the NIST logo requirements.
 | Area | Supported | Outside the profile |
 | --- | --- | --- |
 | Runtime and artifacts | Go 1.27 on Linux x86-64 and arm64. Static builds use `CGO_ENABLED=0`. | Other platforms and build profiles. |
-| Engine transport | Direct TLS and QUIC, TLS through supported TCP proxies, or automatic QUIC selection with TLS fallback. The Engine connection uses TLS 1.3. | Proxied QUIC, ECH and custom transports whose cryptography cannot be established by the profile. |
+| Engine transport | Direct TLS and QUIC, TLS through supported TCP proxies in explicit TLS mode, or direct automatic QUIC selection with TLS fallback. The Engine connection uses TLS 1.3. | Proxied QUIC, ECH and custom transports whose cryptography cannot be established by the profile. |
 | Agent identity | Token admission and enrolled client certificates. | Executable mTLS signers. |
 | Service protocols | Private and published bytestreams with supported protocols, published QUIC and ordinary HTTP/3. | Generic datagrams, DTLS, TURN, WebSocket, CONNECT-UDP and CONNECT-IP. |
 | WebTTY | WebTransport, with optional authenticated end-to-end encryption. Explicit endpoint keys and Enterprise standalone workspace-managed sessions are supported. | Plain and WebSocket terminal transports, managed participant streams, the legacy X25519/HPKE suite and the filesystem sidecar. |
@@ -224,13 +229,17 @@ authorization bypass.
 The profile rejects an SDK client configuration before network I/O when it:
 
 - disables certificate verification;
-- permits only a TLS version older than TLS 1.2;
+- sets an explicit minimum or maximum older than TLS 1.2;
 - explicitly enables ECH;
 - explicitly selects a curve outside P-256, P-384, or the approved Go hybrid groups;
 - explicitly selects a TLS 1.2 cipher suite outside ECDHE with AES-GCM;
 - supplies a proxied QUIC transport or an unreviewed custom transport.
 
 Normal Go TLS defaults remain controlled by the linked Go Cryptographic Module in approved mode. Private certificate authorities must be installed through the system trust store or the rstream CA configuration; certificate verification cannot be bypassed.
+
+Use `transport.mode: tls` for a shared context configured with a proxy.
+Automatic mode also configures a QUIC branch and the restricted profile
+rejects proxied QUIC.
 
 QUIC always requires TLS 1.3. `quic-go` uses the Go FIPS-aware TLS cipher
 selection, rejects ChaCha20 in FIPS mode, delegates QUIC packet AES-GCM to the

@@ -20,7 +20,7 @@ published TLS. Use an Engine with a certificate trusted by your client.
 Start a loopback HTTP server in a fresh temporary directory. The HTTP
 response gives this TLS tunnel a disposable byte stream to forward.
 
-On Linux or macOS:
+On Linux or macOS, start the HTTP server from the temporary directory.
 
 ```sh
 demo_dir="$(mktemp -d)" &&
@@ -29,7 +29,7 @@ demo_dir="$(mktemp -d)" &&
   python3 -m http.server 9000 --bind 127.0.0.1
 ```
 
-In Windows PowerShell:
+In Windows PowerShell, use the Windows Python launcher.
 
 ```powershell
 & {
@@ -41,7 +41,7 @@ In Windows PowerShell:
 }
 ```
 
-In another terminal, run:
+Use a second terminal to publish the TLS tunnel.
 
 ```sh
 rstream forward 127.0.0.1:9000 --tls --tls-mode terminated
@@ -118,5 +118,7 @@ dependency in the same module.
 
 To exercise a published DTLS tunnel, use the published mode of the
 [datagram echo pair](../examples/README.md#choose-another-example) against an
-Engine that enables DTLS. Confirm that the client uses the advertised
-hostname and that the requested version complies with the project policy.
+Engine that enables DTLS. That pair uses the library's default version
+negotiation. To verify a specific minimum, configure a trusted test client
+to offer only the DTLS version under test and inspect the result against
+the project's policy.

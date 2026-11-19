@@ -30,6 +30,20 @@ props := rstream.TunnelProperties{
 
 The upstream service behind the tunnel must be a real forward proxy. The rstream engine forwards the `CONNECT host:port` request to that service and relays bytes only after the upstream returns a 2xx response.
 
+## Verify a proxy connection
+
+Configure the upstream proxy's authentication and destination allowlist.
+Choose an HTTPS target that proxy is allowed to reach. Use the tunnel's
+printed HTTPS address as the proxy URL, then make a request to the target.
+
+```sh
+curl --proxy 'https://proxy-tunnel.example.com' 'https://allowed-origin.example.com/'
+```
+
+Supply the credentials required by your proxy. curl verifies both server
+certificates. Expect the target service's response after the proxy accepts
+CONNECT. If the tunnel uses a private CA, supply it with `--proxy-cacert`.
+
 ## Security model
 
 The downstream TLS or QUIC connection selects the rstream tunnel. The

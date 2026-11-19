@@ -13,7 +13,7 @@ opening the share.
 | A disposable project that allows public requests | Add a local password with `--password`. |
 | A project that requires edge authentication | Use its required sign-in or tunnel token. The file server's local password cannot be combined with edge authentication. |
 
-For the password case, run from the parent of `exports`:
+Start the password-protected share from the parent of `exports`.
 
 ```sh
 rstream files ./exports --password
@@ -62,7 +62,7 @@ Global configuration, context, region, transport and logging options continue to
 Enable CORS explicitly for the dashboard's origin. It works with the WebDAV backend, including `--no-ui`:
 
 ```bash
-rstream files ./exports --read-write --no-ui --token-auth \
+rstream files ./exports --no-ui --token-auth \
   --cors-allow-origin https://dashboard.example
 ```
 
@@ -83,12 +83,18 @@ HTTPS protects transport to the edge, and the tunnel protects the edge-to-agent 
 
 ## CLI and MCP downloads
 
-The existing filesystem client commands also read standalone shares:
+Use a managed project with HTTP token authentication for this example. Put
+a sample `report.csv` in `./exports`. Start the token-protected share in one
+terminal and download it from an authenticated rstream context in another.
+Replace the destination path if it already exists.
 
 ```sh
-rstream files ./exports --name exports
+rstream files ./exports --name exports --token-auth
 rstream webtty fs --url rstrm://exports download /report.csv ./report.csv
 ```
+
+Check that the downloaded file matches the original. Stop the share with
+Ctrl+C when finished.
 
 The CLI resolves a WebTTY or HTTP tunnel through Engine inventory, then dials it privately even when it has a published URL. It discovers WebDAV or WebRTC over that connection. For a token restricted to stream access, add `--no-discovery` and supply the exact tunnel id or name; `--fs-path` selects a path other than `/fs`. This explicit path does not require inventory or control-plane access. Server authentication and read-only policy still apply.
 
@@ -96,8 +102,14 @@ Local MCP filesystem tools accept the same `rstrm://` target and use private dia
 
 ## Read-write service without a web page
 
+Use a token-protected managed project. Create the export directory on the
+server and prepare a sample `update.bin` on the client. Start the share
+before uploading and stop it with Ctrl+C after checking the file in the
+export directory. Add `--host` only if you need a project-controlled domain.
+
 ```sh
-rstream files ./maintenance --read-write --no-ui --token-auth --host maintenance.example.com --name maintenance --max-upload-size 134217728
+rstream files ./maintenance --read-write --no-ui --token-auth \
+  --name maintenance --max-upload-size 134217728
 rstream webtty fs --url rstrm://maintenance upload ./update.bin /update.bin
 ```
 
@@ -133,7 +145,7 @@ for HTTP headers, status codes and the receipt format.
 
 Keep the upload journal in one persistent directory per export. Use an
 external state directory when the export's security policy prevents journal
-files or locking in the shared root:
+files or locking in the shared root.
 
 ```sh
 mkdir -m 700 /writable-volume/rstream-state

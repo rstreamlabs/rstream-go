@@ -42,10 +42,14 @@ rstream webtty server -v --rstream --name dev-shell --identity dev-shell
 Then run on the operator host:
 
 ```sh
-rstream webtty exec --url rstrm://dev-shell -o text -- whoami
+rstream webtty exec --url rstrm://dev-shell --e2e -o text -- whoami
 ```
 
-Keep private identity files on their owning hosts. Stop the server with Ctrl+C after validation.
+Expect the server process account from an authorized client. A client
+with Engine access and the public server pin needs an authorized client
+identity to run a command. Check that a second client without that trust
+fails before opening a session. Keep private identity files on their owning
+hosts and stop the test server with Ctrl+C.
 
 To prepare the same protocol profile used by rstream FIPS builds from a
 standard CLI, add `--crypto-profile=fips-compatible` when creating both endpoint
@@ -57,7 +61,7 @@ the named rstream target. Use `--e2e` in a script to require that the client
 resolves trusted endpoint material before it opens a session.
 
 For a direct local WebSocket listener already configured with the same server
-identity, select the pinned server in the client command:
+identity, select the pinned server when connecting.
 
 ```sh
 rstream webtty exec --url ws://127.0.0.1:8080 --known-server dev-shell -- whoami
@@ -104,7 +108,7 @@ non-interactive daemon or service-account recipient. Browsers are trusted from
 the workspace protection page, not with this command.
 
 After approval, the CLI resolves protection from the selected server and
-workspace policy:
+workspace policy.
 
 ```bash
 rstream webtty exec --url rstrm://prod-shell -- whoami
@@ -122,6 +126,10 @@ pin after restoring the device's workspace trust.
 
 Complete the [workspace device trust setup](#trust-a-cli-for-workspace-managed-webtty) on the operator and server hosts before enrollment when workspace-managed protection is required.
 
+The following examples create a server protected by Workspace Protection.
+Use an eligible Enterprise workspace. For a transport-only server, select
+`--encryption-policy disabled` where the workspace permits it.
+
 Create the registered server from an authenticated project context, then run
 the enrollment command returned by the CLI, product, or API on the host that
 will run WebTTY.
@@ -131,7 +139,7 @@ enroll during creation:
 
 ```bash
 rstream project use project-endpoint
-rstream webtty server create prod-shell --enroll
+rstream webtty server create prod-shell --encryption-policy workspace_managed --enroll
 rstream webtty server -v --server-id 'my-server-id' --login-user 'local-user'
 ```
 
@@ -143,7 +151,7 @@ enrollment command on the runtime host:
 
 ```bash
 rstream project use project-endpoint
-rstream webtty server create prod-shell
+rstream webtty server create prod-shell --encryption-policy workspace_managed
 ```
 
 ```bash
@@ -171,8 +179,10 @@ rstream webtty server -v --server-id server_id --login-user operator
 ```
 
 `--server-id` implies `--rstream` and starts a managed `protocol=webtty` tunnel.
-Registered servers publish by default; add `--no-publish` when the server should
-stay reachable only through private rstream dials. Use `--server-enrollment`
+Registered servers publish by default. A registered WebTransport server
+requires publication. For a registered server reachable only by private
+rstream dials, use a supported private transport such as WebSocket with
+`--no-publish`. Use `--server-enrollment`
 only when the enrollment file is not at the default path.
 
 Registered servers default to login mode. Choose an existing account with
@@ -374,7 +384,7 @@ keys:
 
 Workspace trust has its own directory. The device record establishes
 workspace trust, and its separate WebTTY identity opens workspace-managed
-terminal grants:
+terminal grants.
 
 ```text
 ~/.rstream/workspaces/<workspace-id>/devices/<device-id>.json

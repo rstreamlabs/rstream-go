@@ -12,6 +12,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -20,6 +21,15 @@ import (
 )
 
 func main() {
+	flag.Usage = func() {
+		fmt.Fprintln(flag.CommandLine.Output(), "Request short-lived TURN credentials for the selected rstream context.")
+	}
+	flag.Parse()
+	if flag.NArg() != 0 {
+		flag.Usage()
+		os.Exit(2)
+	}
+
 	turn, err := config.CreateTURNCredentialsFromEnv(
 		context.Background(),
 	)

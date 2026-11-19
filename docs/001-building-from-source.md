@@ -9,11 +9,11 @@ starts. This uses the source in the checkout. For a released executable, follow
 | Go | Use the minimum version in [`go.mod`](../go.mod) or a compatible newer toolchain. |
 | Git and network access | Clone the repository and download its Go modules. |
 | Make and a POSIX shell | Build on Linux or macOS with the Makefile. It also uses `find`, `awk` and `sed`. |
-| C toolchain | Required for builds using cgo and for the race detector. On macOS, install the Xcode Command Line Tools with `xcode-select --install`. |
+| C toolchain | Required for builds using cgo and for the race detector. Native macOS Make builds enable cgo by default. Install the Xcode Command Line Tools with `xcode-select --install`. |
 
 ## Build on Linux or macOS
 
-From a terminal with the tools above:
+Clone the source and build the CLI from the repository root.
 
 ```sh
 git clone https://github.com/rstreamlabs/rstream-go.git
@@ -22,7 +22,7 @@ go version
 make rstream
 ```
 
-On a fresh checkout, find the executable and check it runs:
+In a fresh checkout, the following check locates the binary and prints its version.
 
 ```sh
 cli="$(find out/cmd/rstream -type f -name rstream -path '*/release/bin/*')"
@@ -36,7 +36,7 @@ if you also have a released CLI installed. To connect to an Engine, follow the
 ## Build on Windows
 
 Install Go and Git, clone the repository, and run these commands from its root
-in PowerShell:
+in PowerShell to prepare the module and verify the executable.
 
 ```powershell
 go run ./tools/icepatch -output out/ice-patch

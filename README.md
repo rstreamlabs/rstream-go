@@ -31,7 +31,7 @@ to try this with a disposable service and understand its access policy.
 ## Use the Go library
 
 A bytestream tunnel implements `net.Listener`. Pass it to a standard Go HTTP
-server to accept requests inside your application:
+server to accept requests inside your application.
 
 ```go
 func serveHTTP(listener rstream.BytestreamTunnel, handler http.Handler) error {

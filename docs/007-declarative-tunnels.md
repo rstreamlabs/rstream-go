@@ -15,7 +15,7 @@
 From the repository root, start the upstream in the [YAML example](../examples/run-yaml/README.md)
 on port 8080. Use a context that permits published HTTP tunnels. If your project
 requires authorization on published HTTP, set a compatible access policy in the
-YAML before applying it. Then run:
+YAML before applying it.
 
 ```sh
 rstream -v run --apply ./examples/run-yaml/tunnels.yaml
@@ -25,7 +25,10 @@ Open the forwarding URL it prints to see the upstream response. Stop the process
 with Ctrl+C. Add `--watch` when the runner should reconcile
 changes to the file. For container discovery, use the
 [Docker example](../examples/run-docker/README.md), which starts an upstream
-service with matching labels.
+service with matching labels. Use the disposable upstream in that example.
+For a deployed service that requires edge access checks, configure HTTP token
+authentication before publication. YAML uses `tunnel.http.auth.token: true`.
+Docker uses `rstream.tunnel.<name>.http.auth.token: "true"`.
 
 ## YAML Schema (`--apply`)
 
@@ -44,7 +47,7 @@ tunnels:
         app: web
 ```
 
-Environment variables expand in YAML values (e.g. `${RSTREAM_TOKEN}`).
+The runner expands environment variables before decoding the YAML. Use variables such as `${RSTREAM_TOKEN}` for scalar values.
 
 `tunnel.tls.ciphers` selects TLS ciphers, equivalent to `forward --tls-ciphers`.
 Each apply file must contain exactly one YAML document. Unknown fields are
@@ -192,15 +195,16 @@ The [YAML example](../examples/run-yaml) and [Docker example](../examples/run-do
 
 `rstream run` keeps tunnels in sync from a YAML file (`--apply`) or Docker labels (`--docker`), with optional watch/reconcile.
 
-In watch mode, the runner retries temporary Engine failures and resource
-conflicts. It reports the first failure and the eventual recovery. A lost
+Both launch modes retry temporary Engine failures and resource conflicts.
+Watch mode also reloads the desired configuration when it changes. The
+runner reports the first failure and subsequent recovery. A lost
 control channel stops new connections through that channel. Established
 connections can continue on their existing data paths while the runner
 reopens the route. Stopping the runner closes its forwarding sessions.
 
 ## HTTP CORS
 
-`forward` uses the six `--cors-*` options covered in [HTTP tunnels](005-http-tunnels.md#cross-origin-browser-access-cors). The equivalent `run --apply` configuration is:
+`forward` uses the six `--cors-*` options covered in [HTTP tunnels](005-http-tunnels.md#cross-origin-browser-access-cors). This apply file sets the same policy in YAML.
 
 ```yaml
 version: 1

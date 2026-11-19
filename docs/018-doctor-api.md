@@ -40,7 +40,7 @@ and mTLS identities (including external signers) are preserved.
 | `Report.Checks` | Show each check's status, message and optional details. The status can be pass, warn, fail or skip. |
 | `Report.Summary` | Count checks by status. A failure makes `Report.Err()` return `doctor.ErrChecksFailed`. |
 | `doctor.ErrChecksFailed` | Use `errors.Is` to identify failed checks and keep the report for diagnostics. |
-| Cancellation or deadline | Check with `errors.Is` and use the partial report, which includes the execution failure. |
+| Cancellation or deadline | Check `context.Canceled` or `context.DeadlineExceeded` first with `errors.Is`. The error can also match `ErrChecksFailed`. Use the partial report for the failed probe. |
 
 Use `encoding/json` for the same structured fields as the CLI, or use the typed
 results to present them in your application.

@@ -12,6 +12,7 @@ with [editions and plans](https://rstream.io/docs/support/editions) or
 | Try an existing service with the CLI | [Install the CLI](000-installation.md), then [connect and publish a first HTTP service](002-cli-workflow.md#connect-the-cli). |
 | Embed rstream in Go | [Use the Go SDK](003-go-sdk.md) to serve HTTP or connect privately. |
 | Compile this checkout | [Build from source](001-building-from-source.md) covers tools, build and verification. |
+| Run matching server and client programs | The [Go examples](../examples/README.md) cover published HTTP, private access and specialized protocols. |
 
 ## Choose and configure a tunnel
 
@@ -21,6 +22,7 @@ with [editions and plans](https://rstream.io/docs/support/editions) or
 | [HTTP tunnels](005-http-tunnels.md) | Forward an HTTP service, select its upstream mode and configure access. |
 | [TLS and DTLS tunnels](006-tls-dtls-tunnels.md) | Choose where encryption terminates and verify a TLS service. |
 | [Declarative tunnels](007-declarative-tunnels.md) | Manage multiple tunnels from YAML or Docker labels. |
+| [HTTP CONNECT](013-http-connect.md) and [Extended CONNECT](014-extended-connect.md) | Carry proxy requests, WebTransport or MASQUE through HTTP. |
 
 ## Files, terminals and integrations
 
@@ -37,13 +39,11 @@ with [editions and plans](https://rstream.io/docs/support/editions) or
 | Guide | Task |
 | --- | --- |
 | [Agent transport](020-agent-transport.md) | Select TLS or QUIC to the Engine, a proxy, DNS or a network interface. |
-| [HTTP CONNECT](013-http-connect.md) and [Extended CONNECT](014-extended-connect.md) | Carry proxy requests, WebTransport or MASQUE through HTTP. |
 | [Engine API mTLS and TURN](015-engine-mtls-turn.md) | Use an enrolled identity for Engine HTTPS calls or obtain relay credentials. |
 | [External mTLS signers](016-external-mtls-signer.md) | Delegate an agent's private-key signing to a local helper. |
 | [FIPS profile](017-fips-140-3-profile.md) | Verify or build the restricted Go distribution. |
 | [Go diagnostic API](018-doctor-api.md) | Diagnose a connection in an application. Use [product troubleshooting](https://rstream.io/docs/support/troubleshooting) for the CLI. |
 | [Filesystem over WebRTC](021-filesystem-webrtc.md) | Choose a peer-to-peer backend for reading files. |
 
-The [example catalog](../examples/README.md) is organized by protocol.
 [Contributing](../CONTRIBUTING.md) links to repository practices and the
 [test guide](../test/README.md).

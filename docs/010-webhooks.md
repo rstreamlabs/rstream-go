@@ -15,7 +15,7 @@ delivers events to an HTTPS receiver and records attempts and retries.
 Start your receiver at `http://localhost:3000/api/rstream/webhook` and configure
 it to verify the [signature on the raw request body](https://rstream.io/docs/integrations/webhooks#signatures).
 Select a [CLI context](002-cli-workflow.md#connect-the-cli) that can watch project
-events. Give the CLI and receiver the same dedicated test secret, then run:
+events. Give the CLI and receiver the same dedicated test secret.
 
 ```sh
 rstream events --transport sse \

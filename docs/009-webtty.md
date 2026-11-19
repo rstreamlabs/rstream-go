@@ -17,26 +17,36 @@ Use a dedicated account for a server that will stay running.
 | Published WebSocket | Use a managed project that permits HTTP token authentication, including hosted Basic. The server requests token protection for the public endpoint. A browser opening the endpoint needs an authorized session. |
 | Private WebSocket | Use a project that permits private tunnels, or a direct Community Edition Engine. Only rstream clients can dial the endpoint. |
 
-On a managed project, start published WebTTY with:
+Use the following command on a managed project to publish a WebSocket endpoint.
 
 ```sh
 rstream webtty server --rstream --name shell
 ```
 
-On Community Edition or a managed project that permits private tunnels, use:
+On Community Edition or a managed project that permits private tunnels,
+start a private server.
 
 ```sh
 rstream webtty server --rstream --name shell --no-publish
 ```
 
-In a second terminal with the operator context, run:
+For a native connection, use the matching project or Engine context with
+permission to discover the server and dial its stream. Run a one-shot command
+from a second terminal.
 
 ```sh
 rstream webtty exec --url rstrm://shell -o text -- whoami
 ```
 
-Expect the username of the account running the server. Stop the server with
-Ctrl+C. If your token permits inventory, run `rstream webtty list` to verify
+Expect the username of the account running the server. On a server that
+supports a pseudoterminal, open a shell through the same context.
+
+```sh
+rstream webtty client --url rstrm://shell
+```
+
+Exit the shell with `exit`, then stop the server with Ctrl+C. If your token permits
+inventory, run `rstream webtty list` to verify
 that the lightweight server is gone. The Go server on Windows supports command
 execution through pipes. See [browser access](https://rstream.io/docs/webtty/quickstart#publish-through-rstream)
 for the published endpoint.
@@ -47,7 +57,7 @@ for the published endpoint.
 | --- | --- |
 | Set up access, an operating system user, end-to-end encryption or a registered server | [WebTTY configuration](webtty/000-configuration.md) |
 | Inspect, join or stop managed sessions, connect without discovery or transfer files | [WebTTY session operations](webtty/001-session-operations.md) |
-| Embed a server or client and choose transports or manage session lifetime | [Go runtime reference](webtty/002-go-runtime.md) |
+| Connect a Go client, choose a transport or manage the session lifetime | [Go runtime reference](webtty/002-go-runtime.md) |
 
 For browser and dashboard workflows, see the [product WebTTY guide](https://rstream.io/docs/webtty).
 

@@ -1,9 +1,12 @@
 # Extended CONNECT and MASQUE
 
-The Go SDK can publish and dial HTTP/3 datagram tunnels that carry Extended CONNECT protocols such as WebTransport, CONNECT-UDP, and CONNECT-IP. Plain authority-form CONNECT is not Extended CONNECT and is documented separately in [HTTP CONNECT](013-http-connect.md). The SDK does not implement MASQUE itself; the samples and runtime tests use the upstream protocol libraries directly:
+The Go SDK can publish and dial HTTP/3 datagram tunnels that carry Extended CONNECT protocols such as WebTransport, CONNECT-UDP, and CONNECT-IP. See [HTTP CONNECT](013-http-connect.md) for a TCP forward proxy. The Go
+examples use dedicated libraries for the Extended CONNECT protocols.
 
-- `github.com/quic-go/masque-go` for CONNECT-UDP.
-- `github.com/quic-go/connect-ip-go` for CONNECT-IP.
+| Protocol | Example library |
+| --- | --- |
+| CONNECT-UDP | `github.com/quic-go/masque-go` |
+| CONNECT-IP | `github.com/quic-go/connect-ip-go` |
 
 ## Tunnel shape
 
@@ -51,17 +54,19 @@ The upstream server owns IP proxy behavior: route scoping, address assignment, r
 
 Use a project that allows datagram tunnels, with an Engine that supports
 the selected protocol. On hosted rstream, use Pro or Enterprise. The
-following demo dials a private tunnel. Add `--publish` to both sample
-programs to use a published HTTP/3 endpoint on a compatible deployment.
+following demo uses a private test tunnel and a self-signed upstream
+certificate. Keep the examples in an isolated test environment. For a
+published proxy, configure caller authentication and restrict the targets or
+routes it can reach. Configure TLS trust in the clients that will use it.
 
-Build the pair from the repository root:
+Build both programs from the repository root.
 
 ```sh
 make masque-server masque-client
 ```
 
 For CONNECT-UDP, start an echo service on the machine running the MASQUE
-server. Save this as `udp_echo.py` and run it with Python 3:
+server. Save the script as `udp_echo.py` and run it with Python 3.
 
 ```python
 import socket
@@ -74,7 +79,7 @@ with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as server:
 ```
 
 Start `./out/examples/masque-server --variant connect-udp` in a second
-terminal. With the same project context, run the client:
+terminal. Run the client with the same project context.
 
 ```sh
 ./out/examples/masque-client --variant connect-udp --target 127.0.0.1:9000
@@ -86,6 +91,16 @@ and the echo process with Ctrl+C.
 For CONNECT-IP, run both programs with `--variant connect-ip` and omit
 `--target`. The programs exchange a test IP packet directly. Expect
 `CONNECT-IP packet echo ok`. Stop the server after the test.
+
+## WebTransport
+
+Use the [Go WebTransport server](../examples/http-wt-server) and
+[matching client](../examples/http-wt-client) to test a stream exchange.
+In published mode, the server defaults to a raw QUIC tunnel. Use
+`--published-protocol=http` to select the HTTP/3 WebTransport path in a
+project that supports it. See
+[Connection Upgrades](https://rstream.io/docs/tunnels/http-tunnels/connection-upgrades#webtransport)
+for edge routing and authentication.
 
 ## Browser support
 

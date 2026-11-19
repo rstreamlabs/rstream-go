@@ -14,7 +14,7 @@ Use the CLI to [forward a service that already has a listener](002-cli-workflow.
 | Self-hosted Community Edition | [Configure a CLI context for the Engine](https://rstream.io/docs/tunnels/self-hosted/deployment#agent-context) using its hostname, CA if needed, and JWT. CE supports published HTTP and private bytestreams. |
 | An existing deployment | Select the context provided by your operator. See [editions and plans](https://rstream.io/docs/support/editions) for listener and policy requirements. |
 
-For a hosted project, sign in and copy the `ENDPOINT` from the project list:
+For a hosted project, sign in and select the value in the `ENDPOINT` column.
 
 ```sh
 rstream login
@@ -29,7 +29,8 @@ The program below reads the saved context through `config.NewClientFromEnv()`.
 ## Serve a published HTTP route
 
 The published SDK declares its Go requirement in its module metadata. For the
-source checkout, see [`go.mod`](../go.mod). Open an empty directory in a terminal and create a module for the program:
+source checkout, see [`go.mod`](../go.mod). Initialize the module from an
+empty directory.
 
 ```sh
 go mod init example.com/rstream-hello

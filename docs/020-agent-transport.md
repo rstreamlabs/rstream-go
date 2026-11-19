@@ -33,7 +33,7 @@ individual fields. Fields omitted from the context retain their environment
 value. Explicit `false` overrides `true`, and HTTP proxy headers merge by name.
 
 For example, share an HTTP CONNECT proxy across an environment while letting
-one context set its own transport mode:
+one context set its own transport mode.
 
 ```yaml
 environments:
@@ -50,38 +50,9 @@ contexts:
 ```
 
 Use an existing context with admission credentials for your project.
-`rstream doctor -o json` probes TLS and QUIC independently. Its
+`rstream --context service doctor -o json` probes TLS and QUIC independently. Its
 `tunnel_transport` check reports the configured and selected modes. In `auto`,
 working TLS with unavailable QUIC is a fallback warning.
-
-### Shared YAML fields
-
-Paths below are relative to `environments[].transport` or `contexts[].transport`. Omitted context values inherit linked environment settings; boolean pointers preserve explicit false. Defaults apply after that merge.
-
-| Field                              | Format and purpose                                       | Default or condition                                                                   |
-| ---------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `mode`                             | `auto`, `tls`, `quic`; agent connection selection.       | auto; explicit mode takes precedence over legacy useQuic.                              |
-| `useQuic`                          | Legacy boolean transport selector.                       | Omit in new configurations; true selects QUIC, false TLS.                              |
-| `bind.mode`                        | `interface` or `address` local binding.                  | Omit the bind block for OS routing; an omitted mode with address uses address binding. |
-| `bind.interface`                   | Local interface name such as en0.                        | Used with mode=interface; selected address must fit first-hop family.                  |
-| `bind.address`                     | Local IP literal.                                        | Used with mode=address; not the remote Engine.                                         |
-| `ipFamily`                         | `ipv4`, `ipv6` or omitted.                               | Omitted permits both; selects destination family, not DNS-server family.               |
-| `dns.override`                     | Resolver IP/host with optional port.                     | Platform resolvers when omitted; DNS-over-TLS requires an override.                    |
-| `dns.tls`                          | Boolean enabling DNS over TLS.                           | false; omitted port becomes 853.                                                       |
-| `dns.serverName`                   | TLS resolver verification name.                          | Needed when DoT resolver address is an IP.                                             |
-| `dns.dnssec`                       | Boolean requiring authenticated DNSSEC answers.          | false; a validation requirement, not a separate resolver.                              |
-| `mptcp`                            | Boolean requesting MPTCP on TCP connections.             | false; requires OS support, does not alter QUIC.                                       |
-| `tls.caFile`                       | PEM CA bundle for the Engine.                            | System roots when omitted.                                                             |
-| `tls.serverName`                   | Engine SNI/certificate verification name.                | Original Engine hostname when omitted.                                                 |
-| `tls.insecureSkipVerify`           | Boolean disabling Engine certificate verification.       | false; diagnostics only, rejected by FIPS.                                             |
-| `proxy.http`                       | HTTP/HTTPS CONNECT proxy URL.                            | No explicit proxy by default; QUIC requires HTTPS MASQUE.                              |
-| `proxy.socks5`                     | socks5/socks5h URL.                                      | Alternative to proxy.http; TCP CONNECT or QUIC UDP ASSOCIATE.                          |
-| `proxy.username`, `proxy.password` | Proxy credentials as strings.                            | Optional; keep secret values out of logs.                                              |
-| `proxy.headers`                    | String map of HTTP proxy headers.                        | Empty; merged by key from environment/context.                                         |
-| `proxy.fromEnvironment`            | Boolean enabling standard process proxy-variable lookup. | Opt-in; explicit proxy URL takes precedence.                                           |
-| `proxy.tls.caFile`                 | PEM CA bundle for an HTTPS/MASQUE proxy.                 | System roots; independent from Engine roots.                                           |
-| `proxy.tls.serverName`             | Proxy SNI/certificate verification name.                 | Proxy hostname when omitted.                                                           |
-| `proxy.tls.insecureSkipVerify`     | Boolean disabling proxy-hop verification.                | false; diagnostics only.                                                               |
 
 ## Engine identity and admission
 
@@ -165,8 +136,8 @@ rstream uses the resolver for Engine lookup and for the `HTTPS` and `SVCB`
 records used in ECH discovery. The operating system's resolver configuration
 is the default. To configure DNS over TLS, set `dns.tls` and provide a
 `dns.override`; the default port is `853`. When the resolver's address is an
-IP, use `dns.serverName` to verify its certificate. Set `dns.dnssec` to require
-authenticated answers.
+IP, use `dns.serverName` to verify its certificate. To require DNSSEC, set `dns.dnssec` with verified DNS over TLS. The resolver
+must validate DNSSEC and mark the answers as authenticated.
 
 On macOS, rstream reads the active resolver configuration from the system DNS state so scoped per-domain resolvers are respected. On Linux and other Unix targets, the fallback source remains `/etc/resolv.conf`.
 
@@ -180,21 +151,24 @@ Optional MPTCP support can be enabled where available to improve resilience when
 
 ## Select the transport in a Go application
 
-Use `AutoTransport` when constructing a client directly, or select a strict transport when fallback is not desired:
+Choose the transport when constructing the client. Set `OwnTransport` to let
+the client close the transport when it shuts down.
 
 ```go
 client, err := rstream.NewClient(rstream.ClientOptions{
-    Engine:    engine,
-    Token:     token,
-    Transport: &rstream.AutoTransport{},
+    Engine:       engine,
+    Token:        token,
+    Transport:    &rstream.AutoTransport{},
+    OwnTransport: true,
 })
-
-strictQUIC, err := rstream.NewClient(rstream.ClientOptions{
-    Engine:    engine,
-    Token:     token,
-    Transport: &rstream.QUICTransport{},
-})
+if err != nil {
+    return err
+}
+defer client.Close()
 ```
+
+Use `&rstream.Transport{}` for TLS-only operation and `&rstream.QUICTransport{}`
+for QUIC only.
 
 `QUICTransport` accepts the same network options as the standard `Transport`:
 
@@ -210,6 +184,8 @@ strictQUIC, err := rstream.NewClient(rstream.ClientOptions{
 | `ProxyFromEnvironment`         | read process proxy variables when no explicit proxy URL is configured. |
 
 For QUIC transport, `ProxyHTTP` must point at an HTTPS MASQUE proxy. If the URL path is empty, the SDK uses `/.well-known/masque/udp/{target_host}/{target_port}/`. A custom path must include both `{target_host}` and `{target_port}`.
+Choose an HTTPS MASQUE proxy that accepts this client without static
+credentials or custom HTTP headers.
 
 ### Lifecycle
 
@@ -225,7 +201,36 @@ continues to determine TLS name verification.
 
 For a published tunnel, these settings apply to the agent. For a private
 tunnel, its owner and each dialing client need their own Engine connectivity.
-A Go client can use `Client.PacketDial` to dial a private datagram tunnel it owns.
+A Go client can use `Client.PacketDial` when its identity may connect to the private datagram tunnel.
 Native datagrams may be lost; opt into reliable delivery when the application
 needs it. See [tunnel configuration](004-tunnel-configuration.md) and the
 [FIPS profile](017-fips-140-3-profile.md) for deployment constraints.
+
+## Shared YAML fields
+
+Paths below are relative to `environments[].transport` or `contexts[].transport`. Omitted context values inherit linked environment settings; boolean pointers preserve explicit false. Defaults apply after that merge.
+
+| Field                              | Format and purpose                                       | Default or condition                                                                   |
+| ---------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `mode`                             | `auto`, `tls`, `quic`; agent connection selection.       | auto; explicit mode takes precedence over legacy useQuic.                              |
+| `useQuic`                          | Legacy boolean transport selector.                       | Omit in new configurations; true selects QUIC, false TLS.                              |
+| `bind.mode`                        | `interface` or `address` local binding.                  | Omit the bind block for OS routing; an omitted mode with address uses address binding. |
+| `bind.interface`                   | Local interface name such as en0.                        | Used with mode=interface; selected address must fit first-hop family.                  |
+| `bind.address`                     | Local IP literal.                                        | Used with mode=address; not the remote Engine.                                         |
+| `ipFamily`                         | `ipv4`, `ipv6` or omitted.                               | Omitted permits both; selects destination family, not DNS-server family.               |
+| `dns.override`                     | Resolver IP/host with optional port.                     | Platform resolvers when omitted; DNS-over-TLS requires an override.                    |
+| `dns.tls`                          | Boolean enabling DNS over TLS.                           | false; omitted port becomes 853.                                                       |
+| `dns.serverName`                   | TLS resolver verification name.                          | Needed when DoT resolver address is an IP.                                             |
+| `dns.dnssec`                       | Boolean requiring authenticated DNSSEC answers.          | false; requires a verified DNS-over-TLS resolver.                              |
+| `mptcp`                            | Boolean requesting MPTCP on TCP connections.             | false; requires OS support, does not alter QUIC.                                       |
+| `tls.caFile`                       | PEM CA bundle for the Engine.                            | System roots when omitted.                                                             |
+| `tls.serverName`                   | Engine SNI/certificate verification name.                | Original Engine hostname when omitted.                                                 |
+| `tls.insecureSkipVerify`           | Boolean disabling Engine certificate verification.       | false; diagnostics only, rejected by FIPS.                                             |
+| `proxy.http`                       | HTTP/HTTPS CONNECT proxy URL.                            | No explicit proxy by default; QUIC requires HTTPS MASQUE.                              |
+| `proxy.socks5`                     | socks5/socks5h URL.                                      | Alternative to proxy.http; TCP CONNECT or QUIC UDP ASSOCIATE.                          |
+| `proxy.username`, `proxy.password` | Proxy credentials as strings.                            | For HTTP CONNECT and SOCKS5. QUIC MASQUE rejects static credentials.                                              |
+| `proxy.headers`                    | String map of HTTP proxy headers.                        | Merged by key for HTTP CONNECT. QUIC MASQUE rejects custom headers.                                         |
+| `proxy.fromEnvironment`            | Boolean enabling standard process proxy-variable lookup. | Opt-in; explicit proxy URL takes precedence.                                           |
+| `proxy.tls.caFile`                 | PEM CA bundle for an HTTPS/MASQUE proxy.                 | System roots; independent from Engine roots.                                           |
+| `proxy.tls.serverName`             | Proxy SNI/certificate verification name.                 | Proxy hostname when omitted.                                                           |
+| `proxy.tls.insecureSkipVerify`     | Boolean disabling proxy-hop verification.                | false; diagnostics only.                                                               |

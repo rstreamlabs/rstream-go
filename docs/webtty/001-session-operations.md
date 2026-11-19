@@ -1,6 +1,9 @@
 # Operate WebTTY sessions
 
-Use these commands after [opening a first session](../009-webtty.md#open-a-terminal). The host, authenticated context and transport determine which operations are available.
+Use an authenticated project context with access to a
+[registered WebTTY server](000-configuration.md#enroll-a-registered-webtty-server)
+for managed session operations. To verify a lightweight server first,
+[open a terminal](../009-webtty.md#open-a-terminal).
 
 ## Inspect managed sessions
 
@@ -33,18 +36,19 @@ the original session data.
 
 ## Start and retrieve a detached command
 
+Use a published WebSocket or WebTransport server on a deployment that
+supports detached execution.
+
 ```sh
-rstream webtty sessions start --url rstrm://build-server --execution-seconds 300 -- sh -c 'make check'
+rstream webtty sessions start --url rstrm://build-server --execution-seconds 300 -- whoami
 ```
 
-This example runs `make check` on the remote server. The server must have the
-project checkout and build tools. The CLI prints a session ID in JSON. Run
+This example runs `whoami` on the remote server. The CLI prints the session ID in JSON. Run
 `rstream webtty sessions show my-session-id` with that ID to see the actual
 process result. Join the session while it is running if the Engine supports
 live attachment.
 
-Detached execution needs a published WebSocket or WebTransport server, discovery
-and an explicit execution budget within the Engine's limit. The command receives
+Use discovery and set an execution budget within the Engine's limit. The command receives
 empty standard input and the start operation does not capture its output.
 Use `webtty exec` for connection-bound execution and local output capture.
 If the start response is lost, check for the existing execution before retrying.
@@ -52,12 +56,15 @@ The FIPS profile requires WebTransport for starting a session.
 
 ## Stop an existing managed command
 
+Use a session you control. Its Engine and WebTTY server must support
+explicit termination, and the Engine must support live attachment and
+control transfer.
+
 ```sh
 rstream webtty sessions stop 'my-session-id' --reason 'maintenance' --timeout 65s
 ```
 
-Replace the example ID with the session to stop. The operation requires
-control of that session. The result reports a confirmed native `exit_code` or
+Replace the example ID with the session to stop. The result reports a confirmed native `exit_code` or
 null if completion is unknown. A local cancellation releases the reader and
 can leave a termination request in flight. Read any retained output with
 `sessions export`.
@@ -88,7 +95,7 @@ and the FIPS and detached-execution publication requirements.
 
 ## Connect without discovery
 
-A device with a token scoped to private dialing can use an explicit Engine
+Use the standard CLI for this private connection. A device with a token scoped to private dialing can use an explicit Engine
 context and local trust material without inventory access. Supply the exact
 tunnel name or ID and the server's actual transport. Set `--exec-path` if
 the server uses a non-default terminal endpoint. Use the

@@ -9,10 +9,12 @@ relay when peers cannot establish a direct path.
 ## Use a certificate with the Engine API
 
 Start with a [certificate-authenticated context](002-cli-workflow.md#authenticate-an-agent-with-mtls).
-Use the normal project Engine address. The SDK discovers the project's
-certificate-authenticated HTTPS endpoint before sending credentials. For an
-explicitly provisioned endpoint, configure `ClientOptions.MTLSAPIURL` instead.
-The client verifies the server certificate and project binding. Send one Engine identity per request, either a token or an enrolled certificate.
+Use the normal project Engine address. Discovery verifies the project's
+HTTPS endpoint before sending credentials. If the deployment provisions the
+certificate-authenticated API URL explicitly, set `ClientOptions.MTLSAPIURL`
+to its HTTPS `/api` URL for the same project and keep certificate verification
+enabled. To test the configured identity, use [the Go inventory example](../examples/README.md#choose-another-example)
+or run `rstream tunnel list` with inventory permission.
 
 The API uses HTTP/1.1 or HTTP/2 over TLS/TCP, or HTTP/3 through QUIC. In
 automatic transport mode, an unavailable QUIC handshake can fall back to TCP
@@ -21,8 +23,10 @@ does not trigger fallback. The WebSocket adapter uses TLS/TCP.
 
 ## Request TURN credentials in Go
 
-The Engine identity needs `turn.credentials.create` for the following call.
-Reuse the client for later renewals and close it when the application shuts down.
+Configure an identity for the project. API issuance needs
+`turn.credentials.create`; local derivation needs `turn.relay.allocate`.
+Use the shared configuration to select the Control plane, Engine or local
+issuer. Keep the client for subsequent renewals.
 
 ```go
 client, err := config.NewClientFromEnv()
@@ -30,8 +34,9 @@ if err != nil {
     return err
 }
 defer client.Close()
-credentials, err := client.CreateTURNCredentials(ctx, rstream.CreateTURNCredentialsOptions{
-    TTL: 10 * time.Minute,
+credentials, err := config.CreateTURNCredentialsFromEnv(ctx, config.TURNCredentialsEnvOptions{
+    Client: client,
+    TTL:    10 * time.Minute,
 })
 ```
 
@@ -40,7 +45,7 @@ credentials, err := client.CreateTURNCredentials(ctx, rstream.CreateTURNCredenti
 | Available identity or configuration | Where the client obtains credentials |
 | --- | --- |
 | Eligible personal access token or application identity with relay coordinates | Automatic mode derives credentials locally. A token needs allocation rights, a reference and a valid expiry. |
-| Other token or application identity with a Control plane URL | The client asks the Control plane first. It switches to the Engine for connection or DNS failures, timeouts and HTTP 502, 503 or 504. Authorization, certificate and quota failures stop the request. |
+| Other token or application identity with a Control plane URL | The config helper asks the Control plane when it has a project endpoint. It falls back to the Engine for connection or DNS failures, timeouts and HTTP 502, 503 or 504. Authorization, certificate and quota failures stop the request. |
 | Enrolled client certificate | The client asks its discovered Engine HTTPS API. |
 | Programmatic client configured with an Engine only | The client asks the Engine directly. |
 | Explicit `api`, `engine`, `pat` or `app` mode | The specified issuer or derivation method is used. Local application derivation uses the client ID, PKCS#8 DER-hex secret and a relay realm key. |
@@ -49,16 +54,16 @@ Automatic API issuance has a ten-second total budget by default, with up to
 five seconds for the Control plane. The config helper uses the configured
 Control plane when present.
 
-Use a duration between one second and one hour for the request (default ten
+Use a whole-second duration between one second and one hour for the request (default ten
 minutes). Go returns the effective `TTL` in seconds with the relay URLs, username
 and credential. Managed issuance needs
 `turn.credentials.create` on either API. Local PAT/APP derivation needs
 `turn.relay.allocate`. Project scope, membership, status, credential revocation
 and expiry remain enforced. Usernames are opaque. Never log TURN passwords.
 
-The config helper remains available for one-off operations. Applications should
-pass a reusable client in `TURNCredentialsEnvOptions.Client` or call the client
-method directly. Filesystem WebRTC providers retain one client until shutdown.
+For Engine-only issuance, call `Client.CreateTURNCredentials` directly
+with the default options. The config helper loads the Control plane URL,
+project and relay settings needed for the other modes.
 
 ## CLI access with a certificate
 

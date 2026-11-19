@@ -40,13 +40,13 @@ or Engine. In a managed project, the tunnel owner needs
 `tunnels.tunnels.create-delete` and the dialing client needs
 `tunnels.streams.create-delete` on the tunnel.
 
-With an HTTP service listening on `127.0.0.1:8080`, forward it through a private tunnel:
+Create a private tunnel for a service listening on `127.0.0.1:8080`.
 
 ```sh
 rstream forward 127.0.0.1:8080 --no-publish --name internal-api
 ```
 
-In a second terminal, dial the named tunnel through a loopback listener:
+In a second terminal, dial that tunnel through a loopback listener.
 
 ```sh
 rstream nc -L 127.0.0.1:8081 -R rstrm://internal-api
@@ -81,11 +81,11 @@ For published services, choose a coherent protocol/type pair:
 | `tls`    | Bytestream                                                                | Clear bytes after edge TLS termination, or the application's TLS handshake in passthrough mode. |
 | `dtls`   | Datagram                                                                  | Raw datagrams, or a DTLS upstream when enabled.                                                                                   |
 | `quic`   | Datagram                                                                  | QUIC upstream.                                                                                   |
-| `webtty` | Bytestream                                                                | Engine-managed WebTTY envelope; use registered-server enrollment.                               |
+| `webtty` | Bytestream, or datagram for registered WebTransport                                                                | Engine-managed WebTTY envelope; use registered-server enrollment.                               |
 
 Omit `Type` when the engine can derive it from the protocol. Explicit values
-must agree. Native unreliable datagrams require QUIC transport; the transport
-guide explains the separate framed reliable-delivery path.
+must agree. Native unreliable datagrams require QUIC transport; use `DatagramGuaranteedDelivery` when the application needs framed reliable
+delivery.
 
 ## Region and routing
 

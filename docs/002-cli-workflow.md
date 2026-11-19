@@ -14,7 +14,7 @@ response. [Install the CLI](000-installation.md) before starting.
 
 For hosted rstream, approve sign-in in your browser. For a workstation,
 choose **My computer** and **Development**. Copy the `ENDPOINT` value from
-`rstream project list` into the last command:
+`rstream project list` into the project selection command.
 
 ```sh
 rstream login
@@ -45,7 +45,7 @@ demo_dir="$(mktemp -d)" &&
   python3 -m http.server 8080 --bind 127.0.0.1
 ```
 
-In Windows PowerShell, use:
+In Windows PowerShell, create the directory and start the server with the Windows Python launcher.
 
 ```powershell
 & {
@@ -68,7 +68,7 @@ rstream forward 127.0.0.1:8080 --http
 Open the HTTPS address printed by the CLI. Expect `Hello from rstream` at
 both addresses and a request in the local server log. If the project enforces
 HTTP token authentication, [follow the protected HTTP example](https://rstream.io/docs/tunnels/http-tunnels/authentication#enable-access-control). For a CE Engine using a
-private certificate authority, verify the printed HTTPS address with curl and the CA file:
+private certificate authority, verify the printed hostname with the CA file.
 
 ```sh
 curl --cacert /path/to/ca.pem 'https://your-tunnel-host/'

@@ -6,7 +6,7 @@ HSM exposes a vendor API instead of PKCS#11. The executable supplies the public
 certificate chain and signatures. TLS, certificate verification, connections
 and tunnel traffic stay in rstream.
 
-Enroll the public leaf certificate in the project first. Use this backend for
+First [enroll the public leaf certificate](https://rstream.io/docs/security/mtls) in the project. Use this backend for
 agent mTLS. [WebTTY endpoint trust](webtty/000-configuration.md) and
 [published client admission](005-http-tunnels.md#http-authentication) each
 have separate identities.
@@ -75,7 +75,7 @@ locations where possible.
 Create the context through the CLI if preferred:
 
 ```sh
-rstream context create device --no-api-url \
+rstream --config /etc/rstream/config.yaml context create device --no-api-url \
   --engine project.cluster.example:443 \
   --mtls-exec /usr/libexec/device-mtls-helper \
   --mtls-exec-arg=--identity --mtls-exec-arg=device \
@@ -93,13 +93,11 @@ selection, and ordinary config resolution do not execute the helper.
 
 ```sh
 rstream --config /etc/rstream/config.yaml --context device doctor
-rstream --config /etc/rstream/config.yaml --context device webtty server --rstream
-rstream --config /etc/rstream/config.yaml --context device run --apply tunnels.yaml
 ```
 
-WebTTY admission and optional E2E settings still need to match the deployment.
-The Engine identity belongs in the central config, not in
-`--webtty-config`'s `tls` block.
+The same context can be used by [declarative tunnels](007-declarative-tunnels.md)
+and [WebTTY](009-webtty.md). Configure terminal endpoint trust separately
+when opening a protected WebTTY session.
 
 A tunnels file can use the default context or reference a named central context:
 

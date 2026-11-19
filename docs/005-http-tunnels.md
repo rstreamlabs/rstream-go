@@ -23,12 +23,12 @@ bytestream tunnel directly as a listener.
 
 Select the upstream variant the application serves:
 
-| `HTTPVersion`         | `UpstreamTLS` | Application connection                      | Tunnel type |
-| --------------------- | ------------- | ------------------------------------------- | ----------- |
-| `http/1.1` or omitted | Omitted/false | Clear HTTP/1.1.                             | Bytestream  |
-| `h2c`                 | Omitted/false | Clear HTTP/2 with prior knowledge.          | Bytestream  |
-| Omitted               | true          | TLS with ALPN selecting HTTP/1.1 or HTTP/2. | Bytestream  |
-| `h3`                  | Omitted/true  | HTTP/3 over QUIC; TLS is required.          | Datagram    |
+| Go `HTTPVersion` | Go `UpstreamTLS` | CLI options after `--http` | Upstream | Type |
+| --- | --- | --- | --- | --- |
+| `http/1.1` or omitted | Omitted or false | `--http-version http/1.1` or default | Clear HTTP/1.1 | Bytestream |
+| `h2c` | Omitted or false | `--http-version h2c` | Clear HTTP/2 with prior knowledge | Bytestream |
+| Omitted | true | `--upstream-tls` | TLS with ALPN selecting HTTP/1.1 or HTTP/2 | Bytestream |
+| `h3` | Omitted or true | `--http-version h3` | HTTP/3 over QUIC | Datagram |
 
 With a TLS-negotiated HTTP/1.1/2 upstream, omit `HTTPVersion` so ALPN selects
 it. HTTP/3 is the explicit exception: `h3` selects QUIC and enables upstream TLS;

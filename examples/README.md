@@ -7,7 +7,7 @@ For complete applications with framework setup and their own lifecycle, see [rst
 ## Prepare the checkout
 
 Install the tools in [Build from source](../docs/001-building-from-source.md).
-From the repository root on Linux or macOS, build the HTTP server and client:
+Run the build for the HTTP server and client from the repository root on Linux or macOS.
 
 ```sh
 make http-h1-server http-h1-client
@@ -15,7 +15,7 @@ make http-h1-server http-h1-client
 
 The binaries are written to `out/examples/`. `make examples` builds the
 complete catalog. On Windows, [prepare the source checkout](../docs/001-building-from-source.md#build-on-windows),
-then build the pair in PowerShell:
+then build the pair in PowerShell.
 
 ```powershell
 go build -modfile=out/ice-patch/go.mod -o out/examples/http-h1-server.exe ./examples/http-h1-server
@@ -74,7 +74,7 @@ Build a selected program with `make <directory-name>`, then use its `-h` output 
 | --- | --- | --- |
 | HTTP/1.1 | [Server](http-h1-server) and [client](http-h1-client) | Published HTTP or a private request through the Go dialer. |
 | HTTP/2 | [Server](http-h2c-server) and [client](http-h2c-client) | An h2c application carried over a tunnel. |
-| Application TLS | [Server](http-tls-server) and [client](http-tls-client) | HTTPS over accepted bytestreams, with a demonstration certificate for the internal server. |
+| Application TLS | [Server](http-tls-server) and [client](http-tls-client) | HTTPS over accepted bytestreams, with a test certificate in private mode. Published mode needs the service certificate and key. |
 | HTTP/3 | [Server](http-h3-server) and [client](http-h3-client) | An HTTP/3 application with a demonstration certificate over datagram connectivity. |
 | Server-sent events | [Server](http-sse-server) and [client](http-sse-client) | A continuing HTTP event response. |
 | WebSocket | [HTTP/1.1 server](http-ws-h1-server), [h2c server](http-ws-h2c-server), [HTTP/3 server](http-ws-h3-server) and [client](http-ws-h1-client) | WebSocket traffic over the different HTTP paths; the client selects a server with `--tunnel`. |
@@ -84,9 +84,9 @@ Build a selected program with `make <directory-name>`, then use its `-h` output 
 | QUIC | [Server](quic-echo-server) and [client](quic-echo-client) | QUIC streams and datagrams. |
 | SCTP | [Server](sctp-echo-server) and [client](sctp-echo-client) | SCTP streams over datagram tunnels or a published DTLS endpoint. |
 | SSH | [Server](tcp-ssh-server) and [client](tcp-ssh-client) | Published TCP with SSH password authentication and explicit host-key verification. |
-| MASQUE | [Server](masque-server) and [client](masque-client) | CONNECT-UDP and CONNECT-IP through private tunnels or a published HTTP/3 endpoint. |
+| MASQUE | [Server](masque-server) and [client](masque-client) | CONNECT-UDP and CONNECT-IP in a private test tunnel. |
 | Engine API | [List tunnels](api-list-tunnels) | Engine inventory using a token or enrolled mTLS identity. |
-| TURN credentials | [Credential helper](turn-credentials) | Obtain short-lived relay credentials from the active configuration. |
+| TURN credentials | [Credential helper](turn-credentials) | Request short-lived relay credentials from the active context. Keep the JSON response private. |
 | CLI orchestration | [YAML](run-yaml) and [Docker labels](run-docker) | Declarative forwarding with the CLI rather than an embedded SDK. |
 
 The [external mTLS signer guide](../docs/016-external-mtls-signer.md) explains the [signing helper example](mtls-exec-helper).

@@ -1,8 +1,16 @@
 # Inspect tunnels from the terminal
 
 Select a [CLI context](002-cli-workflow.md), then run `rstream ui` to watch clients,
-tunnels and WebTTY servers. If an expected resource is missing, check the active
-context and its Engine permissions.
+tunnels and WebTTY servers. Run it in an interactive terminal. If an
+expected resource is missing, check the active context and its Engine
+permissions.
+
+| Key | Action |
+| --- | --- |
+| `1`, `2` or `3` | View WebTTY, tunnels or clients. |
+| `Tab` | Switch to the next inventory view. |
+| `?` | Open the keyboard help. |
+| `q` | Exit the inventory. |
 
 ## Switch context or project
 
