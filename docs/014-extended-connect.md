@@ -1,6 +1,6 @@
 # Extended CONNECT and MASQUE
 
-The Go SDK can publish and dial HTTP/3 datagram tunnels that carry Extended CONNECT protocols such as WebTransport, CONNECT-UDP, and CONNECT-IP. Plain authority-form CONNECT is not Extended CONNECT and is documented separately in [HTTP_CONNECT.md](004-http-connect.md). The SDK does not implement MASQUE itself; the samples and runtime tests use the upstream protocol libraries directly:
+The Go SDK can publish and dial HTTP/3 datagram tunnels that carry Extended CONNECT protocols such as WebTransport, CONNECT-UDP, and CONNECT-IP. Plain authority-form CONNECT is not Extended CONNECT and is documented separately in [HTTP_CONNECT.md](013-http-connect.md). The SDK does not implement MASQUE itself; the samples and runtime tests use the upstream protocol libraries directly:
 
 - `github.com/quic-go/masque-go` for CONNECT-UDP.
 - `github.com/quic-go/connect-ip-go` for CONNECT-IP.
@@ -49,14 +49,14 @@ The upstream server owns IP proxy behavior: route scoping, address assignment, r
 
 ## Samples
 
-The MASQUE samples follow the same published/private flag shape as other examples:
+Prepare this checkout with [Build from source](001-building-from-source.md), then run from its root. The MASQUE samples follow the same published/private flag shape as other examples:
 
 ```bash
-go run ./examples/masque-server --variant connect-udp
-go run ./examples/masque-client --variant connect-udp --target 127.0.0.1:9000
+go run -modfile=out/ice-patch/go.mod ./examples/masque-server --variant connect-udp
+go run -modfile=out/ice-patch/go.mod ./examples/masque-client --variant connect-udp --target 127.0.0.1:9000
 
-go run ./examples/masque-server --variant connect-udp --publish
-go run ./examples/masque-client --variant connect-udp --publish --target 127.0.0.1:9000
+go run -modfile=out/ice-patch/go.mod ./examples/masque-server --variant connect-udp --publish
+go run -modfile=out/ice-patch/go.mod ./examples/masque-client --variant connect-udp --publish --target 127.0.0.1:9000
 ```
 
 CONNECT-IP uses the same flags with `--variant connect-ip`. Published clients can pass `--addr` to skip tunnel lookup and connect to a specific published forwarding address.

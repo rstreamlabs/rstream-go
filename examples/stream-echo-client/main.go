@@ -10,10 +10,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -32,14 +34,19 @@ func handleConnection(conn net.Conn) error {
 	if err != nil {
 		return fmt.Errorf("failed to write: %w", err)
 	}
+	if n != len(msg) {
+		return fmt.Errorf("failed to write: %w", io.ErrShortWrite)
+	}
 	log.Printf("Wrote %d bytes: %s", n, msg)
-	// Receive a message
-	buf := make([]byte, 2048)
-	n, err = conn.Read(buf)
+	buf := make([]byte, len(msg))
+	n, err = io.ReadFull(conn, buf)
 	if err != nil {
 		return fmt.Errorf("failed to read: %w", err)
 	}
-	log.Printf("Received %d bytes: %s", n, buf[:n])
+	if !bytes.Equal(buf, msg) {
+		return fmt.Errorf("echo payload does not match the sent message")
+	}
+	log.Printf("Received %d bytes: %s", n, buf)
 	return nil
 }
 

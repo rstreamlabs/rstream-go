@@ -10,10 +10,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -29,6 +31,26 @@ import (
 // Published QUIC requires an explicit application ALPN; the engine mirrors it upstream
 const quicEchoALPN = "rstream-quic-echo"
 
+func exchangeStream(stream io.ReadWriter) error {
+	message := []byte("Hello from rstream-go!")
+	n, err := stream.Write(message)
+	if err != nil {
+		return fmt.Errorf("write failed: %w", err)
+	}
+	if n != len(message) {
+		return fmt.Errorf("write failed: %w", io.ErrShortWrite)
+	}
+	reply := make([]byte, len(message))
+	if _, err := io.ReadFull(stream, reply); err != nil {
+		return fmt.Errorf("read failed: %w", err)
+	}
+	if !bytes.Equal(reply, message) {
+		return fmt.Errorf("echo payload does not match the sent message")
+	}
+	log.Printf("Received stream %d bytes: %s", len(reply), reply)
+	return nil
+}
+
 func handleConnection(ctx context.Context, conn *quic.Conn) error {
 	defer conn.CloseWithError(0, "client done")
 	// Open a single stream
@@ -37,20 +59,9 @@ func handleConnection(ctx context.Context, conn *quic.Conn) error {
 		return fmt.Errorf("failed to open stream: %w", err)
 	}
 	defer stream.Close()
-	// Send a message
-	msg := []byte("Hello from rstream-go!")
-	n, err := stream.Write(msg)
-	if err != nil {
-		return fmt.Errorf("failed to write: %w", err)
+	if err := exchangeStream(stream); err != nil {
+		return err
 	}
-	log.Printf("Wrote %d bytes: %s", n, msg)
-	// Receive a message
-	buf := make([]byte, 2048)
-	n, err = stream.Read(buf)
-	if err != nil {
-		return fmt.Errorf("failed to read: %w", err)
-	}
-	log.Printf("Received stream %d bytes: %s", n, buf[:n])
 	dgram := []byte("Datagram from rstream-go!")
 	if err := conn.SendDatagram(dgram); err != nil {
 		return fmt.Errorf("failed to send datagram: %w", err)

@@ -229,14 +229,6 @@ func checkDoctorNetwork(ctx context.Context, report *Report, resolved config.Res
 		return
 	}
 	report.add("engine_address", StatusPass, "engine address configured", map[string]string{"address": address, "host": host})
-	lookupCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	ips, err := net.DefaultResolver.LookupHost(lookupCtx, host)
-	if err != nil {
-		report.add("dns", StatusFail, err.Error(), map[string]string{"host": host})
-	} else {
-		report.add("dns", StatusPass, "engine host resolves", map[string]string{"host": host, "addresses": strings.Join(ips, ",")})
-	}
 	if ctx.Err() != nil {
 		return
 	}
@@ -277,6 +269,7 @@ func checkDoctorNetwork(ctx context.Context, report *Report, resolved config.Res
 			selectionMessage = "auto transport will fall back to TLS"
 		}
 	}
+	checkDoctorDNS(ctx, report, resolved.Transport, host, selected)
 	report.add("tunnel_transport", selectionStatus, selectionMessage, map[string]string{"configuredMode": string(mode), "selectedMode": selected})
 }
 

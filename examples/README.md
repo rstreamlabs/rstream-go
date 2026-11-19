@@ -1,87 +1,112 @@
-# Examples
+# Go SDK examples
 
-The examples use the same config/env resolution as the CLI via `config.NewClientFromEnv()`. That keeps the sample code short and consistent with `rstream` usage.
+These programs show how a Go application accepts connections through rstream, dials a private service or calls an API. They use the same credentials and endpoint configuration as the CLI. Start with HTTP to see the connection model; the other examples explore particular protocols and integrations.
 
-## Prerequisites
+For complete applications with framework setup and their own lifecycle, see [rstream application examples](https://github.com/rstreamlabs/rstream-examples).
 
-Set a default context or `RSTREAM_ENGINE`. If your engine requires token authentication, set `RSTREAM_AUTHENTICATION_TOKEN`. If the example opens an agent control-channel connection and it requires mTLS agent authentication, set `RSTREAM_MTLS_CERT_FILE` and `RSTREAM_MTLS_KEY_FILE` instead. Examples that call the Engine HTTP API require token authentication.
+## Prepare the checkout
 
-Typical setup (CLI):
+Install the tools in [Build from source](../docs/001-building-from-source.md). Commands on this page run from the repository root, not from an individual example directory. Build only the first pair:
 
-```bash
-rstream login <token>
-rstream project use <project-endpoint>
+```sh
+make http-h1-server http-h1-client
 ```
 
-## Run
+The binaries are written to `out/examples/`. `make examples` builds the complete catalog. On Windows, the corresponding binary names end in `.exe`.
 
-Build all examples:
+The programs also need access to an engine and permission to create or dial the selected tunnel. With an installed CLI and a managed project, select a context:
 
-```bash
-make examples
+```sh
+rstream login
+rstream project use my-project-endpoint
 ```
 
-Run an example:
+Replace `my-project-endpoint` with the endpoint from the project dashboard. Reuse that context in both terminals below. A self-hosted engine can instead be selected explicitly; [configuration](../docs/002-cli-workflow.md) explains the credential and endpoint choices.
 
-```bash
+| Configuration | When it is needed |
+| --- | --- |
+| Selected CLI context | The usual local-development path; examples load it through `config.NewClientFromEnv()`. |
+| `RSTREAM_ENGINE` | Override the engine address instead of using the selected context. |
+| `RSTREAM_AUTHENTICATION_TOKEN` | Supply explicit token authentication; leave unset when using mTLS. |
+| `RSTREAM_MTLS_CERT_FILE` and `RSTREAM_MTLS_KEY_FILE` | Use an enrolled certificate for native Engine connections and Engine HTTP APIs through automatic discovery. Control plane administration still requires a token. |
+
+## Serve HTTP
+
+In the first terminal, publish the example server:
+
+```sh
 ./out/examples/http-h1-server --publish
 ```
 
-Useful protocol-focused examples:
+It prints `Server listening on` followed by the forwarding address. Open that address in a browser or request it with `curl`; the response body is the server's hostname. The Go handler receives connections directly through the tunnel, without a local TCP listening port. Stop the server with an interrupt.
 
-- `tcp-ssh-server` / `tcp-ssh-client`: SSH over a published raw TCP tunnel, with password authentication and explicit host key verification.
-- `http-sse-server` / `http-sse-client`: Server-Sent Events over an HTTP tunnel.
-- `sctp-echo-server` / `sctp-echo-client`: SCTP streams with `pion/sctp` over datagram tunnels, and over the published DTLS edge.
-- `masque-server` / `masque-client`: CONNECT-UDP and CONNECT-IP over HTTP/3 datagram tunnels, using internal rstream dialing by default and published HTTP/3 endpoints with `--publish`.
+## Connect privately
 
-Run the MASQUE examples in private mode:
+Run the server without publication in the first terminal:
 
-```bash
-go run ./examples/masque-server --variant connect-udp
-go run ./examples/masque-client --variant connect-udp --target 127.0.0.1:9000
+```sh
+./out/examples/http-h1-server
 ```
 
-Run the same shape through a published HTTP/3 endpoint:
+In a second terminal using the same project context, run:
 
-```bash
-go run ./examples/masque-server --variant connect-udp --publish
-go run ./examples/masque-client --variant connect-udp --publish --target 127.0.0.1:9000
+```sh
+./out/examples/http-h1-client
 ```
 
-Run the SSH server through an ephemeral published TCP address:
+The client dials the tunnel named `h1-example` through rstream and prints the HTTP status and hostname. This path needs no public service address. Stop the first server before starting another copy with the same tunnel name.
 
-```bash
-RSTREAM_SSH_PASSWORD='<password>' go run ./examples/tcp-ssh-server
+Publication and private dialing are separate choices. The agent-to-engine connection remains authenticated in both cases. Each protocol example has its own requirements; engine edition, project settings and permissions still determine what can be created or reached.
+
+## Choose another example
+
+Build a selected program with `make <directory-name>`, then use its `-h` output for the flags it accepts. A server/client pair normally runs in two terminals with the server started first.
+
+| Topic | Programs | What it demonstrates |
+| --- | --- | --- |
+| HTTP/1.1 | [Server](http-h1-server) and [client](http-h1-client) | Published HTTP or a private request through the Go dialer. |
+| HTTP/2 | [Server](http-h2c-server) and [client](http-h2c-client) | An h2c application carried over a tunnel. |
+| Application TLS | [Server](http-tls-server) and [client](http-tls-client) | HTTPS over accepted bytestreams, with a demonstration certificate for the internal server. |
+| HTTP/3 | [Server](http-h3-server) and [client](http-h3-client) | An HTTP/3 application with a demonstration certificate over datagram connectivity. |
+| Server-sent events | [Server](http-sse-server) and [client](http-sse-client) | A continuing HTTP event response. |
+| WebSocket | [HTTP/1.1 server](http-ws-h1-server), [h2c server](http-ws-h2c-server), [HTTP/3 server](http-ws-h3-server) and [client](http-ws-h1-client) | WebSocket traffic over the different HTTP paths; the client selects a server with `--tunnel`. |
+| WebTransport | [Server](http-wt-server) and [client](http-wt-client) | Bidirectional stream exchange over WebTransport. |
+| Raw bytestream | [Server](stream-echo-server) and [client](stream-echo-client) | Private echo connections or a published TLS endpoint. |
+| Datagrams and DTLS | [Server](datagram-echo-server) and [client](datagram-echo-client) | Message-preserving echo traffic, including the published DTLS path. |
+| QUIC | [Server](quic-echo-server) and [client](quic-echo-client) | QUIC streams and datagrams. |
+| SCTP | [Server](sctp-echo-server) and [client](sctp-echo-client) | SCTP streams over datagram tunnels or a published DTLS endpoint. |
+| SSH | [Server](tcp-ssh-server) and [client](tcp-ssh-client) | Published TCP with SSH password authentication and explicit host-key verification. |
+| MASQUE | [Server](masque-server) and [client](masque-client) | CONNECT-UDP and CONNECT-IP through private tunnels or a published HTTP/3 endpoint. |
+| Engine API | [List tunnels](api-list-tunnels) | Engine inventory using a token or enrolled mTLS identity. |
+| TURN credentials | [Credential helper](turn-credentials) | Obtain short-lived relay credentials from the active configuration. |
+| CLI orchestration | [YAML](run-yaml) and [Docker labels](run-docker) | Declarative forwarding with the CLI rather than an embedded SDK. |
+
+The [external mTLS signer guide](../docs/016-external-mtls-signer.md) explains the `mtls-exec-helper` program; it is an authentication helper, not a separate tunnel example.
+
+## Protocol-specific setup
+
+The internal HTTPS and HTTP/3 demo servers use self-signed application certificates. Their clients have an explicit `--insecure-demo-tls` option for that isolated demonstration. It changes application-server verification, not the agent's engine authentication; published endpoints continue to use their normal edge certificate. Keep this opt-in confined to the demo.
+
+For SSH, set `RSTREAM_SSH_PASSWORD` in both processes. Start the server, then pass its printed address and fingerprint to the client:
+
+```sh
+./out/examples/tcp-ssh-server
 ```
 
-Use the address and host key fingerprint printed by the server:
-
-```bash
-RSTREAM_SSH_PASSWORD='<password>' go run ./examples/tcp-ssh-client \
-  -address '<hostname>:<port>' \
-  -fingerprint 'SHA256:<fingerprint>'
+```sh
+./out/examples/tcp-ssh-client -address '<hostname>:<port>' -fingerprint 'SHA256:<fingerprint>'
 ```
 
-The downstream TCP connection is not secured by rstream. SSH provides encryption, server identity, and client authentication in this example.
+SSH supplies encryption and peer authentication for this TCP example. Raw published TCP by itself does not add those properties.
 
-Generate managed TURN credentials from the active config context:
+For MASQUE CONNECT-UDP, provide a reachable UDP target. These commands use private dialing:
 
-```bash
-go run ./examples/turn-credentials
+```sh
+./out/examples/masque-server --variant connect-udp
 ```
 
-Or override the current context with environment variables:
-
-```bash
-RSTREAM_API_URL=http://localhost:3000 \
-RSTREAM_AUTHENTICATION_TOKEN="$RSTREAM_AUTHENTICATION_TOKEN" \
-RSTREAM_PROJECT_ENDPOINT=9bfdaa8b \
-go run ./examples/turn-credentials
+```sh
+./out/examples/masque-client --variant connect-udp --target 127.0.0.1:9000
 ```
 
-When TURN routing fields are not already present in the local context, the SDK falls back to the Control plane API.
-
-## CLI Run Examples
-
-- `examples/run-yaml`: YAML-based `rstream -v run --apply` example with a whoami container.
-- `examples/run-docker`: Docker-label-based `rstream -v run --docker` example with a whoami container.
+Add `--publish` to both commands for the published HTTP/3 path. CONNECT-IP additionally requires the host privileges and routing setup described by the programs; it is not a first-connection prerequisite.
