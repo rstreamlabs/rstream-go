@@ -34,7 +34,7 @@ curl -fsS http://127.0.0.1:8080/
 rstream forward 8080
 ```
 
-Use `curl.exe` in Windows PowerShell to avoid its legacy `curl` alias. The local curl should print `Hello from rstream`. `forward` prints an HTTPS forwarding address and keeps the tunnel online. Request the HTTPS forwarding address from a third terminal. Replace the example address with the one printed by the CLI:
+Use `curl.exe` in Windows PowerShell. The local request should print `Hello from rstream`. In a third terminal, request the HTTPS address printed by `forward`:
 
 ```sh
 curl -fsS 'https://my-tunnel.example.com/'
@@ -59,7 +59,7 @@ Omit `--permission` to review the preset choices. Repeat `--permission <scope>` 
 
 ### Import an existing Token
 
-Use one explicit input. Login takes no positional token; the old `--stdin` alias is deprecated.
+Import an existing token from a file or standard input.
 
 ```sh
 rstream login --token-file /path/to/account-token
@@ -67,7 +67,7 @@ rstream login --token-file /path/to/account-token
 secret-reader | rstream login --token-stdin
 ```
 
-`secret-reader` represents your own secret-manager command, not an rstream tool. File and stdin inputs are mutually exclusive. `--token-storage macos-keychain` stores a token reference in YAML instead of its value on supported macOS builds. Browser login defaults to OAuth Device Authorization; `--auth-flow legacy` selects the older flow for compatibility testing.
+`secret-reader` represents your own secret-manager command, not an rstream tool. File and stdin inputs are mutually exclusive. `--token-storage macos-keychain` stores a token reference in YAML instead of its value on supported macOS builds.
 
 ### Configure a service or CI runner
 

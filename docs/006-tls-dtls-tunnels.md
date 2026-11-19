@@ -43,9 +43,12 @@ The public TLS session and the connection to the application are separate:
 
 ## DTLS and project cryptographic policy
 
-Published DTLS endpoints support DTLS 1.2 and 1.3 when the engine enables DTLS.
+Published DTLS requires Enterprise Edition with a DTLS listener. It supports DTLS 1.2 and 1.3.
 The tunnel and project minimum use the existing values `tls1.2` and `tls1.3`;
 for DTLS these select a DTLS 1.2-or-newer or DTLS 1.3 minimum.
+
+Project post-quantum (PQ) key exchange and Encrypted Client Hello (ECH) settings
+can narrow the allowed connections.
 
 | Project setting        | Published DTLS behavior                                          |
 | ---------------------- | ---------------------------------------------------------------- |

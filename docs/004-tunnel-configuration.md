@@ -11,7 +11,7 @@ project settings and permissions apply to the complete configuration.
 | Private, `Publish=false`  | An authenticated rstream client dials the tunnel's name or ID.               | A database, worker or internal application connection.                |
 | Published, `Publish=true` | An ordinary client uses the forwarding hostname/port returned by the engine. | A browser, webhook sender, SSH client or other public service client. |
 
-Publication defaults to true. Set `Publish=false` explicitly for private access.
+Publication defaults to true. Published endpoints can still require authentication. Set `Publish=false` explicitly for private access.
 Private creation requires the project's private-tunnel entitlement; dialing
 uses the caller's connect permission. The process that creates a tunnel accepts
 its connections; a private peer uses
@@ -54,8 +54,8 @@ For published services, choose a coherent protocol/type pair:
 | `http`   | Bytestream for HTTP/1.1 or HTTP/2 upstream; datagram for HTTP/3 upstream. | HTTP handler, WebSocket service or compatible CONNECT application.                              |
 | `tcp`    | Bytestream                                                                | Raw TCP application such as SSH.                                                                |
 | `tls`    | Bytestream                                                                | Clear bytes after edge TLS termination, or the application's TLS handshake in passthrough mode. |
-| `dtls`   | Datagram                                                                  | DTLS service.                                                                                   |
-| `quic`   | Datagram                                                                  | QUIC service.                                                                                   |
+| `dtls`   | Datagram                                                                  | Raw datagrams, or a DTLS upstream when enabled.                                                                                   |
+| `quic`   | Datagram                                                                  | QUIC upstream.                                                                                   |
 | `webtty` | Bytestream                                                                | Engine-managed WebTTY envelope; use registered-server enrollment.                               |
 
 Omit `Type` when the engine can derive it from the protocol. Explicit values

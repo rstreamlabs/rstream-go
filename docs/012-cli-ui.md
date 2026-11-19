@@ -1,44 +1,35 @@
-# Interactive CLI inventory
+# Inspect tunnels from the terminal
 
-Run `rstream ui` after selecting a context with the [CLI workflow](002-cli-workflow.md). It watches visible clients, tunnels and WebTTY servers in one terminal. Engine permissions determine which categories and fields are available. Check the active context and its permissions if expected resources are missing.
+Select a [CLI context](002-cli-workflow.md), then run `rstream ui` to watch clients,
+tunnels and WebTTY servers. If an expected resource is missing, check the active
+context and its Engine permissions.
 
 ## Switch context or project
 
+Press `c` to open the picker. The **Current** and **Default** columns show which
+context the UI is using and which context is saved for future commands.
 
-`rstream ui` can change the runtime context without restarting the process.
-Press `c` from the inventory to open the context and project picker:
+| Key | Action |
+| --- | --- |
+| `1`, `2` or `Tab` | Select or switch between local contexts and remote projects. |
+| `Enter` | Use the selection in the current UI session. |
+| `d` | Use the selection and save it as the default context. |
+| `/` | Search the active list. |
+| `r` | Refresh projects from the active Control plane. |
+| `Esc` | Return to the inventory. |
 
-- `1` and `2` select the separate context and project views; `Tab` toggles them.
-- `Enter` switches only for the current UI process and does not write config.
-- `d` switches and saves the selected context as the default.
-- `/` searches the active view.
-- `r` refreshes projects from the active Control plane API.
-- `Esc` returns to the inventory without changing context.
+Local contexts are available without Control plane access. Project discovery
+uses the active context's Control plane unless you select one with `--api-url`
+or `RSTREAM_API_URL`. The UI can still list local contexts when the remote
+project request fails.
 
-Each table has one row per choice and explicit `CURRENT` and `DEFAULT` columns.
-The detail panel shows the selected target properties. Selecting a remote
-project without a local context builds an in-memory context for a session-only
-switch. A persistent selection creates or refreshes the project context with
-the same engine and TURN metadata as `rstream project use`, then writes the
-config selected by `--config`, `RSTREAM_CONFIG`, or the default config path.
-
-Local contexts do not depend on Control plane access. They remain available
-when the current context is unlinked, when no Control plane API is defined, or
-when the selected token cannot list projects. Remote project discovery runs in
-the background and reports its error in the picker without interrupting the
-current Engine inventory. By default, projects are loaded only for the Control
-plane API linked to the active context. `--api-url` or `RSTREAM_API_URL` pins
-that scope; unlinked local contexts remain available.
-
-`--context` and `RSTREAM_CONTEXT` select the initial runtime. Interactive
-selection can override them for the running UI, but saving another default does
-not override `RSTREAM_CONTEXT` in future processes, so the UI displays a
-warning. `RSTREAM_ENGINE` remains authoritative and prevents switching to a
-context configured for another engine. An active WebTTY session must be closed
-with `Ctrl+g q` before switching so a remote terminal is never disconnected
-implicitly.
-
+`--context` and `RSTREAM_CONTEXT` select the initial context. You can switch
+inside the UI. A saved default applies to future commands that have no explicit
+context. If `RSTREAM_ENGINE` is set, the selected context must use that Engine.
 
 ## Open WebTTY
 
-Select a WebTTY server and press Enter. The UI resolves the same identity, known-server pin and workspace-device grants as the CLI. It never creates a trust-on-first-use entry for authenticated E2E. A missing known-server pin fails before sending terminal content. See [WebTTY](009-webtty.md) for enrollment, OS users and supported transports.
+Select a WebTTY server and press Enter. The UI follows the same endpoint trust
+and identity rules as the CLI. Configure any required known-server pin before
+opening a protected session. Close the terminal with `Ctrl+g q` before switching
+contexts. See [WebTTY configuration](webtty/000-configuration.md) for setup.

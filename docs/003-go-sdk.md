@@ -8,7 +8,7 @@ You can also [forward an existing process](002-cli-workflow.md) with the CLI.
 
 ## Serve a published HTTP route
 
-Use the Go toolchain required by the SDK release. Create a small module and add the SDK:
+Check `go version` against the Go requirement declared in the SDK release's `go.mod`. Create a small module and add the SDK:
 
 ```sh
 mkdir rstream-hello
@@ -17,7 +17,7 @@ go mod init example.com/rstream-hello
 go get github.com/rstreamlabs/rstream-go
 ```
 
-[Install the CLI](000-installation.md) and select a project with `rstream login` and `rstream project use my-project-endpoint`. The program reads that context, creates a published HTTP/1.1 tunnel and serves requests directly, without binding a local TCP port.
+[Install the CLI](000-installation.md), then [sign in and select your project](002-cli-workflow.md#publish-a-first-http-service). The program reads that context, creates a published HTTP/1.1 tunnel and serves requests directly, without binding a local TCP port.
 
 ```go
 package main
@@ -107,4 +107,4 @@ Pass contexts/deadlines for bounded setup and requests. A context used to establ
 | Inventory/watch/session APIs with token or certificate                  | [Engine API mTLS/TURN](015-engine-mtls-turn.md). Control plane administration still needs its own authorized token. |
 | Restricted cryptographic distribution                                   | [FIPS profile](017-fips-140-3-profile.md); its exclusions are intentional.                                          |
 
-Coverage still depends on Engine version, edition, listeners, project permissions and plan. Native unreliable datagrams preserve message boundaries and can be lost. Applications own their protocol authorization and recovery.
+Coverage still depends on Engine version, edition, listeners, project permissions and plan. Applications using native datagrams must handle loss. Use a reliable path when the service needs ordered delivery.

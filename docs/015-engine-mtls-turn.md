@@ -1,9 +1,27 @@
 # Engine HTTP mTLS and TURN credentials
 
-Reuse a `Client` for native runtime operations, Engine inventory, watch streams,
-WebTTY session requests and TURN renewal. Existing certificate configuration
-(including supported hardware/external signers) supplies the identity. A token
-and certificate cannot authenticate the same request.
+An enrolled client certificate can authenticate native rstream connections and
+Engine HTTPS APIs from the same Go client. TURN credentials let the application
+connect to the relay when a direct peer connection is unavailable.
+
+## Use a certificate with the Engine API
+
+Start with a [certificate-authenticated context](002-cli-workflow.md#authenticate-an-agent-with-mtls).
+Use the normal project Engine address. The SDK discovers the project's
+certificate-authenticated HTTPS endpoint before sending credentials. For an
+explicitly provisioned endpoint, configure `ClientOptions.MTLSAPIURL` instead.
+The client verifies the server certificate and project binding. Choose either
+token or certificate identity for the Engine request.
+
+The API uses HTTP/1.1 or HTTP/2 over TLS/TCP, or HTTP/3 through QUIC. In
+automatic transport mode, an unavailable QUIC handshake can fall back to TCP
+before sending the request. A credential refusal or an already-sent request
+does not trigger fallback. The WebSocket adapter uses TLS/TCP.
+
+## Request TURN credentials in Go
+
+The Engine identity needs `turn.credentials.create` for the following call.
+Reuse the client for later renewals and close it when the application shuts down.
 
 ```go
 client, err := config.NewClientFromEnv()
@@ -15,24 +33,6 @@ credentials, err := client.CreateTURNCredentials(ctx, rstream.CreateTURNCredenti
     TTL: 10 * time.Minute,
 })
 ```
-
-The context needs the ordinary project Engine address and an enrolled certificate
-with `turn.credentials.create`. `Client.EngineAPIURL(ctx)` anonymously discovers
-`/.well-known/rstream/engine`, validates HTTPS and the project binding, and caches
-its `mtlsApiUrl` in memory. Concurrent callers share discovery. The default cache
-lifetime is one hour, capped at 24 hours; no-store/no-cache bypass reuse. A failed
-transport clears the cached address for a later call without replaying a POST.
-Discovery has its own five-second budget and never sends certificates, signer
-callbacks, tokens, cookies or Control plane headers. Redirects are refused and
-server verification remains enabled even if a runtime transport was configured
-insecurely. There is no YAML migration or persistent cache. `MTLSAPIURL` is an
-optional programmatic override for an explicitly provisioned deployment.
-
-HTTP/1.1 and HTTP/2 use TLS/TCP. A QUIC client uses HTTP/3 for API calls, TURN and
-SSE. Auto transport may fall back to TCP on an unavailable QUIC handshake before
-sending a request; authentication, TLS verification or an already-sent POST are
-not fallback reasons. The Go WebSocket adapter continues to use TLS/TCP. Close
-the client to cancel pending work and release its owned HTTP/QUIC connections.
 
 ## TURN selection and authorization
 
