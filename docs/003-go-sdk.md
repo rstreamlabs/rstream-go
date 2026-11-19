@@ -103,6 +103,10 @@ go run .
 
 Open the printed forwarding address to see `Hello from rstream`; stop the process with an interrupt.
 
+For a project that requires caller authentication, verify the route with
+the configured credentials. The [HTTP tunnel guide](005-http-tunnels.md#http-authentication)
+shows which Go properties select the caller policy.
+
 For a direct Engine using a private CA, pass that CA to the client that
 checks the published address. In curl, use `--cacert /path/to/engine-ca.pem`
 with the printed HTTPS hostname. The CLI context trusts the Engine for the
