@@ -68,7 +68,10 @@ The public TLS session and the connection to the application are separate:
 
 ## DTLS and project cryptographic policy
 
-Published DTLS requires Enterprise Edition with a DTLS listener. It supports DTLS 1.2 and 1.3.
+Hosted Pro and Enterprise projects can publish DTLS when the Engine enables
+a DTLS listener. Published DTLS supports versions 1.2 and 1.3. The
+[editions and plans table](https://rstream.io/docs/support/editions) lists
+availability by deployment.
 The tunnel and project minimum use the existing values `tls1.2` and `tls1.3`;
 for DTLS these select a DTLS 1.2-or-newer or DTLS 1.3 minimum.
 

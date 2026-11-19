@@ -39,7 +39,8 @@ go get github.com/rstreamlabs/rstream-go
 ```
 
 The program publishes a disposable HTTP response. It uses the project or
-Engine selected above and serves the handler directly on the tunnel.
+Engine you selected in [Prepare a connection](#prepare-a-connection) and
+serves the handler directly on the tunnel.
 Set up [HTTP access control](005-http-tunnels.md#http-authentication) before
 replacing the example handler with a service that needs restricted access.
 

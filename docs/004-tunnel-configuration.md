@@ -123,7 +123,7 @@ DNS and registration workflows.
 | ---------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | Project permissions/settings | Whether the identity may create/connect and which protocols, regions or cryptographic requirements are allowed. |
 | `TrustedIPs`, `GeoIP`        | Source network/country restrictions at ingress.                                                                 |
-| Public HTTP authentication   | Tokens, rstream browser sessions, challenges or admitted client certificates.                                   |
+| Public HTTP authentication   | Tokens, rstream browser sessions or admitted client certificates.                                   |
 | Public TLS policy            | Termination, minimum TLS version, ALPN and client-certificate admission.                                        |
 
 Agent credentials authenticate the creating/dialing process. Public edge policy

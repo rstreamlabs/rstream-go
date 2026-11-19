@@ -162,9 +162,9 @@ IPv4-only or IPv6-only dialing can be enforced when one address family is filter
 DNS override allows the client to use a dedicated resolver for edge name resolution instead of the system resolver. This is useful when system DNS is constrained, inconsistent across environments, or must follow a specific egress route.
 
 rstream uses the resolver for Engine lookup and for the `HTTPS` and `SVCB`
-records used in ECH discovery. The operating system`s resolver configuration
+records used in ECH discovery. The operating system's resolver configuration
 is the default. To configure DNS over TLS, set `dns.tls` and provide a
-`dns.override`; the default port is `853`. When the resolver`s address is an
+`dns.override`; the default port is `853`. When the resolver's address is an
 IP, use `dns.serverName` to verify its certificate. Set `dns.dnssec` to require
 authenticated answers.
 

@@ -6,16 +6,19 @@ This repository contains the reference Go SDK and the `rstream` CLI. The CLI for
 
 | What you want to do | Start here |
 | --- | --- |
-| Forward an existing service | [Install the CLI](docs/000-installation.md) and [publish a first HTTP service](docs/002-cli-workflow.md#publish-a-first-http-service). |
-| Integrate with a Go application | [Run an HTTP handler on a tunnel](docs/003-go-sdk.md#serve-a-published-http-route) or [connect privately](docs/003-go-sdk.md#run-a-private-client-and-server). |
+| Forward an existing service | [Install the CLI](docs/000-installation.md) and [configure your first HTTP tunnel](docs/002-cli-workflow.md#connect-the-cli). |
+| Integrate with a Go application | [Run an HTTP handler on a tunnel](docs/003-go-sdk.md) or [connect privately](docs/003-go-sdk.md#run-a-private-client-and-server). |
 | Build or contribute to this checkout | [Build from source](docs/001-building-from-source.md), then see [Contributing](CONTRIBUTING.md). |
 | Evaluate a hosted or self-hosted deployment | [Editions and plans](https://rstream.io/docs/support/editions) and the [security model](https://rstream.io/docs/security/authentication). |
 
 ## Start with the CLI
 
 With a [CLI connection configured](docs/002-cli-workflow.md#connect-the-cli) and
-an HTTP service on local port 8080, forward that service over a published
-tunnel:
+an HTTP service on local port 8080, the following command publishes an
+Internet-reachable endpoint. For a restricted service choose
+[HTTP authentication](docs/005-http-tunnels.md#http-authentication) or
+[private access](docs/004-tunnel-configuration.md#try-a-private-connection)
+before forwarding.
 
 ```sh
 rstream forward 127.0.0.1:8080 --http

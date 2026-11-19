@@ -32,6 +32,9 @@ context for the direct Engine hostname and its locally signed token.
 
 ## Serve HTTP
 
+[Build the pair and select a context](#prepare-the-checkout) first. For a
+project that enforces HTTP token authentication, use the corresponding
+[request credentials](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication).
 In the first terminal, publish the example server:
 
 ```sh
@@ -42,7 +45,7 @@ It prints `Server listening on` followed by the forwarding address. Open that ad
 
 ## Connect privately
 
-Private bytestreams are available on hosted Pro and Enterprise or through
+[Build the pair and select a context](#prepare-the-checkout) first. Private bytestreams are available on hosted Pro and Enterprise or through
 a direct Community Edition Engine. Both processes need the same project or
 Engine. On managed projects, grant tunnel creation to the server and private
 dialing to the client.
@@ -59,7 +62,7 @@ In a second terminal using the same project context, run:
 ./out/examples/http-h1-client
 ```
 
-The client dials the tunnel named `h1-example` through rstream and prints the HTTP status and hostname. This path needs no public service address. Stop the first server before starting another copy with the same tunnel name.
+The client dials the tunnel named `h1-example` through rstream and prints the HTTP status and hostname. This path needs no public service address. After the client exits, stop the server with Ctrl+C.
 
 See [editions and plans](https://rstream.io/docs/support/editions) before running a protocol that requires an additional listener or project entitlement.
 

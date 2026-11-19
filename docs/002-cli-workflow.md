@@ -1,4 +1,4 @@
-# CLI workflow
+# Forward your first service with the CLI
 
 Use the CLI to forward a service that already runs locally. The following
 walkthrough publishes a disposable HTTP service and verifies the public
@@ -12,8 +12,9 @@ response. [Install the CLI](000-installation.md) before starting.
 | Self-hosted Community Edition | Configure the direct Engine hostname, trusted certificate and locally signed JWT using the [CE agent context](https://rstream.io/docs/tunnels/self-hosted/deployment#agent-context). |
 | An existing deployment | Use the context and credentials provided by your operator. See [identity options](#choose-an-identity) when provisioning a device or CI runner. |
 
-For hosted rstream, approve sign-in in your browser. Copy the value in the
-`ENDPOINT` column of `rstream project list` and substitute it in the last command:
+For hosted rstream, approve sign-in in your browser. For a workstation,
+choose **My computer** and **Development**. Copy the `ENDPOINT` value from
+`rstream project list` into the last command:
 
 ```sh
 rstream login
@@ -22,13 +23,14 @@ rstream project use 'my-project-endpoint'
 ```
 
 If the list is empty, create a project in your workspace or ask its owner to
-give you access. See [hosted project setup](https://rstream.io/docs/getting-started/quickstart-guide#select-a-project).
+give you access. If your previous approval was restricted to specific projects,
+run `rstream login` again and approve the intended project. See [hosted project setup](https://rstream.io/docs/getting-started/quickstart-guide#select-a-project).
 The CLI saves the choice as its default context. Go programs that use
 `config.NewClientFromEnv()` can reuse it.
 
 ## Publish a first HTTP service
 
-You need a working CLI context, Python 3 and curl. The printed forwarding
+You need a [working CLI context](#connect-the-cli), Python 3 and curl. The printed forwarding
 address is reachable from the Internet. Use a new directory containing only
 this demo file. To publish an existing service with restricted access,
 [configure HTTP authentication](005-http-tunnels.md#http-authentication)
@@ -37,19 +39,22 @@ before forwarding it.
 In the first terminal, start the service on loopback.
 
 ```sh
-mkdir rstream-demo
-cd rstream-demo
-printf 'Hello from rstream\n' > index.html
-python3 -m http.server 8080 --bind 127.0.0.1
+demo_dir="$(mktemp -d)" &&
+  cd "$demo_dir" &&
+  printf 'Hello from rstream\n' > index.html &&
+  python3 -m http.server 8080 --bind 127.0.0.1
 ```
 
 In Windows PowerShell, use:
 
 ```powershell
-New-Item -ItemType Directory rstream-demo
-Set-Location rstream-demo
-Set-Content -Encoding ASCII index.html 'Hello from rstream'
-py -3 -m http.server 8080 --bind 127.0.0.1
+& {
+  $demo = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
+  New-Item -ItemType Directory -Path $demo -ErrorAction Stop | Out-Null
+  Set-Location $demo -ErrorAction Stop
+  Set-Content -Encoding ASCII index.html 'Hello from rstream'
+  py -3 -m http.server 8080 --bind 127.0.0.1
+}
 ```
 
 In a second terminal, check the local response and forward the port. Use
@@ -61,9 +66,17 @@ rstream forward 127.0.0.1:8080 --http
 ```
 
 Open the HTTPS address printed by the CLI. Expect `Hello from rstream` at
-both addresses and a request in the local server log. For a CE Engine using a
-private certificate authority, use the [CE verification instructions](https://rstream.io/guides/self-host-rstream-engine-ce-with-docker-compose#verify-the-engine-and-tunnel)
-to check the public hostname and certificate.
+both addresses and a request in the local server log. If the project enforces
+HTTP token authentication, [send a scoped token](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication). For a CE Engine using a
+private certificate authority, verify the printed HTTPS address with curl and the CA file:
+
+```sh
+curl --cacert /path/to/ca.pem 'https://your-tunnel-host/'
+```
+
+Use `curl.exe` in PowerShell and supply the real URL and CA path. The
+[CE setup guide](https://rstream.io/guides/self-host-rstream-engine-ce-with-docker-compose)
+walks through a local deployment.
 
 Stop the forwarder, then the local server, with Ctrl+C. The CLI context is
 ready for the next command.

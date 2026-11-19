@@ -7,23 +7,29 @@ workspace-managed access or session operations supported by your deployment.
 ## Open a terminal
 
 [Configure the CLI](002-cli-workflow.md#connect-the-cli) on the server and
-operator machines. Use the same project or direct Engine on both. The server
+operator machines. Use the same project or direct Engine on both. On Community Edition, start
+with the private command below. The server
 in this example runs commands as the operating system user that starts it.
 Use a dedicated account for a server that will stay running.
 
 | Mode | When to use it |
 | --- | --- |
-| Published WebSocket | Use a project that permits published HTTP, including hosted Basic. The server requests token protection for the public endpoint. A browser opening the endpoint needs an authorized session. |
+| Published WebSocket | Use a managed project that permits HTTP token authentication, including hosted Basic. The server requests token protection for the public endpoint. A browser opening the endpoint needs an authorized session. |
 | Private WebSocket | Use a project that permits private tunnels, or a direct Community Edition Engine. Only rstream clients can dial the endpoint. |
 
-On the server, start the published mode:
+On a managed project, start published WebTTY with:
 
 ```sh
 rstream webtty server --rstream --name shell
 ```
 
-For private mode, add `--no-publish` to that command. In a second terminal with
-the operator context, run:
+On Community Edition or a managed project that permits private tunnels, use:
+
+```sh
+rstream webtty server --rstream --name shell --no-publish
+```
+
+In a second terminal with the operator context, run:
 
 ```sh
 rstream webtty exec --url rstrm://shell -o text -- whoami

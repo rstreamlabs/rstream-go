@@ -47,8 +47,10 @@ application can still authenticate the requests it receives.
 | --- | --- |
 | `TokenAuth` | A client with a scoped rstream tunnel token. |
 | `RstreamAuth` | A signed-in rstream user who has access to the tunnel. |
-| `ChallengeMode` | A client that completes the configured browser challenge and any other required checks. |
 | `MTLSAuth` | A client presenting a certificate admitted for the project. |
+
+Use `ChallengeMode` for a browser anti-automation check. A project that
+requires authentication also needs a supported identity proof.
 
 Use [HTTP tunnel authentication](https://rstream.io/docs/tunnels/http-tunnels/authentication)
 for CLI flags and a request that verifies the chosen policy. That reference

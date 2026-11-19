@@ -1,6 +1,8 @@
 # Share files over HTTPS
 
-`rstream files [path]` publishes a file or directory through one HTTPS tunnel. The path defaults to the current directory. It runs an embedded HTTP service, read-only by default, directly on the tunnel listener; there is no Python process, local port, Node runtime, or runtime asset download.
+`rstream files [path]` serves a file or directory from your machine through a published HTTPS
+tunnel. The path defaults to the current directory. Files are read-only by
+default and remain on your machine until a client downloads them.
 
 Select a [CLI context](002-cli-workflow.md#connect-the-cli). Use a small
 directory containing a file you intend to share. Access is decided before
@@ -27,7 +29,8 @@ The Go client and CLI can also read this standalone share through the same
 filesystem client used by WebTTY. A WebTTY server is only needed when the
 files belong to its sidecar.
 
-Automatic reconnection follows `forward`; use `--no-retry` to stop after a disconnect. Files are read live, without uploading a stored copy. Changes to the source are visible on refresh. This is not a filesystem snapshot: changing a file during a download or ZIP can interrupt or alter that transfer.
+The share reads the directory live. Changes appear on refresh and can affect
+a download in progress. Use `--no-retry` to stop after a disconnect.
 
 File sharing is unavailable in the restricted FIPS build for both WebDAV and WebRTC, including the WebTTY filesystem. See the [FIPS compatibility table](017-fips-140-3-profile.md#file-sharing-compatibility).
 
@@ -65,11 +68,10 @@ rstream files ./exports --read-write --no-ui --token-auth \
 
 The share remains authenticated. Use an authorized delegated tunnel token on each actual request, either in `Authorization: Bearer …` or in the `rstream.token` query parameter. A valid browser preflight can succeed without a token, but it cannot read or modify files. Token expiry, resource restrictions and permissions still apply to the subsequent operation.
 
-Files supplies WebDAV methods and request headers (including Authorization, Depth, Destination, Overwrite, conditional headers, Range and If-Range). It exposes download and resume metadata including Content-Disposition, Content-Range, Accept-Ranges, ETag, Last-Modified and Content-Length. The policy covers `/_rstream/files/v1/info`, `/fs/`, archives and errors. Write methods still require `--read-write`; CORS does not enable writes. Repeat `--cors-allow-origin` to add origins, and use the shared `--cors-allow-method`, `--cors-allow-header`, `--cors-expose-header`, `--cors-allow-credentials` and `--cors-max-age` options to customize the policy. An explicitly supplied list replaces that list's Files defaults.
-
-CORS is available with the WebDAV backend. It cannot be combined with `--backend webrtc`, which requires same-origin access.
-
-For a standalone Go HTTP server, set `fileserver.Config.CORS` to `&httpcors.Config{AllowedOrigins: []string{"https://dashboard.example"}}`. `fileserver.New` applies WebDAV defaults and wraps every route, including password-authentication errors. When publishing through an rstream tunnel, put the policy returned by `fileserver.NormalizeCORS` in `TunnelProperties.HTTPCORS` and leave the local `fileserver.Config.CORS` nil, as the CLI does. Engine then owns the policy, including edge-authentication errors. Set `Password` when a directly exposed server requires password protection; CORS itself is not authentication.
+WebDAV permits the browser to send the methods and headers needed for file
+operations. Custom lists replace those defaults. Use the
+[HTTP CORS settings](005-http-tunnels.md#cross-origin-browser-access-cors)
+for overrides. The WebRTC backend uses same-origin access.
 
 ## Authentication
 
@@ -129,45 +131,22 @@ for HTTP headers, status codes and the receipt format.
 
 ### Upload state outside the export
 
-By default, durable uploads keep `.rstream-upload-receipts`, `.rstream-upload-pending` and journal temporary files at the export root, which must also permit file locking. Consequently, a writable destination under a non-writable or confined export root is insufficient. Select a separate persistent directory when the server cannot write or lock the root:
+Keep the upload journal in one persistent directory per export. Use an
+external state directory when the export's security policy prevents journal
+files or locking in the shared root:
 
 ```sh
 mkdir -m 700 /writable-volume/rstream-state
 rstream files /srv/exports --read-write --no-ui --token-auth --state-dir /writable-volume/rstream-state
-# Alternatively, set RSTREAM_FILES_STATE_DIR=/writable-volume/rstream-state.
 ```
 
-The directory must already exist. The CLI flag overrides the environment variable; an explicitly empty flag is rejected. The library does not read this environment variable: embedders set `fileserver.Config.StateDir` or `filesystem.Policy.StateDir` when opening a `filesystem.Local`. Use a persistent directory with write access.
-
-Each export needs one dedicated, persistent state directory used by every
-process serving that export. The daemon checks ownership and write access
-before opening a writable share. External journal storage is unavailable
-on Windows.
-
-Keep the same directory when restarting. Changing or removing the state can
-lose the ability to recover earlier uploads. Shut down all writers before
-moving an existing journal. For the storage and locking contract, see the
-[filesystem maintainer reference](../filesystem/README.md#durable-upload-state).
-
-The process also needs permission to write to the exported destination. Hidden
-paths and exclusions still apply. Large directory mutations can require smaller
-operations when subtree inspection reaches its limits.
+Every process serving the same export must use the same location after
+restart. `--state-dir` overrides `RSTREAM_FILES_STATE_DIR`. The directory
+must already exist and be writable by the service account. External journal
+storage is unavailable on Windows. See [durable upload state](../filesystem/README.md#durable-upload-state)
+when moving existing upload history or configuring an embedded server.
 
 ## HTTP and backend contract
 
-| Path | Contract |
-| --- | --- |
-| `/` | Embedded UI with same-origin assets and requests, no CDN; 404 with `--no-ui`. |
-| `/_rstream/files/v1/info` | GET/HEAD metadata: version, name (no absolute path), kind, backend, `fs_path`, optional `archive_path`, effective access, capabilities, and `max_upload_size_bytes` when writable. `capabilities.write` reflects `--read-write`; `resume` means download resume. Version remains 1. |
-| `/fs/…` | WebDAV OPTIONS, PROPFIND Depth 0/1, GET and HEAD; writes are forbidden by default. `--read-write` enables WebDAV mutation methods including PUT, MKCOL, COPY, MOVE and DELETE. |
-| `/_rstream/files/v1/archive?path=/folder` | GET/HEAD streamed directory ZIP; identical exposure rules. |
-
-Paths passed to the JS backend are decoded logical paths; encode each URL segment once. Individual downloads support Range, ETag, Last-Modified and conditional requests. Use `curl -C - -o backup.tar.zst 'https://<share>/fs/backup.tar.zst'` to resume; use validators such as `If-Range` when the source may have changed. Downloads use attachment disposition and do not render shared HTML/SVG as trusted UI.
-
-`filesystem.Local` owns an `os.Root`; close it after all requests stop. Actual operations remain rooted under concurrent symlink replacement. In-root symlinks remain compatible with WebTTY; outside links, special files, traversal and excluded targets are rejected. The process needs OS permission to read the source. This is not an isolation boundary against another local process modifying that source.
-
-Listing rejects directories with more than 10,000 raw entries, including filtered entries (HTTP 507). Missing/infinite PROPFIND depth is forbidden, request XML is capped at 64 KiB, UI renders 100 entries per page. ZIP allows two concurrent streams, at most 100,000 entries and depth 64; cycles fail. ZIP uses store mode and ZIP64, with a 64 KiB content buffer and bounded directory/central-directory metadata. File contents never become a browser Blob or accumulate in server memory. ZIP is not resumable; an error after headers aborts the connection instead of finalizing an incomplete archive.
-
-The shared Go filesystem and selected transport also back `webtty.NewFileSystemHandler`; existing config, paths, writes and upload limit remain supported with WebDAV. `webtty server --fs-root ./exports --fs-backend webrtc` selects read-only WebRTC; all writes fail with 403, without WebDAV fallback. That returned handler implements `io.Closer`; embedders must close it after serving. WebTTY's filesystem remains incompatible with WebTTY E2E payload encryption.
-
-The JS package `@rstreamlabs/filesystem` defines `FileSystemBackend` (list/stat/readStream/archiveStream/downloadURL) independently from `WebDAVFileSystem`. `WebTTYFileSystem` preserves its existing exports through a compatibility wrapper. Capabilities describe transport functionality and encryption separately, while `RemoteFileSystem` discovers WebDAV or WebRTC and `WebRTCFileSystem` explicitly requires WebRTC. Both reuse the same operations.
+Use the [Go file-server reference](../fileserver/README.md) to embed the
+service or implement a client against its HTTP and capability contracts.
