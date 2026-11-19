@@ -628,7 +628,29 @@ if [ "$PROFILE" = "full-direct" ]; then
   run_case "cpp-client/go-server/ws/e2e-authenticated" cpp_client_text "go-server-e2e" --uri="$go_cpp_e2e_addr" --transport=websocket --known-server-key="$go_cpp_known_server" --identity-file="$runtime_client_identity" -I -T -- /bin/sh -c "printf go-server-e2e"
   run_case "cpp-client/go-server/ws/e2e/remote-exit-before-eof" cpp_client_remote_exit_before_eof "cpp-go-e2e-early-exit" "$EARLY_EXIT_SIZE" --uri="$go_cpp_e2e_addr" --transport=websocket --known-server-key="$go_cpp_known_server" --identity-file="$runtime_client_identity"
   cpp_client_credential="$TMP_DIR/cpp-client-credential.json"
-  printf '{"type":"test.workspace.credential","v":1}\n' >"$cpp_client_credential"
+  # The direct server authorizes the fixture signing key above. The credential
+  # supplies the matching client identity and workspace recording context.
+  python3 - "$runtime_client_identity" >"$cpp_client_credential" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    identity = json.load(stream)
+json.dump({
+    "v": 1,
+    "payload": {
+        "type": "workspace.webtty.client.credential",
+        "device_key_id": "direct-client",
+        "workspace_id": "direct-workspace",
+        "project_id": "direct-project",
+        "server_id": "direct-server",
+        "webtty_key_id": identity["encryption_key_id"],
+        "webtty_public_key": identity["encryption_public_key"],
+        "client_signing_key_id": identity["signing_key_id"],
+        "client_signing_public_key": identity["signing_public_key"],
+    },
+}, sys.stdout)
+PY
   run_case "cpp-client/go-server/ws/e2e-client-credential" cpp_client_text "go-server-e2e-credential" --uri="$go_cpp_e2e_addr" --transport=websocket --known-server-key="$go_cpp_known_server" --identity-file="$runtime_client_identity" --client-credential-file="$cpp_client_credential" -I -T -- /bin/sh -c "printf go-server-e2e-credential"
   mkdir -p "$TMP_DIR/cpp-home/.rstream/webtty"
   python3 - "$go_cpp_e2e_identity" "$TMP_DIR/cpp-home/.rstream/webtty/known_servers.json" <<'PY'
