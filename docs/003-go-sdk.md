@@ -2,17 +2,88 @@
 
 Use Go when your application should own the Engine connection, accept or dial streams, or compose datagram protocols. This is rstream's reference SDK, with broad protocol coverage and standard Go network interfaces.
 
-## Choose released code or this checkout
+Use a released Go module for an application. To modify the SDK or run its
+examples from a checkout, follow [Build from source](001-building-from-source.md).
+You can also [forward an existing process](002-cli-workflow.md) with the CLI.
 
-| Path                         | Preparation                                                                                      | First result                                                                                                                         |
-| ---------------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Consume the published module | Create a Go module, add `github.com/rstreamlabs/rstream-go`, select an authorized CLI context.   | Follow the complete [HTTP program in the README](../README.md#use-the-go-library): save main.go, tidy, run and curl its printed URL. |
-| Run or modify these examples | [Build this checkout](001-building-from-source.md). | [HTTP server/client pair](../examples/README.md#serve-http) from the repository root.                                                |
-| Forward an existing process  | No application code change.                                                                      | [CLI workflow](002-cli-workflow.md).                                                                                                 |
+## Serve a published HTTP route
+
+Use the Go toolchain required by the SDK release. Create a small module and add the SDK:
+
+```sh
+mkdir rstream-hello
+cd rstream-hello
+go mod init example.com/rstream-hello
+go get github.com/rstreamlabs/rstream-go
+```
+
+[Install the CLI](000-installation.md) and select a project with `rstream login` and `rstream project use my-project-endpoint`. The program reads that context, creates a published HTTP/1.1 tunnel and serves requests directly, without binding a local TCP port.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+
+	"github.com/rstreamlabs/rstream-go"
+	"github.com/rstreamlabs/rstream-go/config"
+)
+
+func main() {
+	if err := serve(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func serve() error {
+	client, err := config.NewClientFromEnv()
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	control, err := client.Connect(context.Background(), nil)
+	if err != nil {
+		return err
+	}
+	defer control.Close()
+	tunnel, err := control.CreateTunnel(context.Background(), rstream.TunnelProperties{
+		Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
+		HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP1_1),
+		Publish:     rstream.BoolPtr(true),
+	})
+	if err != nil {
+		return err
+	}
+	defer tunnel.Close()
+	address, err := tunnel.ForwardingAddress()
+	if err != nil {
+		return err
+	}
+	fmt.Println(address)
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "Hello from rstream")
+	})}
+	return server.Serve(tunnel.(rstream.BytestreamTunnel))
+}
+```
+
+Save the program as `main.go` in that module. Resolve its imports, including the configuration package, then run it:
+
+```sh
+go mod tidy
+go run .
+```
+
+Open the printed forwarding address to see `Hello from rstream`; stop the process with an interrupt.
+
+The runnable [HTTP server example](../examples/README.md#serve-http) adds signal handling and graceful shutdown. The [example catalog](../examples/README.md) explains which programs to pair for private connections, other protocols and API integrations.
 
 ## Run a private client and server
 
-The CLI context supplies Engine credentials to both programs. Build and run the [private HTTP example pair](../examples/README.md#connect-privately) to see the server accept connections on a tunnel and the client use rstream as its HTTP dialer. Both programs must use the same project. To serve a public route instead, use the [standalone first program](../README.md#use-the-go-library) in a new module.
+The CLI context supplies Engine credentials to both programs. Build and run the [private HTTP example pair](../examples/README.md#connect-privately) to see the server accept connections on a tunnel and the client use rstream as its HTTP dialer. Both programs must use the same project. To serve a public route instead, use the [published walkthrough](#serve-a-published-http-route) in a new module.
 
 ## Network interfaces and ownership
 

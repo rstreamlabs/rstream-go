@@ -7,7 +7,7 @@ This repository contains the reference Go SDK and the `rstream` CLI. Embed the S
 | Goal                                 | Start here                                                                                                                                                         |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Try rstream with an existing service | [Install the CLI](docs/000-installation.md), then follow the CLI example below.                                                                                    |
-| Add connectivity to a Go application | [Use the Go library](#use-the-go-library), follow the [SDK integration path](docs/003-go-sdk.md), or run the [HTTP server example](examples/README.md#serve-http). |
+| Add connectivity to a Go application | Follow the [Go SDK walkthrough](docs/003-go-sdk.md#serve-a-published-http-route) or run the [HTTP server example](examples/README.md#serve-http). |
 | Explore an integration or protocol   | [Example catalog](examples/README.md).                                                                                                                             |
 | Build or modify this checkout        | [Build from source](docs/001-building-from-source.md), then [Contributing](CONTRIBUTING.md).                                                                       |
 
@@ -38,78 +38,18 @@ Replace `my-project-endpoint` with the endpoint of your project. Login opens the
 
 ## Use the Go library
 
-Use the Go toolchain required by the SDK release. Create a small module and add the SDK:
-
-```sh
-mkdir rstream-hello
-cd rstream-hello
-go mod init example.com/rstream-hello
-go get github.com/rstreamlabs/rstream-go
-```
-
-[Install the CLI](docs/000-installation.md) and select a project with `rstream login` and `rstream project use my-project-endpoint`. The program reads that context, creates a published HTTP/1.1 tunnel and serves requests directly, without binding a local TCP port.
+A bytestream tunnel implements `net.Listener`, so a standard Go HTTP server can
+serve it directly:
 
 ```go
-package main
-
-import (
-	"context"
-	"fmt"
-	"log"
-	"net/http"
-
-	"github.com/rstreamlabs/rstream-go"
-	"github.com/rstreamlabs/rstream-go/config"
-)
-
-func main() {
-	if err := serve(); err != nil {
-		log.Fatal(err)
-	}
-}
-
-func serve() error {
-	client, err := config.NewClientFromEnv()
-	if err != nil {
-		return err
-	}
-	defer client.Close()
-	control, err := client.Connect(context.Background(), nil)
-	if err != nil {
-		return err
-	}
-	defer control.Close()
-	tunnel, err := control.CreateTunnel(context.Background(), rstream.TunnelProperties{
-		Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
-		HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP1_1),
-		Publish:     rstream.BoolPtr(true),
-	})
-	if err != nil {
-		return err
-	}
-	defer tunnel.Close()
-	address, err := tunnel.ForwardingAddress()
-	if err != nil {
-		return err
-	}
-	fmt.Println(address)
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "Hello from rstream")
-	})}
-	return server.Serve(tunnel.(rstream.BytestreamTunnel))
-}
+server := &http.Server{Handler: handler}
+return server.Serve(tunnel.(rstream.BytestreamTunnel))
 ```
 
-Save the program as `main.go` in that module. Resolve its imports, including the configuration package, then run it:
-
-```sh
-go mod tidy
-go run .
-```
-
-Open the printed forwarding address to see `Hello from rstream`; stop the process with an interrupt. Select a project context first, as in the CLI setup above.
-
-The runnable [HTTP server example](examples/README.md#serve-http) adds signal handling and graceful shutdown. The [example catalog](examples/README.md) explains which programs to pair for private connections, other protocols and API integrations.
+Follow [the Go SDK walkthrough](docs/003-go-sdk.md#serve-a-published-http-route)
+to install the module, create the tunnel and run the complete program. The
+[example catalog](examples/README.md) has paired programs for private
+connections and other protocols.
 
 ## Documentation
 

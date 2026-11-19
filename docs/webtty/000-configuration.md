@@ -2,6 +2,12 @@
 
 Use this guide to choose who can access a WebTTY server, how endpoints establish trust and which operating system account runs a session.
 
+| To configure | Start with |
+| --- | --- |
+| Trust directly between a client and one server | [Endpoint identities](#require-end-to-end-terminal-encryption) |
+| Access governed by a workspace | [Trust a device](#trust-a-cli-for-workspace-managed-webtty), then [enroll the server](#enroll-a-registered-webtty-server) |
+| A persistent server on a device or host | [Choose the operating system identity](#operating-system-identity) and [load a daemon configuration](#load-a-daemon-configuration) |
+
 ## Require end-to-end terminal encryption
 
 Create a server endpoint identity and a client endpoint identity, authorize the
