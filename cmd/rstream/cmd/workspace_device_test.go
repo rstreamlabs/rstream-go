@@ -25,6 +25,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func serveWorkspaceDevicePersonalIdentity(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodGet || r.URL.Path != "/api/whoami" {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"id": "user-1", "role": "user"})
+	return true
+}
+
 func newTestWorkspaceDeviceCommand(output *bytes.Buffer) *cobra.Command {
 	cmd := &cobra.Command{Use: "device"}
 	cmd.Flags().String("workspace", "", "")
@@ -159,7 +168,7 @@ func TestWorkspaceDeviceAccessProofsUseOnlyActiveTrustedDevices(t *testing.T) {
 	if _, err := writeWorkspaceDeviceFile(incomplete); err != nil {
 		t.Fatalf("writeWorkspaceDeviceFile(incomplete) error = %v", err)
 	}
-	proofs, err := workspaceDeviceAccessProofsWithDevices(workspaceID, 8)
+	proofs, err := workspaceDeviceAccessProofsWithDevices(workspaceID, 8, controlplane.CallerIdentity{Owner: controlplane.CredentialOwner{Kind: "user", UserID: "user-1"}})
 	if err != nil {
 		t.Fatalf("workspaceDeviceAccessProofsWithDevices() error = %v", err)
 	}
@@ -220,6 +229,9 @@ func TestRunWorkspaceDeviceEnrollWritesLocalDevice(t *testing.T) {
 	setWorkspaceDeviceTestHome(t, home)
 	var seen controlplane.CreateWorkspaceDeviceKeyRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if strings.Contains(r.URL.EscapedPath(), "/resolve/global-project") {
 			http.Error(w, "global project context must not be resolved when --workspace is set", http.StatusBadRequest)
 			return
@@ -352,6 +364,9 @@ func TestRunWorkspaceDeviceEnrollReusesPendingLocalDevice(t *testing.T) {
 	}
 	createCalled := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.EscapedPath() == "/api/workspaces/workspace-1/enterprise/devices/lookup":
 			var seen controlplane.LookupWorkspaceDeviceKeysRequest
@@ -424,6 +439,9 @@ func TestRunWorkspaceDeviceEnrollReusesActiveLocalDevice(t *testing.T) {
 	}
 	createCalled := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.EscapedPath() == "/api/workspaces/workspace-1/enterprise/devices/lookup":
 			var seen controlplane.LookupWorkspaceDeviceKeysRequest
@@ -502,6 +520,9 @@ func TestRunWorkspaceDeviceRotateKeepsActiveDeviceUntilReplacementIsApproved(t *
 	}
 	seen := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.EscapedPath() == "/api/workspaces/workspace-1/enterprise/devices/lookup":
 			seen["lookup"] = true
@@ -612,6 +633,9 @@ func TestRunWorkspaceDeviceStatusCompletesApprovedRotation(t *testing.T) {
 	}
 	revokeCalled := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.EscapedPath() == "/api/workspaces/workspace-1/enterprise/devices/lookup":
 			var seen controlplane.LookupWorkspaceDeviceKeysRequest
@@ -716,6 +740,9 @@ func TestRunWorkspaceDeviceEnrollSupportsServiceKind(t *testing.T) {
 	setWorkspaceDeviceTestHome(t, home)
 	var seen controlplane.CreateWorkspaceDeviceKeyRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.EscapedPath() != "/api/workspaces/workspace-1/enterprise/devices" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
@@ -805,6 +832,9 @@ func TestRunWorkspaceDeviceEnrollUsesDefaultContext(t *testing.T) {
 	setWorkspaceDeviceTestHome(t, home)
 	var seen controlplane.CreateWorkspaceDeviceKeyRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.EscapedPath() != "/api/workspaces/workspace-1/enterprise/devices" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
@@ -874,6 +904,9 @@ func TestRunWorkspaceDeviceStatusWithWorkspaceUsesDefaultContextWithoutResolving
 	}
 	seen := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if strings.Contains(r.URL.EscapedPath(), "/resolve/global-project") {
 			http.Error(w, "global project context must not be resolved when --workspace is set", http.StatusBadRequest)
 			return
@@ -937,6 +970,9 @@ func TestRunWorkspaceDeviceRotateWithWorkspaceUsesDefaultContextWithoutResolving
 	}
 	seen := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if strings.Contains(r.URL.EscapedPath(), "/resolve/global-project") {
 			http.Error(w, "global project context must not be resolved when --workspace is set", http.StatusBadRequest)
 			return
@@ -1000,6 +1036,9 @@ func TestRunWorkspaceDeviceEnrollWithWorkspaceIgnoresGlobalProjectContext(t *tes
 	configPath := writeTestGlobalProjectConfig(t)
 	seen := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if strings.Contains(r.URL.EscapedPath(), "/resolve/global-project") {
 			http.Error(w, "global project context must not be resolved when --workspace is set", http.StatusBadRequest)
 			return
@@ -1053,6 +1092,9 @@ func TestRunWorkspaceDeviceStatusWithWorkspaceIgnoresGlobalProjectContext(t *tes
 	configPath := writeTestGlobalProjectConfig(t)
 	seen := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if strings.Contains(r.URL.EscapedPath(), "/resolve/global-project") {
 			http.Error(w, "global project context must not be resolved when --workspace is set", http.StatusBadRequest)
 			return
@@ -1112,6 +1154,9 @@ func TestRunWorkspaceDeviceRotateWithWorkspaceIgnoresGlobalProjectContext(t *tes
 	configPath := writeTestGlobalProjectConfig(t)
 	seen := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if strings.Contains(r.URL.EscapedPath(), "/resolve/global-project") {
 			http.Error(w, "global project context must not be resolved when --workspace is set", http.StatusBadRequest)
 			return
@@ -1169,6 +1214,9 @@ func TestRunWorkspaceDeviceEnrollInfersWorkspaceFromActiveProject(t *testing.T) 
 	setWorkspaceDeviceTestHome(t, home)
 	var seen controlplane.CreateWorkspaceDeviceKeyRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/api/projects/tunnels/resolve/demo":
 			w.Header().Set("Content-Type", "application/json")
@@ -1227,7 +1275,13 @@ func TestRunWorkspaceDeviceEnrollInfersWorkspaceFromActiveProject(t *testing.T) 
 
 func TestRunWorkspaceDeviceEnrollRequiresWorkspaceWithoutActiveProject(t *testing.T) {
 	clearRstreamTestEnv(t)
-	t.Setenv("RSTREAM_API_URL", "https://api.example.com")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !serveWorkspaceDevicePersonalIdentity(w, r) {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("RSTREAM_API_URL", server.URL)
 	t.Setenv("RSTREAM_AUTHENTICATION_TOKEN", "token")
 	t.Setenv("RSTREAM_CONFIG", filepath.Join(t.TempDir(), "config.yaml"))
 	var out bytes.Buffer
@@ -1275,6 +1329,9 @@ func TestRunWorkspaceDeviceStatusStoresEnvelope(t *testing.T) {
 	}
 	var seen controlplane.LookupWorkspaceDeviceKeysRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.EscapedPath() != "/api/workspaces/workspace-1/enterprise/devices/lookup" {
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 			return
@@ -1369,6 +1426,9 @@ func TestRunWorkspaceDeviceStatusInfersWorkspaceFromActiveProject(t *testing.T) 
 		t.Fatalf("writeWorkspaceDeviceFileAt() error = %v", err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.EscapedPath() == "/api/projects/tunnels/resolve/demo":
 			w.Header().Set("Content-Type", "application/json")

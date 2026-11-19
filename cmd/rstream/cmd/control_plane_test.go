@@ -36,3 +36,24 @@ func TestValidateToken(t *testing.T) {
 		t.Fatalf("validateToken(good-token) error = %v", err)
 	}
 }
+
+func TestValidateTokenAcceptsWorkspaceIdentityAndRejectsMalformedOwner(t *testing.T) {
+	for _, valid := range []bool{true, false} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/api/whoami" || r.URL.Query().Get("format") != "identity" {
+				t.Errorf("unexpected identity endpoint: %s", r.URL)
+			}
+			identity := map[string]any{"owner": map[string]string{"kind": "workspace", "workspaceId": "workspace-1"}, "credentialId": "credential-1", "permissions": []string{}}
+			if !valid {
+				identity["id"] = "invented-user"
+				identity["role"] = "admin"
+			}
+			_ = json.NewEncoder(w).Encode(identity)
+		}))
+		err := validateToken(t.Context(), server.URL, "service-token", nil)
+		server.Close()
+		if (err == nil) != valid {
+			t.Fatalf("workspace token validation error=%v want valid=%v", err, valid)
+		}
+	}
+}

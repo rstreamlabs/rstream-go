@@ -500,6 +500,9 @@ func TestUIWebTTYSessionConfigResolvesWorkspaceManagedE2E(t *testing.T) {
 	serverPublicKey := webtty.EncodeE2EKeyMaterial(serverIdentity.Encryption.PublicKey)
 	var seen controlplane.ResolveWebTTYServerClientRequest
 	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.EscapedPath() == "/api/projects/tunnels/project-1/webtty/servers/server-1/client-resolution":
 			if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {
@@ -888,6 +891,9 @@ func TestUIWebTTYSessionOpensWorkspaceManagedE2ERuntime(t *testing.T) {
 	serverPublicKey := webtty.EncodeE2EKeyMaterial(serverIdentity.Encryption.PublicKey)
 	var seen controlplane.ResolveWebTTYServerClientRequest
 	controlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveWorkspaceDevicePersonalIdentity(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodPost && r.URL.EscapedPath() == "/api/projects/tunnels/project-runtime/webtty/servers/server-runtime/client-resolution":
 			if err := json.NewDecoder(r.Body).Decode(&seen); err != nil {

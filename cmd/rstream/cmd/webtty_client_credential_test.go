@@ -5,18 +5,237 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	rstream "github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/webtty"
 )
+
+func TestPreparedWorkspaceCredentialFIPSCompatibleReplayUsesOnlySelectedKeys(t *testing.T) {
+	_, identity, raw := testWebTTYWorkspaceClientCredentialFixtureForOwner(t, true)
+	credential, err := decodeWebTTYWorkspaceClientCredential(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err := webTTYWorkspaceRecordingConfig(webtty.E2EPayloadCryptoConfig{}, credential, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	crypto, err := webtty.NewE2EClientPayloadCrypto(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := crypto.EncryptStdout(t.Context(), []byte("prepared recording"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityJSON, err := webtty.EncodeWebTTYEndpointIdentityJSON(*identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, scenario := range []string{"valid", "workspace", "project", "server", "missing-scope", "identity", "missing-identity", "oversized", "invalid", "missing-grant", "denied", "cancelled"} {
+		t.Run(scenario, func(t *testing.T) {
+			directory := t.TempDir()
+			t.Setenv("RSTREAM_DATA_DIR", directory)
+			identityPath := filepath.Join(directory, "identity.json")
+			credentialPath := filepath.Join(directory, "client-credential.json")
+			t.Setenv(webTTYIdentityFileEnv, identityPath)
+			t.Setenv(webTTYIdentityEnv, "")
+			t.Setenv(webTTYClientCredentialFileEnv, credentialPath)
+			selectedIdentity, selectedCredential := identityJSON, raw
+			if scenario == "identity" {
+				other, err := webtty.GenerateWebTTYEndpointIdentity()
+				if err != nil {
+					t.Fatal(err)
+				}
+				selectedIdentity, err = webtty.EncodeWebTTYEndpointIdentityJSON(*other)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if scenario == "missing-identity" {
+				t.Setenv(webTTYIdentityFileEnv, "")
+			}
+			if scenario == "oversized" {
+				selectedCredential = bytes.Repeat([]byte("x"), webTTYMaxClientCredentialBytes+1)
+			}
+			if scenario == "invalid" {
+				selectedCredential = []byte(`{"v":1}`)
+			}
+			if err := os.WriteFile(identityPath, selectedIdentity, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(credentialPath, selectedCredential, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			session := &rstream.WebTTYSession{
+				ID: "session-prepared", WorkspaceID: config.WorkspaceID,
+				ProjectID: config.ProjectID, ServerID: config.ServerID,
+				EncryptionMode: rstream.WebTTYEncryptionModeE2E,
+			}
+			switch scenario {
+			case "workspace":
+				session.WorkspaceID = "other-workspace"
+			case "project":
+				session.ProjectID = "other-project"
+			case "server":
+				session.ServerID = "other-server"
+			case "missing-scope":
+				session.ServerID = ""
+			}
+			var requests atomic.Int64
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				requests.Add(1)
+				if !strings.HasSuffix(req.URL.Path, "/webtty/sessions/session-prepared/key-grants/decrypt-material") ||
+					req.URL.Query().Get("recipient_id") != config.Recipients[0].ID ||
+					req.URL.Query().Get("recipient_kind") != webtty.E2ERecipientKindWorkspaceDevice {
+					t.Errorf("unexpected prepared recipient request: %s", req.URL)
+					http.Error(w, "unexpected request", http.StatusBadRequest)
+					return
+				}
+				if scenario == "denied" {
+					http.Error(w, "forbidden", http.StatusForbidden)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				grants := rstream.ListWebTTYKeyGrantDecryptMaterialResponse{}
+				if scenario != "missing-grant" {
+					grants = append(grants, rstream.WebTTYKeyGrantDecryptMaterial{
+						ID: "grant-prepared", SessionID: session.ID,
+						RecipientID: config.Recipients[0].ID, RecipientKind: webtty.E2ERecipientKindWorkspaceDevice,
+						Crypto: testWebTTYKeyGrantMetadata(t, crypto.SessionKeyGrant),
+					})
+				}
+				_ = json.NewEncoder(w).Encode(grants)
+			}))
+			defer server.Close()
+			engine := strings.TrimPrefix(server.URL, "https://")
+			token := "current-engine-token"
+			client := &rstream.Client{
+				EngineURL: &engine, Token: &token,
+				TLSClientConfig: server.Client().Transport.(*http.Transport).TLSClientConfig.Clone(),
+			}
+			ctx := t.Context()
+			if scenario == "cancelled" {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			}
+			prepared, err := webTTYSessionAttachPayloadCrypto(ctx, nil, client, session)
+			if scenario != "valid" {
+				if err == nil || prepared != nil {
+					t.Fatalf("unsafe prepared replay was accepted: %v", err)
+				}
+				wantRequests := int64(0)
+				if scenario == "missing-grant" || scenario == "denied" {
+					wantRequests = 1
+				}
+				if requests.Load() != wantRequests {
+					t.Fatalf("invalid selection triggered %d requests, want %d", requests.Load(), wantRequests)
+				}
+				return
+			}
+			if err != nil || prepared == nil {
+				t.Fatalf("prepared replay failed: %v", err)
+			}
+			if requests.Load() != 1 || prepared.DeviceID != config.Recipients[0].ID || !bytes.Equal(prepared.ClientCredential, raw) {
+				t.Fatalf("prepared replay lost its selected device: %+v, requests %d", prepared, requests.Load())
+			}
+			plaintext, err := prepared.PayloadCrypto.DecryptStdout(ctx, encrypted)
+			if err != nil || string(plaintext) != "prepared recording" {
+				t.Fatalf("prepared recording did not decrypt: %q, %v", plaintext, err)
+			}
+		})
+	}
+}
+
+func TestPreparedWorkspaceCredentialFIPSCompatibleRecordingRecipients(t *testing.T) {
+	_, identity, credential := testWebTTYWorkspaceClientCredentialFixtureForOwner(t, true)
+	envelope, err := decodeWebTTYWorkspaceClientCredential(credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := webtty.GenerateWebTTYEndpointIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	public := server.Public()
+	for _, existingClientRecipient := range []bool{false, true} {
+		t.Run(fmt.Sprintf("existing-client-recipient-%t", existingClientRecipient), func(t *testing.T) {
+			payloadConfig := webtty.E2EPayloadCryptoConfig{Recipients: []webtty.E2ERecipient{{
+				KeyID: server.Encryption.KeyID, PublicKey: server.Encryption.PublicKey,
+			}}}
+			if existingClientRecipient {
+				payloadConfig.Recipients, err = appendWebTTYE2EClientEndpointRecipient(payloadConfig.Recipients, *identity)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			payloadCrypto, err := webtty.NewE2EClientPayloadCrypto(payloadConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			config, err := withWebTTYWorkspaceRecordingRecipient(webTTYClientCryptoConfig{
+				PayloadCrypto: payloadCrypto, payloadConfig: &payloadConfig,
+				EndpointIdentity: identity, ExpectedServerIdentity: &public,
+			}, envelope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(config.payloadConfig.Recipients) != 2 {
+				t.Fatalf("duplicate or missing recording recipient: %+v", config.payloadConfig.Recipients)
+			}
+			if got := config.payloadConfig.Recipients[1]; got.ID != workspaceTrustString(envelope.Payload, "device_key_id") || got.Kind != webtty.E2ERecipientKindWorkspaceDevice {
+				t.Fatalf("recording recipient does not identify the approved device: %+v", got)
+			}
+			var keyContext map[string]any
+			if err := json.Unmarshal(config.PayloadCrypto.SessionKeyGrant.KeyContext, &keyContext); err != nil {
+				t.Fatal(err)
+			}
+			for _, field := range []string{"workspace_id", "project_id", "server_id"} {
+				if keyContext[field] != envelope.Payload[field] {
+					t.Fatalf("recording context %s = %v, want %v", field, keyContext[field], envelope.Payload[field])
+				}
+			}
+			if _, err := webtty.NewE2EServerPayloadCrypto(config.PayloadCrypto.SessionKeyGrant, identity.Encryption); err != nil {
+				t.Fatalf("approved device cannot decrypt its own recording grant: %v", err)
+			}
+			if _, err := webtty.NewE2EServerPayloadCrypto(config.PayloadCrypto.SessionKeyGrant, server.Encryption); err != nil {
+				t.Fatalf("registered server recipient was lost: %v", err)
+			}
+		})
+	}
+	for _, scenario := range []string{"identity", "workspace", "project", "server"} {
+		t.Run("reject-"+scenario, func(t *testing.T) {
+			payloadConfig := webtty.E2EPayloadCryptoConfig{}
+			client := identity
+			switch scenario {
+			case "identity":
+				client = server
+			case "workspace":
+				payloadConfig.WorkspaceID = "other-workspace"
+			case "project":
+				payloadConfig.ProjectID = "other-project"
+			case "server":
+				payloadConfig.ServerID = "other-server"
+			}
+			if _, err := withWebTTYWorkspaceRecordingRecipient(webTTYClientCryptoConfig{payloadConfig: &payloadConfig, EndpointIdentity: client}, envelope); err == nil {
+				t.Fatal("mismatched prepared credential was accepted")
+			}
+		})
+	}
+}
 
 func TestWebTTYClientPreparationPortableFiles(t *testing.T) {
 	_, identity, credential := testWebTTYWorkspaceClientCredentialFixture(t)
@@ -91,6 +310,22 @@ func TestWebTTYClientPreparationRejectsInvalidMaterialBeforeWriting(t *testing.T
 				t.Fatalf("invalid preparation left files: %v", err)
 			}
 		})
+	}
+}
+
+func TestWebTTYClientPreparationFIPSCompatibleServerSuite(t *testing.T) {
+	_, identity, credential := testWebTTYWorkspaceClientCredentialFixtureForOwner(t, true)
+	server, err := webtty.GenerateWebTTYEndpointIdentityForSuite(webtty.KeyEnvelopeSuiteP256HKDFSHA256AES256GCMRandomNonce)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := writeWebTTYClientPreparation(filepath.Join(t.TempDir(), "prepared"), "server-p256", *identity, server.Public(), credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := webtty.LoadKnownServerEndpointIdentitiesFile(files["known-servers.json"])
+	if err != nil || len(loaded) != 1 || !reflect.DeepEqual(loaded[0], server.Public()) {
+		t.Fatalf("P-256 trust did not round trip: %v", err)
 	}
 }
 

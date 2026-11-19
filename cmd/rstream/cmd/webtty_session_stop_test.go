@@ -29,11 +29,16 @@ func TestMCPWebTTYSessionStopRequiresControlAndPreservesNativeResult(t *testing.
 		code                                                             *int
 		wantError                                                        bool
 		detachStatus                                                     int
+		terminalOnDetach                                                 bool
+		retryDetachStatus                                                int
 	}{
 		{name: "confirmed stop", code: new(23)},
 		{name: "reader already detached", code: new(23), detachStatus: http.StatusNotFound},
 		{name: "cleanup forbidden preserves result", code: new(23), detachStatus: http.StatusForbidden, wantError: true},
 		{name: "cleanup unavailable preserves result", code: new(23), detachStatus: http.StatusServiceUnavailable, wantError: true},
+		{name: "legacy terminal cleanup", code: new(23), detachStatus: http.StatusServiceUnavailable, terminalOnDetach: true},
+		{name: "legacy terminal reader already removed", code: new(23), detachStatus: http.StatusServiceUnavailable, terminalOnDetach: true, retryDetachStatus: http.StatusNotFound},
+		{name: "legacy terminal cleanup forbidden preserves result", code: new(23), detachStatus: http.StatusServiceUnavailable, terminalOnDetach: true, retryDetachStatus: http.StatusForbidden, wantError: true},
 		{name: "old engine", oldEngine: true, wantError: true},
 		{name: "old native", oldNative: true, wantError: true},
 		{name: "control denied", denied: true, wantError: true},
@@ -45,7 +50,7 @@ func TestMCPWebTTYSessionStopRequiresControlAndPreservesNativeResult(t *testing.
 		t.Run(scenario.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			var attached, detached, requested, terminated atomic.Int32
+			var attached, detached, requested, terminated, inspected atomic.Int32
 			var granted atomic.Bool
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer fixture-token" {
@@ -56,8 +61,9 @@ func TestMCPWebTTYSessionStopRequiresControlAndPreservesNativeResult(t *testing.
 				w.Header().Set("Content-Type", "application/json")
 				switch r.URL.Path {
 				case "/api/webtty/sessions/session-1":
+					inspected.Add(1)
 					session := rstream.WebTTYSession{ID: "session-1", Status: rstream.WebTTYSessionStatusActive, EncryptionMode: rstream.WebTTYEncryptionModeManaged, Live: rstream.WebTTYSessionLive{Available: true, Attachable: true, HasUpstream: true}}
-					if scenario.completed {
+					if scenario.completed || (scenario.terminalOnDetach && detached.Load() > 0) {
 						session.Status = rstream.WebTTYSessionStatusClosed
 						if scenario.code != nil {
 							session.ExitCode = new(int32(*scenario.code))
@@ -70,9 +76,13 @@ func TestMCPWebTTYSessionStopRequiresControlAndPreservesNativeResult(t *testing.
 					attached.Add(1)
 					_ = json.NewEncoder(w).Encode(rstream.WebTTYParticipant{ID: "reader-1", SessionID: "session-1", Role: rstream.WebTTYParticipantRoleSpectator, AttachGrant: []byte("fixture-grant")})
 				case "/api/webtty/sessions/session-1/participants/reader-1":
-					detached.Add(1)
-					if scenario.detachStatus != 0 {
-						http.Error(w, http.StatusText(scenario.detachStatus), scenario.detachStatus)
+					attempt := detached.Add(1)
+					status := scenario.detachStatus
+					if scenario.terminalOnDetach && attempt > 1 {
+						status = scenario.retryDetachStatus
+					}
+					if status != 0 {
+						http.Error(w, http.StatusText(status), status)
 						return
 					}
 					_ = json.NewEncoder(w).Encode(rstream.WebTTYParticipant{ID: "reader-1", SessionID: "session-1"})
@@ -188,7 +198,17 @@ func TestMCPWebTTYSessionStopRequiresControlAndPreservesNativeResult(t *testing.
 			if scenario.denied {
 				wantTerminate = 0
 			}
-			if attached.Load() != wantAttach || detached.Load() != wantAttach || requested.Load() != wantControl || terminated.Load() != wantTerminate {
+			wantDetach, wantInspect := wantAttach, int32(1)
+			if scenario.detachStatus == http.StatusServiceUnavailable {
+				wantInspect++
+			}
+			if scenario.terminalOnDetach {
+				wantDetach++
+			}
+			if inspected.Load() != wantInspect {
+				t.Errorf("session inspections = %d, want %d", inspected.Load(), wantInspect)
+			}
+			if attached.Load() != wantAttach || detached.Load() != wantDetach || requested.Load() != wantControl || terminated.Load() != wantTerminate {
 				t.Fatalf("attach/detach/control/terminate = %d/%d/%d/%d", attached.Load(), detached.Load(), requested.Load(), terminated.Load())
 			}
 		})

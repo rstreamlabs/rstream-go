@@ -1232,6 +1232,9 @@ func webTTYSessionAttachPayloadCrypto(ctx context.Context, runtime *resolvedRunt
 	if session.EncryptionMode != rstream.WebTTYEncryptionModeE2E {
 		return nil, nil
 	}
+	if prepared, err := webTTYSessionPayloadCryptoFromPreparedCredential(ctx, client, session); prepared != nil || err != nil {
+		return prepared, err
+	}
 	attachCrypto, deviceErr := webTTYSessionPayloadCryptoFromWorkspaceDevices(ctx, runtime, client, session)
 	if attachCrypto != nil {
 		return attachCrypto, nil
@@ -1249,6 +1252,38 @@ func webTTYSessionAttachPayloadCrypto(ctx context.Context, runtime *resolvedRunt
 		return nil, deviceErr
 	}
 	return nil, webTTYSessionE2EDecryptUnavailableError(session, recipientKinds, "session key grant")
+}
+
+func webTTYSessionPayloadCryptoFromPreparedCredential(ctx context.Context, client *rstream.Client, session *rstream.WebTTYSession) (*webTTYSessionAttachCrypto, error) {
+	raw, credential, err := readWebTTYClientCredentialFile("")
+	if err != nil || raw == nil {
+		return nil, err
+	}
+	if session.WorkspaceID == "" || session.ProjectID == "" || session.ServerID == "" {
+		return nil, fmt.Errorf("WebTTY session is missing its recording scope")
+	}
+	identity, err := webTTYClientEndpointIdentityForNameOrExplicitSources(nil, "")
+	if err != nil {
+		return nil, err
+	}
+	config, err := webTTYWorkspaceRecordingConfig(webtty.E2EPayloadCryptoConfig{
+		WorkspaceID: session.WorkspaceID, ProjectID: session.ProjectID, ServerID: session.ServerID,
+	}, credential, identity)
+	if err != nil {
+		return nil, err
+	}
+	recipient := config.Recipients[0]
+	payloadCrypto, err := webTTYSessionPayloadCryptoFromGrantRecipient(ctx, client, session.ID, recipient.ID, recipient.Kind, identity.Encryption)
+	if err != nil {
+		return nil, err
+	}
+	if payloadCrypto == nil {
+		return nil, &webTTYSessionWorkspaceDeviceGrantUnavailableError{sessionID: session.ID}
+	}
+	return &webTTYSessionAttachCrypto{
+		PayloadCrypto: payloadCrypto, EndpointIdentity: identity, ClientCredential: raw,
+		ClientPrincipalID: recipient.ID, DeviceID: recipient.ID,
+	}, nil
 }
 
 func webTTYSessionKeyGrantRecipientKinds(ctx context.Context, client *rstream.Client, sessionID string) (map[string]struct{}, error) {
@@ -1399,7 +1434,12 @@ func webTTYSessionAttachWorkspaceCredential(ctx context.Context, runtime *resolv
 	if workspaceID == "" || projectID == "" || serverID == "" {
 		return nil
 	}
-	proofItems, err := workspaceDeviceAccessProofsWithDevices(workspaceID, 8)
+	controlClient := newRuntimeControlPlaneClient(runtime.Resolved)
+	identity, err := controlClient.Identity(ctx)
+	if err != nil {
+		return mapControlPlaneError(err)
+	}
+	proofItems, err := workspaceDeviceAccessProofsWithDevices(workspaceID, 8, identity)
 	if err != nil {
 		return fmt.Errorf("load workspace device proof for WebTTY session attach: %w", err)
 	}
@@ -1409,7 +1449,6 @@ func webTTYSessionAttachWorkspaceCredential(ctx context.Context, runtime *resolv
 		proofs = append(proofs, item.proof)
 		localDevices = append(localDevices, item.device)
 	}
-	controlClient := newRuntimeControlPlaneClient(runtime.Resolved)
 	resolved, err := controlClient.ResolveWebTTYServerClient(ctx, projectID, serverID, controlplane.ResolveWebTTYServerClientRequest{
 		DeviceProofs: proofs,
 	})

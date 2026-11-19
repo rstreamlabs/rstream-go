@@ -11,7 +11,7 @@ Tunnel creation is documented separately.
 ### Environment
 
 An **environment** represents a Control plane API URL. It stores:
-- the account-wide token for that Control plane API
+- the selected personal or workspace token for that Control plane API
 - transport defaults for Engine API connections
 
 Environments are identified by `apiUrl`.
@@ -44,32 +44,34 @@ One context is selected as the **default context**. Most commands use it automat
 
 Two modes exist, depending on where the CLI runs.
 
-### Developer machine (account-wide identity)
+### Developer machine (personal token)
 
 Appropriate for installations tied to a physical user (laptops, workstations).
 
-- `rstream login` stores an **account-wide token** locally for the selected `apiUrl`.
-- The same token is reused across projects and contexts.
+- `rstream login` stores the approved **personal token** locally for the selected `apiUrl`.
+- Its access can cover all accessible projects or a narrower selection approved in the browser.
+- Contexts linked to that environment inherit its token unless they have their own authentication.
 - `rstream project use <project-endpoint>` derives a context from the selected project.
 - Switching projects is typically done by running `rstream project use` again.
 
-The account-wide token can be obtained via:
+The token can be obtained via:
 - `rstream login`, which uses OAuth 2.0 Device Authorization Grant by default
 - local MCP tools `rstream_auth_start` and `rstream_auth_poll`, which initiate the same OAuth flow for Codex without returning the approved token to the prompt
 - `rstream login --auth-flow legacy`, which keeps the older rstream-specific login flow available for compatibility tests
 - token generated from the rstream dashboard
 - token generated via the rstream API
 
-All methods lead to the same outcome: an account-wide token stored locally and reused.
+All methods use the same local configuration and token validation. Personal tokens follow the user's current workspace access.
 
-### Remote device (project-scoped token)
+### Service or application (workspace token)
 
-Appropriate for servers, CI runners, and embedded systems that must not rely on an account-wide identity.
+Appropriate for servers, CI runners, backends and embedded systems whose access must survive the creating user's departure.
 
-- No `rstream login`.
-- A **project-scoped token** is used.
-- A context is created explicitly with `--engine` and `--token`.
-- Credentials remain narrowly scoped to a single project.
+- On a server with owner-aware enrollment, `rstream login` can create a workspace token through explicit browser approval by a workspace owner or admin.
+- Choose **Service or application**, the owning workspace, an access preset, and any project or required tunnel-label restrictions.
+- The token belongs to one workspace. All projects means current and future projects within that workspace; selected projects narrows that access.
+- A workspace token cannot sign into the dashboard as a user. Its permissions determine which APIs it can use.
+- A manually created token can also be supplied through stdin or a file, including in an explicit project context.
 
 ### Agent mTLS
 
@@ -103,7 +105,13 @@ contexts:
 rstream login
 ```
 
-If this is a new account, the browser step opened by `rstream login` is also the signup/sign-in step. The CLI uses OAuth Device Authorization Grant by default and stores the approved account-wide token locally after the user completes the hosted flow.
+If this is a new account, the browser step opened by `rstream login` is also the signup/sign-in step. The CLI uses OAuth Device Authorization Grant by default and stores the approved token locally after the user completes the hosted flow.
+
+Owner-aware servers advertise the enrollment version through OAuth discovery. The CLI uses the server's shared preset catalog instead of maintaining a separate default permission list. Older servers keep the historical personal login request. Explicitly requested scopes remain an upper bound; a reduced approval is never retried with broader access.
+
+The approval page can choose an expiration date or **No expiration** for the native token. The approval request still expires independently. `rstream login --output json` reports the verified owner, effective permissions, resource restrictions and authentication deadline without printing the token. Local MCP returns the same verified identity after storing the token.
+
+For macOS Keychain storage, use `rstream login --token-storage macos-keychain`. Each approved token has its own owner-specific entry, so a later login or rotation does not overwrite a token still referenced by an existing context. The config stores the keychain reference. Inline config storage remains the default.
 
 When Codex is using local MCP tools, the equivalent flow is:
 
@@ -118,8 +126,7 @@ The default `rstream_auth_start` scope is intentionally limited to common CLI an
 Alternative token inputs:
 
 ```bash
-rstream login <token>
-rstream login --stdin
+rstream login --token-stdin
 rstream login --token-file /path/to/token
 ```
 
@@ -150,13 +157,13 @@ rstream forward 8080
 ### 1) Create a context with a project-scoped token
 
 ```bash
-rstream context create <name> --engine <host:port> --token <project-scoped-token> --default --no-api-url
+rstream context create <name> --engine <host:port> --token-file /path/to/token --default --no-api-url
 ```
 
 Alternative token inputs:
 
 ```bash
-rstream context create <name> --engine <host:port> --stdin --default
+rstream context create <name> --engine <host:port> --token-stdin --default
 rstream context create <name> --engine <host:port> --token-file /path/to/token --default
 ```
 

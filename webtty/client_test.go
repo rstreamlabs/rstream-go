@@ -93,7 +93,7 @@ func TestStdinSessionLoopPreservesTransportAndEncryptionFailures(t *testing.T) {
 			if test.crypto {
 				cfg.PayloadCrypto = &PayloadCrypto{EncryptStdin: func(context.Context, []byte) (*EncryptedPayload, error) { return nil, test.err }}
 			}
-			session := &ClientSession{runtime: &clientRuntime{cfg: cfg, conn: stdinEOFWriteFailureConn{err: test.err}}}
+			session := &ClientSession{runtime: &clientRuntime{ctx: t.Context(), cfg: cfg, conn: stdinEOFWriteFailureConn{err: test.err}}}
 			errorsCh := make(chan error, 1)
 			(&clientRuntime{}).stdinSessionLoop(t.Context(), session, errorsCh, func(_ context.Context, buffer []byte) (int, error) { return copy(buffer, "input"), io.EOF })
 			select {
@@ -141,7 +141,7 @@ func TestStdinSessionLoopSuppressesOnlyEOFFailureDuringTransportClose(t *testing
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			runtime := &clientRuntime{conn: stdinEOFWriteFailureConn{}}
+			runtime := &clientRuntime{ctx: t.Context(), conn: stdinEOFWriteFailureConn{}}
 			runtime.closing.Store(tt.closing)
 			session := &ClientSession{runtime: runtime}
 			errors := make(chan error, 1)
@@ -162,7 +162,7 @@ func TestStdinSessionLoopSuppressesOnlyEOFFailureDuringTransportClose(t *testing
 
 func TestClientRuntimeMarksClosingBeforeCloseHandshake(t *testing.T) {
 	conn := newBlockingSessionCloseConn()
-	runtime := &clientRuntime{conn: conn, cfg: &ClientConfig{}}
+	runtime := &clientRuntime{ctx: t.Context(), conn: conn, cfg: &ClientConfig{}}
 	closed := make(chan struct{})
 	go func() {
 		runtime.closeConn()
@@ -199,7 +199,7 @@ func TestClientReadLoopMarksClosingBeforeDispatchingRemoteTerminalMessage(t *tes
 				t.Fatalf("failed to marshal message: %v", err)
 			}
 			conn := &remoteTerminalReadConn{payload: payload, read: make(chan struct{})}
-			runtime := &clientRuntime{conn: conn}
+			runtime := &clientRuntime{ctx: t.Context(), conn: conn}
 			done := make(chan struct{})
 			exited := make(chan struct{})
 			go func() {

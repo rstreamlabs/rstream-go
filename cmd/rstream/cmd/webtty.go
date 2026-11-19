@@ -75,9 +75,10 @@ type webTTYClientResult struct {
 }
 
 type webTTYClientRuntimeE2EContext struct {
-	controlClient *controlplane.Client
-	project       controlplane.Project
-	serverID      string
+	controlClient   *controlplane.Client
+	project         controlplane.Project
+	serverID        string
+	forCredentialID string
 }
 
 type webTTYServerPayloadCryptoConfig struct {
@@ -95,6 +96,7 @@ type webTTYKnownServerSource struct {
 
 type webTTYClientCryptoConfig struct {
 	PayloadCrypto          *webtty.PayloadCrypto
+	payloadConfig          *webtty.E2EPayloadCryptoConfig
 	EndpointIdentity       *webtty.WebTTYEndpointIdentity
 	ExpectedServerIdentity *webtty.WebTTYEndpointIdentityPublic
 	ClientCredential       []byte
@@ -857,6 +859,7 @@ func addWebTTYServerFlags(cmd *cobra.Command) {
 	cmd.Flags().String("webtty-config", "", "WebTTY server runtime config file; may contain serverId or serverEnrollment")
 	cmd.Flags().Bool("publish", false, "publish the tunnel when using --rstream")
 	cmd.Flags().Bool("no-publish", false, "do not publish the tunnel when using --rstream")
+	cmd.Flags().Bool("mtls", false, "allow client-certificate authentication on the published tunnel")
 	cmd.MarkFlagsMutuallyExclusive("publish", "no-publish")
 	cmd.Flags().Bool("retry", false, "enable automatic reconnection on disconnect")
 	cmd.Flags().Bool("no-retry", false, "disable automatic reconnection on disconnect")
@@ -969,6 +972,9 @@ func validateWebTTYServerFlags(cmd *cobra.Command) error {
 	}
 	if useRstream && cmd.Flags().Changed("auth-token-file") {
 		return fmt.Errorf("--auth-token-file is only used by local WebTTY WebSocket/WebTransport servers")
+	}
+	if mtls, _ := cmd.Flags().GetBool("mtls"); mtls && (!useRstream || !webTTYServerPublish(cmd)) {
+		return fmt.Errorf("--mtls requires a published rstream WebTTY endpoint")
 	}
 	identityName, _ := cmd.Flags().GetString("identity")
 	if strings.TrimSpace(identityName) != "" {
@@ -1425,6 +1431,12 @@ func webTTYClientCryptoWithRuntimeAndScope(ctx context.Context, cmd *cobra.Comma
 		return webTTYClientCryptoConfig{}, err
 	}
 	credentialFile, _ := cmd.Flags().GetString("client-credential-file")
+	if cryptoConfig.ExpectedServerIdentity != nil && cryptoConfig.EndpointIdentity == nil {
+		cryptoConfig.EndpointIdentity, err = webTTYClientEndpointIdentityForNameOrExplicitSources(cmd, cryptoConfig.ClientIdentityName)
+		if err != nil {
+			return webTTYClientCryptoConfig{}, err
+		}
+	}
 	return withWebTTYClientCredential(cryptoConfig, credentialFile)
 }
 
@@ -1436,6 +1448,12 @@ func webTTYClientCryptoForRuntimeAndScope(ctx context.Context, runtimeE2E *webTT
 	cryptoConfig, err := webTTYClientCryptoFromSources(ctx, false, sources, serverKeysConfigured, runtimeE2E, scope)
 	if err != nil {
 		return webTTYClientCryptoConfig{}, err
+	}
+	if cryptoConfig.ExpectedServerIdentity != nil && cryptoConfig.EndpointIdentity == nil {
+		cryptoConfig.EndpointIdentity, err = webTTYClientEndpointIdentityForNameOrExplicitSources(nil, cryptoConfig.ClientIdentityName)
+		if err != nil {
+			return webTTYClientCryptoConfig{}, err
+		}
 	}
 	return withWebTTYClientCredential(cryptoConfig, "")
 }
@@ -1552,6 +1570,7 @@ func webTTYClientCryptoFromSources(ctx context.Context, e2eRequested bool, sourc
 	}
 	return webTTYClientCryptoConfig{
 		PayloadCrypto:          payloadCrypto,
+		payloadConfig:          &payloadConfig,
 		EndpointIdentity:       endpointIdentity,
 		ExpectedServerIdentity: expectedServerIdentity,
 		ClientCredential:       clientCredential,
@@ -1567,7 +1586,19 @@ func webTTYClientRuntimeE2EServerSources(ctx context.Context, runtimeE2E *webTTY
 	localDevices := []workspaceDeviceFile{}
 	if workspaceID != "" {
 		var err error
-		proofItems, err := workspaceDeviceAccessProofsWithDevices(workspaceID, 8)
+		identity, err := runtimeE2E.controlClient.Identity(ctx)
+		if err != nil {
+			return nil, nil, nil, false, mapControlPlaneError(err)
+		}
+		owner, credentialID := identity.Owner, identity.CredentialID
+		if runtimeE2E.forCredentialID != "" {
+			if identity.Owner.Kind != "user" {
+				return nil, nil, nil, false, fmt.Errorf("service preparation requires a personal token with workspace owner or admin access")
+			}
+			owner = controlplane.CredentialOwner{Kind: "workspace", WorkspaceID: workspaceID}
+			credentialID = runtimeE2E.forCredentialID
+		}
+		proofItems, err := workspaceDeviceAccessProofsForOwner(workspaceID, 8, owner, credentialID)
 		if err != nil {
 			return nil, nil, nil, false, err
 		}
@@ -1579,10 +1610,11 @@ func webTTYClientRuntimeE2EServerSources(ctx context.Context, runtimeE2E *webTTY
 		}
 	}
 	resolved, err := runtimeE2E.controlClient.ResolveWebTTYServerClient(ctx, runtimeE2E.project.ID, runtimeE2E.serverID, controlplane.ResolveWebTTYServerClientRequest{
+		CredentialID: runtimeE2E.forCredentialID,
 		DeviceProofs: proofs,
 	})
 	if err != nil {
-		if errors.Is(err, controlplane.ErrForbidden) && workspaceID != "" {
+		if errors.Is(err, controlplane.ErrForbidden) && workspaceID != "" && runtimeE2E.forCredentialID == "" {
 			return nil, nil, nil, false, fmt.Errorf("workspace-managed WebTTY E2E requires this machine to be a trusted workspace device; %s", workspaceDeviceEnrollmentHint(workspaceID))
 		}
 		return nil, nil, nil, false, mapControlPlaneError(err)
@@ -2265,6 +2297,7 @@ func newWebTTYServerTunnelProperties(cmd *cobra.Command, enrollment *webTTYServe
 			}
 		}
 		props.TokenAuth = rstream.BoolPtr(true)
+		props.MTLSAuth = getBoolPtr(cmd, "mtls")
 	}
 	return props
 }
@@ -2530,7 +2563,11 @@ func resolveWebTTYClientRstream(ctx context.Context, runtime *resolvedRuntime, r
 			return webTTYClientRstreamResolution{}, err
 		}
 	}
-	if serverInfo != nil && !webTTYClientRstreamNeedsControlPlane(serverInfo) {
+	engineOnly := runtime != nil && runtime.Resolved.HasMTLS()
+	if engineOnly && serverInfo == nil {
+		return webTTYClientRstreamResolution{}, fmt.Errorf("WebTTY server %q was not found in Engine inventory; verify that it is online and the certificate has inventory access", target)
+	}
+	if serverInfo != nil && (!webTTYClientRstreamNeedsControlPlane(serverInfo) || engineOnly) {
 		return webTTYClientRstreamResolution{URL: urlValue, Server: serverInfo, PublishedHost: publishedHost, Scope: scope}, nil
 	}
 	if runtime == nil || runtime.Resolved.Context == nil || strings.TrimSpace(runtime.Resolved.Context.ProjectEndpoint) == "" {

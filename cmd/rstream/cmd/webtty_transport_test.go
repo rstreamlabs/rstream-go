@@ -119,6 +119,73 @@ func TestWebTTYWithoutDiscoveryDoesNotRequireMetadataClients(t *testing.T) {
 	}
 }
 
+func TestWebTTYCertificateWorkspaceResolutionFIPSCompatibleUsesEngineOnly(t *testing.T) {
+	var controlCalls atomic.Int32
+	var inventoryMode atomic.Int32
+	control := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		controlCalls.Add(1)
+		http.Error(w, "certificate has no Control plane authentication", http.StatusForbidden)
+	}))
+	defer control.Close()
+	engine := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/api/tunnels" {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		if inventoryMode.Load() == 2 {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if inventoryMode.Load() == 1 {
+			_ = json.NewEncoder(w).Encode(rstream.ListTunnelsResponse{})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(rstream.ListTunnelsResponse{{
+			TunnelProperties: rstream.TunnelProperties{
+				ID: rstream.StringPtr("tunnel"), Name: rstream.StringPtr("server"),
+				Protocol: rstream.ProtocolPtr(rstream.ProtocolWebTTY),
+				Labels: map[string]string{
+					webtty.WebTTYServerIDLabelKey:         "server",
+					webtty.WebTTYApplicationProtocolKey:   webtty.WebTTYApplicationProtocol,
+					webtty.WebTTYEncryptionPolicyLabelKey: webTTYServerEncryptionPolicyWorkspaceManaged,
+					webtty.WebTTYE2ELabelKey:              webtty.WebTTYE2ERequired,
+					webtty.WebTTYClientProofLabelKey:      webtty.WebTTYClientProofRequired,
+					webtty.WebTTYTransportLabelKey:        string(webtty.WebTTYTransportWebTransport),
+				},
+			}, Status: "online",
+		}})
+	}))
+	defer engine.Close()
+	engineURL := strings.TrimPrefix(engine.URL, "https://")
+	client := &rstream.Client{
+		EngineURL: &engineURL, Token: rstream.StringPtr("metadata-fixture"),
+		TLSClientConfig: engine.Client().Transport.(*http.Transport).TLSClientConfig.Clone(),
+	}
+	defer client.Close()
+	// The transport authentication is exercised by the real Engine fixture. Here
+	// the configured certificate selects the CLI's metadata resolution path.
+	selected := &resolvedRuntime{Resolved: config.Resolved{
+		APIURL: control.URL, Context: &config.Context{ProjectEndpoint: "project"},
+		TLSClientConfig: &tls.Config{GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			return nil, nil
+		}},
+	}}
+	resolution, err := resolveWebTTYClientRstream(t.Context(), selected, client, "rstrm://server")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if controlCalls.Load() != 0 || resolution.RuntimeE2E != nil || !resolution.Scope.E2ERequired || !resolution.Scope.ClientProofRequired {
+		t.Fatalf("certificate resolution escaped Engine trust or lost required proof: %+v, Control plane calls %d", resolution, controlCalls.Load())
+	}
+	for _, mode := range []int32{1, 2} {
+		inventoryMode.Store(mode)
+		if _, err := resolveWebTTYClientRstream(t.Context(), selected, client, "rstrm://server"); err == nil || controlCalls.Load() != 0 {
+			t.Fatalf("unavailable certificate inventory fell back to the Control plane: %v, calls %d", err, controlCalls.Load())
+		}
+	}
+}
+
 func TestUIWebTTYTransportConfiguration(t *testing.T) {
 	clearRstreamTestEnv(t)
 	for _, transport := range []webtty.WebTTYTransport{webtty.WebTTYTransportPlain, webtty.WebTTYTransportWebSocket, webtty.WebTTYTransportWebTransport} {

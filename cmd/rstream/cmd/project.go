@@ -90,7 +90,7 @@ var projectUseCmd = &cobra.Command{
 		if err := client.RequireToken(); err != nil {
 			return err
 		}
-		if _, err := client.Whoami(cmd.Context()); err != nil {
+		if _, err := client.Identity(cmd.Context()); err != nil {
 			return mapControlPlaneError(err)
 		}
 		project, err := client.ResolveProjectByEndpoint(cmd.Context(), args[0])

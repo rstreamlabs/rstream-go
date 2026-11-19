@@ -229,6 +229,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == "/api/whoami?format=identity":
+            if self.headers.get("authorization") != "Bearer token":
+                self.send_error(401)
+                return
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            # Exercise normalization of the historical personal identity shape.
+            self.wfile.write(json.dumps({"id": "user-runtime", "role": "user"}).encode())
+            return
         if self.path == "/api/workspaces":
             self.send_response(200)
             self.send_header("content-type", "application/json")

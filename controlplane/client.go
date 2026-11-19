@@ -360,6 +360,37 @@ func (c *Client) LookupWorkspaceDeviceKeys(ctx context.Context, workspaceID stri
 	return out, err
 }
 
+// CreateWorkspaceCredentialDeviceKey provisions a public service key using the
+// client's human owner/admin authorization. The target credential is the device
+// owner, not the identity authenticating this request.
+func (c *Client) CreateWorkspaceCredentialDeviceKey(ctx context.Context, workspaceID string, credentialID string, request CreateWorkspaceDeviceKeyRequest) (CreateWorkspaceDeviceKeyResponse, error) {
+	var out CreateWorkspaceDeviceKeyResponse
+	path := workspaceCredentialDevicesPath(workspaceID, credentialID)
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
+	return out, err
+}
+
+// LookupWorkspaceCredentialDeviceKeys reads a target token's public devices
+// using the client's human owner/admin authorization and signed device proofs.
+func (c *Client) LookupWorkspaceCredentialDeviceKeys(ctx context.Context, workspaceID string, credentialID string, request LookupWorkspaceDeviceKeysRequest) (LookupWorkspaceDeviceKeysResponse, error) {
+	var out LookupWorkspaceDeviceKeysResponse
+	path := workspaceCredentialDevicesPath(workspaceID, credentialID) + "/lookup"
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, &out)
+	return out, err
+}
+
+func workspaceCredentialDevicesPath(workspaceID string, credentialID string) string {
+	return "/api/workspaces/" + url.PathEscape(workspaceID) + "/credentials/" + url.PathEscape(credentialID) + "/devices"
+}
+
+// RevokeWorkspaceCredentialDeviceKey uses human management authorization and
+// the existing signed device-revocation proof for the selected token's device.
+func (c *Client) RevokeWorkspaceCredentialDeviceKey(ctx context.Context, workspaceID string, credentialID string, deviceKeyID string, request RevokeWorkspaceDeviceKeyRequest) error {
+	path := workspaceCredentialDevicesPath(workspaceID, credentialID) + "/" + url.PathEscape(deviceKeyID) + "/revoke"
+	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, nil)
+	return err
+}
+
 func (c *Client) RevokeWorkspaceDeviceKey(ctx context.Context, workspaceID string, deviceKeyID string, request RevokeWorkspaceDeviceKeyRequest) error {
 	path := "/api/workspaces/" + url.PathEscape(workspaceID) + "/enterprise/devices/" + url.PathEscape(deviceKeyID) + "/revoke"
 	_, err := c.doJSONBody(ctx, http.MethodPost, path, nil, request, nil)

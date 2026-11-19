@@ -289,6 +289,7 @@ type ApproveWebTTYServerWorkspaceTrustRequest struct {
 }
 
 type ResolveWebTTYServerClientRequest struct {
+	CredentialID string                       `json:"credentialId,omitempty"`
 	DeviceProofs []WorkspaceDeviceAccessProof `json:"deviceProofs"`
 }
 
@@ -309,6 +310,7 @@ type ResolveWebTTYServerClientResponse struct {
 }
 
 type WebTTYCurrentDeviceResolution struct {
+	CredentialID         string          `json:"credentialId,omitempty"`
 	DeviceKeyID          string          `json:"deviceKeyId"`
 	Kind                 string          `json:"kind"`
 	PublicEncryptionKey  string          `json:"publicEncryptionKey"`
@@ -356,6 +358,7 @@ type LookupWorkspaceDeviceKeysRequest struct {
 }
 
 type WorkspaceDeviceKey struct {
+	CredentialID        string  `json:"credentialId,omitempty"`
 	ID                  string  `json:"id"`
 	Kind                string  `json:"kind"`
 	Status              string  `json:"status"`

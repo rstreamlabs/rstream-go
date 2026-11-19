@@ -50,7 +50,7 @@ func CaptureCommand(ctx context.Context, cfg *ClientConfig, maxOutputBytes int) 
 	if err != nil {
 		return result, err
 	}
-	runtime := &clientRuntime{cfg: resolved, logger: resolved.Logger}
+	runtime := &clientRuntime{ctx: ctx, cfg: resolved, logger: resolved.Logger}
 	restoreTerminal, err := runtime.prepareTerminal()
 	if err != nil {
 		return result, err

@@ -19,6 +19,7 @@ import (
 	"time"
 	"uuid"
 
+	"github.com/rstreamlabs/rstream-go/internal/contextsync"
 	"github.com/rstreamlabs/rstream-go/internal/fipsprofile"
 	"github.com/rstreamlabs/rstream-go/pb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -633,10 +634,7 @@ type openTunnelResult struct {
 	err    error
 }
 
-type contextMutex struct {
-	once sync.Once
-	ch   chan struct{}
-}
+type contextMutex = contextsync.Mutex
 
 type controlChannelWriteError struct {
 	err error
@@ -648,23 +646,6 @@ func (e *controlChannelWriteError) Error() string {
 
 func (e *controlChannelWriteError) Unwrap() error {
 	return e.err
-}
-
-func (m *contextMutex) Lock(ctx context.Context) error {
-	m.once.Do(func() {
-		m.ch = make(chan struct{}, 1)
-		m.ch <- struct{}{}
-	})
-	select {
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	case <-m.ch:
-		return nil
-	}
-}
-
-func (m *contextMutex) Unlock() {
-	m.ch <- struct{}{}
 }
 
 type controlChannelImpl struct {

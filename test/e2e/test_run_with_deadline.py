@@ -8,6 +8,8 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
+import run_with_deadline as deadline
 
 HELPER = Path(__file__).with_name("run_with_deadline.py")
 
@@ -59,6 +61,50 @@ class DeadlineTests(unittest.TestCase):
         result = self.run_command(5, source)
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout, "done\n")
+
+    def test_darwin_cleanup_verifies_group_after_permission_error(self):
+        process = subprocess.CompletedProcess([], 0)
+        process.pid = 12345
+        for snapshot in ("42 S\n", "12345 Z+\n"):
+            with (
+                self.subTest(snapshot=snapshot),
+                patch.object(deadline.sys, "platform", "darwin"),
+                patch.object(deadline.os, "killpg", side_effect=PermissionError),
+                patch.object(
+                    deadline.subprocess,
+                    "run",
+                    return_value=subprocess.CompletedProcess([], 0, snapshot),
+                ),
+            ):
+                deadline.signal_group(process, signal.SIGKILL)
+
+    def test_permission_errors_with_live_or_unknown_group_fail_closed(self):
+        process = subprocess.CompletedProcess([], 0)
+        process.pid = 12345
+        for snapshot in ("12345 S+\n", "12345 R\n"):
+            with (
+                self.subTest(snapshot=snapshot),
+                patch.object(deadline.sys, "platform", "darwin"),
+                patch.object(deadline.os, "killpg", side_effect=PermissionError),
+                patch.object(
+                    deadline.subprocess,
+                    "run",
+                    return_value=subprocess.CompletedProcess([], 0, snapshot),
+                ),
+                self.assertRaises(PermissionError),
+            ):
+                deadline.signal_group(process, signal.SIGKILL)
+        with (
+            patch.object(deadline.sys, "platform", "darwin"),
+            patch.object(deadline.os, "killpg", side_effect=PermissionError),
+            patch.object(
+                deadline.subprocess,
+                "run",
+                side_effect=subprocess.TimeoutExpired("ps", 1),
+            ),
+            self.assertRaises(subprocess.TimeoutExpired),
+        ):
+            deadline.signal_group(process, signal.SIGKILL)
 
     def test_interrupt_kills_a_child_that_ignores_sigterm(self):
         with tempfile.TemporaryDirectory() as directory:
