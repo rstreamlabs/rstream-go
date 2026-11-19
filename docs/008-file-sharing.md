@@ -103,33 +103,14 @@ reads can continue while the upload is staged.
 
 ### Recoverable uploads
 
-The info response exposes `content_revision`, `conditional_write` and `upload_receipts` separately from write permission. WebDAV also returns `Upload-Protocol: durable-v1` when durable uploads are supported. Windows currently advertises `atomic-sha256-v1` and refuses a durable upload with 501: directory-journal synchronization is not implemented there. Never infer support from an older server's generic PUT success.
+A client that needs to recover the result of an interrupted upload should first
+check whether the server advertises durable upload receipts. Give each upload
+its own ID. After a lost response, look up that ID to check the outcome. Reusing
+an ID with the same request returns its original receipt. Start a new attempt
+with a new ID after a confirmed interruption.
 
-Clients requiring these guarantees use `PATCH /fs/path` with `File-System-Action: put` or `delete` and an explicit revision precondition. The handler admits the existing PUT/DELETE implementation under the namespace lock. Older WebDAV owners reject PATCH rather than ignoring unfamiliar headers and performing an unconditional mutation. There is no fallback to ordinary PUT/DELETE after an unsupported response. Ordinary WebDAV methods remain available for existing callers.
-
-For a durable PUT, send `Upload-Id` (a new 16–128 character identifier containing ASCII letters, digits, `_` or `-`), `Upload-Length` (decimal complete byte count), `Content-Digest` (SHA-256), and the intended `If-Match` or `If-None-Match` precondition. `Upload-Length` supports streaming browser requests where the application cannot set Content-Length. The streamed body is checked before publication. The JSON response has the same shape as `GET /fs/path?upload-receipt=ID`:
-
-```json
-{
-  "id": "upload-example-0001",
-  "path": "path",
-  "state": "committed",
-  "status": 201,
-  "size_bytes": "3",
-  "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
-  "revision": "\"sha256-ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\"",
-  "started_at": "2026-01-01T00:00:00Z",
-  "completed_at": "2026-01-01T00:00:01Z"
-}
-```
-
-A 200 receipt response means the attempt was found; inspect `state` and its recorded `status` to determine the outcome. `receiving` and `prepared` are in progress; `committed`, `rejected`, `interrupted` and `uncertain` are terminal. The UTC timestamps are the owner's wall clock, not synchronized acquisition timestamps. The receipt retains its original revision after later replacement or removal of the file. An identical PUT with the same ID returns that receipt without writing again; changed parameters return 409. An interrupted attempt requires a new explicit ID to start another transfer. Looking up an ID never replays its request.
-
-The owner synchronizes staging data, a private preparation journal, the renamed directory and the final receipt before acknowledging success. On restart, the next lookup or mutation reconciles unfinished preparation before any later write can replace its evidence. Staging inode identity, size and digest establish a committed rename; missing or contradictory evidence becomes `uncertain`. Uploads interrupted before publication leave the original intact. This is process-restart recovery under the same filesystem ownership discipline, not coordination with arbitrary external writers.
-
-Receipts use the same authenticated export and current path policy as file reads; the ID grants no access. The metadata is hidden and cannot be downloaded through WebDAV or ZIP. It is retained without automatic expiry, bounded to 4,096 receipts per export; a full journal (receipt limit, disk space or quota) refuses new durable uploads with 507. An inaccessible or otherwise unavailable journal returns 503, with the underlying admission error in the server log. Existing receipt reads and ordinary file operations remain available. There is no expiry or purge API in this protocol. Removing an old receipt would forget its identity and could let the same request write again. Do not remove this journal while its identities must remain recoverable. Journal retention and any higher-level operation retention must be coordinated by the owning application. The receipt does not by itself supply a cross-service operations catalogue or an audit identity.
-
-HTTP `Range`/`If-Range` and the `resume` capability describe downloads only. ZIP downloads must still restart after interruption.
+See the [upload receipt reference](../filesystem/README.md#recoverable-uploads)
+for HTTP headers, status codes and the receipt format.
 
 ### Upload state outside the export
 
@@ -141,7 +122,7 @@ rstream files /srv/exports --read-write --no-ui --token-auth --state-dir /writab
 # Alternatively, set RSTREAM_FILES_STATE_DIR=/writable-volume/rstream-state.
 ```
 
-The directory must already exist. The CLI flag overrides the environment variable; an explicitly empty flag is rejected. The library does not read this environment variable: embedders set `fileserver.Config.StateDir` or `filesystem.Policy.StateDir` when opening a `filesystem.Local`. Each export needs its own state directory. Omit the option to preserve the existing layout; there is no automatic fallback to a temporary directory or user home.
+The directory must already exist. The CLI flag overrides the environment variable; an explicitly empty flag is rejected. The library does not read this environment variable: embedders set `fileserver.Config.StateDir` or `filesystem.Policy.StateDir` when opening a `filesystem.Local`. Use a persistent directory with write access.
 
 Each export needs one dedicated, persistent state directory used by every
 process serving that export. The daemon checks ownership and write access

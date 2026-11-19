@@ -191,26 +191,11 @@ The [YAML example](../examples/run-yaml) and [Docker example](../examples/run-do
 
 `rstream run` keeps tunnels in sync from a YAML file (`--apply`) or Docker labels (`--docker`), with optional watch/reconcile.
 
-In watch mode the reconciler keeps retrying temporary Engine failures and
-resource conflicts with bounded exponential backoff and downward jitter. The
-jitter prevents a regional recovery from making every agent reconnect at the
-same instant and never exceeds the configured retry ceiling. The first failure
-is logged once, repeated failures are coalesced, and recovery reports the
-number of failed attempts and outage duration before resetting the backoff.
-This matters during container or agent restarts: an earlier control channel can
-lose its route while established customer sessions are still carrying data.
-The command treats each reconnect as a new admission generation: the ended
-generation stops accepting immediately, its established TCP or datagram relays
-remain owned and bounded by the root command lifecycle, and the replacement
-generation opens the route again. A normal process stop still cancels and joins
-every relay. Consequently, a transient control-plane failure does not turn into
-payload loss, and reconnect does not leak goroutines, sockets or transports.
-
-The negotiated heartbeat grace is deliberately much longer than the heartbeat
-interval. Missing heartbeats below that grace do not change the route or active
-sessions. Once it expires, the Engine withdraws the old route and rejects new
-admissions; `rstream run` reconnects with bounded jitter while established
-sessions finish on their original immutable data paths.
+In watch mode, the runner retries temporary Engine failures and resource
+conflicts. It reports the first failure and the eventual recovery. A lost
+control channel stops new connections through that channel. Established
+connections can continue on their existing data paths while the runner
+reopens the route. Stopping the runner closes its forwarding sessions.
 
 ## HTTP CORS
 

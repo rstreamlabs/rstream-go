@@ -41,41 +41,17 @@ description and must follow the NIST logo requirements.
 
 ## Supported Scope
 
-The profile covers these Go runtime and transport capabilities.
+| Area | Supported | Outside the profile |
+| --- | --- | --- |
+| Runtime and artifacts | Go 1.27 on Linux x86-64 and arm64. Static builds use `CGO_ENABLED=0`. | Other platforms and build profiles. |
+| Engine transport | Direct TLS and QUIC, TLS through supported TCP proxies, or automatic QUIC selection with TLS fallback. The Engine connection uses TLS 1.3. | Proxied QUIC, ECH and custom transports whose cryptography cannot be established by the profile. |
+| Agent identity | Token admission and enrolled client certificates. | Executable mTLS signers. |
+| Service protocols | Private and published bytestreams with supported protocols, published QUIC and ordinary HTTP/3. | Generic datagrams, DTLS, TURN, WebSocket, CONNECT-UDP and CONNECT-IP. |
+| WebTTY | WebTransport, with optional authenticated end-to-end encryption. Explicit endpoint keys and Enterprise standalone workspace-managed sessions are supported. | Plain and WebSocket terminal transports, managed participant streams, the legacy X25519/HPKE suite and the filesystem sidecar. |
+| CLI events and file sharing | SSE events. | WebSocket events and `rstream files`. |
 
-- Go 1.27;
-- Linux x86-64 and arm64;
-- static binaries with `CGO_ENABLED=0`;
-- direct TLS transport and TLS through the supported TCP proxy paths;
-- direct QUIC transport, including automatic QUIC-first selection with TLS
-  fallback;
-- TLS 1.2 or later, with the current rstream engine path using TLS 1.3;
-- QUIC over TLS 1.3 with AES-GCM packet protection;
-- token admission and mTLS client admission;
-- private and published bytestream tunnels that do not select an excluded
-  protocol;
-- published QUIC tunnels and ordinary HTTP/3 tunnels;
-- WebTTY over HTTP/3/WebTransport, with transport encryption alone or authenticated application E2E;
-- explicit-key and EE standalone workspace-managed WebTTY clients and servers;
-- P-256 ECDH, HKDF-SHA256, and AES-256-GCM with internally generated random
-  nonces for WebTTY session-key envelopes and terminal payloads.
-
-The profile excludes these capabilities.
-
-- external mTLS signers (`auth.mtls.storage.kind: exec`); arbitrary provider executables are outside the reviewed module boundary and are rejected before execution;
-
-- proxied QUIC transport;
-- generic datagram tunnels, DTLS, and TURN; datagram tunnel metadata is accepted
-  only for published QUIC and HTTP/3;
-- ECH;
-- WebTTY over plain streams or WebSocket, including managed participant
-  `sessions join` streams, which do not yet expose WebTransport;
-- the WebTTY filesystem sidecar and the `rstream files` command;
-- the legacy WebTTY X25519/HPKE suite;
-- CLI WebSocket event streaming;
-- WebSocket, CONNECT-UDP, CONNECT-IP, and other non-WebTransport Extended
-  CONNECT paths;
-- custom SDK transports whose cryptographic behavior cannot be established by the profile.
+See [TLS policy](#tls-policy) and the [WebTTY profile](#webtty-profile) for
+cryptographic requirements beyond protocol selection.
 
 ## File-sharing compatibility
 
