@@ -141,7 +141,11 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	}
 	os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 	transport := quic.Transport{Conn: rstream.PacketConnFromPacketListener(packetListener)}
-	listener, err := transport.Listen(tlsCfg, &quic.Config{EnableDatagrams: true})
+	listener, err := transport.Listen(tlsCfg, &quic.Config{
+		EnableDatagrams:         true,
+		InitialPacketSize:       1200,
+		DisablePathMTUDiscovery: true,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to start QUIC listener: %w", err)
 	}

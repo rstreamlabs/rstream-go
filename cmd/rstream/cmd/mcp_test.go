@@ -1234,6 +1234,10 @@ func TestMCPInitializeProtocolVersion(t *testing.T) {
 	if !strings.Contains(string(payload), `"title":"rstream"`) || !strings.Contains(string(payload), "rstream_runtime_prepare") || !strings.Contains(string(payload), "call rstream_auth_poll with wait=true") || !strings.Contains(string(payload), "do not infer or recommend") {
 		t.Fatalf("initialize missing display title or instructions: %s", string(payload))
 	}
+	if !strings.Contains(string(payload), "Lightweight WebTTY can use a private bytestream on CE.") ||
+		!strings.Contains(string(payload), "Registered servers, hosted recordings and workspace-managed WebTTY require a managed runtime.") {
+		t.Fatalf("initialize missing CE WebTTY boundaries: %s", string(payload))
+	}
 }
 
 func TestMCPInitializeRejectsMissingRequiredParams(t *testing.T) {

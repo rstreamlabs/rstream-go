@@ -4,6 +4,7 @@ The Linux-only `transport` program exercises verified private tunnels through
 actual fixture engines. Follow [Build from source](../../docs/001-building-from-source.md) first, then build from the repository root:
 
 ```sh
+make ice-patch
 CGO_ENABLED=0 GOOS=linux go build -modfile=out/ice-patch/go.mod -o /absolute/output/transport-benchmark ./test/performance/transport
 ```
 
@@ -34,8 +35,7 @@ The output directory must already exist. Run the binary on Linux with disposable
 
 The probe has a 90-second deadline. Echo workers, resource sampling and clients
 are owned and joined on exit. Transfer sizes, sample counts and datagram timing
-are bounded. `--pacing-ms=1..1000` and `--drain-seconds=1..30` control datagram
-timing; defaults are 1 ms and three seconds. Missing packets mean delivery-window
+are bounded. Missing packets mean delivery-window
 misses, not physical link loss. Datagram delivery is best effort; this probe measures the selected transport without changing its delivery guarantees. The reviewed QUIC dependency set has an open delivery limitation under packet reordering: packets can be discarded by QUIC receive history before reaching the SDK. This is separate from application queue overflow; the [datagram method](000-datagram-qualification.md) describes the required controls. A successful stream or WebTransport test does not qualify native datagram behavior, and larger SDK queues cannot recover packets already rejected by QUIC.
 
 JSON contains CPU/allocation deltas for both SDK peers in one process, latency

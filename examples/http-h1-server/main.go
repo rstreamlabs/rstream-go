@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -19,6 +20,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
@@ -31,14 +33,17 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, hostname)
 }
 
-func run(ctx context.Context, client *rstream.Client, publish bool) error {
-	// Open control channel
+func run(ctx context.Context, publish bool) error {
+	client, err := config.NewClientFromEnv()
+	if err != nil {
+		return fmt.Errorf("load rstream configuration: %w", err)
+	}
+	defer client.Close()
 	ctrl, err := client.Connect(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to connect to rstream engine server: %w", err)
 	}
 	defer ctrl.Close()
-	// Create the tunnel
 	tunnelProps := rstream.TunnelProperties{
 		Name:    rstream.StringPtr("h1-example"),
 		Publish: rstream.BoolPtr(publish),
@@ -56,23 +61,22 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	if err != nil {
 		return fmt.Errorf("failed to get forwarding address: %w", err)
 	}
-	netListener, ok := tunnel.(interface{ net.Listener })
+	netListener, ok := tunnel.(net.Listener)
 	if !ok {
 		return fmt.Errorf("tunnel does not implement net.Listener")
 	}
 	fmt.Printf("Server listening on %s\n", forwardingAddr)
-	// Start an HTTP server using the tunnel as a listener (HTTP/1.1)
-	server := &http.Server{
-		Handler: http.HandlerFunc(handler),
-	}
+	server := &http.Server{Handler: http.HandlerFunc(handler)}
+	defer server.Close()
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- server.Serve(netListener)
 	}()
 	select {
 	case <-ctx.Done():
-		log.Println("Shutting down HTTP server...")
-		return server.Shutdown(context.Background())
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return server.Shutdown(shutdownCtx)
 	case err := <-errCh:
 		return fmt.Errorf("http server error: %w", err)
 	}
@@ -81,20 +85,10 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 func main() {
 	publish := flag.Bool("publish", false, "publish the tunnel")
 	flag.Parse()
-	client, err := config.NewClientFromEnv()
-	if err != nil {
-		log.Fatalf("Configuration error: %v", err)
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		log.Println("Received shutdown signal, exiting...")
-		cancel()
-	}()
-	if err := run(ctx, client, *publish); err != nil && err != http.ErrServerClosed {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	err := run(ctx, *publish)
+	stop()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatalf("Server error: %v", err)
 	}
 }

@@ -1,8 +1,20 @@
 # Plain HTTP CONNECT
 
-The Go SDK can publish HTTP tunnels that carry plain authority-form `CONNECT` requests. This is the standard TCP proxy mechanism used by forward proxies and system proxy integrations. It is not Extended CONNECT and it does not use a `:protocol` token.
+The Go SDK can publish HTTP tunnels that carry plain authority-form `CONNECT` requests. This is the standard TCP proxy mechanism used by forward proxies and system proxy integrations. For WebSocket, WebTransport or MASQUE, see [Extended CONNECT](014-extended-connect.md).
 
-## Tunnel setup
+## Forward an existing HTTP proxy
+
+Configure the proxy's authentication and destination allowlist before
+publishing it. Point the CLI at your HTTP/1.1 proxy on loopback port 8080.
+
+```sh
+rstream forward 127.0.0.1:8080 --http --http-version http/1.1
+```
+
+Use the forwarding address to [verify a proxy connection](#verify-a-proxy-connection).
+Community Edition can carry plain CONNECT over HTTP/1.1 or HTTP/2.
+
+## Serve a proxy in Go
 
 Plain CONNECT follows normal HTTP tunnel version support:
 
@@ -16,7 +28,8 @@ props := rstream.TunnelProperties{
 }
 ```
 
-For HTTP/3 upstreams, use a datagram tunnel:
+For an HTTP/3 upstream, use a datagram tunnel on a compatible managed
+Engine and project. See the [HTTP/3 requirements](005-http-tunnels.md#upstream-http-mode).
 
 ```go
 props := rstream.TunnelProperties{
@@ -30,26 +43,29 @@ props := rstream.TunnelProperties{
 
 The upstream service behind the tunnel must be a real forward proxy. The rstream engine forwards the `CONNECT host:port` request to that service and relays bytes only after the upstream returns a 2xx response.
 
-## Security model
+## Verify a proxy connection
 
-The `CONNECT` authority is the final TCP target, not the rstream tunnel host. The engine therefore binds plain CONNECT to the tunnel selected by the downstream TLS or QUIC connection and does not use the target authority for tunnel routing.
-
-On HTTP/2 and HTTP/3, multiple CONNECT streams can share one connection. To prevent accidental cross-use of a reused connection, the engine separates normal reverse HTTP traffic from proxy egress traffic:
-
-- normal HTTP requests use reverse HTTP mode;
-- plain `CONNECT`, `CONNECT-UDP`, and `CONNECT-IP` use proxy egress mode.
-
-Once a connection enters one mode, requests from the other mode are rejected with `421 Misdirected Request`. Destination policy remains the upstream proxy's responsibility; keep target allowlists, authentication, and audit logging in that proxy.
-
-`Proxy-Authorization` and `Proxy-Authenticate` are preserved for plain CONNECT so the upstream proxy can authenticate clients. Sensitive proxy credentials are still redacted from engine logs.
-
-## Runtime coverage
-
-The runtime forwarding suite includes a real CONNECT proxy and TCP echo target:
+Configure the upstream proxy's authentication and destination allowlist.
+Choose an HTTPS target that proxy is allowed to reach. Use the tunnel's
+printed HTTPS hostname and port as the proxy URL. Include port 443 when
+the address omits the standard HTTPS port.
 
 ```sh
-make test-bins
-bash test/e2e/runtime-forward.sh
+curl --proxy 'https://proxy-tunnel.example.com:443' 'https://allowed-origin.example.com/'
 ```
 
-The cases are listed as `forward/http connect h1`, `forward/http connect h2`, and `forward/http connect h3`.
+Supply the credentials required by your proxy. curl verifies both server
+certificates. Expect the target service's response after the proxy accepts
+CONNECT. If the tunnel uses a private CA, supply it with `--proxy-cacert`.
+
+## Security model
+
+The downstream TLS or QUIC connection selects the rstream tunnel. The
+`CONNECT` authority names the final TCP target that the upstream proxy will
+dial. Configure authentication, destination allowlists and logging in that
+proxy. rstream preserves `Proxy-Authorization` and `Proxy-Authenticate` so
+the proxy can authenticate the caller.
+
+Open a dedicated connection for proxy traffic over HTTP/2 or HTTP/3. The Engine
+returns `421 Misdirected Request` if a connection already used for reverse
+HTTP is reused for CONNECT egress, or the reverse.

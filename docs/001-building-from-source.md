@@ -1,72 +1,90 @@
 # Build the Go SDK and CLI from source
 
-Use this path to run a modified CLI or work on the SDK itself. It builds the current checkout; [CLI installation](000-installation.md) installs a released binary instead. No rstream account or running engine is needed to compile the code. Connecting the resulting CLI or an example requires the corresponding credentials and endpoint.
+From a fresh checkout, build a local `rstream` executable and check that it
+starts. This uses the source in the checkout. For a released executable, follow
+[Install the CLI](000-installation.md).
 
-## Prerequisites
-
-| Tool | Requirement |
+| Tool | When you need it |
 | --- | --- |
-| Go | The version declared in `go.mod` or newer; this checkout declares Go 1.27.4. Check the selected toolchain with `go version`. |
-| Git | Required to clone the repository and apply the verified ICE build input. |
-| Network access | The first build downloads the locked Go modules unless they are already cached. |
-| C toolchain | Required for `go test -race` and platform builds using cgo. On macOS, install the Xcode Command Line Tools with `xcode-select --install`. |
-| Make and a POSIX shell | Required only for the Makefile targets. These also use standard Unix utilities such as `find`, `awk` and `sed`. |
+| Go | Use the minimum version in [`go.mod`](../go.mod) or a compatible newer toolchain. |
+| Git and network access | Clone the repository and download its Go modules. |
+| Make and a POSIX shell | Build on Linux or macOS with the Makefile. It also uses `find`, `awk` and `sed`. |
+| C toolchain | Required for builds using cgo and for the race detector. Native macOS Make builds enable cgo by default. Install the Xcode Command Line Tools with `xcode-select --install`. |
 
-Clone the repository and work from its root:
+## Choose a source revision
+
+Clone the repository. For a reproducible build, switch to your release tag
+or reviewed commit. Substitute it for `my-reviewed-revision` below. Record
+the revision and Go version alongside the executable.
 
 ```sh
 git clone https://github.com/rstreamlabs/rstream-go.git
 cd rstream-go
+git switch --detach 'my-reviewed-revision'
+git rev-parse HEAD
 go version
 ```
 
-## Build a local CLI
+## Build on Linux or macOS
 
-Prepare the verified ICE source, then compile a binary at a fixed local path:
-
-```sh
-go run ./tools/icepatch -output out/ice-patch
-go build -modfile=out/ice-patch/go.mod -o out/rstream ./cmd/rstream
-./out/rstream --help
-```
-
-For native Windows PowerShell, use the same first command and an `.exe` output:
-
-```powershell
-go run ./tools/icepatch -output out/ice-patch
-go build -modfile=out/ice-patch/go.mod -o out/rstream.exe ./cmd/rstream
-.\out\rstream.exe --help
-```
-
-These commands build from this checkout without installing over another CLI. Use the output path when following the [CLI workflow](002-cli-workflow.md), or add that directory to the current process's `PATH`. The direct Go build does not set the release metadata supplied by the Makefile.
-
-The ICE preparation creates an alternate module file under ignored `out/`; it does not modify `go.mod` or the shared module cache. Use that alternate file for subsequent builds and tests. The [ICE build guide](../tools/icepatch/README.md) explains its scope and how external applications adopt it.
-
-## Use the Makefile
-
-On a host with the Unix build tools, the Makefile prepares ICE and records version/platform metadata automatically:
+From the checkout root, build the CLI.
 
 ```sh
 make rstream
 ```
 
-The binary is written below `out/cmd/rstream/<channel>/<version>/<os>/<arch>/release/bin/`. An untagged checkout uses the `dev` channel and its branch name as the version. `make` builds every command under `cmd/`; `make rstream` selects only the CLI. Native macOS builds enable cgo by default and need the C toolchain above.
-
-| Target | Result |
-| --- | --- |
-| `make rstream` | CLI for the current host. |
-| `make examples` | All sample binaries under `out/examples/`. |
-| `make http-h1-server http-h1-client` | Only the selected example pair. |
-| `make tests` | Repository tests with the prepared ICE input. |
-
-## Develop and test
-
-After preparation, run checks against the same source graph:
+In a fresh checkout, the following check locates the binary and prints its version.
 
 ```sh
-go test -modfile=out/ice-patch/go.mod ./...
-go test -race -modfile=out/ice-patch/go.mod ./...
-go vet -modfile=out/ice-patch/go.mod ./...
+cli="$(find out/cmd/rstream -type f -name rstream -path '*/release/bin/*')"
+"$cli" --version
 ```
 
-The race detector requires a supported host architecture and C compiler. Runtime fixtures that connect to an engine have additional prerequisites in the [test guide](../test/README.md); they are separate from compilation. [Contributing](../CONTRIBUTING.md) covers API, configuration, style and generated-code requirements. Cross-platform release packaging and FIPS builds follow their dedicated maintainer guides.
+To try the checkout with the walkthrough commands, put its binary directory
+first on the path in each terminal you use. Run this from the checkout root
+after setting `cli` above.
+
+```sh
+export PATH="$(pwd)/$(dirname "$cli"):$PATH"
+```
+
+## Build on Windows
+
+After [selecting the revision](#choose-a-source-revision), run these commands
+from the checkout root in PowerShell.
+
+```powershell
+go run ./tools/icepatch -output out/ice-patch
+go build '-modfile=out/ice-patch/go.mod' -o out/rstream.exe ./cmd/rstream
+.\out\rstream.exe --version
+```
+
+The first command prepares an alternate Go module file with the selected ICE
+dependency. Use that file for subsequent direct builds and tests. The direct
+build omits the release metadata supplied by Make. See the
+[build tool reference](../tools/icepatch/README.md) for its behavior and
+consumer-module instructions.
+
+In each PowerShell session you use for the walkthrough, run this from the
+checkout root to select the local executable.
+
+```powershell
+Set-Alias rstream (Resolve-Path .\out\rstream.exe).Path
+```
+
+## Try the CLI
+
+Run `rstream --version` in each terminal to confirm which binary you are using,
+then follow [the first CLI connection](002-cli-workflow.md#connect-the-cli).
+
+## Build examples and test changes
+
+| Command | Result |
+| --- | --- |
+| `make http-h1-server http-h1-client` | Build the first [HTTP example pair](../examples/README.md#serve-http). |
+| `make examples` | Build the Go example catalog under `out/examples/`. |
+| `make tests` | Run the package tests. |
+
+See [Contributing](../CONTRIBUTING.md) for race detection, static checks and
+repository practices. The [test guide](../test/README.md) covers Engine-backed
+tests. The [FIPS profile](017-fips-140-3-profile.md) has its own build procedure.
