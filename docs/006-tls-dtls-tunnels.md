@@ -55,10 +55,26 @@ above serves cleartext and works with termination at the edge.
 ## Client certificate authentication
 
 For an edge-terminated TLS tunnel on a deployment with published mTLS,
-set `--mtls` in the CLI or `TunnelProperties.MTLSAuth` in Go. Enroll the
-caller's certificate and scope it to the tunnel. Verify an admitted
-certificate and refusal without one using
-[published tunnel access](https://rstream.io/docs/security/mtls#published-tunnel-access).
+set `--mtls` in the CLI or `TunnelProperties.MTLSAuth` in Go.
+[Enroll the caller's certificate](https://rstream.io/docs/security/mtls#client-certificate-credentials)
+and scope it to the tunnel. Start the loopback HTTP service on port 8080
+again if needed, then open a new terminated tunnel.
+
+```sh
+rstream forward 127.0.0.1:8080 --tls --tls-mode terminated --mtls
+```
+
+Use the printed address and your certificate and key paths for the request.
+
+```sh
+curl -fsS --http1.1 --cert ./client.pem --key ./client-key.pem 'https://tls-demo.example.com:443/'
+```
+
+An admitted certificate returns the demo response. Repeat the request
+without `--cert` and `--key` to confirm refusal during TLS negotiation.
+Use the same hostname and CA settings for both requests. See
+[published tunnel access](https://rstream.io/docs/security/mtls#published-tunnel-access)
+for the project policy that controls admission.
 
 ## Upstream encryption
 
