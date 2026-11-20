@@ -1431,13 +1431,7 @@ func webTTYClientCryptoWithRuntimeAndScope(ctx context.Context, cmd *cobra.Comma
 		return webTTYClientCryptoConfig{}, err
 	}
 	credentialFile, _ := cmd.Flags().GetString("client-credential-file")
-	if cryptoConfig.ExpectedServerIdentity != nil && cryptoConfig.EndpointIdentity == nil {
-		cryptoConfig.EndpointIdentity, err = webTTYClientEndpointIdentityForNameOrExplicitSources(cmd, cryptoConfig.ClientIdentityName)
-		if err != nil {
-			return webTTYClientCryptoConfig{}, err
-		}
-	}
-	return withWebTTYClientCredential(cryptoConfig, credentialFile)
+	return withWebTTYClientIdentityAndCredential(cryptoConfig, cmd, credentialFile)
 }
 
 func webTTYClientCryptoForRuntimeAndScope(ctx context.Context, runtimeE2E *webTTYClientRuntimeE2EContext, scope webTTYClientSecurityScope) (webTTYClientCryptoConfig, error) {
@@ -1449,13 +1443,18 @@ func webTTYClientCryptoForRuntimeAndScope(ctx context.Context, runtimeE2E *webTT
 	if err != nil {
 		return webTTYClientCryptoConfig{}, err
 	}
-	if cryptoConfig.ExpectedServerIdentity != nil && cryptoConfig.EndpointIdentity == nil {
-		cryptoConfig.EndpointIdentity, err = webTTYClientEndpointIdentityForNameOrExplicitSources(nil, cryptoConfig.ClientIdentityName)
+	return withWebTTYClientIdentityAndCredential(cryptoConfig, nil, "")
+}
+
+func withWebTTYClientIdentityAndCredential(config webTTYClientCryptoConfig, cmd *cobra.Command, credentialFile string) (webTTYClientCryptoConfig, error) {
+	if config.ExpectedServerIdentity != nil && config.EndpointIdentity == nil {
+		identity, err := webTTYClientEndpointIdentityForNameOrExplicitSources(cmd, config.ClientIdentityName)
 		if err != nil {
 			return webTTYClientCryptoConfig{}, err
 		}
+		config.EndpointIdentity = identity
 	}
-	return withWebTTYClientCredential(cryptoConfig, "")
+	return withWebTTYClientCredential(config, credentialFile)
 }
 
 func webTTYClientCryptoFromSources(ctx context.Context, e2eRequested bool, sources []webTTYKnownServerSource, serverKeysConfigured bool, runtimeE2E *webTTYClientRuntimeE2EContext, scope webTTYClientSecurityScope) (webTTYClientCryptoConfig, error) {
@@ -3084,17 +3083,10 @@ func runWebTTYClientWithOptions(cmd *cobra.Command, urlOverride string, args []s
 	clientCfg.ExpectedServerIdentity = cryptoConfig.ExpectedServerIdentity
 	clientCfg.ClientCredential = append([]byte(nil), cryptoConfig.ClientCredential...)
 	if cryptoConfig.ExpectedServerIdentity != nil {
-		identity := cryptoConfig.EndpointIdentity
-		if identity == nil {
-			identity, err = webTTYClientEndpointIdentityForNameOrExplicitSources(cmd, cryptoConfig.ClientIdentityName)
-			if err != nil {
-				return err
-			}
-		}
-		if identity == nil {
+		if cryptoConfig.EndpointIdentity == nil {
 			return webTTYMissingClientEndpointIdentityError(securityScope, cryptoConfig)
 		}
-		clientCfg.EndpointIdentity = identity
+		clientCfg.EndpointIdentity = cryptoConfig.EndpointIdentity
 	}
 	if options.Detached {
 		result, startErr := startWebTTYSession(ctx, clientCfg)
