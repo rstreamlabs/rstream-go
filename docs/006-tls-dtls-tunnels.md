@@ -2,7 +2,9 @@
 
 A TLS tunnel carries a byte stream. DTLS uses datagrams and has its own version
 and project policy requirements. Choose which endpoint owns the public handshake
-before configuring the upstream connection.
+before configuring the upstream connection. For HTTP routing or request
+authentication in front of an HTTPS service, choose
+[HTTP with upstream TLS](005-http-tunnels.md#upstream-http-mode).
 
 | Mode | What reaches the application | Where to enforce public TLS policy |
 | --- | --- | --- |
@@ -17,34 +19,14 @@ stream to a disposable local service. Use a [configured CLI context](002-cli-wor
 on Community Edition or a hosted Pro or Enterprise project that allows
 published TLS. Use an Engine with a certificate trusted by your client.
 
-Start a loopback HTTP server in a fresh temporary directory. The HTTP
-response gives this TLS tunnel a disposable byte stream to forward.
-
-On Linux or macOS, start the HTTP server from the temporary directory.
-
-```sh
-demo_dir="$(mktemp -d)" &&
-  cd "$demo_dir" &&
-  printf 'Hello through TLS\n' > index.html &&
-  python3 -m http.server 9000 --bind 127.0.0.1
-```
-
-In Windows PowerShell, use the Windows Python launcher.
-
-```powershell
-& {
-  $demo = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
-  New-Item -ItemType Directory -Path $demo -ErrorAction Stop | Out-Null
-  Set-Location $demo -ErrorAction Stop
-  Set-Content -Encoding ASCII index.html 'Hello through TLS'
-  py -3 -m http.server 9000 --bind 127.0.0.1
-}
-```
+Start the [loopback demo service](002-cli-workflow.md#start-the-local-service)
+on port 8080, or keep it running from the first walkthrough. Stop the
+previous public HTTP forwarder before testing the TLS address.
 
 Use a second terminal to publish the TLS tunnel.
 
 ```sh
-rstream forward 127.0.0.1:9000 --tls --tls-mode terminated
+rstream forward 127.0.0.1:8080 --tls --tls-mode terminated
 ```
 
 Use the hostname and port printed by the CLI in the following request. Use
@@ -54,15 +36,13 @@ Use the hostname and port printed by the CLI in the following request. Use
 curl -fsS --http1.1 'https://tls-demo.example.com:443/'
 ```
 
-The client verifies the certificate and returns `Hello through TLS`. For a
+The client verifies the certificate and returns `Hello from rstream`. For a
 private CA, pass its certificate with `--cacert /path/to/ca.pem`.
 Stop the tunnel and the demo server with Ctrl+C.
 
 Use this mode for a service whose TLS endpoint belongs at the Engine.
 For an end-to-end TLS session, use `--tls-mode passthrough` when project
-policy permits it. The upstream presents the certificate. When you need HTTP routing or request-level
-authentication in front of an HTTPS origin, choose
-[an HTTP tunnel with upstream TLS](005-http-tunnels.md#upstream-http-mode).
+policy permits it. The upstream then presents the public certificate.
 
 ## Client certificate authentication
 
@@ -79,14 +59,45 @@ The public TLS session and the connection to the application are separate:
 | DTLS                | Selects DTLS on the application connection.                                                            |
 | QUIC                | TLS is required and enabled; an explicit false is rejected.                                            |
 
+## Verify a published DTLS tunnel
+
+Use hosted Pro or Enterprise, or a managed deployment that enables a DTLS
+listener for the project. Check the [cryptographic policy](#dtls-and-project-cryptographic-policy)
+before choosing a client. The owner needs tunnel creation permission.
+The example client uses Engine inventory to find the published endpoint,
+so its identity needs `tunnels.resources.read-only` for that tunnel.
+
+Build the [datagram echo pair](../examples/README.md#choose-another-example)
+with `make datagram-echo-server datagram-echo-client`. Run both programs
+with `--publish`, starting with the server. The example client verifies the
+published hostname against the system trust store. For a private CA or a
+project requiring client certificates, use a DTLS client configured with
+that CA or the required certificate. The CLI context's Engine CA is for
+the agent connection and does not configure the downstream client.
+
+```sh
+./out/examples/datagram-echo-server --publish
+```
+
+```sh
+./out/examples/datagram-echo-client --publish
+```
+
+The client prints the echoed payload when the connection succeeds. Stop the
+server with Ctrl+C. The pair uses the DTLS library's default version
+negotiation. To verify a project minimum, use a trusted DTLS client that
+offers only the version under test.
+
 ## DTLS and project cryptographic policy
 
-Hosted Pro and Enterprise projects can publish DTLS when the Engine enables
-a DTLS listener. Published DTLS supports versions 1.2 and 1.3. The
+The public listener supports DTLS 1.2 and 1.3. The
 [editions and plans table](https://rstream.io/docs/support/editions) lists
 availability by deployment.
 The tunnel and project minimum use the existing values `tls1.2` and `tls1.3`;
-for DTLS these select a DTLS 1.2-or-newer or DTLS 1.3 minimum.
+for DTLS these select a DTLS 1.2-or-newer or DTLS 1.3 minimum. Set the
+tunnel minimum with `--tls-min-version tls1.3` on a published DTLS forwarder,
+or use `TunnelProperties.TLSMinVersion` in Go. The connection must satisfy
+both the tunnel minimum and the project policy.
 
 Project post-quantum (PQ) key exchange and Encrypted Client Hello (ECH) settings
 can narrow the allowed connections. For the equivalent TLS and QUIC behavior,
@@ -105,7 +116,9 @@ Requirements combine with the minimum version and access/authentication rules.
 Early data, DTLS session resumption and CID migration are disabled. The
 restricted FIPS profile excludes DTLS.
 
-The SDK's agent-to-engine transports are independent of the published DTLS
+## Use a DTLS connection from Go
+
+The SDK's agent-to-Engine transports are independent of the published DTLS
 protocol. Use the connection adapter matching the imported Pion type:
 
 | Pion connection                | Packet adapter                                 |
@@ -115,10 +128,3 @@ protocol. Use the connection adapter matching the imported Pion type:
 
 The DTLS examples use the latter adapter. WebRTC can use its own DTLS
 dependency in the same module.
-
-To exercise a published DTLS tunnel, use the published mode of the
-[datagram echo pair](../examples/README.md#choose-another-example) against an
-Engine that enables DTLS. That pair uses the library's default version
-negotiation. To verify a specific minimum, configure a trusted test client
-to offer only the DTLS version under test and inspect the result against
-the project's policy.

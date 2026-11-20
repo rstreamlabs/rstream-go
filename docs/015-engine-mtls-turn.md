@@ -23,10 +23,14 @@ does not trigger fallback. The WebSocket adapter uses TLS/TCP.
 
 ## Request TURN credentials in Go
 
-Configure an identity for the project. API issuance needs
+Use a managed project with TURN enabled. Community Edition and the
+[FIPS profile](017-fips-140-3-profile.md#supported-scope) are outside this
+relay workflow. Configure an identity for the project. API issuance needs
 `turn.credentials.create`; local derivation needs `turn.relay.allocate`.
-Use the shared configuration to select the Control plane, Engine or local
-issuer. Keep the client for subsequent renewals.
+Use the selected project context to choose the issuer. Keep the client for
+renewal and refresh the credentials before their effective TTL expires. See
+[WebRTC ICE configuration](https://rstream.io/docs/integrations/stun-turn#webrtc-ice-configuration)
+for how to use the returned URLs, username and password.
 
 ```go
 client, err := config.NewClientFromEnv()
@@ -72,9 +76,11 @@ application key, pass its client ID and secret to the package function
 Engine-backed `client list`, `tunnel list`, `events`, `ui`, WebTTY inventory and
 session methods use the same certificate identity. Permissions still apply.
 The UI retains local contexts without optional Control plane enrichment.
-Doctor checks native admission, discovery and HTTP access without minting TURN;
-a denied health or inventory read is a restricted-rights warning. When health
-access is denied, Doctor reports that readiness could not be verified.
+Doctor verifies the configured transport, discovers the mTLS API and
+checks HTTP readiness and inventory. Denied reads appear as warnings and can
+leave readiness unverified.
+To verify native session admission, open a control channel with
+`Client.Connect` and close it after the check.
 
 Project/workspace administration, enrollment and managed WebTTY trust provisioning
 still require Control plane token access. Known local/runtime WebTTY targets can

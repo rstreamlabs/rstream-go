@@ -115,8 +115,6 @@ rstream webtty fs --url rstrm://maintenance upload ./update.bin /update.bin
 
 Use the tunnel's exact name or id with the filesystem client. The shared root must already exist. Read-only remains the default; `--read-write` is explicitly rejected with `--backend webrtc`. `--no-ui` is independent of terminal output, authentication and write access. Reconnection retains all these options and the existing filesystem service.
 
-Go embedders can use `fileserver.Config{Root: "./maintenance", ReadWrite: true, MaxUploadSize: 134217728}` with `fileserver.New`. A zero-valued `ReadWrite` stays read-only; omitting `UI` exposes only the API. `Config.Validate` checks transfer options without filesystem or network access.
-
 The browser UI still only browses and downloads, even on a writable share. Uploads and other mutations are available through WebDAV clients, the filesystem CLI and MCP. With public access, any client that can reach the share can use its enabled write operations. Authentication protects the same endpoints in either mode.
 
 A successful upload replaces the destination atomically. If the request is
@@ -127,19 +125,13 @@ Use a durable upload ID when the caller must recover that outcome after a restar
 The per-request upload limit defaults to 64 MiB. Oversized uploads return HTTP
 413. A PUT request replaces the whole file. Use a content digest to verify the
 received bytes and an ETag precondition to guard against concurrent changes.
-Other mutations can wait behind a slow upload to the same export. Independent
-reads can continue while the upload is staged.
 
 ### Recoverable uploads
 
-A client that needs to recover the result of an interrupted upload should first
-check whether the server advertises durable upload receipts. Give each upload
-its own ID. After a lost response, look up that ID to check the outcome. Reusing
-an ID with the same request returns its original receipt. Start a new attempt
-with a new ID after a confirmed interruption.
-
-See the [upload receipt reference](../filesystem/README.md#recoverable-uploads)
-for HTTP headers, status codes and the receipt format.
+Use [durable upload receipts](../filesystem/README.md#recoverable-uploads)
+when a client must recover the result after losing a response. First check
+that the server advertises the capability. Look up the original upload ID
+before deciding whether another upload is needed.
 
 ### Upload state outside the export
 

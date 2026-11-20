@@ -6,7 +6,7 @@ Choose WebRTC to transfer files over a peer connection. The default WebDAV backe
 | --- | --- |
 | Standalone file share | Add `--backend webrtc` to `rstream files`. |
 | Files alongside a WebTTY server | Use WebSocket transport and add `--fs-root ./exports --fs-backend webrtc`. |
-| Go application | Use `filesystem.NewHTTPClient` with the authenticated HTTP client and tunnel dialer. Close response bodies after reading. |
+| Go application | Use the [backend-aware HTTP client](../fileserver/README.md#read-from-a-share) with the share's base URL and your authenticated signaling client. |
 
 ## Try a protected download
 
@@ -19,7 +19,10 @@ sample `report.csv` in `./exports` and start a protected WebRTC share.
 rstream files ./exports --name exports --backend webrtc --token-auth
 ```
 
-From the receiving device, download the file and compare it with the original.
+On the receiving device, use a scoped identity that can read the tunnel
+inventory and open its stream. Download the file and compare it with the
+original. A client granted only stream access can pass `--no-discovery`
+with the exact tunnel name or ID.
 
 ```sh
 rstream webtty fs --url rstrm://exports download /report.csv ./report.csv
@@ -35,9 +38,28 @@ WebRTC supports listing, file reads and byte ranges. Upload, write, rename and d
 
 Signaling and lease renewal use authenticated HTTP. File data moves directly between peers when the network permits it. rstream TURN relays data when a direct path is unavailable, using the project's TURN quota. Browser downloads that use an HTTPS attachment link travel through the Engine. The WebRTC connection encrypts data in transit.
 
-Without a reachable Control plane, configure the device's Engine address.
-An Engine with TURN enabled can issue credentials directly. Local derivation
-is available to eligible credentials when relay settings are supplied. See [TURN credential selection](015-engine-mtls-turn.md#turn-selection-and-authorization) for permissions and configuration.
+## Issue TURN credentials directly from the Engine
+
+On a managed Engine with TURN enabled, a project certificate can request
+credentials without a Control plane connection. Give the identity permission
+to publish the share and request TURN credentials. The CLI needs a named
+context with both the Engine address and project endpoint.
+
+```yaml
+contexts:
+  - name: file-relay
+    engine: my-project-endpoint.engine.example.com:443
+    projectEndpoint: my-project-endpoint
+    auth:
+      mtls:
+        certificateFile: /etc/rstream/client.pem
+        keyFile: /etc/rstream/client-key.pem
+```
+
+Use the explicit project Engine address supplied by the operator and select
+the context with `rstream context use file-relay`. See
+[TURN credential selection](015-engine-mtls-turn.md#turn-selection-and-authorization)
+for token-based issuance or local derivation.
 
 ## Build an application using this backend
 

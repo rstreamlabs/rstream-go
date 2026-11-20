@@ -2,7 +2,19 @@
 
 The Go SDK can publish HTTP tunnels that carry plain authority-form `CONNECT` requests. This is the standard TCP proxy mechanism used by forward proxies and system proxy integrations. For WebSocket, WebTransport or MASQUE, see [Extended CONNECT](014-extended-connect.md).
 
-## Tunnel setup
+## Forward an existing HTTP proxy
+
+Configure the proxy's authentication and destination allowlist before
+publishing it. Point the CLI at your HTTP/1.1 proxy on loopback port 8080.
+
+```sh
+rstream forward 127.0.0.1:8080 --http --http-version http/1.1
+```
+
+Use the forwarding address to [verify a proxy connection](#verify-a-proxy-connection).
+Community Edition can carry plain CONNECT over HTTP/1.1 or HTTP/2.
+
+## Serve a proxy in Go
 
 Plain CONNECT follows normal HTTP tunnel version support:
 
@@ -16,7 +28,8 @@ props := rstream.TunnelProperties{
 }
 ```
 
-For HTTP/3 upstreams, use a datagram tunnel:
+For an HTTP/3 upstream, use a datagram tunnel on a compatible managed
+Engine and project. See the [HTTP/3 requirements](005-http-tunnels.md#upstream-http-mode).
 
 ```go
 props := rstream.TunnelProperties{

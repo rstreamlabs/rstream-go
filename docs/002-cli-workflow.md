@@ -2,7 +2,8 @@
 
 Use the CLI to forward a service that already runs locally. The following
 walkthrough publishes a disposable HTTP service and verifies the public
-response. [Install the CLI](000-installation.md) before starting.
+response. Use an [installed CLI](000-installation.md) or
+[a binary from your checkout](001-building-from-source.md#try-the-cli).
 
 ## Connect the CLI
 
@@ -30,13 +31,17 @@ The CLI saves the choice as its default context. Go programs that use
 
 ## Publish a first HTTP service
 
-You need a [working CLI context](#connect-the-cli), Python 3 and curl. The printed forwarding
-address is reachable from the Internet. Use a new directory containing only
-this demo file. To publish an existing service with restricted access,
-[configure HTTP authentication](005-http-tunnels.md#http-authentication)
-before forwarding it.
+You need a [working CLI context](#connect-the-cli), Python 3 and curl. The
+public address is reachable from the Internet. If your service or project
+requires caller authentication, follow the
+[protected CLI example](https://rstream.io/docs/tunnels/http-tunnels/authentication#enable-access-control)
+on a compatible managed project. On CE, configure authentication in the
+upstream application or [try private access](004-tunnel-configuration.md#try-a-private-connection).
 
-In the first terminal, start the service on loopback.
+### Start the local service
+
+In the first terminal, create a directory for the demo response and serve
+only that directory on loopback.
 
 ```sh
 demo_dir="$(mktemp -d)" &&
@@ -57,17 +62,23 @@ In Windows PowerShell, create the directory and start the server with the Window
 }
 ```
 
-In a second terminal, check the local response and forward the port. Use
-`curl.exe` in Windows PowerShell.
+### Forward and verify
+
+In a second terminal, check that the demo server started and returns
+`Hello from rstream` locally. Use `curl.exe` in Windows PowerShell.
 
 ```sh
 curl -fsS http://127.0.0.1:8080/
+```
+
+When that matches, forward the demo service.
+
+```sh
 rstream forward 127.0.0.1:8080 --http
 ```
 
 Open the HTTPS address printed by the CLI. Expect `Hello from rstream` at
-both addresses and a request in the local server log. If the project enforces
-HTTP token authentication, [follow the protected HTTP example](https://rstream.io/docs/tunnels/http-tunnels/authentication#enable-access-control). For a CE Engine using a
+both addresses and a request in the local server log. For a CE Engine using a
 private certificate authority, verify the printed hostname with the CA file.
 
 ```sh
@@ -78,11 +89,12 @@ Use `curl.exe` in PowerShell and supply the real URL and CA path. The
 [CE setup guide](https://rstream.io/guides/self-host-rstream-engine-ce-with-docker-compose)
 walks through a local deployment.
 
-Stop the forwarder, then the local server, with Ctrl+C. The CLI context is
-ready for the next command.
-
-To carry traffic without a public address, follow the [private CLI example](004-tunnel-configuration.md#try-a-private-connection).
-If connecting or routing fails, start with [the troubleshooting guide](https://rstream.io/docs/support/troubleshooting).
+Stop the public forwarder with Ctrl+C. Leave the HTTP server running to
+[try private access](004-tunnel-configuration.md#try-a-private-connection)
+or [verify TLS termination](006-tls-dtls-tunnels.md#forward-a-tls-service)
+against the same service. Otherwise, stop the HTTP server as well. For
+another service, [choose the protocol and access mode](004-tunnel-configuration.md).
+If the request failed, start with [troubleshooting](https://rstream.io/docs/support/troubleshooting).
 
 ## Choose an identity
 
@@ -91,7 +103,7 @@ If connecting or routing fails, start with [the troubleshooting guide](https://r
 | Developer workstation           | `login`, then `project use`                             | Personal Token for the selected Control plane API, bounded by the browser approval.                                  |
 | Server, CI or device            | Use the Service or application login choice, or supply a project-scoped Token            | A workspace Token belongs to one workspace and survives creator departure. Choose the required permissions and projects. |
 | Certificate-authenticated agent | Enrolled mTLS certificate and key or a supported signer | Native Engine and Engine HTTP API identity; Control plane administration still needs a token.                    |
-| Browser or immediate handoff    | Short-lived delegated token from a trusted issuer       | Not the durable credential for a workstation or service.                                                         |
+| Browser or immediate handoff | Short-lived delegated token from a trusted issuer | Expires quickly and can restrict access to a specific tunnel. |
 
 ### Request specific permissions
 
@@ -120,7 +132,11 @@ rstream context create service \
   --no-api-url --default
 ```
 
-`context create` also accepts `--token-stdin` or `--token`; prefer file/stdin for secret injection. These three inputs are mutually exclusive. An unlinked context does not inherit the workstation's account token. Replace 'engine.example.com:443' with the Engine hostname and port for that project. Use `--engine-tls-ca-file /path/to/engine-ca.pem` for a private CA. Run `rstream doctor` to check the context before using it.
+`context create` also accepts `--token-stdin` or `--token`; prefer file/stdin for secret injection. These three inputs are mutually exclusive. `--token-file` imports the credential into the context. After rotating it,
+run `rstream context update service --token-file /path/to/project-token`.
+For a credential supplied by the service's secret manager at launch, set
+`RSTREAM_AUTHENTICATION_TOKEN` in that process. An unlinked context does
+not inherit the workstation's account token. Replace 'engine.example.com:443' with the Engine hostname and port for that project. Use `--engine-tls-ca-file /path/to/engine-ca.pem` for a private CA. Run `rstream doctor` to check the context before using it.
 
 ### Authenticate an agent with mTLS
 
@@ -160,7 +176,7 @@ Unlinked contexts have no `apiUrl` and do not inherit Control plane tokens. Link
 | Remove local context                 | `rstream context delete <name>`                                |
 | Select for one command               | `rstream --context <name> tunnel list`                         |
 
-The process environment can override configuration. Empty/unset values below do not select an override.
+The process environment can override configuration. A nonempty value selects an override.
 
 | Variable                                          | Format and purpose                                              | Default or condition                                                              |
 | ------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------- |

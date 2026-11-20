@@ -22,60 +22,66 @@ import (
 	"github.com/rstreamlabs/rstream-go/config"
 )
 
-// NB : Any HTTP version can be used (HTTP/1.1, HTTP/2, HTTP/3) on client side for published tunnels.
-
-func main() {
-	publish := flag.Bool("publish", false, "connect to published host instead of using rstream dialer")
-	flag.Parse()
+func run(publish bool) error {
 	client, err := config.NewClientFromEnv()
 	if err != nil {
-		log.Fatalf("Configuration error: %v", err)
+		return fmt.Errorf("load rstream configuration: %w", err)
 	}
-	// Create the HTTP client
+	defer client.Close()
 	httpClient := &http.Client{
 		Timeout: 5 * time.Second,
 	}
-	name := "h1-example"
-	var url *string = nil
-	if *publish {
+	defer httpClient.CloseIdleConnections()
+	const name = "h1-example"
+	var url string
+	if publish {
 		// List tunnels to find the published host using the Engine API.
 		tunnels, err := client.ListTunnels(context.Background(), nil)
 		if err != nil {
-			log.Fatalf("failed to list tunnels: %v", err)
+			return fmt.Errorf("list tunnels: %w", err)
 		}
 		for _, tunnel := range *tunnels {
 			if tunnel.Name != nil && *tunnel.Name == name && tunnel.Host != nil {
-				url = rstream.StringPtr("https://" + *tunnel.Host + "/")
+				url = "https://" + *tunnel.Host + "/"
 				break
 			}
 		}
-		if url == nil {
-			log.Fatalf("tunnel %q not found or not published", name)
+		if url == "" {
+			return fmt.Errorf("tunnel %q not found or not published", name)
 		}
 	} else {
-		url = rstream.StringPtr("http://" + name + "/")
+		url = "http://" + name + "/"
 		// Dial the tunnel using rstream dialer (HTTP/1.1)
 		httpClient.Transport = &http.Transport{
 			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 				host, _, err := net.SplitHostPort(addr)
-				if err != nil || host == "" {
-					return nil, fmt.Errorf("failed to extract host from address: %v", err)
+				if err != nil {
+					return nil, fmt.Errorf("extract host from HTTP address: %w", err)
 				}
 				return client.Dial(ctx, rstream.Addr{IdOrName: host})
 			},
 		}
 	}
 	// Make the HTTP request
-	resp, err := httpClient.Get(*url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
-		log.Fatalf("HTTP request failed: %v", err)
+		return fmt.Errorf("make HTTP request: %w", err)
 	}
 	defer resp.Body.Close()
 	// Read and print the response
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Fatalf("Failed to read response body: %v", err)
+		return fmt.Errorf("read HTTP response: %w", err)
 	}
 	fmt.Printf("Response status: %s\n", resp.Status)
 	fmt.Printf("Response body:\n%s", body)
+	return nil
+}
+
+func main() {
+	publish := flag.Bool("publish", false, "connect to published host instead of using rstream dialer")
+	flag.Parse()
+	if err := run(*publish); err != nil {
+		log.Fatal(err)
+	}
 }

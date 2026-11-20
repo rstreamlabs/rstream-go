@@ -10,6 +10,11 @@ examples use dedicated libraries for the Extended CONNECT protocols.
 
 ## Tunnel shape
 
+Choose a project that permits datagrams and an Engine that supports the
+selected protocol. Hosted Pro and Enterprise provide datagram tunnels. For
+a public proxy, configure caller authentication and limit targets or routes
+according to its policy.
+
 Published MASQUE endpoints use a datagram HTTP tunnel with an HTTP/3 upstream:
 
 ```go
@@ -52,13 +57,12 @@ The upstream server owns IP proxy behavior: route scoping, address assignment, r
 
 ## Samples
 
-Use a project that allows datagram tunnels, with an Engine that supports
-the selected protocol. On hosted rstream, use Pro or Enterprise. The
-following demo uses a private test tunnel and a self-signed upstream
-certificate. The demo client accepts that certificate for the test. Run both
-programs in an isolated test environment. For a
-published proxy, configure caller authentication and restrict the targets or
-routes it can reach. Configure TLS trust in the clients that will use it.
+This demo exercises a private test tunnel. Its Go client accepts the
+server's self-signed demonstration certificate, so run it in an isolated
+test environment. To verify a published proxy, connect to its public
+hostname with a trusted certificate, use a permitted authenticated caller
+and confirm its target policy. See the
+[published HTTP/3 requirements](https://rstream.io/docs/tunnels/http-tunnels/connection-upgrades#extended-connect).
 
 Build both programs from the repository root.
 

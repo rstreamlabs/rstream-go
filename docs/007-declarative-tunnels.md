@@ -128,7 +128,7 @@ Each `<name>` identifies one tunnel declared on the container. The label suffix 
 
 | Label                                                | Value or requirement                                                              |
 | ---------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `rstream.tunnel.<name>.forward`                      | Required target port or discovered container host:port; see address rules below.  |
+| `rstream.tunnel.<name>.forward`                      | Required port or explicit discovered container IP and port.  |
 | `rstream.tunnel.<name>.publish`                      | true or false, default true                                                       |
 | `rstream.tunnel.<name>.protocol`                     | http or tls or tcp or dtls or quic or webtty, default http                        |
 | `rstream.tunnel.<name>.type`                         | bytestream or datagram                                                            |
@@ -160,13 +160,15 @@ For agent authentication, `rstream run` uses the selected CLI context or explici
 
 ### Forward Target Resolution (Docker)
 
-- A bare port uses the container address on `--docker-network` when available,
-  otherwise the first discovered network address (ordered by network name).
-- Each network prefers IPv4 when available, falling back to its global IPv6
-  address, supporting IPv6-only Docker networks.
-- Explicit `host:port` and `[IPv6]:port` targets must name the discovered container
-  or one of its discovered network addresses. Arbitrary external/internal hosts
-  remain rejected; use `--apply` for those targets.
+| Target | How the agent selects an address |
+| --- | --- |
+| Port, such as `8080` | Uses the container address on `--docker-network`, when available. Otherwise it selects the first discovered network in name order. |
+| IPv4 address and port, such as `172.18.0.3:8080` | The address must match one discovered for that container. |
+| IPv6 address and port, such as `[fd00::3]:8080` | The address must match one discovered for that container. |
+
+Discovery prefers IPv4 on each network, then its global IPv6 address.
+Use a bare port for dynamic container addresses. Use `--apply` to forward to
+a DNS name or a target outside the discovered container addresses.
 
 ## Flags
 
@@ -179,6 +181,10 @@ For agent authentication, `rstream run` uses the selected CLI context or explici
 | `--docker-network`         | Select a container network for forwarding.         | Optional; otherwise use the discovery rules below.                                                         |
 | `--docker-default-context` | Select the default CLI context for Docker tunnels. | Defaults to the normal selected context; containers cannot override it unless the opt-in below is enabled. |
 | `--docker-allow-context-labels` | Allow `rstream.context` labels to select a configured identity. | `false`; delegate only to trusted container owners. |
+
+For a published HTTP tunnel that requires a caller token,
+[verify an authorized and an anonymous request](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication)
+after applying the configuration.
 
 ## Managed Labels
 

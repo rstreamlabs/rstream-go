@@ -1,7 +1,7 @@
 # Operate WebTTY sessions
 
 Use an authenticated project context with access to a
-[registered WebTTY server](000-configuration.md#enroll-a-registered-webtty-server)
+[registered WebTTY server](001-server-trust.md#enroll-a-registered-webtty-server)
 for managed session operations. To verify a lightweight server first,
 [open a terminal](../009-webtty.md#open-a-terminal).
 
@@ -91,8 +91,22 @@ An explicit `--transport` must agree with the value advertised by the server.
 
 A lightweight server using the plain transport accepts private rstream
 connections. Registered WebTransport servers require a published endpoint.
-See the [transport reference](002-go-runtime.md#transports) for direct URLs
-and the FIPS and detached-execution publication requirements.
+Use the explicit URI that matches the server's endpoint when you connect
+directly.
+
+| Client URI | Meaning | Condition |
+| --- | --- | --- |
+| `rstrm://<tunnel-id-or-name>` | Resolve inventory/security, then dial through rstream. | Standard live commands use private dial; see exceptions below. No public DNS name is needed. |
+| `ws://host:port/path`, `wss://host:port/path` | Direct WebSocket endpoint. | `wss` verifies TLS; direct E2E needs explicit/local known-server trust. Default CLI URL is `ws://127.0.0.1:8080`. |
+| `tcp://host:port`, `tls://host:port` | Direct plain WebTTY stream, with TLS for the latter. | Plain transport; default ports 80/443, use explicit port for local listeners. |
+| `https://host/path` | Direct WebTransport endpoint. | Requires `--transport webtransport`; port 443 if omitted. `wt://`, `wts://` and `webtransport://` are accepted aliases with the same override. |
+| `wss://host/path` with `--transport webtransport` | Same endpoint rewritten to HTTPS for WebTransport. | The server must actually provide WebTransport. |
+
+The standard client opens a private stream or datagram for `rstrm://`,
+including when that tunnel also has a published endpoint. The FIPS client
+resolves its target to a verified HTTPS/WebTransport endpoint. A detached
+command uses a published WebSocket or WebTransport endpoint so the Engine
+can own its execution. Authentication and recording policy still apply.
 
 ## Connect without discovery
 
@@ -100,7 +114,7 @@ Use the standard CLI for this private connection. A device with a token scoped t
 context and local trust material without inventory access. Supply the exact
 tunnel name or ID and the server's actual transport. Set `--exec-path` if
 the server uses a non-default terminal endpoint. Use the
-[configuration reference](000-configuration.md#environment-variables-and-local-trust-sources)
+[configuration reference](000-server-configuration.md#environment-variables-and-local-trust-sources)
 to provide a pinned server identity and your local client identity.
 
 ### Prepare workspace access for an Engine-only device

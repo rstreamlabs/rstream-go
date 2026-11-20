@@ -95,7 +95,9 @@ recording metadata, and replay material all carry the selected suite.
 
 ## Build
 
-The repository pins the reviewed module version instead of resolving `certified` during each release build:
+Use the Go toolchain specified in [`go.mod`](../go.mod). The Makefile pins the
+reviewed cryptographic module. Run `make fips-test` from a checkout path
+without spaces so Go can parse the generated module-file flag.
 
 ```bash
 make fips-test
@@ -111,9 +113,8 @@ out/fips/linux/arm64/rstream
 
 Stable releases expose distinct, checksummed GitHub assets named
 `rstream-fips-<version>-linux-x86_64.tar.gz` and
-`rstream-fips-<version>-linux-arm64.tar.gz`. They are carried through the same
-immutable release candidate as the standard distribution, but are not selected
-by the standard installer, package repositories, or `latest` container tag.
+`rstream-fips-<version>-linux-arm64.tar.gz`. Download these assets explicitly
+to install the restricted build.
 Each archive contains the binary, its `go version -m` output, the source commit,
 the profile documentation, and an internal checksum manifest. Verify the
 adjacent `.sha256` file before extracting an archive.
@@ -133,6 +134,22 @@ QUIC and WebTransport identities. The build checks artifact metadata, and the
 CLI checks the same identities and the enabled FIPS runtime at startup.
 Setting `GODEBUG=fips140=off` causes the restricted binary to exit before executing a
 command.
+
+## Build a Go application
+
+From your application module, use the compatible SDK and the same reviewed
+toolchain and profile. The published profile targets Linux on x86-64 and
+arm64. This command builds for x86-64.
+
+```sh
+GOOS=linux GOARCH=amd64 GOFIPS140=v1.0.0-c2097c7c CGO_ENABLED=0 \
+  go build -tags=rstream_fips -o app .
+```
+
+Choose `GOARCH=arm64` for Linux arm64. Check both transport dependencies in
+`go version -m app`. This profile reviews `quic-go v0.60.0` and
+`webtransport-go v0.11.1`. Use `rstream.RequireFIPS` at process startup to
+verify that the enabled runtime and dependency graph satisfy the profile.
 
 ## Verify an artifact
 

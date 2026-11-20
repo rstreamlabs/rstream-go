@@ -6,8 +6,12 @@ HSM exposes a vendor API instead of PKCS#11. The executable supplies the public
 certificate chain and signatures. TLS, certificate verification, connections
 and tunnel traffic stay in rstream.
 
-First [enroll the public leaf certificate](https://rstream.io/docs/security/mtls) in the project. Use this backend for
-agent mTLS. [WebTTY endpoint trust](webtty/000-configuration.md) and
+Build an executable for your device or start with the
+[signing helper example](../examples/mtls-exec-helper) to see the contract.
+Use a standard CLI or SDK build. The
+[FIPS profile](017-fips-140-3-profile.md#supported-scope) excludes executable
+signers. [Enroll the public leaf certificate](https://rstream.io/docs/security/mtls)
+in the project before configuring agent mTLS. [WebTTY endpoint trust](webtty/001-server-trust.md) and
 [published client admission](005-http-tunnels.md#http-authentication) each
 have separate identities.
 
@@ -125,12 +129,12 @@ SDK applications can use `config.NewClientFromEnv()` or
 `ClientOptions.TLSClientConfig` retain that API. No native dependency or CGO is
 required by the external backend.
 
-`doctor` checks the public certificate and signs a random challenge with each
-advertised algorithm, then checks configured transports and Engine
-control-channel admission. It does not require a token for these agent checks.
-`doctor --deep` additionally tests a tunnel lifecycle under the identity's
-existing permissions. Normal operations only load the identity when TLS first
-requests a client certificate.
+`doctor` checks the public certificate and signs a challenge with each
+advertised algorithm. It checks the configured transport and Engine HTTP API
+using the certificate. For a native admission and tunnel lifecycle check,
+use [the optional deep probe](018-doctor-api.md#optional-deep-probe) in a project
+where the diagnostic tunnel is allowed. A normal connection loads the
+identity when TLS requests a client certificate.
 
 ## Protocol v1
 

@@ -14,6 +14,10 @@ has its own build and verification steps.
 
 ## Verify the installed binary
 
+For a native installation, run the commands below. For a container, verify
+the image and select a container-reachable upstream in the
+[Docker setup guide](https://rstream.io/docs/getting-started/installation/docker).
+
 ```sh
 rstream --version
 rstream --help
@@ -22,7 +26,8 @@ rstream --help
 ## First connection
 
 Follow the [CLI walkthrough](002-cli-workflow.md#connect-the-cli) to choose a
-hosted project or a direct Engine context and verify a first HTTP request.
+hosted project or a direct Engine context and verify a first HTTP request
+with a native CLI.
 
 ## Build from source
 

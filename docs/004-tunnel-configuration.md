@@ -1,8 +1,9 @@
 # Tunnel configuration
 
-A tunnel connects an application to its callers. Start with who can reach it,
-then choose the kind of traffic and its public entry point. Engine admission,
-project settings and permissions apply to the complete configuration.
+The process serving traffic opens an outbound connection to the Engine.
+Published callers use the Engine's public address. Private callers connect
+to the Engine as rstream clients and dial a tunnel by name or ID. Choose
+who can connect before selecting the service protocol and address.
 
 ## Private or published
 
@@ -11,12 +12,13 @@ project settings and permissions apply to the complete configuration.
 | Private, `Publish=false`  | An authenticated rstream client dials the tunnel's name or ID.               | A database, worker or internal application connection.                |
 | Published, `Publish=true` | An ordinary client uses the forwarding hostname/port returned by the engine. | A browser, webhook sender, SSH client or other public service client. |
 
-Publication defaults to true. Published endpoints can still require authentication. Set `Publish=false` explicitly for private access.
-Private creation requires the project's private-tunnel entitlement; dialing
-uses the caller's connect permission. The process that creates a tunnel accepts
-its connections; a private peer uses
-`Client.Dial` or `Client.PacketDial`. See the [examples](../examples/README.md)
-for complete programs on each side.
+Publication defaults to true. Set `Publish=false` explicitly for private
+access. Agent credentials authenticate the process that creates the tunnel
+and any private rstream caller. Published services can separately require
+[HTTP authentication](005-http-tunnels.md#http-authentication) or
+[TLS client certificates](006-tls-dtls-tunnels.md#client-certificate-authentication).
+The [Go examples](../examples/README.md#connect-privately) show a private
+tunnel and its dialer.
 
 These properties create a private bytestream; use them with an established
 control channel:
@@ -40,13 +42,17 @@ or Engine. In a managed project, the tunnel owner needs
 `tunnels.tunnels.create-delete` and the dialing client needs
 `tunnels.streams.create-delete` on the tunnel.
 
-Create a private tunnel for a service listening on `127.0.0.1:8080`.
+Keep the [demo HTTP service](002-cli-workflow.md#start-the-local-service)
+running on `127.0.0.1:8080`, or use your own listening service. Create a
+private tunnel in the owner's terminal. If you are reusing the first
+walkthrough, this is the second terminal, where the public forwarder ran.
 
 ```sh
 rstream forward 127.0.0.1:8080 --no-publish --name internal-api
 ```
 
-In a second terminal, dial that tunnel through a loopback listener.
+In a separate caller terminal, dial that tunnel through a loopback listener.
+Keep both the service and the private forwarder running.
 
 ```sh
 rstream nc -L 127.0.0.1:8081 -R rstrm://internal-api
@@ -54,7 +60,8 @@ rstream nc -L 127.0.0.1:8081 -R rstrm://internal-api
 
 Request `http://127.0.0.1:8081/` from a browser or with curl. Expect the same
 response as the upstream service. Stop the listener and the forwarder with
-Ctrl+C. Use the [private Go example pair](../examples/README.md#connect-privately)
+Ctrl+C. You can keep the service running to
+[verify TLS termination](006-tls-dtls-tunnels.md#forward-a-tls-service). Use the [private Go example pair](../examples/README.md#connect-privately)
 when both endpoints are Go programs.
 
 ## Client transport, stream type and service protocol
@@ -76,10 +83,10 @@ For published services, choose a coherent protocol/type pair:
 
 | Protocol | Tunnel type                                                               | Application side                                                                                |
 | -------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `http`   | Bytestream for HTTP/1.1 or HTTP/2 upstream; datagram for HTTP/3 upstream. | HTTP handler, WebSocket service or compatible CONNECT application.                              |
-| `tcp`    | Bytestream                                                                | Raw TCP application such as SSH.                                                                |
-| `tls`    | Bytestream                                                                | Clear bytes after edge TLS termination, or the application's TLS handshake in passthrough mode. |
-| `dtls`   | Datagram                                                                  | Raw datagrams, or a DTLS upstream when enabled.                                                                                   |
+| [`http`](005-http-tunnels.md) | Bytestream for HTTP/1.1 or HTTP/2 upstream; datagram for HTTP/3 upstream. | HTTP handler, WebSocket service or compatible CONNECT application.                              |
+| `tcp`    | Bytestream                                                                | Raw TCP application such as the [SSH example](../examples/README.md#protocol-specific-setup).                                                                |
+| [`tls`](006-tls-dtls-tunnels.md) | Bytestream                                                                | Clear bytes after edge TLS termination, or the application's TLS handshake in passthrough mode. |
+| [`dtls`](006-tls-dtls-tunnels.md#verify-a-published-dtls-tunnel) | Datagram                                                                  | Raw datagrams, or a DTLS upstream when enabled.                                                                                   |
 | `quic`   | Datagram                                                                  | QUIC upstream.                                                                                   |
 | `webtty` | Bytestream, or datagram for registered WebTransport                                                                | Engine-managed WebTTY envelope; use registered-server enrollment.                               |
 
@@ -126,15 +133,4 @@ DNS and registration workflows.
 | Public HTTP authentication   | Tokens, rstream browser sessions or admitted client certificates.                                   |
 | Public TLS policy            | Termination, minimum TLS version, ALPN and client-certificate admission.                                        |
 
-Agent credentials authenticate the creating/dialing process. Public edge policy
-authenticates the service's callers. Configure the latter for the selected
-protocol in [HTTP](005-http-tunnels.md) or [TLS/DTLS](006-tls-dtls-tunnels.md).
-Managed terminal payload encryption belongs to [WebTTY](009-webtty.md#end-to-end-encryption).
-
-## Continue with the service protocol
-
-| Service | Guide |
-| --- | --- |
-| Website, API or WebSocket | [HTTP tunnels](005-http-tunnels.md) covers forwarding, upstream HTTP versions and access policy. |
-| TLS or DTLS service | [TLS and DTLS tunnels](006-tls-dtls-tunnels.md) explains termination, passthrough and certificate requirements. |
-| A TCP service with its own security, such as SSH | Select TCP and let the Engine assign a port, or request a port reserved for the project. See the [SSH client and server](../examples/README.md#choose-another-example). |
+For managed terminal payload encryption, see [WebTTY](009-webtty.md#end-to-end-encryption).

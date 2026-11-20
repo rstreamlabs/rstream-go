@@ -49,14 +49,12 @@ The shared checks cover context, token claims or mTLS identity/signatures,
 Control plane authentication, project status, engine address, DNS, TLS and
 QUIC connectivity, selected tunnel transport, and Engine readiness/inventory.
 Unavailable projects produce an actionable project failure and skip transport
-probes. mTLS agents probe native admission, dedicated API discovery, and Engine HTTP readiness/inventory without requiring a token. Insufficient inventory rights produce a warning; they are not classified as invalid certificates. The runner does not mint TURN credentials.
+probes. With mTLS, the standard probe verifies the transport, discovers the dedicated API and checks Engine HTTP readiness and inventory. Restricted inventory access produces a warning. Use the deep probe below to exercise native session admission and tunnel creation.
 The restricted FIPS build also validates its cryptographic runtime before
 starting diagnostics.
 
-The CLI additionally loads its config and resolves flags/environment. It adds
-its existing `config` check and `configPath` metadata, or reports a config/context
-resolution failure before calling the runner. Its table/JSON formats, flags and
-nonzero exit on failed checks are preserved.
+For a CLI run and its exit status, see
+[product troubleshooting](https://rstream.io/docs/support/troubleshooting).
 
 ## Optional deep probe
 

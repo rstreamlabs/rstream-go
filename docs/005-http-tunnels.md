@@ -1,6 +1,10 @@
 # HTTP tunnels
 
-HTTP tunnels accept HTTP traffic at the edge and forward HTTP requests to your upstream service. Downstream clients may negotiate HTTP/1.1, HTTP/2, or HTTP/3 with the edge; this is independent from how the edge reaches your upstream.
+Use an HTTP tunnel for HTTP routing, request authentication and protocol
+upgrades. The HTTP version negotiated by clients at the edge is independent
+of the version served by your upstream. For an encrypted byte stream or an
+application that owns the public TLS handshake, choose a
+[TLS tunnel](006-tls-dtls-tunnels.md).
 
 ## Forward an HTTP service
 

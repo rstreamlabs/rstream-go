@@ -32,8 +32,11 @@ context for the direct Engine hostname and its locally signed token.
 
 ## Serve HTTP
 
-[Build the pair and select a context](#prepare-the-checkout) first. For a
-project that enforces HTTP token authentication, use the corresponding
+[Build the pair and select a context](#prepare-the-checkout) first. The example
+uses a project that permits an unauthenticated caller. When the project
+requires caller authentication, configure the
+[Go access properties](../docs/005-http-tunnels.md#http-authentication)
+before running the server and verify with the corresponding
 [request credentials](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication).
 In the first terminal, publish the example server:
 

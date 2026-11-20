@@ -29,9 +29,13 @@ cli="$(find out/cmd/rstream -type f -name rstream -path '*/release/bin/*')"
 "$cli" --version
 ```
 
-The executable reports the version built from the checkout. Store its full path
-if you also have a released CLI installed. To connect to an Engine, follow the
-[CLI workflow](002-cli-workflow.md#connect-the-cli) using the executable you built.
+To try the checkout with the walkthrough commands, put its binary directory
+first on the path in each terminal you use. Run this from the checkout root
+after setting `cli` above.
+
+```sh
+export PATH="$(pwd)/$(dirname "$cli"):$PATH"
+```
 
 ## Build on Windows
 
@@ -49,6 +53,18 @@ dependency. Use that file for subsequent direct builds and tests. The direct
 build omits the release metadata supplied by Make. See the
 [build tool reference](../tools/icepatch/README.md) for its behavior and
 consumer-module instructions.
+
+In each PowerShell session you use for the walkthrough, run this from the
+checkout root to select the local executable.
+
+```powershell
+Set-Alias rstream (Resolve-Path .\out\rstream.exe).Path
+```
+
+## Try the CLI
+
+Run `rstream --version` in each terminal to confirm which binary you are using,
+then follow [the first CLI connection](002-cli-workflow.md#connect-the-cli).
 
 ## Build examples and test changes
 

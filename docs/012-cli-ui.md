@@ -40,4 +40,4 @@ context. If `RSTREAM_ENGINE` is set, the selected context must use that Engine.
 Select a WebTTY server and press Enter. The UI follows the same endpoint trust
 and identity rules as the CLI. Configure any required known-server pin before
 opening a protected session. Close the terminal with `Ctrl+g q` before switching
-contexts. See [WebTTY configuration](webtty/000-configuration.md) for setup.
+contexts. See [WebTTY configuration](webtty/000-server-configuration.md) for setup.

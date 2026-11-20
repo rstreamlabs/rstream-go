@@ -51,9 +51,11 @@ contexts:
 ```
 
 Use an existing context with admission credentials for your project.
-`rstream --context service doctor -o json` probes TLS and QUIC independently. Its
-`tunnel_transport` check reports the configured and selected modes. In `auto`,
-working TLS with unavailable QUIC is a fallback warning.
+Run `rstream --context service doctor -o json` to verify the TLS connection.
+An explicit TLS context leaves the QUIC probe unavailable. In `auto`, Doctor
+checks both transports independently and warns when only TLS works.
+Its `selectedMode` indicates the expected preference from those probes. The
+actual connection uses the transport that finishes its startup race first.
 
 ## Engine identity and admission
 

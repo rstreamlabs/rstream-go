@@ -1,28 +1,58 @@
 # Embedded file HTTP service
 
-Use `fileserver.New` to serve an export inside a Go application. The
-[file sharing guide](../docs/008-file-sharing.md) covers the CLI and choosing
-the access policy. The [filesystem package](../filesystem/README.md)
+Use `fileserver.New` to serve an export inside a Go application. Pass the
+returned `*fileserver.Server` to an HTTP server as its handler. After the
+HTTP server stops accepting requests and drains its handlers, close the file
+server to release its backend and filesystem root.
+
+The [file sharing guide](../docs/008-file-sharing.md) covers the CLI and
+choosing the access policy. The [filesystem package](../filesystem/README.md)
 defines mutation conditions and recoverable uploads.
+
+For a writable, API-only WebDAV export, pass this configuration to
+`fileserver.New`. The export must exist, and the process needs permission
+to serve and modify it.
+
+```go
+config := fileserver.Config{
+	Root:          "./maintenance",
+	ReadWrite:     true,
+	MaxUploadSize: 128 << 20,
+}
+```
+
+Without `ReadWrite` the server opens the export in read-only mode.
+Attach an authorization policy to your HTTP service, or set `Password`
+for HTTP Basic auth and use HTTPS. An rstream HTTP tunnel can instead
+authenticate at its published entrypoint.
+
+## Read from a share
+
+`filesystem.NewHTTPClient(baseURL, client)`
+selects WebDAV or WebRTC from the server's advertised capabilities.
+`baseURL` identifies the share, before adding a file path. Supply a client
+configured with the credentials and private dialer the share requires.
+Close each download response body after reading it.
 
 ## Routes and clients
 
 | Path | Contract |
 | --- | --- |
-| `/` | Embedded UI with same-origin assets and requests, no CDN; 404 with `--no-ui`. |
+| `/` | Serves the handler from `Config.UI` when supplied. |
 | `/_rstream/files/v1/info` | GET/HEAD metadata: version, name (no absolute path), kind, backend, `fs_path`, optional `archive_path`, effective access, capabilities, and `max_upload_size_bytes` when writable. `capabilities.write` reflects `--read-write`; `resume` means download resume. Version remains 1. |
 | `/fs/…` | WebDAV OPTIONS, PROPFIND Depth 0/1, GET and HEAD; writes are forbidden by default. `--read-write` enables WebDAV mutation methods including PUT, MKCOL, COPY, MOVE and DELETE. |
 | `/_rstream/files/v1/archive?path=/folder` | GET/HEAD streamed directory ZIP; identical exposure rules. |
 
 Paths passed to the JS backend are decoded logical paths; encode each URL segment once. Individual downloads support Range, ETag, Last-Modified and conditional requests. Use `curl -C - -o backup.tar.zst 'https://<share>/fs/backup.tar.zst'` to resume; use validators such as `If-Range` when the source may have changed. Downloads use attachment disposition and do not render shared HTML/SVG as trusted UI.
 
-`filesystem.Local` owns an `os.Root`; close it after all requests stop. Actual operations remain rooted under concurrent symlink replacement. In-root symlinks remain compatible with WebTTY; outside links, special files, traversal and excluded targets are rejected. The process needs OS permission to read the source. This is not an isolation boundary against another local process modifying that source.
+When using `filesystem.Local` directly, close it after all requests stop. Actual operations remain rooted under concurrent symlink replacement. In-root symlinks remain compatible with WebTTY; outside links, special files, traversal and excluded targets are rejected. The process needs OS permission to read the source. This is not an isolation boundary against another local process modifying that source.
 
-Listing rejects directories with more than 10,000 raw entries, including filtered entries (HTTP 507). Missing/infinite PROPFIND depth is forbidden, request XML is capped at 64 KiB, UI renders 100 entries per page. ZIP allows two concurrent streams, at most 100,000 entries and depth 64; cycles fail. ZIP uses store mode and ZIP64, with a 64 KiB content buffer and bounded directory/central-directory metadata. File contents never become a browser Blob or accumulate in server memory. ZIP is not resumable; an error after headers aborts the connection instead of finalizing an incomplete archive.
+Listing rejects directories with more than 10,000 raw entries, including filtered entries (HTTP 507). Missing/infinite PROPFIND depth is forbidden, request XML is capped at 64 KiB, ZIP allows two concurrent streams, at most 100,000 entries and depth 64. A directory archive cannot resume an interrupted transfer. Retry the download if the server closes the connection midstream.
 
-The shared Go filesystem and selected transport also back `webtty.NewFileSystemHandler`; existing config, paths, writes and upload limit remain supported with WebDAV. `webtty server --fs-root ./exports --fs-backend webrtc` selects read-only WebRTC; all writes fail with 403, without WebDAV fallback. That returned handler implements `io.Closer`; embedders must close it after serving. WebTTY's filesystem remains incompatible with WebTTY E2E payload encryption.
-
-The JS package `@rstreamlabs/filesystem` defines `FileSystemBackend` (list/stat/readStream/archiveStream/downloadURL) independently from `WebDAVFileSystem`. `WebTTYFileSystem` preserves its existing exports through a compatibility wrapper. Capabilities describe transport functionality and encryption separately, while `RemoteFileSystem` discovers WebDAV or WebRTC and `WebRTCFileSystem` explicitly requires WebRTC. Both reuse the same operations.
+For a filesystem alongside a terminal, use `webtty.NewFileSystemHandler`
+and close the returned handler through `io.Closer` after serving. WebDAV supports writable
+exports. WebRTC is read-only. See [WebTTY filesystem configuration](../docs/webtty/000-server-configuration.md#publication-and-filesystem-options)
+for sidecar compatibility and CLI defaults.
 
 ## Enforcing CORS
 

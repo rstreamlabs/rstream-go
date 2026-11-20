@@ -7,9 +7,9 @@ workspace-managed access or session operations supported by your deployment.
 ## Open a terminal
 
 [Configure the CLI](002-cli-workflow.md#connect-the-cli) on the server and
-operator machines. Use the same project or direct Engine on both. On Community Edition, start
-with the private command below. The server
-in this example runs commands as the operating system user that starts it.
+operator machines. Use the same project or direct Engine on both. On
+Community Edition, use the private command below. The server in this example
+runs commands as the operating system user that starts it.
 Use a dedicated account for a server that will stay running.
 
 | Mode | When to use it |
@@ -39,7 +39,8 @@ rstream webtty exec --url rstrm://shell -o text -- whoami
 ```
 
 Expect the username of the account running the server. On a server that
-supports a pseudoterminal, open a shell through the same context.
+supports a pseudoterminal, open a shell through the same context. Windows
+supports command execution through pipes. On Windows, use the command above.
 
 ```sh
 rstream webtty client --url rstrm://shell
@@ -47,17 +48,17 @@ rstream webtty client --url rstrm://shell
 
 Exit the shell with `exit`, then stop the server with Ctrl+C. If your token permits
 inventory, run `rstream webtty list` to verify
-that the lightweight server is gone. The Go server on Windows supports command
-execution through pipes. See [browser access](https://rstream.io/docs/webtty/quickstart#publish-through-rstream)
+that the lightweight server is gone. See [browser access](https://rstream.io/docs/webtty/quickstart#publish-through-rstream)
 for the published endpoint.
 
 ## Configure and operate a server
 
 | Task | Reference |
 | --- | --- |
-| Set up access, an operating system user, end-to-end encryption or a registered server | [WebTTY configuration](webtty/000-configuration.md) |
-| Inspect, join or stop managed sessions, connect without discovery or transfer files | [WebTTY session operations](webtty/001-session-operations.md) |
-| Connect a Go client, choose a transport or manage the session lifetime | [Go runtime reference](webtty/002-go-runtime.md) |
+| Set a host account, runtime file or connection options | [Server configuration](webtty/000-server-configuration.md) |
+| Require end-to-end encryption or enroll a registered server | [Server identities and enrollment](webtty/001-server-trust.md) |
+| Inspect, join or stop managed sessions, connect without discovery or transfer files | [WebTTY session operations](webtty/002-session-operations.md) |
+| Connect a Go client, choose a transport or manage the session lifetime | [Go runtime reference](webtty/003-go-runtime.md) |
 
 For browser and dashboard workflows, see the [product WebTTY guide](https://rstream.io/docs/webtty).
 
@@ -65,5 +66,5 @@ For browser and dashboard workflows, see the [product WebTTY guide](https://rstr
 
 End-to-end encryption protects terminal input and output between the WebTTY
 client and server. Session routing and lifecycle metadata remain available
-to the Engine. See [endpoint trust setup](webtty/000-configuration.md#require-end-to-end-terminal-encryption)
-and the [Go encryption reference](webtty/002-go-runtime.md#e2e-crypto).
+to the Engine. See [endpoint trust setup](webtty/001-server-trust.md#require-end-to-end-terminal-encryption)
+and the [Go encryption reference](webtty/003-go-runtime.md#e2e-crypto).
