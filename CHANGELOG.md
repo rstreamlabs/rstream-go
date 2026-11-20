@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.38.1](https://github.com/rstreamlabs/rstream-go/compare/v1.38.0...v1.38.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **webtty:** resolve prepared endpoint identity before MCP validation ([9541bc3](https://github.com/rstreamlabs/rstream-go/commit/9541bc3ea16083d28de5e71c5e12f939dbf8f638))
+
 ## [1.38.0](https://github.com/rstreamlabs/rstream-go/compare/v1.37.0...v1.38.0) (2026-11-19)
 
 
