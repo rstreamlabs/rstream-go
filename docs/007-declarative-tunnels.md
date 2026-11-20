@@ -21,8 +21,11 @@ YAML before applying it.
 rstream -v run --apply ./examples/run-yaml/tunnels.yaml
 ```
 
-Open the forwarding URL it prints to see the upstream response. Stop the process
-with Ctrl+C. Add `--watch` when the runner should reconcile
+Request the printed forwarding URL while the command runs. The upstream
+returns JSON describing the request. For token authentication, use a
+[scoped caller token](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication)
+and confirm that an anonymous request is refused. Stop with Ctrl+C.
+Add `--watch` when the runner should reconcile
 changes to the file. For container discovery, use the
 [Docker example](../examples/run-docker/README.md), which starts an upstream
 service with matching labels. Use the disposable upstream in that example.
@@ -30,7 +33,7 @@ For a deployed service that requires edge access checks, configure HTTP token
 authentication before publication. YAML uses `tunnel.http.auth.token: true`.
 Docker uses `rstream.tunnel.<name>.http.auth.token: "true"`.
 
-## YAML Schema (`--apply`)
+## YAML schema
 
 ```yaml
 version: 1

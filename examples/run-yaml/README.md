@@ -19,4 +19,10 @@ In a second terminal, apply the bundled [tunnels.yaml](tunnels.yaml):
 rstream -v run --apply examples/run-yaml/tunnels.yaml --watch
 ```
 
-Open the printed forwarding URL. The response is a JSON description of your HTTP request. Stop both processes with Ctrl+C. See [declarative tunnels](../../docs/007-declarative-tunnels.md) for the YAML fields and reconciliation behavior.
+Request the printed forwarding URL to see the JSON description of your
+request. When your project requires HTTP token authentication, set
+`tunnel.http.auth.token: true` before applying the file and
+[verify it with a scoped caller token](../../docs/007-declarative-tunnels.md#apply-yaml-or-discover-docker-services).
+Stop both processes with Ctrl+C. The
+[configuration guide](../../docs/007-declarative-tunnels.md#yaml-schema)
+covers the remaining YAML fields.

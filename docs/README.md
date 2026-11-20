@@ -3,7 +3,7 @@
 Use these guides to configure the Go client and CLI, serve traffic through a
 tunnel, or work on this checkout. For a deployment or language choice, start
 with [editions and plans](https://rstream.io/docs/support/editions) or
-[choosing an SDK](https://rstream.io/docs/sdks).
+[choosing an SDK](https://rstream.io/sdks).
 
 ## Get started
 

@@ -33,7 +33,7 @@ for each selected event. Stop the watcher with Ctrl+C.
 To inspect the signed body and headers without sending HTTP requests, replace
 `--forward-to` with `--include-webhook-headers`. Local signing supports
 `client.created`, `client.deleted`, `tunnel.created` and `tunnel.deleted`.
-Use a durable destination and a [compatible receiver](https://rstream.io/docs/integrations/webhooks#receiver-compatibility)
+Use a durable destination and a [compatible receiver](https://rstream.io/docs/integrations/webhooks)
 for WebTTY events.
 
 ## Control plane methods in Go

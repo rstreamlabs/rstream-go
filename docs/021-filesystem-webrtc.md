@@ -6,7 +6,7 @@ Choose WebRTC to transfer files over a peer connection. The default WebDAV backe
 | --- | --- |
 | Standalone file share | Add `--backend webrtc` to `rstream files`. |
 | Files alongside a WebTTY server | Use WebSocket transport and add `--fs-root ./exports --fs-backend webrtc`. |
-| Go application | Use the [backend-aware HTTP client](../fileserver/README.md#read-from-a-share) with the share's base URL and your authenticated signaling client. |
+| Go application | [Serve a WebRTC export](../fileserver/README.md#serve-a-webrtc-export) or [read a share](../fileserver/README.md#read-from-a-share) from Go. |
 
 ## Try a protected download
 

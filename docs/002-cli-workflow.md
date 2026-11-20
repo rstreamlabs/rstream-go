@@ -10,7 +10,7 @@ response. Use an [installed CLI](000-installation.md) or
 | Where you connect | How to get a context |
 | --- | --- |
 | Hosted rstream | Sign in, then select a project as shown below. A Basic project can publish the HTTP example. |
-| Self-hosted Community Edition | Configure the direct Engine hostname, trusted certificate and locally signed JWT using the [CE agent context](https://rstream.io/docs/tunnels/self-hosted/deployment#agent-context). |
+| Self-hosted Community Edition | Use a reachable Engine hostname, trusted certificate and locally signed JWT. See [CE agent context](https://rstream.io/docs/tunnels/self-hosted/deployment#agent-context). With local Compose, complete its container validation first. |
 | An existing deployment | Use the context and credentials provided by your operator. See [identity options](#choose-an-identity) when provisioning a device or CI runner. |
 
 For hosted rstream, approve sign-in in your browser. For a workstation,
@@ -33,9 +33,10 @@ The CLI saves the choice as its default context. Go programs that use
 
 You need a [working CLI context](#connect-the-cli), Python 3 and curl. The
 public address is reachable from the Internet. If your service or project
-requires caller authentication, follow the
-[protected CLI example](https://rstream.io/docs/tunnels/http-tunnels/authentication#enable-access-control)
-on a compatible managed project. On CE, configure authentication in the
+requires caller authentication, configure the required proof first. For
+token authentication on a compatible managed project, add `--token-auth`
+and [verify a scoped caller token](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication).
+On CE, configure authentication in the
 upstream application or [try private access](004-tunnel-configuration.md#try-a-private-connection).
 
 ### Start the local service
@@ -163,7 +164,7 @@ Engine listing, watch and session APIs reuse the certificate through [automatic 
 | Environment      | One Control plane `apiUrl`, a personal or workspace Token and transport defaults.                                                         |
 | Project endpoint | Hosted project identifier used by `project use` to resolve its Engine and create a context.                               |
 | Context          | Named Engine endpoint, authentication and transport overrides. Optional `apiUrl` links it to an environment.              |
-| Default context  | A context name used unless an explicit selector overrides it. Use unique names or `--api-url` to disambiguate duplicates. |
+| Default context  | A context name used unless an explicit selector overrides it. Use a unique name for a saved default. |
 
 Unlinked contexts have no `apiUrl` and do not inherit Control plane tokens. Linked contexts can inherit environment token and transport defaults; a context mTLS identity replaces an inherited token as a complete identity.
 
@@ -175,6 +176,10 @@ Unlinked contexts have no `apiUrl` and do not inherit Control plane tokens. Link
 | Save a default context               | `rstream context use <name>`                                   |
 | Remove local context                 | `rstream context delete <name>`                                |
 | Select for one command               | `rstream --context <name> tunnel list`                         |
+
+For contexts with the same name in different environments, provide the
+matching `--api-url` on each command, or set `RSTREAM_API_URL` for that
+process. Selecting a default saves its name.
 
 The process environment can override configuration. A nonempty value selects an override.
 

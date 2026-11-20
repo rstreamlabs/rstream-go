@@ -26,12 +26,27 @@ Attach an authorization policy to your HTTP service, or set `Password`
 for HTTP Basic auth and use HTTPS. An rstream HTTP tunnel can instead
 authenticate at its published entrypoint.
 
+## Serve a WebRTC export
+
+Set `Config.Backend` to `filesystem.BackendWebRTC` and keep the export
+read-only. For a loopback test, WebRTC can use host candidates without a
+relay. To serve across networks, set `Config.RTC.ICE` to a callback that
+returns the allowed STUN/TURN servers and current relay credentials as
+`[]webrtc.ICEServer`. Use the
+[TURN guidance](../docs/015-engine-mtls-turn.md#request-turn-credentials-in-go)
+when sourcing those credentials from rstream. Keep the credential client
+open for the lifetime of the file server and close it after returning
+from `Server.Close`.
+
 ## Read from a share
 
 `filesystem.NewHTTPClient(baseURL, client)`
 selects WebDAV or WebRTC from the server's advertised capabilities.
-`baseURL` identifies the share, before adding a file path. Supply a client
-configured with the credentials and private dialer the share requires.
+Set `baseURL` to the filesystem endpoint, including `/fs` for a default
+share. For example, use `https://share.example.com/fs`, then request
+`https://share.example.com/fs/report.csv`. If the server advertises a
+different filesystem path, use that prefix. Supply a signaling client
+with the credentials and private dialer the share requires.
 Close each download response body after reading it.
 
 ## Routes and clients

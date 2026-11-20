@@ -21,9 +21,13 @@ rstream files ./exports --password
 
 Open the printed URL. Sign in as `rstream` with the password you entered and
 download the sample file. A fresh request without credentials should be
-denied. For a token-protected share, use the
-[published bearer download](https://rstream.io/docs/tunnels/file-sharing#download-from-a-published-token-protected-share).
-Stop the process with Ctrl+C to close the share.
+denied. Stop the process with Ctrl+C to close the share.
+
+For a managed share that uses tokens, pass `--token-auth` in place of
+`--password`. Request the file at `/fs/report.csv` on the printed HTTPS
+endpoint with a [scoped bearer token](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication).
+Use the name of a file in your export. The authorized request returns the
+file. Without the token, the published endpoint returns HTTP 401.
 
 The Go client and CLI can also read this standalone share through the same
 filesystem client used by WebTTY. A WebTTY server is only needed when the
@@ -96,7 +100,13 @@ rstream webtty fs --url rstrm://exports download /report.csv ./report.csv
 Check that the downloaded file matches the original. Stop the share with
 Ctrl+C when finished.
 
-The CLI resolves a WebTTY or HTTP tunnel through Engine inventory, then dials it privately even when it has a published URL. It discovers WebDAV or WebRTC over that connection. For a token restricted to stream access, add `--no-discovery` and supply the exact tunnel id or name; `--fs-path` selects a path other than `/fs`. This explicit path does not require inventory or control-plane access. Server authentication and read-only policy still apply.
+`--token-auth` protects the share's published HTTPS endpoint. With
+`rstrm://`, the CLI dials through the Engine using its own rstream
+credential. The Engine checks stream permission and tunnel scope. Add
+`--no-discovery` and the exact tunnel name or ID when the credential has
+stream access without inventory rights. Use `--fs-path` for a filesystem
+path other than `/fs`. The file server still applies its own local password
+and write policy when configured.
 
 Local MCP filesystem tools accept the same `rstrm://` target and use private dialing without inventory discovery. Supply the advertised `fs_path` when it differs from `/fs`. Both surfaces enforce the standalone share's configured write policy. Existing `webtty fs upload` and MCP write operations work when `--read-write` is enabled.
 

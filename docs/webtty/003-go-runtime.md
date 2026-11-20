@@ -103,10 +103,28 @@ execution deadline is not extended by detaching or attaching another reader.
 
 ## Bounded detached execution in the SDK
 
-Use a registered server with a verified published WebSocket or WebTransport
-endpoint. Supply the endpoint, terminal credential and command in
-`SessionConfig`. Query capabilities with an authenticated Engine client for
-that server.
+Use a registered server that supports detached execution. Take the
+published hostname and advertised command path from the server inventory.
+For a token-authenticated WebSocket endpoint, set `endpoint` to that
+verified `wss://` URL and use a token authorized to open this terminal.
+The Engine API client uses its own authorized context.
+
+```go
+cfg := webtty.SessionConfig{
+	URL:       endpoint,
+	Transport: webtty.WebTTYTransportWebSocket,
+	AuthToken:  &terminalToken,
+	CmdArgs:    []string{"whoami"},
+}
+```
+
+For a private CA, supply its trust roots in `cfg.TLSConfig` while keeping
+hostname verification. For WebTransport, use the published HTTPS URL and
+`webtty.WebTTYTransportWebTransport`. Use the [endpoint trust guide](001-server-trust.md)
+when the server requires terminal end-to-end encryption.
+
+Pass the configuration to this helper with an authenticated Engine client
+for the registered server.
 
 ```go
 func startDetached(ctx context.Context, api *rstream.Client, cfg webtty.SessionConfig) (string, error) {
@@ -153,9 +171,9 @@ termination requests. Detached execution supports WebSocket and
 WebTransport as advertised by the Engine; it cannot extend an existing Attach.
 
 Pass the saved ID to `Client.GetWebTTYSession` to check the process result.
-With live attachment and the required permissions, use
-`Client.AttachWebTTYParticipant` to obtain a new attach grant for the running
-command. If the opening response was lost, check the session inventory before
+To rejoin a running command, use the
+[participant stream reference](../../webtty/README.md#attach-to-a-live-managed-session).
+If the opening response was lost, check the session inventory before
 starting another command. Recording policy and permissions determine which
 historical output remains available.
 

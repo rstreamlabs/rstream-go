@@ -101,7 +101,7 @@ both the tunnel minimum and the project policy.
 
 Project post-quantum (PQ) key exchange and Encrypted Client Hello (ECH) settings
 can narrow the allowed connections. For the equivalent TLS and QUIC behavior,
-see [project transport compatibility](https://rstream.io/docs/security/access-policies#transport-compatibility).
+see [project transport compatibility](https://rstream.io/docs/security/access-policies).
 
 | Project setting        | Published DTLS behavior                                          |
 | ---------------------- | ---------------------------------------------------------------- |
