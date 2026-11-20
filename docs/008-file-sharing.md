@@ -22,7 +22,7 @@ rstream files ./exports --password
 Open the printed URL. Sign in as `rstream` with the password you entered and
 download the sample file. A fresh request without credentials should be
 denied. For a token-protected share, use the
-[product access examples](https://rstream.io/docs/tunnels/file-sharing#choose-access).
+[published bearer download](https://rstream.io/docs/tunnels/file-sharing#download-from-a-published-token-protected-share).
 Stop the process with Ctrl+C to close the share.
 
 The Go client and CLI can also read this standalone share through the same

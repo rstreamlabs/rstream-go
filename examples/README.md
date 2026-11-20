@@ -65,6 +65,12 @@ In a second terminal using the same project context, run:
 ./out/examples/http-h1-client
 ```
 
+To verify separately scoped identities, set `RSTREAM_CONTEXT` to the owner's
+context in the server terminal and the caller's context in the client
+terminal. For example, use `RSTREAM_CONTEXT=publisher ./out/examples/http-h1-server`
+and `RSTREAM_CONTEXT=caller ./out/examples/http-h1-client` in a POSIX shell.
+Set `$env:RSTREAM_CONTEXT` in each session on PowerShell.
+
 The client dials the tunnel named `h1-example` through rstream and prints the HTTP status and hostname. This path needs no public service address. After the client exits, stop the server with Ctrl+C.
 
 See [editions and plans](https://rstream.io/docs/support/editions) before running a protocol that requires an additional listener or project entitlement.
@@ -112,3 +118,28 @@ SSH supplies encryption and peer authentication for this TCP example. Raw publis
 
 For MASQUE, follow the [CONNECT-UDP and CONNECT-IP examples](../docs/014-extended-connect.md#samples).
 The page shows the matching programs and the required echo target.
+
+### Verify published QUIC
+
+Use a project that permits published QUIC and an Engine with a QUIC listener.
+Build the [echo server](quic-echo-server) and [client](quic-echo-client) on
+Linux or macOS.
+
+```sh
+make quic-echo-server quic-echo-client
+```
+
+The server needs tunnel creation rights. The client needs inventory access
+to find `quic-echo` and certificate trust for the public hostname. Both use
+the application ALPN `rstream-quic-echo`. Start the server first.
+
+```sh
+./out/examples/quic-echo-server --publish
+```
+
+```sh
+./out/examples/quic-echo-client --publish
+```
+
+Expect one returned stream message and one returned datagram. Stop the
+server with Ctrl+C.

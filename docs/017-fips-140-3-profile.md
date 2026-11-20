@@ -146,10 +146,11 @@ GOOS=linux GOARCH=amd64 GOFIPS140=v1.0.0-c2097c7c CGO_ENABLED=0 \
   go build -tags=rstream_fips -o app .
 ```
 
-Choose `GOARCH=arm64` for Linux arm64. Check both transport dependencies in
-`go version -m app`. This profile reviews `quic-go v0.60.0` and
-`webtransport-go v0.11.1`. Use `rstream.RequireFIPS` at process startup to
-verify that the enabled runtime and dependency graph satisfy the profile.
+Choose `GOARCH=arm64` for Linux arm64. Compare the transport versions in
+`go version -m app` with `FIPS_QUIC_MODULE` and `FIPS_WEBTRANSPORT_MODULE`
+in the SDK's [Makefile](../Makefile) for the revision you build against.
+Use `rstream.RequireFIPS` at startup to verify that the enabled runtime
+and dependency graph satisfy the profile.
 
 ## Verify an artifact
 

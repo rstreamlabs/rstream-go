@@ -134,9 +134,10 @@ pin after restoring the device's workspace trust.
 
 Complete the [workspace device trust setup](#trust-a-cli-for-workspace-managed-webtty) on the operator and server hosts before enrollment when workspace-managed protection is required.
 
-The following examples create a server protected by Workspace Protection.
-Use an eligible Enterprise workspace. For a transport-only server, select
-`--encryption-policy disabled` where the workspace permits it.
+To register a transport-only server, follow the
+[product registration example](https://rstream.io/docs/webtty/registered-servers#create-the-server-record).
+Use a managed project that grants server registration. The examples below
+configure Workspace Protection on an eligible Enterprise workspace.
 
 Create the registered server from an authenticated project context, then run
 the enrollment command returned by the CLI, product, or API on the host that
@@ -194,7 +195,9 @@ rstream dials, use a supported private transport such as WebSocket with
 only when the enrollment file is not at the default path.
 
 Registered servers default to login mode. Choose an existing account with
-`--login-user`, or see the options below for other execution modes.
+`--login-user`. To run it as a service,
+[save the runtime configuration](000-server-configuration.md#load-a-daemon-configuration).
+Once the server is online, [inspect its sessions](002-session-operations.md#inspect-managed-sessions).
 
 ## Local trust files
 

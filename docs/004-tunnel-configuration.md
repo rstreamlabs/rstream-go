@@ -58,6 +58,10 @@ Keep both the service and the private forwarder running.
 rstream nc -L 127.0.0.1:8081 -R rstrm://internal-api
 ```
 
+To exercise separate identities on one machine, add `--context publisher`
+before `forward` and `--context caller` before `nc`. Use the names of your
+owner and caller contexts for that project.
+
 Request `http://127.0.0.1:8081/` from a browser or with curl. Expect the same
 response as the upstream service. Stop the listener and the forwarder with
 Ctrl+C. You can keep the service running to
@@ -87,7 +91,7 @@ For published services, choose a coherent protocol/type pair:
 | `tcp`    | Bytestream                                                                | Raw TCP application such as the [SSH example](../examples/README.md#protocol-specific-setup).                                                                |
 | [`tls`](006-tls-dtls-tunnels.md) | Bytestream                                                                | Clear bytes after edge TLS termination, or the application's TLS handshake in passthrough mode. |
 | [`dtls`](006-tls-dtls-tunnels.md#verify-a-published-dtls-tunnel) | Datagram                                                                  | Raw datagrams, or a DTLS upstream when enabled.                                                                                   |
-| `quic`   | Datagram                                                                  | QUIC upstream.                                                                                   |
+| [`quic`](../examples/README.md#verify-published-quic) | Datagram                                                                  | QUIC upstream.                                                                                   |
 | `webtty` | Bytestream, or datagram for registered WebTransport                                                                | Engine-managed WebTTY envelope; use registered-server enrollment.                               |
 
 Omit `Type` when the engine can derive it from the protocol. Explicit values

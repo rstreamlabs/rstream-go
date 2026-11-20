@@ -7,16 +7,14 @@ registered server, start with [server identities and enrollment](001-server-trus
 
 ## Operating system identity
 
-`spawn` starts commands as children of the WebTTY server process. It preserves
-client working-directory and environment overrides and uses the server process
-identity.
+| Mode | Account and session settings |
+| --- | --- |
+| `spawn` | Starts the command as a child of the server. The process account is the default. A client can request another user or UID if the server has OS permission to switch. The server preserves working-directory and environment overrides. |
+| `login` | Starts the session as an existing OS account with that account's home and shell. Set `--login-user` or `loginUser` to select it. When `--allow-client-user` is enabled, a client may override it with an account the server can use. |
 
-`login` runs a session as an existing operating system account without requesting the account password. Configure the username of an
-existing local account with `--login-user <username>` (or `loginUser` in YAML).
-Every session is resolved against that account and receives its OS identity,
-home directory, and shell. Registered servers default to `login`, but still
-require a configured target user unless `--allow-client-user` is explicitly
-enabled.
+Lightweight servers default to `spawn`. Registered servers default to
+`login`. For a fixed account, use `login` with an existing user and leave
+`allowClientUser` disabled.
 
 Run the discovery command **on the machine that hosts the WebTTY server**, then
 use its output as `<username>`:
@@ -44,31 +42,35 @@ rstream tokens are not forwarded automatically.
 
 ## Load a daemon configuration
 
-Use `--webtty-config` or `RSTREAM_WEBTTY_CONFIG` when the server is managed by a
-service manager and a long command line would be brittle.
+Use a runtime file when a service manager runs the server. The following
+configuration keeps a private lightweight server running on a direct CE
+Engine or a managed project that allows private tunnels. Replace `operator`
+with the existing account that should run commands.
 
 ```yaml
 version: 1
 server:
-  serverId: srv_prod_shell_01
+  rstream: true
+  name: dev-shell
+  publish: false
   transport: websocket
   executionMode: login
   loginUser: operator
   retry: true
-  labels:
-    env: production
-    role: bastion
 ```
 
-Run it with:
+Save the file as `dev-shell.yaml` and select the configured connection for
+the service, named `service` in this example.
 
-```bash
-rstream webtty server -v --webtty-config /etc/rstream/webtty/prod-shell.yaml
+```sh
+rstream --context service webtty server --webtty-config ./dev-shell.yaml
 ```
 
-CLI flags override YAML values. `server.serverId` loads the matching enrollment
-from `~/.rstream/webtty/enrollments/<server-id>.yaml`. `server.serverEnrollment`
-can point to a non-default enrollment path.
+For a registered server, [enroll the host](001-server-trust.md#enroll-a-registered-webtty-server)
+and set `server.serverId` instead of `server.rstream` and `server.name`.
+Select publication to suit the project and terminal transport.
+`server.serverId` reads the default enrollment; use `server.serverEnrollment`
+for a different location. CLI flags override YAML values.
 
 ## CLI and YAML option correspondence
 
