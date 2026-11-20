@@ -65,6 +65,10 @@ func main() {
 		// Dial the tunnel using rstream dialer (HTTP/3)
 		os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 		httpClient.Transport = &http3.Transport{
+			QUICConfig: &quic.Config{
+				InitialPacketSize:       1200,
+				DisablePathMTUDiscovery: true,
+			},
 			Dial: func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
 				host, _, err := net.SplitHostPort(addr)
 				if err != nil || host == "" {

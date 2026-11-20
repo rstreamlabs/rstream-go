@@ -86,7 +86,7 @@ Build a selected program with `make <directory-name>`, then use its `-h` output 
 | Application TLS | [Server](http-tls-server) and [client](http-tls-client) | HTTPS over accepted bytestreams, with a test certificate in private mode. Published mode needs the service certificate and key. |
 | HTTP/3 | [Server](http-h3-server) and [client](http-h3-client) | An HTTP/3 application with a demonstration certificate over datagram connectivity. |
 | Server-sent events | [Server](http-sse-server) and [client](http-sse-client) | A continuing HTTP event response. |
-| WebSocket | [HTTP/1.1 server](http-ws-h1-server), [h2c server](http-ws-h2c-server), [HTTP/3 server](http-ws-h3-server) and [client](http-ws-h1-client) | WebSocket traffic over the different HTTP paths; the client selects a server with `--tunnel`. |
+| WebSocket | [HTTP/1.1 server](http-ws-h1-server), [h2c server](http-ws-h2c-server), [HTTP/3 server](http-ws-h3-server) and [client](http-ws-h1-client) | An HTTP/1.1 caller connects privately to the first server or through the Engine to the published h2c and HTTP/3 servers. |
 | WebTransport | [Server](http-wt-server) and [client](http-wt-client) | Bidirectional stream exchange over WebTransport. |
 | Raw bytestream | [Server](stream-echo-server) and [client](stream-echo-client) | Private echo connections or a published TLS endpoint. |
 | Datagrams and DTLS | [Server](datagram-echo-server) and [client](datagram-echo-client) | Message-preserving echo traffic, including the published DTLS path. |
@@ -103,6 +103,28 @@ The [external mTLS signer guide](../docs/016-external-mtls-signer.md) explains t
 ## Protocol-specific setup
 
 The internal HTTPS and HTTP/3 demo servers use self-signed application certificates. Their clients have an explicit `--insecure-demo-tls` option for that isolated demonstration. It changes application-server verification, not the agent's engine authentication; published endpoints continue to use their normal edge certificate. Keep this opt-in confined to the demo.
+
+For private HTTP/3, WebTransport or raw QUIC, use a project that supports
+private datagrams and an Engine with agent QUIC enabled. The WebTransport
+and raw QUIC private clients skip application certificate verification
+for their self-signed demo servers. For a deployed service, configure the
+trusted CA and verify the application server's identity.
+
+### Verify a published WebSocket upgrade
+
+The h2c and HTTP/3 servers publish their echo endpoints. Use a managed
+project with the required HTTP protocol enabled. Start one server and
+select its tunnel from the HTTP/1.1 client.
+
+| Upstream | Start the server | Run the client |
+| --- | --- | --- |
+| h2c | `GODEBUG=http2xconnect=1 ./out/examples/http-ws-h2c-server` | `./out/examples/http-ws-h1-client --publish --tunnel ws-h2c-example` |
+| HTTP/3 | `./out/examples/http-ws-h3-server` | `./out/examples/http-ws-h1-client --publish --tunnel ws-h3-example` |
+
+The client verifies the public hostname and prints the echoed message.
+For h2c, the Engine must also support HTTP/2 Extended CONNECT.
+
+### Verify an SSH or MASQUE endpoint
 
 For SSH, set `RSTREAM_SSH_PASSWORD` in both processes. Start the server, then pass its printed address and fingerprint to the client:
 
