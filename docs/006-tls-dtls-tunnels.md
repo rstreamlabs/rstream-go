@@ -40,6 +40,13 @@ The client verifies the certificate and returns `Hello from rstream`. For a
 private CA, pass its certificate with `--cacert /path/to/ca.pem`.
 Stop the tunnel and the demo server with Ctrl+C.
 
+To check a TLS 1.3 minimum, use a curl build that supports TLS 1.3.
+Restart the forwarder with `--tls-min-version tls1.3`. Repeat the same curl
+request with `--tlsv1.3 --tls-max 1.3`, then with
+`--tlsv1.2 --tls-max 1.2`. Keep the hostname, CA
+and service unchanged. The first request succeeds, and the second fails
+during TLS negotiation.
+
 Use this mode for a service whose TLS endpoint belongs at the Engine.
 For an end-to-end TLS session, use `--tls-mode passthrough` when project
 policy permits it. The upstream then presents the public certificate.
@@ -84,9 +91,29 @@ the agent connection and does not configure the downstream client.
 ```
 
 The client prints the echoed payload when the connection succeeds. Stop the
-server with Ctrl+C. The pair uses the DTLS library's default version
-negotiation. To verify a project minimum, use a trusted DTLS client that
-offers only the version under test.
+server with Ctrl+C.
+
+### Check a minimum DTLS version
+
+Start the echo server again, this time requiring DTLS 1.3. Choose a project
+whose remaining cryptographic policies admit the sample client.
+
+```sh
+./out/examples/datagram-echo-server --publish --dtls-min-version tls1.3
+```
+
+While that server runs, use the same tunnel name and trust settings for both
+requests.
+
+```sh
+./out/examples/datagram-echo-client --publish --dtls-version 1.3
+./out/examples/datagram-echo-client --publish --dtls-version 1.2
+```
+
+The first client prints the echoed payload. The second exits with a
+handshake error and receives no payload. To test a project-wide minimum,
+set it on the project and repeat against a server started with `--publish`
+alone.
 
 ## DTLS and project cryptographic policy
 
@@ -101,7 +128,7 @@ both the tunnel minimum and the project policy.
 
 Project post-quantum (PQ) key exchange and Encrypted Client Hello (ECH) settings
 can narrow the allowed connections. For the equivalent TLS and QUIC behavior,
-see [project transport compatibility](https://rstream.io/docs/security/access-policies).
+see [project transport compatibility](https://rstream.io/docs/security/access-policies#transport-compatibility).
 
 | Project setting        | Published DTLS behavior                                          |
 | ---------------------- | ---------------------------------------------------------------- |

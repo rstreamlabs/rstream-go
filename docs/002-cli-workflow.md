@@ -86,9 +86,10 @@ private certificate authority, verify the printed hostname with the CA file.
 curl --cacert /path/to/ca.pem 'https://your-tunnel-host/'
 ```
 
-Use `curl.exe` in PowerShell and supply the real URL and CA path. The
+Use `curl.exe` in PowerShell and supply the real URL and CA path. For a local
+Compose deployment, follow the native CLI verification in the
 [CE setup guide](https://rstream.io/guides/self-host-rstream-engine-ce-with-docker-compose)
-walks through a local deployment.
+to use the mapped host port and resolve the printed hostname on loopback.
 
 Stop the public forwarder with Ctrl+C. Leave the HTTP server running to
 [try private access](004-tunnel-configuration.md#try-a-private-connection)

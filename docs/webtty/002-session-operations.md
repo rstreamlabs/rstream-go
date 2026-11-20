@@ -145,6 +145,36 @@ name for a registered server is its server ID. A display name requires
 discovery. Choose the server's actual transport and configure an explicit
 Engine address without a region selector.
 
+For a workspace-owned certificate, provision the workspace Token's service
+device with an owner or admin login. Run these commands on the device that
+prepares the terminal keys. Substitute the workspace ID, workspace Token
+ID, project ID and registered server ID.
+
+```sh
+rstream workspace device enroll --workspace 'my-workspace-id' --for-token 'my-token-id'
+```
+
+Approve the displayed code under **Workspace Protection**, in the
+**Services** tab. Check the approval, then prepare the files for that device.
+
+```sh
+rstream workspace device status --workspace 'my-workspace-id' --for-token 'my-token-id'
+rstream webtty client prepare 'my-server-id' --project-id 'my-project-id' \
+  --for-token 'my-token-id' --directory ./webtty-access
+```
+
+Use those generated files on the corresponding runtime host with its
+certificate context. Keep the provisioning login separate. The identity
+and client credential can also authorize decryption of recordings from the
+same workspace, project and server. Engine authorization for
+`webtty.logs.read-only` still applies. Set `RSTREAM_WEBTTY_IDENTITY_FILE` and
+`RSTREAM_WEBTTY_CLIENT_CREDENTIAL_FILE` to the prepared files when
+exporting an encrypted recording.
+
+For FIPS, prepare the P-256-compatible identity, use a published
+WebTransport server and keep discovery enabled to obtain its endpoint.
+See the [FIPS compatibility guide](../017-fips-140-3-profile.md#supported-scope).
+
 ## Access files
 
 Use `webtty fs` with a server that has a filesystem sidecar. The sidecar

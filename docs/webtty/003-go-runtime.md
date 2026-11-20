@@ -67,47 +67,32 @@ an error.
 
 ## Disconnect and explicit termination
 
-`ClientSession.Close()` releases the reader. An Engine-managed execution that
-explicitly selected a bounded detached lifetime continues after this disconnect;
-ordinary sessions keep their connection-bound lifetime. Rejoin a live managed
-execution with `Attach`, without sending a new `Open` or repeating the command.
-The session API retains its confirmed result under the existing retention policy.
-After a local close without native completion, `Wait()` returns
-`ErrSessionDisconnected`. `Close()` itself remains idempotent
-and returns nil; a previously confirmed native result is preserved.
+| Task | Go API |
+| --- | --- |
+| Stop reading a session | Call `ClientSession.Close()` to close its reader. Explicitly detached executions retain their original deadline. |
+| Disconnect after sending input | Drain `Events()` and call `Disconnect(ctx)` so the transport can finish sending. |
+| Stop the remote process and read final output | Check `CanTerminate()`, call `RequestTermination(ctx)` with a controlling participant, and keep reading until `Wait()` returns the result. |
 
-For a managed reader that has just written input or `SendEOF()`, use
-`Disconnect(ctx)` to finish the transport exchange before releasing it. Continue
-draining `Events()` during this wait. It is bounded by the caller context and
-`CloseDeadline` (five seconds by default); failure forces a local close and does
-not confirm input delivery. An orderly reader disconnect never confirms process
-completion. This matters especially for WebTransport, where an immediate session
-close can discard queued input. `Close()` remains available for immediate release.
-
-`ClientSession.CanTerminate()` reports runtime support. Your participant
-credentials determine whether you can request termination.
-`RequestTermination(ctx)` sends a separate stop request and leaves the reader
-open for final output. Keep draining `Events()` and use `Wait()` to obtain the
-native exit code. A successful request write is not confirmation that the
-process has exited. An older server returns `ErrTerminationUnsupported`; the
-client does not substitute a disconnect. Cancelling a partially written request
-closes the transport because that frame cannot be retried safely.
-
-For managed sessions, pass the result of `GetWebTTYCapabilities()` in
-`ManagedSessionConfig.Capabilities` and acquire control through the existing
-participant/control APIs. The SDK checks `ExplicitTermination` as well as native
-support. An Attach without Engine capabilities cannot request termination. Native
-capability discovery alone cannot qualify an older Engine relay. Spectators
-and revoked controllers cannot send termination. The session's original
-execution deadline is not extended by detaching or attaching another reader.
+For live attachment, open the
+[participant stream](../../webtty/README.md#attach-to-a-live-managed-session)
+using the existing execution ID. The
+[Go package lifecycle reference](../../webtty/README.md#managed-disconnect-and-termination-contracts)
+describes disconnect guarantees, capability checks and cancellation.
 
 ## Bounded detached execution in the SDK
 
-Use a registered server that supports detached execution. Take the
-published hostname and advertised command path from the server inventory.
-For a token-authenticated WebSocket endpoint, set `endpoint` to that
-verified `wss://` URL and use a token authorized to open this terminal.
-The Engine API client uses its own authorized context.
+[Enroll a registered server](001-server-trust.md#enroll-a-registered-webtty-server)
+on a managed deployment that supports detached execution. On the operator
+machine, create an Engine client from the selected project with
+`config.NewClientFromEnv()`. Use `ListTunnels` and
+`webtty.ParseServers(*tunnels)` to select the intended registered server by
+ID. Use its `Host` and `ExecPath` to construct the published `wss://` URL.
+Select a server with a published WebSocket endpoint for this example.
+
+Set `terminalToken` to a credential that can open the published terminal,
+for example a [token scoped to that tunnel](https://rstream.io/docs/security/fine-grained-tokens#mint-a-token-for-one-published-tunnel).
+The Engine client needs its own inventory and session permissions. An
+existing operator token can serve both roles if it has both sets of access.
 
 ```go
 cfg := webtty.SessionConfig{

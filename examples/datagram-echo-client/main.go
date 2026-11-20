@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"flag"
 	"fmt"
 	"log"
@@ -18,14 +19,19 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/pion/dtls/v4"
+	"github.com/pion/dtls/v4/pkg/protocol"
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
 )
 
 func handleConnection(packetConn net.PacketConn, raddr net.Addr) error {
 	defer packetConn.Close()
+	if err := packetConn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return fmt.Errorf("set echo deadline: %w", err)
+	}
 	// Send a message
 	msg := []byte("Hello from rstream-go!")
 	n, err := packetConn.WriteTo(msg, raddr)
@@ -43,50 +49,43 @@ func handleConnection(packetConn net.PacketConn, raddr net.Addr) error {
 	return nil
 }
 
-func run(ctx context.Context, client *rstream.Client, publish bool) error {
-	name := "datagram-echo"
-	if publish {
-		// List tunnels to find the published host using the Engine API.
-		tunnels, err := client.ListTunnels(ctx, nil)
+func publishedOptions(version, caFile string) ([]dtls.ClientOption, error) {
+	var options []dtls.ClientOption
+	if version != "" {
+		var v protocol.Version
+		switch version {
+		case "1.2":
+			v = protocol.Version1_2
+		case "1.3":
+			v = protocol.Version1_3
+		default:
+			return nil, fmt.Errorf("unsupported DTLS version %q (use 1.2 or 1.3)", version)
+		}
+		options = append(options, dtls.WithMinVersion(v), dtls.WithMaxVersion(v))
+	}
+	if caFile != "" {
+		data, err := os.ReadFile(caFile)
 		if err != nil {
-			return fmt.Errorf("failed to list tunnels: %w", err)
+			return nil, fmt.Errorf("read downstream CA: %w", err)
 		}
-		for _, tunnel := range *tunnels {
-			if tunnel.Name != nil && *tunnel.Name == name && tunnel.Host != nil {
-				host := *tunnel.Host
-				hostname := host
-				port := "4433"
-				if parsedHost, parsedPort, err := net.SplitHostPort(host); err == nil {
-					hostname = parsedHost
-					port = parsedPort
-				} else if addrErr, ok := err.(*net.AddrError); !ok || addrErr.Err != "missing port in address" {
-					return fmt.Errorf("failed to split host and port: %w", err)
-				}
-				// Connect to the published host using standard DTLS dialer
-				raddr := &net.UDPAddr{IP: func() net.IP {
-					ips, err := net.LookupIP(hostname)
-					if err != nil || len(ips) == 0 {
-						return net.IPv4zero
-					}
-					return ips[0]
-				}(),
-					Port: func() int {
-						p, err := net.LookupPort("udp", port)
-						if err != nil {
-							return 0
-						}
-						return p
-					}()}
-				packetConn, err := dtls.Dial("udp", raddr, dtls.WithServerName(hostname))
-				if err != nil {
-					return fmt.Errorf("failed to dial published host: %w", err)
-				}
-				return handleConnection(rstream.PacketConnFromConn(packetConn, nil, rstream.PacketModeRaw), raddr)
-			}
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(data) {
+			return nil, fmt.Errorf("no certificates in downstream CA file %q", caFile)
 		}
-		return fmt.Errorf("tunnel %q not found or not published", name)
-	} else {
-		// Dial the tunnel using rstream dialer
+		options = append(options, dtls.WithRootCAs(roots))
+	}
+	return options, nil
+}
+
+func run(ctx context.Context, publish bool, options []dtls.ClientOption) error {
+	client, err := config.NewClientFromEnv()
+	if err != nil {
+		return fmt.Errorf("load rstream configuration: %w", err)
+	}
+	defer client.Close()
+
+	const name = "datagram-echo"
+	if !publish {
 		raddr := rstream.Addr{IdOrName: name}
 		packetConn, err := client.PacketDial(ctx, raddr)
 		if err != nil {
@@ -94,25 +93,55 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 		}
 		return handleConnection(packetConn, &raddr)
 	}
+
+	tunnels, err := client.ListTunnels(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to list tunnels: %w", err)
+	}
+	for _, tunnel := range *tunnels {
+		if tunnel.Name == nil || *tunnel.Name != name || tunnel.Host == nil {
+			continue
+		}
+		hostname, port, err := net.SplitHostPort(*tunnel.Host)
+		if addrErr, ok := err.(*net.AddrError); ok && addrErr.Err == "missing port in address" {
+			hostname, port = *tunnel.Host, "4433"
+		} else if err != nil {
+			return fmt.Errorf("failed to split published address: %w", err)
+		}
+		raddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(hostname, port))
+		if err != nil {
+			return fmt.Errorf("failed to resolve published address: %w", err)
+		}
+		conn, err := dtls.Dial("udp", raddr, append(options, dtls.WithServerName(hostname))...)
+		if err != nil {
+			return fmt.Errorf("failed to dial published host: %w", err)
+		}
+		handshakeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		if err := conn.HandshakeContext(handshakeCtx); err != nil {
+			_ = conn.Close()
+			return fmt.Errorf("published DTLS handshake: %w", err)
+		}
+		return handleConnection(rstream.PacketConnFromConn(conn, nil, rstream.PacketModeRaw), raddr)
+	}
+	return fmt.Errorf("tunnel %q not found or not published", name)
 }
 
 func main() {
 	publish := flag.Bool("publish", false, "connect to published host instead of using rstream dialer")
+	version := flag.String("dtls-version", "", "offer only DTLS 1.2 or 1.3; requires --publish")
+	caFile := flag.String("ca-file", "", "verify the published hostname with this PEM CA bundle; requires --publish")
 	flag.Parse()
-	client, err := config.NewClientFromEnv()
-	if err != nil {
-		log.Fatalf("Configuration error: %v", err)
+	if !*publish && (*version != "" || *caFile != "") {
+		log.Fatal("--dtls-version and --ca-file require --publish")
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		log.Println("Got signal, exiting...")
-		cancel()
-	}()
-	if err := run(ctx, client, *publish); err != nil {
+	options, err := publishedOptions(*version, *caFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx, *publish, options); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }

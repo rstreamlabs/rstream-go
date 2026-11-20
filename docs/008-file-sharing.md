@@ -38,6 +38,14 @@ a download in progress. Use `--no-retry` to stop after a disconnect.
 
 File sharing is unavailable in the restricted FIPS build for both WebDAV and WebRTC, including the WebTTY filesystem. See the [FIPS compatibility table](017-fips-140-3-profile.md#file-sharing-compatibility).
 
+## Share without a public hostname
+
+`files` always creates a published endpoint. To share over a private
+connection, use a [read-only private WebTTY sidecar](https://rstream.io/docs/webtty/quickstart#add-a-filesystem-sidecar). The WebTTY account also runs terminal
+commands. Use an operator identity allowed to reach that host. For a
+Go service that only serves files, embed the
+[Filesystem HTTP handler](../fileserver/README.md) on a private tunnel.
+
 ## Share and access options
 
 | Option | Behavior |

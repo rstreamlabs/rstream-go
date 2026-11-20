@@ -38,7 +38,10 @@ from a second terminal.
 rstream webtty exec --url rstrm://shell -o text -- whoami
 ```
 
-Expect the username of the account running the server. On a server that
+Expect the username of the account running the server. This verifies the
+native stream, including when you published a public WebSocket endpoint.
+Use [the published access check](https://rstream.io/docs/webtty/quickstart#publish-through-rstream)
+to verify browser admission separately. On a server that
 supports a pseudoterminal, open a shell through the same context. Windows
 supports command execution through pipes. On Windows, use the command above.
 

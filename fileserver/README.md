@@ -28,15 +28,91 @@ authenticate at its published entrypoint.
 
 ## Serve a WebRTC export
 
-Set `Config.Backend` to `filesystem.BackendWebRTC` and keep the export
-read-only. For a loopback test, WebRTC can use host candidates without a
-relay. To serve across networks, set `Config.RTC.ICE` to a callback that
-returns the allowed STUN/TURN servers and current relay credentials as
-`[]webrtc.ICEServer`. Use the
-[TURN guidance](../docs/015-engine-mtls-turn.md#request-turn-credentials-in-go)
-when sourcing those credentials from rstream. Keep the credential client
-open for the lifetime of the file server and close it after returning
-from `Server.Close`.
+Prepare the [Go application's reviewed ICE dependency](../docs/021-filesystem-webrtc.md#build-an-application-using-this-backend)
+before building with WebRTC. A published CLI build already has this step.
+
+This test exposes one disposable file on loopback and compares its bytes
+through the filesystem client. It uses read-only WebRTC and local ICE
+candidates. The listener accepts signaling and rejects direct HTTP downloads,
+so the response must come from the peer connection.
+
+```go
+func TestWebRTCExport(t *testing.T) {
+	root := t.TempDir()
+	want := []byte("name,enabled\nexample,true\n")
+	if err := os.WriteFile(filepath.Join(root, "report.csv"), want, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	share, err := fileserver.New(fileserver.Config{
+		Root: root, Backend: filesystem.BackendWebRTC,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer share.Close()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/fs/report.csv" {
+			http.Error(w, "download over WebRTC", http.StatusForbidden)
+			return
+		}
+		share.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+
+	client := filesystem.NewHTTPClient(server.URL+"/fs", server.Client())
+	defer client.CloseIdleConnections()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/fs/report.csv", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("download: %s", response.Status)
+	}
+	got, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("downloaded %q, want %q", got, want)
+	}
+}
+```
+
+Put the test in a Go test file. Import `bytes`, `context`, `io`, `net/http`,
+`net/http/httptest`, `os`, `path/filepath`, `testing`, `time`, and the SDK's
+`fileserver` and `filesystem` packages. Run `go test -run TestWebRTCExport`.
+
+For peers across networks, configure `Config.RTC.ICE` to return fresh
+credentials. For example, an authenticated rstream client can fetch relay
+configuration for each new lease. Keep the parent client open until after the
+file server closes.
+
+```go
+fileConfig.RTC.ICE = func(ctx context.Context) ([]webrtc.ICEServer, error) {
+	relay, err := config.CreateTURNCredentialsFromEnv(ctx, config.TURNCredentialsEnvOptions{
+		Client: projectClient,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return []webrtc.ICEServer{{
+		URLs: relay.URLs, Username: relay.Username, Credential: relay.Credential,
+	}}, nil
+}
+```
+
+The callback uses `github.com/pion/webrtc/v4` and the SDK's `config` package.
+See [TURN issuance](../docs/015-engine-mtls-turn.md#request-turn-credentials-in-go)
+for project scope and permissions. Protect the HTTP signaling endpoints as
+you would other file access.
 
 ## Read from a share
 
