@@ -66,6 +66,12 @@ Ctrl+C. You can keep the service running to
 [verify TLS termination](006-tls-dtls-tunnels.md#forward-a-tls-service). Use the [private Go example pair](../examples/README.md#connect-privately)
 when both endpoints are Go programs.
 
+Use `rstream nc --help` for direct stdio access, local process adapters and
+private datagram relays. Datagram mode uses `--datagram` and preserves message
+boundaries with RFC 4571 framing on stdio. For a local UDP peer, use a
+`udp://` listener with an `rstrm://` upstream. Choose a project that supports
+private datagrams.
+
 ## Client transport, stream type and service protocol
 
 Three choices describe different parts of the path:

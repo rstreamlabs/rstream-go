@@ -13,9 +13,12 @@ opening the share.
 | A disposable project that allows public requests | Add a local password with `--password`. |
 | A project that requires edge authentication | Use its required sign-in or tunnel token. The file server's local password cannot be combined with edge authentication. |
 
-Start the password-protected share from the parent of `exports`.
+In an empty working directory, create a disposable export with one sample
+file, then start the password-protected share.
 
 ```sh
+mkdir exports
+printf 'name,status\nexample,ready\n' > exports/report.csv
 rstream files ./exports --password
 ```
 

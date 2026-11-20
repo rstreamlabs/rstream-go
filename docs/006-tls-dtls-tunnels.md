@@ -98,10 +98,10 @@ so its identity needs `tunnels.resources.read-only` for that tunnel.
 Build the [datagram echo pair](../examples/README.md#choose-another-example)
 with `make datagram-echo-server datagram-echo-client`. Run both programs
 with `--publish`, starting with the server. The example client verifies the
-published hostname against the system trust store. For a private CA or a
-project requiring client certificates, use a DTLS client configured with
-that CA or the required certificate. The CLI context's Engine CA is for
-the agent connection and does not configure the downstream client.
+published hostname against the system trust store. For a private CA, add
+`--ca-file /path/to/downstream-ca.pem` to the client command. If the project
+requires caller certificates, use a DTLS client configured with the admitted
+certificate and key. The CLI context's Engine CA applies to the agent connection.
 
 ```sh
 ./out/examples/datagram-echo-server --publish

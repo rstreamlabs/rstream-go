@@ -136,7 +136,7 @@ Client/exec options are separate from server runtime YAML. Commands after `--` r
 | --- | --- | --- |
 | `--url` | URI from the [transport reference](002-session-operations.md#choose-the-webtty-transport). | `ws://127.0.0.1:8080`. |
 | `--transport` | `plain`, `websocket`, `webtransport`; explicit discovery override. | Discovered/inferred in standard builds; WebTransport in FIPS. Must match advertised transport. |
-| `--no-discovery` | Skip Engine inventory and Control plane metadata. | false; requires explicit transport, Engine and local security. |
+| `--no-discovery` | Skip Engine inventory and Control plane metadata. | false. Supply the transport and any local security material. An `rstrm://` target also needs a configured Engine. |
 | `--interactive`/`-i`, `--no-interactive`/`-I` | Enable/disable interactive input. | Enabled when no command is supplied, otherwise disabled; opposite forms conflict. |
 | `--tty`/`-t`, `--no-tty`/`-T` | Request/disable remote PTY. | Requested when no command is supplied, otherwise disabled; allocation needs a local terminal and server PTY support. |
 | `--env`/`-e` | Repeatable `KEY=VALUE`, or `KEY` copied from client environment. | No overrides by default; server execution policy still applies. |

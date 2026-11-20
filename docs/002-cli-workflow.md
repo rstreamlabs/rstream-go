@@ -49,21 +49,17 @@ only that directory on loopback.
 
 ```sh
 demo_dir="$(mktemp -d)" &&
-  cd "$demo_dir" &&
-  printf 'Hello from rstream\n' > index.html &&
-  python3 -m http.server 8080 --bind 127.0.0.1
+  printf 'Hello from rstream\n' > "$demo_dir/index.html" &&
+  python3 -m http.server 8080 --bind 127.0.0.1 --directory "$demo_dir"
 ```
 
 In Windows PowerShell, create the directory and start the server with the Windows Python launcher.
 
 ```powershell
-& {
-  $demo = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
-  New-Item -ItemType Directory -Path $demo -ErrorAction Stop | Out-Null
-  Set-Location $demo -ErrorAction Stop
-  Set-Content -Encoding ASCII index.html 'Hello from rstream'
-  py -3 -m http.server 8080 --bind 127.0.0.1
-}
+$demo = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString())
+New-Item -ItemType Directory -Path $demo -ErrorAction Stop | Out-Null
+Set-Content -Encoding ASCII -LiteralPath (Join-Path $demo 'index.html') 'Hello from rstream'
+py -3 -m http.server 8080 --bind 127.0.0.1 --directory $demo
 ```
 
 ### Forward and verify
@@ -99,6 +95,11 @@ Stop the public forwarder with Ctrl+C. Leave the HTTP server running to
 or [verify TLS termination](006-tls-dtls-tunnels.md#forward-a-tls-service)
 against the same service. Otherwise, stop the HTTP server as well. For
 another service, [choose the protocol and access mode](004-tunnel-configuration.md).
+When finished with the demo, remove the test page and directory from the
+first terminal. On Linux and macOS use `rm "$demo_dir/index.html"` followed by
+`rmdir "$demo_dir"`. In PowerShell use
+`Remove-Item -LiteralPath (Join-Path $demo 'index.html')` followed by
+`Remove-Item -LiteralPath $demo`.
 If the request failed, start with [troubleshooting](https://rstream.io/docs/support/troubleshooting).
 
 ## Choose an identity
@@ -215,4 +216,18 @@ rstream logout
 
 Logout removes locally stored authentication for the current environment; it does not delete contexts or revoke their independent device credentials.
 
-For the next task, use [declarative forwarding](007-declarative-tunnels.md), [file sharing](008-file-sharing.md), [WebTTY](009-webtty.md), the [interactive inventory](012-cli-ui.md), [webhooks](010-webhooks.md) or [Codex/MCP](011-mcp.md).
+## Find a command by task
+
+Run `rstream --help` for the installed command list. Add `--help` to a
+command or subcommand for its flags and examples.
+
+| Task | Commands and guides |
+| --- | --- |
+| Forward one service, manage a set, or bridge a private service | `forward`, `run` and `nc`. See [tunnel configuration](004-tunnel-configuration.md) and [declarative tunnels](007-declarative-tunnels.md). |
+| Inspect active connections | `client list`, `tunnel list`, `webtty list`, `events` and [`ui`](012-cli-ui.md). |
+| Manage saved connections and hosted projects | `context`, `workspace list`, `project list`, `project use` and `project rename`. |
+| Configure a public address | `project domain` for [custom domains](https://rstream.io/docs/tunnels/custom-domains) and `project tcp-address` for [reserved TCP addresses](https://rstream.io/docs/tunnels/tcp-tunnels). |
+| Issue a short-lived Control plane token | `token create` with explicit permissions, expiry and resource scope. Its output contains the new credential. |
+| Share files or open a terminal | [`files`](008-file-sharing.md) and [`webtty`](009-webtty.md). |
+| Use tools from an AI client | [`mcp`, `codex setup` and `claude setup`](011-mcp.md). |
+| Set up shell completion | `completion bash`, `completion zsh`, `completion fish` or `completion powershell`. Review the shell-specific instructions with `--help`. |

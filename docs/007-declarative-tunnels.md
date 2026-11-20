@@ -37,10 +37,10 @@ before applying the file. For token authentication, add `auth: { token: true }`
 under `tunnel.http`.
 
 ```sh
-rstream run --apply ./tunnels.yaml
+rstream -v run --apply ./tunnels.yaml
 ```
 
-Open the forwarding URL while the runner is active. Expect
+Open the `forwarding` URL from the `Tunnel created` log while the runner is active. Expect
 `Hello from rstream` from the loopback demo. With token authentication,
 [verify a scoped caller token and anonymous denial](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication).
 Stop the runner with Ctrl+C. Add `--watch` when it should reconcile edits

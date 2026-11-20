@@ -9,7 +9,7 @@ with [editions and plans](https://rstream.io/docs/support/editions) or
 
 | Task | Guide |
 | --- | --- |
-| Try an existing service with the CLI | [Install the CLI](000-installation.md), then [connect and publish a first HTTP service](002-cli-workflow.md#connect-the-cli). |
+| Try an existing service with the CLI | [Install the CLI](000-installation.md), then [connect and publish a first HTTP service](002-cli-workflow.md#connect-the-cli). Use the [command map](002-cli-workflow.md#find-a-command-by-task) for other tasks. |
 | Compile this checkout | [Build from source](001-building-from-source.md) covers tools, build and verification. |
 | Embed rstream in Go | [Use the Go SDK](003-go-sdk.md) to serve HTTP or connect privately. |
 | Run matching server and client programs | The [Go examples](../examples/README.md) cover published HTTP, private access and specialized protocols. |

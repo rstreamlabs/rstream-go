@@ -14,8 +14,9 @@ This repository contains the reference Go SDK and the `rstream` CLI. The CLI for
 ## Start with the CLI
 
 With a [CLI connection configured](docs/002-cli-workflow.md#connect-the-cli) and
-an HTTP service on local port 8080, the following command publishes an
-Internet-reachable endpoint. For a restricted service choose
+an HTTP service on local port 8080, the following command publishes an HTTP
+endpoint. A self-hosted endpoint follows the Engine's network reachability
+and access policy. For a restricted service choose
 [HTTP authentication](docs/005-http-tunnels.md#http-authentication) or
 [private access](docs/004-tunnel-configuration.md#try-a-private-connection)
 before forwarding.

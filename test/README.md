@@ -291,11 +291,13 @@ Run the WebTTY runtime matrix:
 bash test/e2e/webtty-runtime-matrix.sh
 ```
 
-Exercise the real MCP stdio process with eight simultaneous WebTTY inventory calls per round, using both line-delimited and Content-Length framing:
+Set `RSTREAM_BIN` to the CLI binary from [your source build](../docs/001-building-from-source.md#build-on-linux-or-macos).
+The following command exercises eight simultaneous WebTTY inventory calls per
+round, using both line-delimited and Content-Length framing.
 
 ```bash
 python3 test/e2e/mcp-stdio-concurrency.py \
-  --binary ./out/cmd/rstream/dev/main/macos/arm64/release/bin/rstream \
+  --binary "$RSTREAM_BIN" \
   --context 'tests' \
   --url 'rstrm://test-webtty-server'
 ```
