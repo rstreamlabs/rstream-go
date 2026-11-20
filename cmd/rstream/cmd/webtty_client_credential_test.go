@@ -410,4 +410,47 @@ func TestWebTTYLocalWorkspaceCredentialExecutesWithoutControlPlane(t *testing.T)
 			}
 		})
 	}
+	t.Run("MCP with prepared files", func(t *testing.T) {
+		clearRstreamTestEnv(t)
+		files, err := writeWebTTYClientPreparation(filepath.Join(t.TempDir(), "prepared"), "server", *clientIdentity, serverPublic, credential)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(webTTYIdentityFileEnv, files["identity.json"])
+		t.Setenv(webTTYKnownServersFileEnv, files["known-servers.json"])
+		t.Setenv(webTTYClientCredentialFileEnv, files["client-credential.json"])
+		command := []string{"sh", "-c", "printf offline-mcp-credential"}
+		if runtime.GOOS == "windows" {
+			command = []string{"cmd.exe", "/c", "echo offline-mcp-credential"}
+		}
+		url, err := json.Marshal("ws" + strings.TrimPrefix(server.URL, "http"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		commandJSON, err := json.Marshal(command)
+		if err != nil {
+			t.Fatal(err)
+		}
+		params := map[string]json.RawMessage{"url": url, "command": commandJSON}
+		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		defer cancel()
+		result, err := mcpWebTTYExec(ctx, params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content, ok := result["structuredContent"].(map[string]any)
+		stdout, _ := content["stdout"].(string)
+		if !ok || result["isError"] == true || content["exit_code"] != float64(0) ||
+			strings.TrimSpace(stdout) != "offline-mcp-credential" || content["stderr"] != "" {
+			t.Fatalf("prepared credential did not authorize the MCP command: %#v", result)
+		}
+		otherIdentity := filepath.Join(t.TempDir(), "identity.json")
+		if _, err := webtty.LoadOrCreateWebTTYEndpointIdentityFile(otherIdentity); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(webTTYIdentityFileEnv, otherIdentity)
+		if _, err := mcpWebTTYExec(ctx, params); err == nil || !strings.Contains(err.Error(), "does not match the approved endpoint identity") {
+			t.Fatalf("prepared credential incorrectly accepted a different identity: %v", err)
+		}
+	})
 }

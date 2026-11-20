@@ -1439,25 +1439,13 @@ func mcpWebTTYCommandConfig(ctx context.Context, args map[string]json.RawMessage
 	if err != nil {
 		return nil, err
 	}
-	cryptoConfig, err = withWebTTYClientCredential(cryptoConfig, "")
+	cryptoConfig, err = withWebTTYClientIdentityAndCredential(cryptoConfig, nil, "")
 	if err != nil {
 		return nil, err
 	}
 	result.PayloadCrypto = cryptoConfig.PayloadCrypto
 	result.ClientCredential = append([]byte(nil), cryptoConfig.ClientCredential...)
 	result.EndpointIdentity = cryptoConfig.EndpointIdentity
-	if cryptoConfig.ExpectedServerIdentity != nil && result.EndpointIdentity == nil && strings.TrimSpace(cryptoConfig.ClientIdentityName) != "" {
-		result.EndpointIdentity, err = webTTYClientEndpointIdentityByName(cryptoConfig.ClientIdentityName)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if cryptoConfig.ExpectedServerIdentity != nil && result.EndpointIdentity == nil {
-		result.EndpointIdentity, _, err = webTTYClientEndpointIdentityFromExplicitSources(nil)
-		if err != nil {
-			return nil, err
-		}
-	}
 	if cryptoConfig.ExpectedServerIdentity != nil && result.EndpointIdentity == nil {
 		return nil, webTTYMissingClientEndpointIdentityError(securityScope, cryptoConfig)
 	}
