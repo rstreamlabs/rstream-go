@@ -8,8 +8,7 @@ captured on the agent event loop; continual gathering takes a fresh snapshot.
 The patch preserves the v4.4.9 gathering generation checks. Its URL snapshot
 change was originally proposed in
 [pion/ice#957](https://github.com/pion/ice/pull/957). It changes no public API.
-A [new proposal against v4](https://github.com/pion/ice/pull/1049) includes
-stronger race regressions. Keep this workaround until
+The [upstream v4 proposal](https://github.com/pion/ice/pull/1049) records the regression cases. Keep this workaround until
 a released upstream version contains and passes the same regression tests.
 
 ## Build this repository
@@ -23,12 +22,16 @@ GOFLAGS="-modfile=$PWD/out/ice-patch/go.mod" go test -race ./...
 go build -modfile=out/ice-patch/go.mod ./cmd/rstream
 ```
 
+## Build the CLI with native PowerShell
+
+Follow the [Windows source build](../../docs/001-building-from-source.md#build-on-windows).
+Use the alternate module file for subsequent direct Go commands.
+
 ## Build a consuming module
 
 Go does not inherit dependency `replace` directives. Installing a newer SDK
 alone therefore cannot apply this patch to another application's binary.
-The helper is available in this repository's source but is not yet included
-in a published SDK release. Set `RSTREAM_GO_SOURCE` to the absolute path of
+Use the helper source from the SDK version you are building against. Set `RSTREAM_GO_SOURCE` to the absolute path of
 a reviewed checkout, then run the local helper from the consuming application's
 module directory. Use the returned `go.mod` for **every** build and test of
 the application. Git and Go are required on the build host.

@@ -6,10 +6,14 @@ HSM exposes a vendor API instead of PKCS#11. The executable supplies the public
 certificate chain and signatures. TLS, certificate verification, connections
 and tunnel traffic stay in rstream.
 
-This backend does not export a private key, change Engine admission policy, or
-enroll a credential. Enroll the public certificate with the intended project
-first. It does not configure WebTTY end-to-end identities, local WebTTY HTTPS
-certificates, published tunnel client admission, or TURN credentials.
+Build an executable for your device or start with the
+[signing helper example](../examples/mtls-exec-helper) to see the contract.
+Use a standard CLI or SDK build. The
+[FIPS profile](017-fips-140-3-profile.md#supported-scope) excludes executable
+signers. [Enroll the public leaf certificate](https://rstream.io/docs/security/mtls)
+in the project before configuring agent mTLS. [WebTTY endpoint trust](webtty/001-server-trust.md) and
+[published client admission](005-http-tunnels.md#http-authentication) each
+have separate identities.
 
 ## Configure an identity
 
@@ -75,7 +79,7 @@ locations where possible.
 Create the context through the CLI if preferred:
 
 ```sh
-rstream context create device --no-api-url \
+rstream --config /etc/rstream/config.yaml context create device --no-api-url \
   --engine project.cluster.example:443 \
   --mtls-exec /usr/libexec/device-mtls-helper \
   --mtls-exec-arg=--identity --mtls-exec-arg=device \
@@ -93,13 +97,11 @@ selection, and ordinary config resolution do not execute the helper.
 
 ```sh
 rstream --config /etc/rstream/config.yaml --context device doctor
-rstream --config /etc/rstream/config.yaml --context device webtty server --rstream
-rstream --config /etc/rstream/config.yaml --context device run --apply tunnels.yaml
 ```
 
-WebTTY admission and optional E2E settings still need to match the deployment.
-The Engine identity belongs in the central config, not in
-`--webtty-config`'s `tls` block.
+The same context can be used by [declarative tunnels](007-declarative-tunnels.md)
+and [WebTTY](009-webtty.md). Configure terminal endpoint trust separately
+when opening a protected WebTTY session.
 
 A tunnels file can use the default context or reference a named central context:
 
@@ -127,123 +129,18 @@ SDK applications can use `config.NewClientFromEnv()` or
 `ClientOptions.TLSClientConfig` retain that API. No native dependency or CGO is
 required by the external backend.
 
-`doctor` checks the public certificate and signs a random challenge with each
-advertised algorithm, then checks configured transports and Engine
-control-channel admission. It does not require a token for these agent checks.
-`doctor --deep` additionally tests a tunnel lifecycle under the identity's
-existing permissions. Normal operations only load the identity when TLS first
-requests a client certificate.
+`doctor` checks the public certificate and signs a challenge with each
+advertised algorithm. It checks the configured transport and Engine HTTP API
+using the certificate. For a native admission and tunnel lifecycle check,
+use [the optional deep probe](018-doctor-api.md#optional-deep-probe) in a project
+where the diagnostic tunnel is allowed. A normal connection loads the
+identity when TLS requests a client certificate.
 
 ## Protocol v1
 
-The executable is launched with exactly the configured arguments. Each process
-handles one request: one JSON object on stdin followed by EOF, and one JSON
-object on stdout followed by EOF. No banners or logging may appear on stdout.
-Every request and response includes integer `version: 1`.
-
-An identity request:
-
-```json
-{"version":1,"operation":"identity","certificateSHA256":"<64 lowercase hex digits>"}
-```
-
-Its response:
-
-```json
-{
-  "version": 1,
-  "certificateChain": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n",
-  "capabilities": [
-    {"algorithm": "ecdsa_secp521r1_sha512", "inputs": ["message"]}
-  ]
-}
-```
-
-`certificateChain` contains PEM certificates, leaf first, followed by any
-intermediates. The public key comes from the leaf. Advertise only algorithms
-actually available for that key. The caller rejects unknown/incompatible
-algorithms, empty capabilities, duplicate capabilities, and unsupported modes.
-
-A signing request:
-
-```json
-{
-  "version": 1,
-  "operation": "sign",
-  "certificateSHA256": "<64 lowercase hex digits>",
-  "algorithm": "ecdsa_secp521r1_sha512",
-  "input": "message",
-  "data": "<base64>"
-}
-```
-
-The response is `{"version":1,"signature":"<base64>"}`.
-The helper must select the enrolled identity consistently across processes and
-reject a mismatching fingerprint. rstream also verifies every returned
-signature against the cached enrolled public key.
-
-| Algorithm | Signature encoding | Input modes |
-| --- | --- | --- |
-| `ecdsa_secp256r1_sha256` | ASN.1 DER ECDSA (r, s) | message, digest |
-| `ecdsa_secp384r1_sha384` | ASN.1 DER ECDSA (r, s) | message, digest |
-| `ecdsa_secp521r1_sha512` | ASN.1 DER ECDSA (r, s) | message, digest |
-| `rsa_pss_rsae_sha256/384/512` | Raw RSA signature bytes | message, digest |
-| `rsa_pkcs1_sha256/384/512` | Raw RSA signature bytes | message, digest |
-| `ed25519` | 64 raw signature bytes, pure Ed25519 | message only |
-
-The RSA names ending in `sha256/384/512` denote three distinct names, for
-example `rsa_pss_rsae_sha384`. RSA keys must be 2048–8192 bits. RSA-PSS requests
-also include integer `pssSaltLength`, equal to the hash length in bytes
-(32, 48, or 64); MGF1 uses the same hash. RSA PKCS#1 v1.5 is only negotiated
-where TLS permits it. The helper may support a subset of algorithms/modes.
-
-For `message`, the helper applies the specified signature algorithm to the
-original bytes. For `digest`, those bytes have already been hashed: **do not
-hash them again**. A message-only OpenSSL DigestSign provider should advertise
-only `message`. rstream uses Go's `crypto.MessageSigner` for TLS 1.2 and 1.3,
-including QUIC. With a digest-only provider, rstream hashes the message once.
-It cannot convert an existing digest back into an original message.
-
-Protocol errors use a response such as:
-
-```json
-{"version":1,"error":"signing_denied"}
-```
-
-Allowed codes: `unsupported_version`, `unsupported_algorithm`,
-`identity_unavailable`, `identity_mismatch`, `signing_denied`,
-`invalid_request`, `internal_error`. A protocol response uses exit status
-zero; a nonzero exit is reported as a process failure. Error messages are
-controlled by rstream; arbitrary provider diagnostics are not copied into logs.
-
-Limits: signing data 1 MiB; encoded request 2 MiB; stdout 256 KiB; stderr 4 KiB;
-certificate chain 16 certificates; signature 1024 bytes. Output overflow
-terminates the operation. Unknown response fields, malformed JSON, trailing
-data, and unsupported protocol versions are rejected. Failures never fall back
-to another credential.
-
-## Lifetime, concurrency and rotation
-
-The public identity is cached after its first successful load. A failed load
-can be retried by the next connection attempt. Reconnection uses the same
-certificate, with a fresh signer bound to the new handshake context. Its
-validity dates are rechecked; it is not silently replaced on expiry.
-
-The per-operation timeout and handshake cancellation terminate and reap the
-helper. Closing a client cancels its pending dials. Established connections
-retain normal SDK ownership. No helper is kept alive between operations.
-Helpers must not daemonize or detach children. Unix helpers run in a dedicated
-process group, which is terminated on completion or cancellation; on other
-platforms only the direct helper process is owned.
-
-The concurrency limit applies to one resolved identity inside one rstream
-process, including its TLS config clones. Multiple contexts or applications
-sharing one HSM may need serialization in the vendor helper/driver.
-
-To rotate, enroll the replacement certificate, update the configured pin, and
-restart/reload the application identity explicitly. Reading the new certificate
-never approves it automatically. Measure process startup, signing latency, and
-reconnection cost on the target device.
+Implement hardware and vendor-backed helpers using the
+[external signer protocol](../internal/mtlsexec/README.md). Enroll each
+replacement certificate before switching the local identity.
 
 ## Compatibility and example
 
@@ -254,25 +151,10 @@ The rstream FIPS distribution rejects this backend before execution: an
 arbitrary external signer is outside its reviewed cryptographic boundary.
 See [the FIPS profile](017-fips-140-3-profile.md).
 
-[The example helper](../examples/mtls-exec-helper) is a standalone Go program
-using a software PEM key for development and protocol testing. Build it with
-`go build -modfile=out/ice-patch/go.mod -o /absolute/path/mtls-exec-helper ./examples/mtls-exec-helper`, then
-configure arguments `["--cert", "/path/client.pem", "--key",
-"/path/client-key.pem", "--message-only"]`. It is not a hardware security
-implementation. Replace key access/signing with the vendor API in a device
-adapter; no vendor code belongs in rstream.
-
-## Validate an integration
-
-Run from the repository root after [source preparation](001-building-from-source.md).
-
-`go test -modfile=out/ice-patch/go.mod ./internal/mtlsexec ./config ./cmd/rstream/...` covers the protocol,
-real TLS 1.2/1.3 and QUIC handshakes, all supported key families, cancellation,
-process cleanup, and CLI/configuration propagation. Run `go test -modfile=out/ice-patch/go.mod -race ./...`
-for the complete concurrency suite and `make fips-test` for profile rejection.
-
-Measure launch/signature cost on the target device; it depends on the helper and
-HSM. `go test -modfile=out/ice-patch/go.mod ./internal/mtlsexec -run '^$' -bench ExecMessageSigning` measures a
-software P-521 signing operation including subprocess startup and local
-verification. Hardware qualification still requires the vendor implementation,
-its device permissions and its actual enrolled certificate.
+Build the [example helper](../examples/mtls-exec-helper) with `make mtls-exec-helper`.
+It reads a PEM key and certificate for local integration. Point the external
+signer configuration at the resulting binary under `out/examples/`, with
+arguments `["--cert", "/path/client.pem", "--key", "/path/client-key.pem", "--message-only"]`.
+For a hardware-backed integration, implement signing through the device or
+vendor API. Validate it against the enrolled certificate and measure signing
+and reconnect latency on the target device.

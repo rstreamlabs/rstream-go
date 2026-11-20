@@ -107,6 +107,9 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 		return fmt.Errorf("tunnel %q not found or not published", name)
 	}
 	// Dial the tunnel using rstream dialer
+	// Keep the inner QUIC packets within the rstream datagram transport.
+	quicCfg.InitialPacketSize = 1200
+	quicCfg.DisablePathMTUDiscovery = true
 	raddr := rstream.Addr{IdOrName: name}
 	packetConn, err := client.PacketDial(ctx, raddr)
 	if err != nil {

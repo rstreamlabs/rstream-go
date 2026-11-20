@@ -90,6 +90,10 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 		url = rstream.StringPtr("https://" + name + "/webtransport")
 		os.Setenv("QUIC_GO_DISABLE_RECEIVE_BUFFER_WARNING", "true")
 		dialer.DialAddr = func(ctx context.Context, addr string, tlsCfg *tls.Config, cfg *quic.Config) (*quic.Conn, error) {
+			// Keep the inner QUIC packets within the rstream datagram transport.
+			cfg = cfg.Clone()
+			cfg.InitialPacketSize = 1200
+			cfg.DisablePathMTUDiscovery = true
 			raddr := rstream.Addr{IdOrName: addr}
 			conn, err := client.PacketDial(ctx, raddr)
 			if err != nil {

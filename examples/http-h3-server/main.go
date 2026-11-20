@@ -25,6 +25,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
@@ -99,6 +100,10 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	server := &http3.Server{
 		Handler:   http.HandlerFunc(handler),
 		TLSConfig: tlsCfg,
+		QUICConfig: &quic.Config{
+			InitialPacketSize:       1200,
+			DisablePathMTUDiscovery: true,
+		},
 	}
 	errCh := make(chan error, 1)
 	go func() {

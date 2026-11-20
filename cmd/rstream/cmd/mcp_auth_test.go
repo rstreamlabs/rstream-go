@@ -140,6 +140,10 @@ func TestMCPRuntimeStatusRequiresTokenToBeReady(t *testing.T) {
 	if !strings.Contains(statusText, `"ready": false`) || !strings.Contains(statusText, `"needs_login": true`) || !strings.Contains(statusText, `"has_token": false`) || !strings.Contains(statusText, `"suggested_next_tool": "rstream_auth_start"`) {
 		t.Fatalf("unexpected clean runtime status: %s", statusText)
 	}
+	if !strings.Contains(statusText, "Lightweight WebTTY can use a private bytestream on CE.") ||
+		!strings.Contains(statusText, "Registered servers, hosted recordings and workspace-managed WebTTY require a managed runtime.") {
+		t.Fatalf("runtime status missing CE WebTTY boundaries: %s", statusText)
+	}
 }
 
 func TestMCPAuthStartCanRequestExplicitPermissions(t *testing.T) {

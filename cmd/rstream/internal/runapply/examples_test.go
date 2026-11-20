@@ -17,11 +17,11 @@ func TestDocumentedRunApplyExamples(t *testing.T) {
 	t.Setenv("PROXY_USER", "fixture")
 	t.Setenv("PROXY_PASS", "synthetic-proxy-password")
 	root := filepath.Join("..", "..", "..", "..")
-	guides, err := filepath.Glob(filepath.Join(root, "docs", "*-cmd-run.md"))
+	guides, err := filepath.Glob(filepath.Join(root, "docs", "*-declarative-tunnels.md"))
 	if err != nil || len(guides) != 1 {
 		t.Fatalf("find command runner guide: %v, %v", guides, err)
 	}
-	for _, path := range []string{filepath.Join(root, "examples", "run-yaml", "tunnels.yaml"), filepath.Join(root, "examples", "run-yaml", "README.md"), guides[0]} {
+	for _, path := range []string{filepath.Join(root, "examples", "run-yaml", "tunnels.yaml"), guides[0]} {
 		t.Run(filepath.Base(filepath.Dir(path))+"/"+filepath.Base(path), func(t *testing.T) {
 			data, err := os.ReadFile(path)
 			if err != nil {
