@@ -31,7 +31,7 @@ From the checkout root, build the CLI.
 
 ```sh
 make rstream
-F
+```
 
 In a fresh checkout, the following check locates the binary and prints its version.
 
