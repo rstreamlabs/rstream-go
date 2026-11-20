@@ -154,10 +154,12 @@ and dependency graph satisfy the profile.
 
 ## Verify an artifact
 
-Run `rstream --version` with the FIPS binary. Its output identifies the profile and
-the exact module, QUIC and WebTransport versions.
+On Linux, run the binary by its path so the check uses the intended
+artifact. For example, run `./out/fips/linux/x86_64/rstream --version` from
+the checkout, or `./rstream --version` from the extracted release folder.
+Expect the FIPS profile along with the module, QUIC and WebTransport versions.
 
-Build metadata provides an independent artifact check:
+On any build host, inspect the build metadata:
 
 ```bash
 go version -m out/fips/linux/x86_64/rstream

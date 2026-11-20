@@ -116,7 +116,8 @@ authorized API credential.
 
 | Property                   | Use                                                                                              |
 | -------------------------- | ------------------------------------------------------------------------------------------------ |
-| `Hostname` in the response | Public hostname assigned or accepted by the engine.                                              |
+| `TunnelProperties.Hostname` in a create request | Request a stable or verified custom hostname. The CLI option is `--host`. |
+| `Hostname` in the response | Public hostname assigned or accepted by the Engine. |
 | `Port` in the response     | Public forwarding port. A create request can select a reserved TCP port.                         |
 | Requested stable hostname  | `<slug>-<project-endpoint>.t.<cluster-domain>` on the owning engine.                             |
 | Requested custom domain    | A domain registered and authorized for the project. Its DNS and certificate setup must be ready. |

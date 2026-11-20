@@ -12,28 +12,10 @@
 
 ## Apply YAML or discover Docker services
 
-From the repository root, start the upstream in the [YAML example](../examples/run-yaml/README.md)
-on port 8080. Use a context that permits published HTTP tunnels. If your project
-requires authorization on published HTTP, set a compatible access policy in the
-YAML before applying it.
-
-```sh
-rstream -v run --apply ./examples/run-yaml/tunnels.yaml
-```
-
-Request the printed forwarding URL while the command runs. The upstream
-returns JSON describing the request. For token authentication, use a
-[scoped caller token](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication)
-and confirm that an anonymous request is refused. Stop with Ctrl+C.
-Add `--watch` when the runner should reconcile
-changes to the file. For container discovery, use the
-[Docker example](../examples/run-docker/README.md), which starts an upstream
-service with matching labels. Use the disposable upstream in that example.
-For a deployed service that requires edge access checks, configure HTTP token
-authentication before publication. YAML uses `tunnel.http.auth.token: true`.
-Docker uses `rstream.tunnel.<name>.http.auth.token: "true"`.
-
-## YAML schema
+Start or reuse the [loopback service](002-cli-workflow.md#start-the-local-service)
+on port 8080. The example needs a context that permits published HTTP.
+Save the configuration as `tunnels.yaml` in the terminal where you run
+the CLI. Keep that file outside the demo directory the HTTP server serves.
 
 ```yaml
 version: 1
@@ -49,6 +31,25 @@ tunnels:
       labels:
         app: web
 ```
+
+If your project requires HTTP caller authentication, set its policy
+before applying the file. For token authentication, add `auth: { token: true }`
+under `tunnel.http`.
+
+```sh
+rstream run --apply ./tunnels.yaml
+```
+
+Open the forwarding URL while the runner is active. Expect
+`Hello from rstream` from the loopback demo. With token authentication,
+[verify a scoped caller token and anonymous denial](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication).
+Stop the runner with Ctrl+C. Add `--watch` when it should reconcile edits
+to the YAML file.
+
+For Docker discovery, use the complete [Compose example](../examples/run-docker/README.md).
+Its containers declare the upstream and access policy through labels.
+
+## YAML schema
 
 The runner expands environment variables before decoding the YAML. Use variables such as `${RSTREAM_TOKEN}` for scalar values.
 

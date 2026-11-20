@@ -13,7 +13,7 @@ From the repository root, start the upstream service:
 go run ./cmd/whoami --listen 127.0.0.1:8080
 ```
 
-In a second terminal, apply the bundled [tunnels.yaml](tunnels.yaml):
+In a second terminal, apply the bundled [tunnels.yaml](tunnels.yaml) and watch for updates.
 
 ```sh
 rstream -v run --apply examples/run-yaml/tunnels.yaml --watch
@@ -22,7 +22,7 @@ rstream -v run --apply examples/run-yaml/tunnels.yaml --watch
 Request the printed forwarding URL to see the JSON description of your
 request. When your project requires HTTP token authentication, set
 `tunnel.http.auth.token: true` before applying the file and
-[verify it with a scoped caller token](../../docs/007-declarative-tunnels.md#apply-yaml-or-discover-docker-services).
+[verify it with a scoped caller token](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication).
 Stop both processes with Ctrl+C. The
 [configuration guide](../../docs/007-declarative-tunnels.md#yaml-schema)
 covers the remaining YAML fields.

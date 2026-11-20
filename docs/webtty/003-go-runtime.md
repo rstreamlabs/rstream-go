@@ -90,7 +90,7 @@ ID (`ServerID`). Use its `Host` and `ExecPath` to construct the published `wss:/
 Select a server with a published WebSocket endpoint for this example.
 
 Set `terminalToken` to a credential that can open the published terminal,
-for example a [token scoped to that tunnel](https://rstream.io/docs/security/fine-grained-tokens#mint-a-token-for-one-published-tunnel).
+for example a [token scoped to that tunnel](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication).
 For Engine inventory, grant `tunnels.resources.read-only`. For inspecting
 the execution and joining as a spectator, grant `webtty.sessions.read-only`
 for that server. Control requires `webtty.sessions.read-write`. An operator

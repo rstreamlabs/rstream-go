@@ -47,13 +47,18 @@ by that forwarder with `--tlsv1.3 --tls-max 1.3`, then with
 and service unchanged. The first request succeeds, and the second fails
 during TLS negotiation. Stop the forwarder and demo service when finished.
 
-Use this mode for a service whose TLS endpoint belongs at the Engine.
-For an end-to-end TLS session, use `--tls-mode passthrough` when project
-policy permits it. The upstream then presents the public certificate.
+To relay an end-to-end TLS session, use `--tls-mode passthrough` when the
+project permits it. Forward to a service that already speaks TLS and can
+present a certificate for the public hostname. The loopback HTTP server
+above serves cleartext and works with termination at the edge.
 
 ## Client certificate authentication
 
-When `mtls_auth=true`, the edge requires client certificate authentication for the published tunnel. Certificate admission is configured through mTLS credentials. mTLS requires TLS termination at the edge.
+For an edge-terminated TLS tunnel on a deployment with published mTLS,
+set `--mtls` in the CLI or `TunnelProperties.MTLSAuth` in Go. Enroll the
+caller's certificate and scope it to the tunnel. Verify an admitted
+certificate and refusal without one using
+[published tunnel access](https://rstream.io/docs/security/mtls#published-tunnel-access).
 
 ## Upstream encryption
 
@@ -129,7 +134,7 @@ both the tunnel minimum and the project policy.
 
 Project post-quantum (PQ) key exchange and Encrypted Client Hello (ECH) settings
 can narrow the allowed connections. For the equivalent TLS and QUIC behavior,
-see [project transport compatibility](https://rstream.io/docs/security/access-policies#transport-compatibility).
+see [project transport policies](https://rstream.io/docs/security/access-policies).
 
 | Project setting        | Published DTLS behavior                                          |
 | ---------------------- | ---------------------------------------------------------------- |

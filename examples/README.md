@@ -18,8 +18,8 @@ complete catalog. On Windows, [prepare the source checkout](../docs/001-building
 then build the pair in PowerShell.
 
 ```powershell
-go build -modfile=out/ice-patch/go.mod -o out/examples/http-h1-server.exe ./examples/http-h1-server
-go build -modfile=out/ice-patch/go.mod -o out/examples/http-h1-client.exe ./examples/http-h1-client
+go build '-modfile=out/ice-patch/go.mod' -o out/examples/http-h1-server.exe ./examples/http-h1-server
+go build '-modfile=out/ice-patch/go.mod' -o out/examples/http-h1-client.exe ./examples/http-h1-client
 ```
 
 Use `.\out\examples\http-h1-server.exe` and

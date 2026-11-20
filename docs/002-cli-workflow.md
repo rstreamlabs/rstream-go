@@ -33,7 +33,9 @@ The CLI saves the choice as its default context. Go programs that use
 
 These commands use a [working default context](#connect-the-cli), Python 3
 and curl. For the independent Compose configuration, use its native CLI
-recipe for both forwarding and verification. The public address is reachable from the Internet. If your service or project
+recipe for both forwarding and verification. A hosted published address is
+reachable from the Internet. A self-hosted address follows the reachability
+and access policy of its Engine. If your service or project
 requires caller authentication, configure the required proof first. For
 token authentication on a compatible managed project, add `--token-auth`
 and [verify a scoped caller token](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication).
@@ -143,7 +145,10 @@ not inherit the workstation's account token. Replace 'engine.example.com:443' wi
 
 ### Authenticate an agent with mTLS
 
-Enroll the public certificate with the project and grant its Engine permissions before using it. The shared connection config can contain:
+Use a managed deployment that supports agent mTLS.
+[Create a client certificate credential](https://rstream.io/docs/security/mtls#client-certificate-credentials)
+with the required Engine permissions and project scope. Keep the private
+key on the agent host. The shared connection config can contain:
 
 ```yaml
 contexts:
