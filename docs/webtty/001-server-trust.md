@@ -199,6 +199,45 @@ Registered servers default to login mode. Choose an existing account with
 [save the runtime configuration](000-server-configuration.md#load-a-daemon-configuration).
 Once the server is online, [inspect its sessions](002-session-operations.md#inspect-managed-sessions).
 
+### Use explicit keys with a registered server
+
+On the runtime host with its project selected, create and enroll a server
+using explicit keys.
+
+```sh
+rstream webtty server create prod-shell --encryption-policy explicit_key --enroll
+```
+
+Substitute the returned ID to read the public endpoint identity from
+the enrollment's identity file.
+
+```sh
+server_id='my-server-id'
+rstream webtty identity show \
+  --identity-file "$HOME/.rstream/webtty/identities/$server_id.identity.json" \
+  --endpoint-identity
+```
+
+Use the [operator's public identity](#require-end-to-end-terminal-encryption)
+to authorize that device on the runtime host. The operator pins the
+registered server identity in its own known-server store.
+
+```sh
+rstream webtty authorized-client add operator-device \
+  --server-id "$server_id" --key '<operator-public-endpoint-identity>'
+rstream webtty server --server-id "$server_id" --login-user 'my-local-username'
+```
+
+Use an existing account on the server host for `--login-user`. On the
+operator device, pin the public endpoint identity and verify a
+command after the server is online.
+
+```sh
+rstream webtty known-server add prod-shell \
+  --key '<server-public-endpoint-identity>' --client-identity operator-device
+rstream webtty exec --url rstrm://prod-shell --e2e -- whoami
+```
+
 ## Local trust files
 
 WebTTY files live under the WebTTY subtree, separate from workspace-managed

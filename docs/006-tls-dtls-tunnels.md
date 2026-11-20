@@ -38,14 +38,14 @@ curl -fsS --http1.1 'https://tls-demo.example.com:443/'
 
 The client verifies the certificate and returns `Hello from rstream`. For a
 private CA, pass its certificate with `--cacert /path/to/ca.pem`.
-Stop the tunnel and the demo server with Ctrl+C.
 
 To check a TLS 1.3 minimum, use a curl build that supports TLS 1.3.
-Restart the forwarder with `--tls-min-version tls1.3`. Repeat the same curl
-request with `--tlsv1.3 --tls-max 1.3`, then with
+Keep the demo service running. Restart only the forwarder with
+`--tls-min-version tls1.3`. Repeat the curl request against the address printed
+by that forwarder with `--tlsv1.3 --tls-max 1.3`, then with
 `--tlsv1.2 --tls-max 1.2`. Keep the hostname, CA
 and service unchanged. The first request succeeds, and the second fails
-during TLS negotiation.
+during TLS negotiation. Stop the forwarder and demo service when finished.
 
 Use this mode for a service whose TLS endpoint belongs at the Engine.
 For an end-to-end TLS session, use `--tls-mode passthrough` when project
@@ -103,7 +103,8 @@ whose remaining cryptographic policies admit the sample client.
 ```
 
 While that server runs, use the same tunnel name and trust settings for both
-requests.
+requests. If the public endpoint uses a private CA, append
+`--ca-file /path/to/downstream-ca.pem` to both commands.
 
 ```sh
 ./out/examples/datagram-echo-client --publish --dtls-version 1.3

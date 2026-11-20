@@ -171,8 +171,10 @@ same workspace, project and server. Engine authorization for
 `RSTREAM_WEBTTY_CLIENT_CREDENTIAL_FILE` to the prepared files when
 exporting an encrypted recording.
 
-For FIPS, prepare the P-256-compatible identity, use a published
-WebTransport server and keep discovery enabled to obtain its endpoint.
+For FIPS, prepare a P-256-compatible identity and use a published
+WebTransport server. For certificate access, start it with
+`--transport webtransport --mtls`. Keep discovery enabled on the client so
+it can obtain the published endpoint.
 See the [FIPS compatibility guide](../017-fips-140-3-profile.md#supported-scope).
 
 ## Access files

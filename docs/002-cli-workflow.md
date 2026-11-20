@@ -10,7 +10,7 @@ response. Use an [installed CLI](000-installation.md) or
 | Where you connect | How to get a context |
 | --- | --- |
 | Hosted rstream | Sign in, then select a project as shown below. A Basic project can publish the HTTP example. |
-| Self-hosted Community Edition | Use a reachable Engine hostname, trusted certificate and locally signed JWT. See [CE agent context](https://rstream.io/docs/tunnels/self-hosted/deployment#agent-context). With local Compose, complete its container validation first. |
+| Self-hosted Community Edition | Use a reachable Engine hostname, trusted certificate and locally signed JWT. See [CE agent context](https://rstream.io/docs/tunnels/self-hosted/deployment#agent-context). For a Compose demo from the host, use the complete native CLI verification in the [CE setup guide](https://rstream.io/guides/self-host-rstream-engine-ce-with-docker-compose). |
 | An existing deployment | Use the context and credentials provided by your operator. See [identity options](#choose-an-identity) when provisioning a device or CI runner. |
 
 For hosted rstream, approve sign-in in your browser. For a workstation,
@@ -31,8 +31,9 @@ The CLI saves the choice as its default context. Go programs that use
 
 ## Publish a first HTTP service
 
-You need a [working CLI context](#connect-the-cli), Python 3 and curl. The
-public address is reachable from the Internet. If your service or project
+These commands use a [working default context](#connect-the-cli), Python 3
+and curl. For the independent Compose configuration, use its native CLI
+recipe for both forwarding and verification. The public address is reachable from the Internet. If your service or project
 requires caller authentication, configure the required proof first. For
 token authentication on a compatible managed project, add `--token-auth`
 and [verify a scoped caller token](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication).

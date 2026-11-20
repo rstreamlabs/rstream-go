@@ -86,13 +86,15 @@ on a managed deployment that supports detached execution. On the operator
 machine, create an Engine client from the selected project with
 `config.NewClientFromEnv()`. Use `ListTunnels` and
 `webtty.ParseServers(*tunnels)` to select the intended registered server by
-ID. Use its `Host` and `ExecPath` to construct the published `wss://` URL.
+ID (`ServerID`). Use its `Host` and `ExecPath` to construct the published `wss://` URL.
 Select a server with a published WebSocket endpoint for this example.
 
 Set `terminalToken` to a credential that can open the published terminal,
 for example a [token scoped to that tunnel](https://rstream.io/docs/security/fine-grained-tokens#mint-a-token-for-one-published-tunnel).
-The Engine client needs its own inventory and session permissions. An
-existing operator token can serve both roles if it has both sets of access.
+For Engine inventory, grant `tunnels.resources.read-only`. For inspecting
+the execution and joining as a spectator, grant `webtty.sessions.read-only`
+for that server. Control requires `webtty.sessions.read-write`. An operator
+token can serve both roles when it grants the published and Engine access.
 
 ```go
 cfg := webtty.SessionConfig{
@@ -156,7 +158,8 @@ termination requests. Detached execution supports WebSocket and
 WebTransport as advertised by the Engine; it cannot extend an existing Attach.
 
 Pass the saved ID to `Client.GetWebTTYSession` to check the process result.
-To rejoin a running command, use the
+For live attachment, use a command that stays running long enough to join.
+To rejoin that command, use the
 [participant stream reference](../../webtty/README.md#attach-to-a-live-managed-session).
 If the opening response was lost, check the session inventory before
 starting another command. Recording policy and permissions determine which

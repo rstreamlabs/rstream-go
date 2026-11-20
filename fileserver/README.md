@@ -88,17 +88,24 @@ func TestWebRTCExport(t *testing.T) {
 
 Put the test in a Go test file. Import `bytes`, `context`, `io`, `net/http`,
 `net/http/httptest`, `os`, `path/filepath`, `testing`, `time`, and the SDK's
-`fileserver` and `filesystem` packages. Run `go test -run TestWebRTCExport`.
+`fileserver` and `filesystem` packages. Run the test with the prepared
+module file.
+
+```sh
+go test -modfile=out/ice-patch/go.mod -run '^TestWebRTCExport$'
+```
 
 For peers across networks, configure `Config.RTC.ICE` to return fresh
-credentials. For example, an authenticated rstream client can fetch relay
-configuration for each new lease. Keep the parent client open until after the
+credentials. Create `projectClient` with `config.NewClientFromEnvOptions`
+and set `ClientEnvOptions.Context` to the project context named `contextName`.
+Use that same context in the callback. Keep the client open until after the
 file server closes.
 
 ```go
 fileConfig.RTC.ICE = func(ctx context.Context) ([]webrtc.ICEServer, error) {
 	relay, err := config.CreateTURNCredentialsFromEnv(ctx, config.TURNCredentialsEnvOptions{
-		Client: projectClient,
+		Client:  projectClient,
+		Context: contextName,
 	})
 	if err != nil {
 		return nil, err
