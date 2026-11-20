@@ -92,8 +92,6 @@ Keep changes small, explicit, and idiomatic.
 
 The wire schema lives in `pb/rstream.proto`. Check the resolved QUIC,
 WebTransport and MASQUE graph together when upgrading transport dependencies.
-The [ICE build procedure](tools/icepatch/README.md) explains how to use the
-prepared dependency graph for local builds and tests.
 
 For FIPS dependency changes, confirm the module certificate and operating
 environments, review the Security Policy and transport integration, and rerun

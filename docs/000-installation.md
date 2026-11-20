@@ -10,13 +10,12 @@ has its own build and verification steps.
 | macOS | [Homebrew and standalone installation](https://rstream.io/docs/getting-started/installation/macos) |
 | Windows | [WinGet and PowerShell installation](https://rstream.io/docs/getting-started/installation/windows) |
 | Container | [Docker setup](https://rstream.io/docs/getting-started/installation/docker) and the [Compose example](../examples/run-docker/README.md) |
-| Another supported Unix target | Select an available [release archive](https://rstream.io/docs/getting-started/installation/manual-downloads) or [build from source](001-building-from-source.md). |
+| Another supported Unix target | Select an available [release archive](https://rstream.io/docs/getting-started/installation/manual-downloads). |
 
 ## Verify the installed binary
 
-For a native installation, run the commands below. For a container, verify
-the image and select a container-reachable upstream in the
-[Docker setup guide](https://rstream.io/docs/getting-started/installation/docker).
+For a native installation, run the commands below. For a container, follow
+the Docker instructions above to verify the image and choose a reachable upstream.
 
 ```sh
 rstream --version

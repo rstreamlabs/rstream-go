@@ -42,17 +42,15 @@ Expect the username of the account running the server. This verifies the
 native stream, including when you published a public WebSocket endpoint.
 Use [the published access check](https://rstream.io/docs/webtty/quickstart#publish-through-rstream)
 to verify browser admission separately. On a server that
-supports a pseudoterminal, open a shell through the same context. Windows
-supports command execution through pipes. On Windows, use the command above.
+supports a pseudoterminal, open a shell through the same context. On Windows,
+use the one-shot command, which executes through pipes.
 
 ```sh
 rstream webtty client --url rstrm://shell
 ```
 
 Exit the shell with `exit`, then stop the server with Ctrl+C. If your token permits
-inventory, run `rstream webtty list` to verify
-that the lightweight server is gone. See [browser access](https://rstream.io/docs/webtty/quickstart#publish-through-rstream)
-for the published endpoint.
+inventory, run `rstream webtty list` to verify that the server is gone.
 
 ## Configure and operate a server
 

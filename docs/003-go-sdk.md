@@ -116,7 +116,7 @@ checks the published address. In curl, use `--cacert /path/to/engine-ca.pem`
 with the printed HTTPS hostname. The CLI context trusts the Engine for the
 SDK connection.
 
-The runnable [HTTP server example](../examples/README.md#serve-http) adds signal handling and graceful shutdown. The [example catalog](../examples/README.md) explains which programs to pair for private connections, other protocols and API integrations.
+The runnable [HTTP server example](../examples/README.md#serve-http) adds signal handling and graceful shutdown.
 
 ## Run a private client and server
 
@@ -164,19 +164,18 @@ The context passed to `Client.Connect` bounds connection establishment.
 Use `ControlChannel.Done` and `Err` to detect when the channel finishes.
 The application owns reconnection and any replacement tunnels. During
 shutdown, drain the HTTP server or connection workers before releasing
-tunnels and the SDK client. The [transport reference](020-agent-transport.md)
-covers caller-owned transports.
+tunnels and the SDK client.
 
 ## Choose the next capability
 
 | Requirement                                                             | Reference or sample                                                                                                 |
 | ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| TLS/QUIC client transport, proxy, private CA, DNS and interface binding | [Transport configuration](020-agent-transport.md).                                                                        |
+| TLS/QUIC client transport, proxy, private CA, DNS and interface binding | [Transport configuration](020-agent-transport.md) covers setup and ownership.                                                                        |
 | HTTP/1.1, h2c, HTTP/3, published TCP/TLS/DTLS/QUIC or private access    | [Tunnel configuration](004-tunnel-configuration.md), [example catalog](../examples/README.md).                      |
 | WebSocket or WebTransport, CONNECT-UDP/IP                               | [Extended CONNECT](014-extended-connect.md); application protocol code stays in its library.                        |
 | Inventory, watch and session APIs with token or certificate                  | [Engine API mTLS/TURN](015-engine-mtls-turn.md). Control plane administration still needs its own authorized token. |
 | Serve files or manage remote terminals | [Embed file sharing](../fileserver/README.md) and [WebTTY in Go](webtty/003-go-runtime.md). |
-| Restricted cryptographic distribution                                   | [FIPS profile](017-fips-140-3-profile.md); its exclusions are intentional.                                          |
+| Restricted cryptographic distribution                                   | [FIPS profile](017-fips-140-3-profile.md).                                                                              |
 
 See the [Go API reference](https://pkg.go.dev/github.com/rstreamlabs/rstream-go)
 for exported types and methods. To diagnose an application connection, use the [Go diagnostic API](018-doctor-api.md). For CLI and Engine checks, see [Troubleshooting](https://rstream.io/docs/support/troubleshooting).

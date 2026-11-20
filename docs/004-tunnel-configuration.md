@@ -17,8 +17,6 @@ access. Agent credentials authenticate the process that creates the tunnel
 and any private rstream caller. Published services can separately require
 [HTTP authentication](005-http-tunnels.md#http-authentication) or
 [TLS client certificates](006-tls-dtls-tunnels.md#client-certificate-authentication).
-The [Go examples](../examples/README.md#connect-privately) show a private
-tunnel and its dialer.
 
 These properties create a private bytestream; use them with an established
 control channel:
