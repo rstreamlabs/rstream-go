@@ -395,10 +395,13 @@ jobs:
 
   publish-npm:
     name: publish npm CLI package
-    # The npm tarball is verified directly against the immutable release
-    # candidate. It must remain promotable when an unrelated package channel
-    # is already populated or temporarily unavailable.
-    needs: prepare
+    needs:
+      - prepare
+      - publish-package-api
+    if: >-
+      !cancelled() && needs.prepare.result == 'success' &&
+      (needs.publish-package-api.result == 'success' ||
+       (github.event_name == 'workflow_dispatch' && inputs.npm_only && needs.publish-package-api.result == 'skipped'))
     permissions:
       contents: read
       id-token: write
@@ -417,6 +420,10 @@ jobs:
       - uses: ./.promotion-policy/.github/actions/restore-release-candidate
         with:
           version: ${{ needs.prepare.outputs.version }}
+      - name: Verify the native downloads selected by the npm installer
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: ./.promotion-policy/.github/scripts/publish-package-api.sh --verify-npm "$PACKAGE_NAME" "$CHANNEL" "$VERSION" "$RSTREAM_URL"
       - name: Check npm release source
         env:
           RELEASE_REPOSITORY: ${{ secrets.RELEASE_NPM_REPOSITORY }}

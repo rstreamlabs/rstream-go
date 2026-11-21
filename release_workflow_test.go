@@ -245,6 +245,11 @@ func TestStableReleasePromotionIsApprovedAndOrdered(t *testing.T) {
 		t.Fatal("MCP publication does not have its scoped OIDC permission")
 	}
 	npmJob := workflow.Jobs["publish-npm"]
+	if !slices.Contains(npmJob.Needs, "publish-package-api") ||
+		!strings.Contains(npmJob.If, "needs.publish-package-api.result == 'success'") ||
+		!strings.Contains(npmJob.If, "inputs.npm_only") {
+		t.Fatal("npm promotion must wait for native packages and support npm-only recovery")
+	}
 	if npmJob.Permissions["contents"] != "read" || npmJob.Permissions["id-token"] != "write" {
 		t.Fatalf("npm publication does not have scoped OIDC permissions: %#v", npmJob.Permissions)
 	}

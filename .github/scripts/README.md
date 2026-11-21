@@ -9,7 +9,7 @@ for a stable tag. [Promote stable releases](../workflows/promote-release.yml)
 verifies the successful candidate run, tag, commit and retained checksums before
 requesting the `stable-release` approval. To rerun promotion, use the candidate
 run ID. For an npm-only recovery, select `npm_only` with that same candidate.
-An existing package version must match the retained archive.
+The full promotion verifies the native package API downloads before publishing the npm wrapper. An npm-only recovery checks the public downloads selected by the installer against the retained native archives. An existing package version must match the retained archive.
 
 When a client changes the wire protocol in `pb/rstream.proto`, verify against the
 Engine version it requires. Release the Engine first if it must understand the

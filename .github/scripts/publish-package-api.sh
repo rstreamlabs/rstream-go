@@ -4,14 +4,20 @@ set -euo pipefail
 
 if [[ $# -ne 5 ]]; then
   echo "usage: $0 <package> <channel> <version> <base-url> <token>" >&2
+  echo "       $0 --verify-npm <package> <channel> <version> <base-url>" >&2
   exit 1
 fi
 
+verify_npm=false
+if [[ $1 == --verify-npm ]]; then
+  verify_npm=true
+  shift
+fi
 package_name=$1
 channel=$2
 version=$3
 base_url=${4%/}
-token=$5
+token=${5:-}
 release_root="out/cmd/${package_name}/${channel}/${version}"
 retry_flags=(--retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 30)
 
@@ -113,12 +119,38 @@ if ((${#archives[@]} == 0)); then
   exit 1
 fi
 
+verified=0
 for archive in "${archives[@]}"; do
   relative=${archive#"${release_root}/"}
   os=${relative%%/*}
   remainder=${relative#*/}
   arch=${remainder%%/*}
   filename=${archive##*/}
+  if [[ $verify_npm == true ]]; then
+    # The npm installer selects baseline CPU architectures and uses the first
+    # plain-format result without a filename filter.
+    case "$arch" in
+      ppc64|mips|mipsle|armv6|arm64|x86_64|x86_i686) ;;
+      *) continue ;;
+    esac
+    expected_suffix=tar.gz
+    if [[ $os == windows ]]; then expected_suffix=zip; fi
+    if [[ $filename != "${package_name}-${version}-${os}-${arch}.${expected_suffix}" ]]; then
+      continue
+    fi
+    selection=$(curl --fail --silent --show-error "${retry_flags[@]}" --get \
+      --data-urlencode "name=${package_name}" --data-urlencode "version=${version}" \
+      --data-urlencode "channel=${channel}" --data-urlencode "os=${os}" \
+      --data-urlencode "arch=${arch}" --data-urlencode "format=plain" "${base_url}/api/packages")
+    package_id=$(awk -F: '/[^[:space:]]/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $1); print $1; exit}' <<< "$selection")
+    if [[ ! $package_id =~ ^[A-Za-z0-9_-]+$ ]]; then
+      echo "npm installer could not resolve ${filename}" >&2
+      exit 1
+    fi
+    verify_download "$package_id" "$(shasum -a 256 "$archive" | awk '{print $1}')"
+    verified=$((verified + 1))
+    continue
+  fi
   checksum=$(shasum -a 256 "$archive" | awk '{print $1}')
   response=$(query_package "$os" "$arch" "$filename")
   total=$(jq -r '.total' <<<"$response")
@@ -170,3 +202,7 @@ for archive in "${archives[@]}"; do
     "$package_name" "$package_id" "$version" "$channel" "$os" "$arch" "$filename" "$checksum" \
     >"${archive}.info"
 done
+if [[ $verify_npm == true && $verified == 0 ]]; then
+  echo "no npm-installable native archives in ${release_root}" >&2
+  exit 1
+fi
