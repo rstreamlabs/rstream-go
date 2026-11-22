@@ -1,42 +1,28 @@
-# Run Apply Example
+# Forward a service from YAML
 
-This example runs `rstream -v run --apply` on the host and forwards to a local `whoami` service.
+Use this example to define a tunnel in a file and apply it with the CLI.
 
-## Prerequisites
+| Prerequisite | Purpose |
+| --- | --- |
+| Go and the rstream CLI | Go runs the small `whoami` service. Install the CLI or [build it from this checkout](../../docs/001-building-from-source.md). |
+| An authorized rstream context | Select a project that permits a published HTTP tunnel. See the [CLI workflow](../../docs/002-cli-workflow.md). |
 
-- A configured rstream context (default context), or set `RSTREAM_ENGINE` with either `RSTREAM_AUTHENTICATION_TOKEN` or the `RSTREAM_MTLS_CERT_FILE` / `RSTREAM_MTLS_KEY_FILE` pair in your shell.
+From the repository root, start the upstream service:
 
-## Run
-
-Run these commands from the repository root after [building the CLI](../../docs/001-building-from-source.md). Use `./out/rstream` instead of `rstream` when testing that checkout.
-
-Terminal 1 (whoami):
-
-```bash
-go run -modfile=out/ice-patch/go.mod ./cmd/whoami --listen :8080
+```sh
+go run ./cmd/whoami --listen 127.0.0.1:8080
 ```
 
-Terminal 2 (rstream -v run):
+In a second terminal, apply the bundled [tunnels.yaml](tunnels.yaml) and watch for updates.
 
-```bash
+```sh
 rstream -v run --apply examples/run-yaml/tunnels.yaml --watch
 ```
 
-## tunnels.yaml
-
-```yaml
-version: 1
-tunnels:
-  - name: "whoami"
-    forward: "127.0.0.1:8080"
-    tunnel:
-      publish: true
-      protocol: "http"
-      upstreamTLS: false
-      http:
-        version: "http/1.1"
-      labels:
-        app: "whoami"
-```
-
-Request the printed forwarding URL with `curl -fsS https://<printed-host>/`; expect the whoami service response. Stop both foreground processes with Ctrl+C.
+Request the printed forwarding URL to see the JSON description of your
+request. When your project requires HTTP token authentication, set
+`tunnel.http.auth.token: true` before applying the file and
+[verify it with a scoped caller token](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication).
+Stop both processes with Ctrl+C. The
+[configuration guide](../../docs/007-declarative-tunnels.md#yaml-schema)
+covers the remaining YAML fields.

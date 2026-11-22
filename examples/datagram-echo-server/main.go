@@ -43,7 +43,13 @@ func handleConnection(conn net.PacketConn) {
 	}
 }
 
-func run(ctx context.Context, client *rstream.Client, publish bool) error {
+func run(ctx context.Context, publish bool, minVersion string) error {
+	client, err := config.NewClientFromEnv()
+	if err != nil {
+		return fmt.Errorf("load rstream configuration: %w", err)
+	}
+	defer client.Close()
+
 	// Open control channel
 	ctrl, err := client.Connect(ctx, nil)
 	if err != nil {
@@ -58,6 +64,9 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	}
 	if publish {
 		tunnelProps.Protocol = rstream.ProtocolPtr(rstream.ProtocolDTLS)
+		if minVersion != "" {
+			tunnelProps.TLSMinVersion = rstream.StringPtr(minVersion)
+		}
 	}
 	tunnel, err := ctrl.CreateTunnel(ctx, tunnelProps)
 	if err != nil {
@@ -80,6 +89,9 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 	for {
 		conn, _, err := packetListener.Accept()
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
 			return fmt.Errorf("listener accept error: %w", err)
 		}
 		go handleConnection(conn)
@@ -88,21 +100,20 @@ func run(ctx context.Context, client *rstream.Client, publish bool) error {
 
 func main() {
 	publish := flag.Bool("publish", false, "publish the tunnel")
+	minVersion := flag.String("dtls-min-version", "", "minimum version tls1.2 or tls1.3; requires --publish")
 	flag.Parse()
-	client, err := config.NewClientFromEnv()
-	if err != nil {
-		log.Fatalf("Configuration error: %v", err)
+	switch *minVersion {
+	case "tls1.2", "tls1.3":
+		if !*publish {
+			log.Fatal("--dtls-min-version requires --publish")
+		}
+	case "":
+	default:
+		log.Fatal("--dtls-min-version must be tls1.2 or tls1.3")
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sigChan
-		log.Println("Got signal, exiting...")
-		cancel()
-	}()
-	if err := run(ctx, client, *publish); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := run(ctx, *publish, *minVersion); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }

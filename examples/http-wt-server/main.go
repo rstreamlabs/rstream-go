@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/webtransport-go"
 	"github.com/rstreamlabs/rstream-go"
@@ -116,6 +117,10 @@ func run(ctx context.Context, client *rstream.Client, publish bool, publishedPro
 			Handler:         mux,
 			TLSConfig:       tlsCfg,
 			EnableDatagrams: true,
+			QUICConfig: &quic.Config{
+				InitialPacketSize:       1200,
+				DisablePathMTUDiscovery: true,
+			},
 		},
 	}
 	webtransport.ConfigureHTTP3Server(server.H3)

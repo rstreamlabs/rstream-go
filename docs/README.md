@@ -1,52 +1,50 @@
-# Go SDK and CLI guides
+# Go SDK and CLI documentation
 
-Choose the artifact and owner of the connection first. A released CLI forwards an existing process; an embedded SDK makes connections part of your application; a source checkout lets you build or change either.
+Use these guides to configure the Go client and CLI, serve traffic through a
+tunnel, or work on this checkout. For a deployment or language choice, start
+with [editions and plans](https://rstream.io/docs/support/editions) or
+[choosing an SDK](https://rstream.io/sdks).
 
-| Path                | Start here                                                                        | First result                                                                     |
-| ------------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Use a released CLI  | [000 Installation](000-installation.md) → [002 CLI workflow](002-cli-workflow.md) | Publish a known local HTTP response, verify its URL, stop the tunnel.            |
-| Build this checkout | [001 Build from source](001-building-from-source.md)                              | Prepare the verified dependency graph, compile a local CLI and inspect its help. |
-| Embed Go            | [003 Go SDK](003-go-sdk.md) → [runnable examples](../examples/README.md)          | Serve HTTP with `net.Listener` or dial a private service with `net.Conn`.        |
+## Get started
 
-The Go SDK is the reference implementation with the broadest rstream protocol coverage. Availability still depends on Engine version/edition, project policy and plan. A source checkout can contain additions that are not yet in a published package; choose the source-build path when evaluating those additions.
+| Task | Guide |
+| --- | --- |
+| Try an existing service with the CLI | [Install the CLI](000-installation.md), then [connect and publish a first HTTP service](002-cli-workflow.md#connect-the-cli). Use the [command map](002-cli-workflow.md#find-a-command-by-task) for other tasks. |
+| Compile this checkout | [Build from source](001-building-from-source.md) covers tools, build and verification. |
+| Embed rstream in Go | [Use the Go SDK](003-go-sdk.md) to serve HTTP or connect privately. |
+| Run matching server and client programs | The [Go examples](../examples/README.md) cover published HTTP, private access and specialized protocols. |
 
-## Connection and service configuration
+## Choose and configure a tunnel
 
-| Guide                                                   | What it explains                                                                 |
-| ------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| [004 Transport](004-transport.md)                       | Agent TLS/QUIC, proxy, DNS, interface binding and certificate verification.      |
-| [005 Tunnel configuration](005-tunnel-configuration.md) | Private/public access, transport versus protocol, routing, services and domains. |
-| [006 Declarative command runner](006-cmd-run.md)        | Apply YAML or reconcile trusted Docker labels with explicit identity selection.  |
-| [007 File sharing](007-file-sharing.md)                 | Browser/WebDAV shares, transfer limits and optional writes.                      |
-| [008 Filesystem WebRTC](008-filesystem-webrtc.md)       | Read-only peer transfers, authenticated signaling and HTTP fallback.             |
+| Guide | Decision |
+| --- | --- |
+| [Tunnel configuration](004-tunnel-configuration.md) | Choose published or private access, a service protocol and an address. |
+| [HTTP tunnels](005-http-tunnels.md) | Forward an HTTP service, select its upstream mode and configure access. |
+| [TLS and DTLS tunnels](006-tls-dtls-tunnels.md) | Choose where encryption terminates and verify a TLS service. |
+| [Declarative tunnels](007-declarative-tunnels.md) | Manage multiple tunnels from YAML or Docker labels. |
 
-## Operations and integration
+## Files, terminals and integrations
 
-| Guide                                      | What it explains                                                        |
-| ------------------------------------------ | ----------------------------------------------------------------------- |
-| [009 WebTTY](009-webtty.md)                | First remote command, server enrollment, OS identity, config and trust. |
-| [010 Webhooks](010-webhooks.md)            | Durable destinations versus local event forwarding.                     |
-| [011 MCP and Codex](011-mcp.md)            | Agent setup, local/hosted authority, remote exposure and cleanup.       |
-| [012 Interactive inventory](012-cli-ui.md) | UI context switching and opening a permitted terminal.                  |
+| Guide | Task |
+| --- | --- |
+| [File sharing](008-file-sharing.md) | Share a file or directory and limit access. |
+| [WebTTY](009-webtty.md) | Run a remote command, then configure terminal access and trust. |
+| [Webhooks](010-webhooks.md) | Choose live events or durable delivery and test a receiver. |
+| [MCP](011-mcp.md) | Connect an AI client and choose the appropriate authorization boundary. |
+| [Interactive inventory](012-cli-ui.md) | Inspect clients, tunnels and WebTTY servers in a terminal. |
 
-## Protocol, identity and maintenance reference
+## Advanced configuration and diagnosis
 
-| Guide                                                   | What it explains                                                 |
-| ------------------------------------------------------- | ---------------------------------------------------------------- |
-| [013 HTTP CONNECT](013-http-connect.md)                 | Authority-form TCP proxy requests and destination policy.        |
-| [014 Extended CONNECT](014-extended-connect.md)         | WebTransport and MASQUE application protocols.                   |
-| [015 Engine mTLS and TURN](015-engine-mtls-turn.md)     | API discovery, certificate reuse and relay credential renewal.   |
-| [016 External mTLS signer](016-external-mtls-signer.md) | A pinned machine identity using a local signing executable.      |
-| [017 FIPS profile](017-fips-140-3-profile.md)           | Separate artifact, cryptographic boundary and excluded features. |
-| [018 Diagnostic API](018-doctor-api.md)                 | Invoke the CLI's checks directly from Go.                        |
-| [019 CLI releases](019-cli-releases.md)                 | Maintainer integrity/promotion and package-source configuration. |
+| Guide | Task |
+| --- | --- |
+| [HTTP CONNECT](013-http-connect.md) and [Extended CONNECT](014-extended-connect.md) | Carry proxy requests, WebTransport or MASQUE through HTTP. |
+| [Engine API mTLS and TURN](015-engine-mtls-turn.md) | Use an enrolled identity for Engine HTTPS calls or obtain relay credentials. |
+| [External mTLS signers](016-external-mtls-signer.md) | Delegate an agent's private-key signing to a local helper. |
+| [FIPS profile](017-fips-140-3-profile.md) | Verify or build the restricted Go distribution. |
+| [Go diagnostic API](018-doctor-api.md) | Diagnose a connection in an application. Use [product troubleshooting](https://rstream.io/docs/support/troubleshooting) for the CLI. |
+| [Agent transport](020-agent-transport.md) | Select TLS or QUIC to the Engine, a proxy, DNS or a network interface. |
+| [Filesystem over WebRTC](021-filesystem-webrtc.md) | Choose a peer-to-peer backend for reading files. |
 
-## Focused references and SDK development
-
-| Guide                                         | Topic                                                                       |
-| --------------------------------------------- | --------------------------------------------------------------------------- |
-| [020 HTTP tunnels](020-http-tunnels.md)       | Upstream variants, TLS, HTTP authentication, CORS and CONNECT.              |
-| [021 TLS and DTLS](021-tls-dtls-tunnels.md)   | Termination, certificates and project cryptographic policy.                 |
-| [022 SDK engineering](022-sdk-engineering.md) | Go ownership, concurrency, cancellation, wire changes and regression tests. |
-
-[Contributing](../CONTRIBUTING.md), the [test guide](../test/README.md), [ICE build procedure](../tools/icepatch/README.md) and [roadmap](../roadmap/README.md) cover work on this repository. Runtime tests need their documented local fixtures; they do not supply a deployed service or credentials.
+[Contributing](../CONTRIBUTING.md) links to repository practices and the
+[test guide](../test/README.md). See [CLI releases](019-cli-releases.md) for
+release maintenance.

@@ -1,69 +1,56 @@
-# Webhooks
+# Receive live events and webhooks
 
-The Go SDK and CLI separate live events from durable delivery:
+Choose how the receiver needs to consume events. A live stream is useful
+while an operator, application or local test is connected. A project webhook
+delivers events to an HTTPS receiver and records attempts and retries.
 
-| Surface | Purpose |
+| Use | Interface |
 | --- | --- |
-| `rstream events` | Watch live engine events over SSE or WebSocket. |
-| Control plane webhook methods | Manage durable destinations, retries and delivery history. |
-| `rstream events --webhook` | Forward signed client/tunnel events to a local receiver during development. |
+| Inspect the current event stream | `rstream events --transport sse` or the SDK's `Client.Watch`. |
+| Test a local receiver with signed requests | `rstream events --webhook --forward-to`. |
+| Manage durable delivery | [Project webhooks](https://rstream.io/docs/integrations/webhooks#destinations) or the Control plane SDK methods below. |
 
-`rstream.Event` preserves canonical live-event metadata (`id`, `created_at`, `workspace_id`, `project_id`, `cluster_id`, and `user_id`) in addition to the event `type` and raw `object`. Control plane `ProjectEvent` responses use the durable API shape: `eventId`, `eventType`, `eventCategory`, `payload`, `createdAt`, and retention metadata.
+## Webhook-compatible local forwarding
+
+Start your receiver at `http://localhost:3000/api/rstream/webhook` and configure
+it to verify the [signature on the raw request body](https://rstream.io/docs/integrations/webhooks#signatures).
+Select a [CLI context](002-cli-workflow.md#connect-the-cli) that can watch project
+events. Give the CLI and receiver the same dedicated test secret.
+
+```sh
+rstream events --transport sse \
+  --webhook --webhook-secret "$RSTREAM_WEBHOOK_SECRET" \
+  --events tunnel.created,tunnel.deleted \
+  --forward-to http://localhost:3000/api/rstream/webhook
+```
+
+Set `RSTREAM_WEBHOOK_SECRET` to your test receiver's secret before running the
+command. If you omit `--webhook-secret`, configure the receiver with the
+temporary secret the CLI prints to stderr. In another terminal, create and
+stop a tunnel allowed by that project. The receiver should verify one request
+for each selected event. Stop the watcher with Ctrl+C.
+
+To inspect the signed body and headers without sending HTTP requests, replace
+`--forward-to` with `--include-webhook-headers`. Local signing supports
+`client.created`, `client.deleted`, `tunnel.created` and `tunnel.deleted`.
+Use a durable destination and a [compatible receiver](https://rstream.io/docs/integrations/webhooks)
+for WebTTY events.
+
+## Control plane methods in Go
+
+Use the authenticated Control plane client to manage a destination or inspect
+the lifecycle of a project event. `ListProjectEvents` returns retained
+`ProjectEvent` records. Delivery records track a destination's attempts,
+status and retry state.
 
 | Task | Control plane methods |
 | --- | --- |
 | Inspect project lifecycle events | `ListProjectEvents` |
 | Manage destinations | `ListProjectWebhooks`, `CreateProjectWebhook`, `UpdateProjectWebhook`, `DeleteProjectWebhook` |
-| Rotate receiver credentials | `RotateProjectWebhookSecret` |
+| Rotate a receiver secret | `RotateProjectWebhookSecret` |
 | Inspect delivery attempts | `ListProjectWebhookDeliveries`, `GetProjectWebhookDelivery` |
 
-`CreateProjectWebhook` and `UpdateProjectWebhook` accept
-`ProjectWebhookEndpointConfig` for HTTPS endpoint destinations. The SDK rejects
-unsupported destination types, non-HTTPS URLs, and URLs that embed credentials
-before opening a network request. `ProjectWebhook.Config` is kept as raw JSON so
-future destination-specific configs can be represented without changing the
-top-level response shape; use `DecodeEndpointConfig()` for current HTTP endpoint
-destinations.
-
-Webhook deliveries are distinct from lifecycle events. Delivery records include attempts, HTTP status, response time, response body, and retry state for one webhook destination.
-
-## Webhook-compatible local forwarding
-
-By default, `rstream events` emits the live watch event shape. Use `--webhook`
-when a local receiver should see the same request body and signed headers as a
-durable webhook delivery:
-
-```bash
-rstream events \
-  --webhook \
-  --events tunnel.created,tunnel.deleted \
-  --forward-to http://localhost:3000/api/rstream/webhook
-```
-
-When `--webhook` is enabled, the CLI filters out non-deliverable watch events,
-builds the canonical webhook JSON body, signs the raw body, and forwards the
-request with `rstream-signature`, `rstream-event-id`, `rstream-event-type`,
-`rstream-webhook-id`, and `rstream-delivery-id`. If `--webhook-secret` is not
-provided, the CLI generates a `whsec_...` secret and prints it to stderr. Use the
-same value in the receiving backend for local verification. Local forwarding can
-target `http://` receivers such as a Next.js development server, or `https://`
-receivers when testing a deployed backend.
-
-The local webhook catalog contains `client.created`, `client.deleted`,
-`tunnel.created` and `tunnel.deleted`. WebTTY events are filtered out in this
-mode. Use configured project destinations with a compatible receiver for those
-events; the [product guide](https://rstream.io/docs/integrations/webhooks#receiver-compatibility)
-describes parser support across SDKs. This restriction applies to local webhook
-conversion, not the ordinary live watch stream.
-
-The Go SDK exposes signing and event-conversion helpers; it does not provide a
-combined receiver signature verifier/parser. Verify signatures before acting on
-the body in application receivers.
-
-For stdout inspection, add `--include-webhook-headers`. The output becomes an
-envelope containing the generated headers and body. The envelope is for local
-debugging only; forwarded HTTP requests still use the real webhook request body.
-
-CLI forwarding is not a delivery backend. It does not create Control plane
-webhook destinations, persist delivery attempts, or retry after process exit.
-Use configured project webhooks for durable delivery history and retry behavior.
+Pass `ProjectWebhookEndpointConfig` to create or update an HTTPS destination
+and use `DecodeEndpointConfig()` to read that variant of a response. The Go
+SDK exposes signing and live-event conversion helpers. A Go receiver should
+verify the signature and parse the resulting payload separately.

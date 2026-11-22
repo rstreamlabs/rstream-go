@@ -16,7 +16,12 @@ system assessment.
 
 The upstream Go behavior and limitations are defined in [Go FIPS 140-3 compliance](https://go.dev/doc/security/fips140).
 
-## Product Claim and Delivery Evidence
+[Verify an artifact](#verify-an-artifact) if you already have a CLI binary.
+[Build the profile](#build) to produce the restricted binary from this
+checkout. Use [FIPS 140-3 Profiles](https://rstream.io/docs/security/fips-140-3)
+to select a deployment.
+
+## What the profile covers
 
 FIPS 140-3 levels 1 through 4 describe the assurance level of a validated
 cryptographic module. They are not graduated self-attestation levels for the
@@ -41,41 +46,17 @@ description and must follow the NIST logo requirements.
 
 ## Supported Scope
 
-The implemented phase-one through phase-three profile covers:
+| Area | Supported | Outside the profile |
+| --- | --- | --- |
+| Runtime and artifacts | Go 1.27 on Linux x86-64 and arm64. Static builds use `CGO_ENABLED=0`. | Other platforms and build profiles. |
+| Engine transport | Direct TLS and QUIC, TLS through supported TCP proxies in explicit TLS mode, or direct automatic QUIC selection with TLS fallback. The Engine connection uses TLS 1.3. | Proxied QUIC, ECH and custom transports whose cryptography cannot be established by the profile. |
+| Agent identity | Token admission and enrolled client certificates. | Executable mTLS signers. |
+| Service protocols | Private and published bytestreams with supported protocols, published QUIC and ordinary HTTP/3. | Generic datagrams, DTLS, TURN, WebSocket, CONNECT-UDP and CONNECT-IP. |
+| WebTTY | WebTransport, with optional authenticated end-to-end encryption. Explicit endpoint keys and Enterprise standalone workspace-managed sessions are supported. | Plain and WebSocket terminal transports, managed participant streams, the legacy X25519/HPKE suite and the filesystem sidecar. |
+| CLI events and file sharing | SSE events. | WebSocket events and `rstream files`. |
 
-- Go 1.27;
-- Linux x86-64 and arm64;
-- static binaries with `CGO_ENABLED=0`;
-- direct TLS transport and TLS through the supported TCP proxy paths;
-- direct QUIC transport, including automatic QUIC-first selection with TLS
-  fallback;
-- TLS 1.2 or later, with the current rstream engine path using TLS 1.3;
-- QUIC over TLS 1.3 with AES-GCM packet protection;
-- token admission and mTLS client admission;
-- private and published bytestream tunnels that do not select an excluded
-  protocol;
-- published QUIC tunnels and ordinary HTTP/3 tunnels;
-- WebTTY over HTTP/3/WebTransport, with transport encryption alone or authenticated application E2E;
-- explicit-key and EE standalone workspace-managed WebTTY clients and servers;
-- P-256 ECDH, HKDF-SHA256, and AES-256-GCM with internally generated random
-  nonces for WebTTY session-key envelopes and terminal payloads.
-
-The current phase excludes:
-
-- external mTLS signers (`auth.mtls.storage.kind: exec`); arbitrary provider executables are outside the reviewed module boundary and are rejected before execution;
-
-- proxied QUIC transport;
-- generic datagram tunnels, DTLS, and TURN; datagram tunnel metadata is accepted
-  only for published QUIC and HTTP/3;
-- ECH;
-- WebTTY over plain streams or WebSocket, including managed participant
-  `sessions join` streams, which do not yet expose WebTransport;
-- the WebTTY filesystem sidecar and the `rstream files` command;
-- the legacy WebTTY X25519/HPKE suite;
-- CLI WebSocket event streaming;
-- WebSocket, CONNECT-UDP, CONNECT-IP, and other non-WebTransport Extended
-  CONNECT paths;
-- custom SDK transports whose cryptographic behavior cannot be established by the profile.
+See [TLS policy](#tls-policy) and the [WebTTY profile](#webtty-profile) for
+cryptographic requirements beyond protocol selection.
 
 ## File-sharing compatibility
 
@@ -114,7 +95,9 @@ recording metadata, and replay material all carry the selected suite.
 
 ## Build
 
-The repository pins the reviewed module version instead of resolving `certified` during each release build:
+Use the Go toolchain specified in [`go.mod`](../go.mod). The Makefile pins the
+reviewed cryptographic module. Run `make fips-test` from a checkout path
+without spaces so Go can parse the generated module-file flag.
 
 ```bash
 make fips-test
@@ -130,9 +113,8 @@ out/fips/linux/arm64/rstream
 
 Stable releases expose distinct, checksummed GitHub assets named
 `rstream-fips-<version>-linux-x86_64.tar.gz` and
-`rstream-fips-<version>-linux-arm64.tar.gz`. They are carried through the same
-immutable release candidate as the standard distribution, but are not selected
-by the standard installer, package repositories, or `latest` container tag.
+`rstream-fips-<version>-linux-arm64.tar.gz`. Download these assets explicitly
+to install the restricted build.
 Each archive contains the binary, its `go version -m` output, the source commit,
 the profile documentation, and an internal checksum manifest. Verify the
 adjacent `.sha256` file before extracting an archive.
@@ -147,30 +129,37 @@ CGO_ENABLED=0
 
 `GOFIPS140` selects a frozen Go Cryptographic Module and enables FIPS mode by default. The `rstream_fips` build tag enables the rstream feature policy and fail-closed runtime checks. Both are required.
 
-The phase-three profile freezes `github.com/quic-go/quic-go` at `v0.60.0` and
-`github.com/quic-go/webtransport-go` at `v0.11.1`.
-The FIPS build fails its metadata check, and the executable fails closed at
-startup, if that reviewed dependency identity changes.
+The [Makefile](../Makefile) pins the reviewed Go cryptographic module,
+QUIC and WebTransport identities. The build checks artifact metadata, and the
+CLI checks the same identities and the enabled FIPS runtime at startup.
+Setting `GODEBUG=fips140=off` causes the restricted binary to exit before executing a
+command.
 
-## Runtime Verification
+## Build a Go application
 
-A FIPS-profile CLI identifies itself and the exact linked module build:
+From your application module, use the compatible SDK and the same reviewed
+toolchain and profile. The published profile targets Linux on x86-64 and
+arm64. This command builds for x86-64.
 
-```text
-rstream version <version> (FIPS 140-3 profile, Go module v1.0.0-c2097c7c, quic-go v0.60.0, webtransport-go v0.11.1)
+```sh
+GOOS=linux GOARCH=amd64 GOFIPS140=v1.0.0-c2097c7c CGO_ENABLED=0 \
+  go build -tags=rstream_fips -o app .
 ```
 
-At process startup, the CLI verifies that:
+Choose `GOARCH=arm64` for Linux arm64. Compare the transport versions in
+`go version -m app` with `FIPS_QUIC_MODULE` and `FIPS_WEBTRANSPORT_MODULE`
+in the SDK's [Makefile](../Makefile) for the revision you build against.
+Use `rstream.RequireFIPS` at startup to verify that the enabled runtime
+and dependency graph satisfy the profile.
 
-- the rstream FIPS profile was compiled in;
-- Go reports FIPS 140-3 mode as enabled;
-- the linked Go module is the exact frozen build;
-- the linked `quic-go` module is the reviewed phase-two version;
-- the linked `webtransport-go` module is the reviewed phase-three version.
+## Verify an artifact
 
-The process exits before command execution when any condition is false. In particular, a caller cannot silently downgrade a FIPS-profile binary with `GODEBUG=fips140=off`.
+On Linux, run the binary by its path so the check uses the intended
+artifact. For example, run `./out/fips/linux/x86_64/rstream --version` from
+the checkout, or `./rstream --version` from the extracted release folder.
+Expect the FIPS profile along with the module, QUIC and WebTransport versions.
 
-Build metadata provides an independent artifact check:
+On any build host, inspect the build metadata:
 
 ```bash
 go version -m out/fips/linux/x86_64/rstream
@@ -260,7 +249,7 @@ authorization bypass.
 The profile rejects an SDK client configuration before network I/O when it:
 
 - disables certificate verification;
-- permits only a TLS version older than TLS 1.2;
+- sets an explicit minimum or maximum older than TLS 1.2;
 - explicitly enables ECH;
 - explicitly selects a curve outside P-256, P-384, or the approved Go hybrid groups;
 - explicitly selects a TLS 1.2 cipher suite outside ECDHE with AES-GCM;
@@ -268,37 +257,10 @@ The profile rejects an SDK client configuration before network I/O when it:
 
 Normal Go TLS defaults remain controlled by the linked Go Cryptographic Module in approved mode. Private certificate authorities must be installed through the system trust store or the rstream CA configuration; certificate verification cannot be bypassed.
 
+Use `transport.mode: tls` for a shared context configured with a proxy.
+Automatic mode also configures a QUIC branch and the restricted profile
+rejects proxied QUIC.
+
 QUIC always requires TLS 1.3. `quic-go` uses the Go FIPS-aware TLS cipher
 selection, rejects ChaCha20 in FIPS mode, delegates QUIC packet AES-GCM to the
-Go cryptographic module, and uses AES for header protection. The strict test
-performs a real `QUICTransport` stream exchange and verifies that this exact
-integration remains operational.
-
-## Test Mode
-
-`make fips-test` adds `GODEBUG=fips140=only` while running the profile-specific
-test set. It exercises real TLS 1.3 and QUIC exchanges in addition to the
-policy checks. Go documents `fips140=only` as an assessment and debugging aid
-that can intentionally return errors or panic for non-approved operations. It
-is not a production setting.
-
-Standard tests continue to run without the profile:
-
-```bash
-make tests
-```
-
-Both test modes are required because the standard build retains the complete protocol surface while the FIPS build intentionally rejects excluded features.
-
-## Module Upgrade Procedure
-
-Changing `FIPS_GO_MODULE`, Go itself, `quic-go`, or `webtransport-go` is a security-relevant
-release change. The Makefile values are intentionally not caller-overridable.
-An upgrade requires:
-
-1. confirming the module's CMVP certificate status and applicable operating environments;
-2. reviewing the module Security Policy, Go release notes, and the `quic-go`
-   and `webtransport-go` FIPS integration;
-3. running the standard and FIPS-specific test suites;
-4. rebuilding both Linux architectures and checking their build metadata;
-5. updating this document, release evidence, and product documentation with the exact module version.
+Go cryptographic module, and uses AES for header protection.
