@@ -24,7 +24,7 @@ CHECKSUM = hashlib.sha256(PAYLOAD).hexdigest()
 
 class PublicationTest(unittest.TestCase):
     def run_case(self, *, metadata=True, stored=None, denied=False,
-                 conflict=False, race=None, upload_denied=False, changed_id=False):
+                 conflict=False, race=None, upload_denied=False, changed_id=False, verify_npm=False):
         state = {
             "metadata": metadata, "stored": stored, "downloads": 0,
             "claims": 0, "uploads": 0, "condition": None,
@@ -45,6 +45,9 @@ class PublicationTest(unittest.TestCase):
             def do_GET(self):
                 path = urllib.parse.urlsplit(self.path).path
                 if path == "/api/packages":
+                    if urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("format") == ["plain"]:
+                        self.reply(200, b"candidate:archive" if metadata else b"")
+                        return
                     records = [{"id": "candidate", "checksum":
                                 "0" * 64 if conflict else CHECKSUM}] if state["metadata"] else []
                     self.reply(200, json.dumps({"total": len(records), "packages": records}).encode())
@@ -105,8 +108,8 @@ class PublicationTest(unittest.TestCase):
             thread.start()
             try:
                 result = subprocess.run(
-                    ["bash", str(PUBLISHER), "rstream", "stable", "1.2.3",
-                     f"http://127.0.0.1:{server.server_port}", "fixture"],
+                    ["bash", str(PUBLISHER), *(["--verify-npm"] if verify_npm else []), "rstream", "stable", "1.2.3",
+                     f"http://127.0.0.1:{server.server_port}", *([] if verify_npm else ["fixture"])],
                     cwd=work, env={**os.environ, "PATH": f"{work / 'bin'}:{os.environ['PATH']}"},
                     capture_output=True, text=True, timeout=20,
                 )
@@ -116,6 +119,15 @@ class PublicationTest(unittest.TestCase):
                 server.server_close()
                 thread.join()
         return result, state
+
+    def test_npm_recovery_requires_available_exact_native_bytes(self):
+        for metadata, stored, success in ((True, PAYLOAD, True), (True, b"other", False),
+                                          (True, None, False), (False, None, False)):
+            with self.subTest(metadata=metadata, stored=stored):
+                result, state = self.run_case(metadata=metadata, stored=stored, verify_npm=True)
+                self.assertEqual(result.returncode == 0, success, result.stderr)
+                self.assertEqual((state["claims"], state["uploads"]), (0, 0))
+                self.assertFalse(state["info"])
 
     def test_new_publication(self):
         result, state = self.run_case(metadata=False)
