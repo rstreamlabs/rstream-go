@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http/httptest"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"testing"
@@ -61,6 +63,84 @@ func TestWindowsStdinReaderCancellationAndReuse(t *testing.T) {
 	}
 	if _, err := stdin.Stat(); err != nil {
 		t.Fatalf("reader closed borrowed stdin: %v", err)
+	}
+}
+
+func TestWindowsStdinReaderInheritedPipeHelper(t *testing.T) {
+	if os.Getenv("RSTREAM_WEBTTY_INHERITED_STDIN_HELPER") != "1" {
+		return
+	}
+	resultPath := os.Getenv("RSTREAM_WEBTTY_INHERITED_STDIN_RESULT")
+	if resultPath == "" {
+		t.Fatal("inherited stdin result path is required")
+	}
+	read, closeReader, err := resolveClientStdinRead(&ClientConfig{Stdin: os.Stdin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeReader()
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	var result bytes.Buffer
+	buffer := make([]byte, 32)
+	for {
+		n, err := read(ctx, buffer)
+		result.Write(buffer[:n])
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(resultPath, result.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWindowsStdinReaderInheritedPipeEarlyClose(t *testing.T) {
+	for iteration := range 16 {
+		resultPath := filepath.Join(t.TempDir(), fmt.Sprintf("result-%d", iteration))
+		ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
+		command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestWindowsStdinReaderInheritedPipeHelper$")
+		command.Env = append(os.Environ(),
+			"RSTREAM_WEBTTY_INHERITED_STDIN_HELPER=1",
+			"RSTREAM_WEBTTY_INHERITED_STDIN_RESULT="+resultPath,
+			"GOCOVERDIR="+t.TempDir(),
+		)
+		stdin, err := command.StdinPipe()
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		var output bytes.Buffer
+		command.Stdout = &output
+		command.Stderr = &output
+		if err := command.Start(); err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		payload := fmt.Appendf(nil, "inherited-pipe-%d\n", iteration)
+		if _, err := stdin.Write(payload); err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		if err := stdin.Close(); err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		err = command.Wait()
+		cancel()
+		if err != nil {
+			t.Fatalf("iteration %d failed: %v\n%s", iteration, err, output.String())
+		}
+		result, err := os.ReadFile(resultPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(result, payload) {
+			t.Fatalf("iteration %d read %q, want %q", iteration, result, payload)
+		}
 	}
 }
 
