@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -4863,4 +4864,145 @@ func testWebTTYServerCertificateFiles(t *testing.T) (string, string) {
 		t.Fatalf("WriteFile(key) error = %v", err)
 	}
 	return certPath, keyPath
+}
+
+func TestRunWebTTYClientCaptureExternalPipeHelper(t *testing.T) {
+	if os.Getenv("RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_HELPER") != "1" {
+		return
+	}
+	rstream.Channel = "dev"
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	resultPath := os.Getenv("RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_RESULT")
+	if resultPath == "" {
+		t.Fatal("external pipe result path is required")
+	}
+	clientURL := os.Getenv("RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_URL")
+	var transport webtty.WebTTYTransport
+	var dialContext func(context.Context, string, string) (net.Conn, error)
+	if address := os.Getenv("RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_DIAL_ADDRESS"); address != "" {
+		clientURL = "rstrm://external-pipe"
+		transport = webtty.WebTTYTransportWebSocket
+		dialContext = func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, "tcp", address)
+		}
+	}
+	deadline := 2 * time.Second
+	result, err := runWebTTYClientCapture(t.Context(), &webtty.ClientConfig{
+		URL:         clientURL,
+		Transport:   transport,
+		DialContext: dialContext,
+		Interactive: false,
+		Stdin:       os.Stdin,
+		CmdArgs: []string{
+			"powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+			"$value = [Console]::ReadLine(); [Console]::Out.Write($value); [Console]::Error.Write('stderr-' + $value)",
+		},
+		OpenDeadline: &deadline,
+		Logger:       logger,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(resultPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunWebTTYClientCaptureForwardsExternalProcessPipe(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows anonymous pipe lifecycle")
+	}
+	zero := time.Duration(0)
+	allowUnauthenticated := true
+	previousChannel := rstream.Channel
+	rstream.Channel = "dev"
+	defer func() { rstream.Channel = previousChannel }()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	handler := webtty.NewWebTTYHandler(&webtty.ServerConfig{
+		HeartbeatInterval:    &zero,
+		AllowUnauthenticated: &allowUnauthenticated,
+		Logger:               logger,
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	defer handler.Shutdown(t.Context())
+	clientURL := "ws" + strings.TrimPrefix(server.URL, "http")
+	for _, test := range []struct {
+		name        string
+		url         string
+		dialAddress string
+		pythonPipe  bool
+	}{
+		{name: "websocket", url: clientURL},
+		{name: "websocket python pipe", url: clientURL, pythonPipe: true},
+		{name: "rstrm custom dial", url: "rstrm://external-pipe", dialAddress: server.Listener.Addr().String()},
+		{name: "rstrm custom dial python pipe", url: "rstrm://external-pipe", dialAddress: server.Listener.Addr().String(), pythonPipe: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resultPath := filepath.Join(t.TempDir(), "result.json")
+			ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+			defer cancel()
+			arguments := []string{"-test.run=^TestRunWebTTYClientCaptureExternalPipeHelper$", "-test.v"}
+			command := exec.CommandContext(ctx, os.Args[0], arguments...)
+			if test.pythonPipe {
+				script := "" +
+					"import subprocess, sys\n" +
+					"def emit(stream, data):\n" +
+					" stream.buffer.write(data if isinstance(data, bytes) else data.encode()) if data else None\n" +
+					"try:\n" +
+					" p = subprocess.run([sys.argv[1], *sys.argv[2:]], input='external-pipe\\n', text=True, capture_output=True, timeout=6)\n" +
+					" sys.stdout.write(p.stdout); sys.stderr.write(p.stderr); sys.exit(p.returncode)\n" +
+					"except subprocess.TimeoutExpired as e:\n" +
+					" emit(sys.stdout, e.stdout); emit(sys.stderr, e.stderr); sys.exit(124)\n"
+				command = exec.CommandContext(ctx, "python", append([]string{"-c", script, os.Args[0]}, arguments...)...)
+			}
+			command.Env = append(os.Environ(),
+				"RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_HELPER=1",
+				"RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_URL="+test.url,
+				"RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_DIAL_ADDRESS="+test.dialAddress,
+				"RSTREAM_CMD_WEBTTY_EXTERNAL_PIPE_RESULT="+resultPath,
+				"GOCOVERDIR="+t.TempDir(),
+			)
+			var stdin io.WriteCloser
+			if !test.pythonPipe {
+				var err error
+				stdin, err = command.StdinPipe()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			var output bytes.Buffer
+			command.Stdout = &output
+			command.Stderr = &output
+			if err := command.Start(); err != nil {
+				t.Fatal(err)
+			}
+			if !test.pythonPipe {
+				if _, err := io.WriteString(stdin, "external-pipe\n"); err != nil {
+					t.Fatal(err)
+				}
+				if err := stdin.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := command.Wait(); err != nil {
+				t.Fatalf("external WebTTY client failed: %v\n%s", err, output.String())
+			}
+			data, err := os.ReadFile(resultPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result webTTYClientResult
+			if err := json.Unmarshal(data, &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.ExitCode == nil || *result.ExitCode != 0 || result.Stdout != "external-pipe" || result.Stderr != "stderr-external-pipe" {
+				t.Fatalf("external WebTTY client result = %#v", result)
+			}
+		})
+	}
 }
