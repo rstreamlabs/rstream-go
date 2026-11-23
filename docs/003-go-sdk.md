@@ -13,15 +13,25 @@ listens on a local port, use the [CLI walkthrough](002-cli-workflow.md#publish-a
 | Self-hosted Community Edition | [Configure a CLI context for the Engine](https://rstream.io/docs/tunnels/self-hosted/deployment#agent-context) using its hostname, CA if needed, and JWT. CE supports published HTTP and private bytestreams. |
 | An existing deployment | Select the context provided by your operator. See [editions and plans](https://rstream.io/docs/support/editions) for listener and policy requirements. |
 
-For a hosted project, sign in and select the value in the `ENDPOINT` column.
+For a hosted project, use the CLI on the machine running the sample. Sign in with the CLI.
 
 ```sh
 rstream login
-rstream project list
-rstream project use 'my-project-endpoint'
 ```
 
-Replace the example endpoint with that value. If you need a project, follow
+List your projects.
+
+```sh
+rstream project list
+```
+
+Replace `my-project-endpoint` with the value from the `ENDPOINT` column.
+
+```sh
+rstream project use my-project-endpoint
+```
+
+If you need a project, follow
 [hosted project setup](https://rstream.io/docs/getting-started/quickstart-guide#select-a-project).
 The program below reads the saved context through `config.NewClientFromEnv()`.
 A service with an explicit Engine address and runtime credential can use

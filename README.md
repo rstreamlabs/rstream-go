@@ -31,13 +31,29 @@ to try this with a disposable service and understand its access policy.
 
 ## Use the Go library
 
-A bytestream tunnel implements `net.Listener`. Pass it to a standard Go HTTP
-server to accept requests inside your application.
+Once the application has connected its client, it can create a published
+HTTP tunnel and pass it to a standard Go HTTP server. Opening the printed
+address returns `Hello from rstream`.
 
 ```go
-func serveHTTP(listener rstream.BytestreamTunnel, handler http.Handler) error {
-	return (&http.Server{Handler: handler}).Serve(listener)
+tunnel, err := control.CreateTunnel(context.Background(), rstream.TunnelProperties{
+	Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
+	HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP1_1),
+	Publish:     rstream.BoolPtr(true),
+})
+if err != nil {
+	return err
 }
+defer tunnel.Close()
+address, err := tunnel.ForwardingAddress()
+if err != nil {
+	return err
+}
+fmt.Println(address)
+server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintln(w, "Hello from rstream")
+})}
+return server.Serve(tunnel.(rstream.BytestreamTunnel))
 ```
 
 The [Go walkthrough](docs/003-go-sdk.md) creates the listener and runs a complete
