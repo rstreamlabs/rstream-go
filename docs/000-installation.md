@@ -6,7 +6,8 @@ has its own build and verification steps.
 
 | Where you run the CLI | Installation |
 | --- | --- |
-| Linux | [Linux packages and standalone installation](https://rstream.io/docs/getting-started/installation/linux) |
+| Debian, Ubuntu and Raspberry Pi OS | [Install the Debian package](https://rstream.io/docs/getting-started/installation/linux#install-with-the-debian-package) and manage updates with APT. |
+| Other Linux distributions | [Use the standalone Linux installer](https://rstream.io/docs/getting-started/installation/linux#install-with-the-shell-installer). |
 | macOS | [Homebrew and standalone installation](https://rstream.io/docs/getting-started/installation/macos) |
 | Windows | [WinGet and PowerShell installation](https://rstream.io/docs/getting-started/installation/windows) |
 | Container | [Docker setup](https://rstream.io/docs/getting-started/installation/docker) and the [Compose example](../examples/run-docker/README.md) |

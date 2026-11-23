@@ -99,12 +99,16 @@ HTTPS protects transport to the edge, and the tunnel protects the edge-to-agent 
 ## CLI and MCP downloads
 
 Use a managed project with HTTP token authentication for this example. Put
-a sample `report.csv` in `./exports`. Start the token-protected share in one
-terminal and download it from an authenticated rstream context in another.
-Replace the destination path if it already exists.
+a sample `report.csv` in `./exports`. Start the token-protected share.
 
 ```sh
 rstream files ./exports --name exports --token-auth
+```
+
+Leave the share running. In a second terminal with an authenticated rstream
+context, download the file. Choose a different destination if `./report.csv` already exists.
+
+```sh
 rstream webtty fs --url rstrm://exports download /report.csv ./report.csv
 ```
 
@@ -124,15 +128,21 @@ Local MCP filesystem tools accept the same `rstrm://` target and use private dia
 ## Read-write service without a web page
 
 Use a token-protected managed project. Create the export directory on the
-server and prepare a sample `update.bin` on the client. Start the share
-before uploading and stop it with Ctrl+C after checking the file in the
-export directory. Add `--host` only if you need a project-controlled domain.
+server and prepare a sample `update.bin` on the client. Start the share on the server.
+Add `--host` for a project-controlled domain.
 
 ```sh
 rstream files ./maintenance --read-write --no-ui --token-auth \
   --name maintenance --max-upload-size 134217728
+```
+
+On the client, use a second terminal to upload the file.
+
+```sh
 rstream webtty fs --url rstrm://maintenance upload ./update.bin /update.bin
 ```
+
+Check the uploaded file in the export directory, then stop the share with Ctrl+C.
 
 Use the tunnel's exact name or id with the filesystem client. The shared root must already exist. Read-only remains the default; `--read-write` is explicitly rejected with `--backend webrtc`. `--no-ui` is independent of terminal output, authentication and write access. Reconnection retains all these options and the existing filesystem service.
 

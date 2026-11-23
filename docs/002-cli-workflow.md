@@ -13,19 +13,32 @@ response. Use an [installed CLI](000-installation.md) or
 | Self-hosted Community Edition | Use a reachable Engine hostname, trusted certificate and locally signed JWT. See [CE agent context](https://rstream.io/docs/tunnels/self-hosted/deployment#agent-context). For a Compose demo from the host, use the complete native CLI verification in the [CE setup guide](https://rstream.io/guides/self-host-rstream-engine-ce-with-docker-compose). |
 | An existing deployment | Use the context and credentials provided by your operator. See [identity options](#choose-an-identity) when provisioning a device or CI runner. |
 
-For hosted rstream, approve sign-in in your browser. For a workstation,
-choose **My computer** and **Development**. Copy the `ENDPOINT` value from
-`rstream project list` into the project selection command.
+For hosted rstream, sign in and approve the request in the browser. On a
+development workstation, select **My computer** and **Development**.
 
 ```sh
 rstream login
-rstream project list
-rstream project use 'my-project-endpoint'
 ```
 
-If the list is empty, create a project in your workspace or ask its owner to
-give you access. If your previous approval was restricted to specific projects,
-run `rstream login` again and approve the intended project. See [hosted project setup](https://rstream.io/docs/getting-started/quickstart-guide#select-a-project).
+List the projects available to this identity.
+
+```sh
+rstream project list
+```
+
+If the list is empty, open the workspace in the [Dashboard](https://rstream.io/dashboard).
+Workspace owners and admins can select **Create new project**. Other members
+can ask an owner or admin for access to an existing project. If the CLI login
+was limited to specific projects, run `rstream login` again to include the
+intended project. Run `rstream project list` again after gaining access.
+
+Choose a project that allows HTTP publication. Replace `my-project-endpoint`
+with its `ENDPOINT` value.
+
+```sh
+rstream project use my-project-endpoint
+```
+
 The CLI saves the choice as its default context. Go programs that use
 `config.NewClientFromEnv()` can reuse it.
 
@@ -117,15 +130,20 @@ Omit `--permission` to review the preset choices. Repeat `--permission <scope>` 
 
 ### Import an existing Token
 
-Import an existing token from a file or standard input.
+To import a token from a file, supply its path.
 
 ```sh
 rstream login --token-file /path/to/account-token
-# Or pipe the token from your secret source:
+```
+
+To import a token from standard input, replace `secret-reader` with the command
+that retrieves it from your secret manager.
+
+```sh
 secret-reader | rstream login --token-stdin
 ```
 
-`secret-reader` represents your own secret-manager command, not an rstream tool. File and stdin inputs are mutually exclusive. `--token-storage macos-keychain` stores a token reference in YAML instead of its value on supported macOS builds.
+File and stdin inputs are mutually exclusive. `--token-storage macos-keychain` stores a token reference in YAML instead of its value on supported macOS builds.
 
 ### Configure a service or CI runner
 

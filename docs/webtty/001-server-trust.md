@@ -91,17 +91,27 @@ Workspace-managed registered servers require a trusted workspace browser,
 operator CLI, automation agent, or service device before protected WebTTY data
 can be opened. A host that runs a workspace-managed WebTTY server must also be
 a trusted workspace device before server enrollment. Enroll the local machine
-once per workspace, approve the displayed verification code from a trusted
-browser, then refresh the local status.
+once per workspace. From an authenticated CLI, list the projects.
 
-```bash
-rstream workspace list
-rstream project use 'my-project-endpoint'
+```sh
+rstream project list
+```
+
+Replace `my-project-endpoint` with the `ENDPOINT` of a project in the intended
+workspace, then enroll this machine.
+
+```sh
+rstream project use my-project-endpoint
 rstream workspace device enroll --label ops-cli
+```
+
+Approve the displayed verification code from a trusted browser, then check the device.
+
+```sh
 rstream workspace device status
 ```
 
-Use the `ENDPOINT` value for the intended workspace's project. FIPS builds create the workspace-device WebTTY subidentity with P-256 by
+FIPS builds create the workspace-device WebTTY subidentity with P-256 by
 default. To replace a legacy device from a standard CLI, use
 `rstream workspace device rotate --crypto-profile=fips-compatible`, approve the
 replacement, and refresh its status before opening the terminal.
@@ -139,32 +149,18 @@ To register a transport-only server, follow the
 Use a managed project that grants server registration. The examples below
 configure Workspace Protection on an eligible Enterprise workspace.
 
-Create the registered server from an authenticated project context, then run
-the enrollment command returned by the CLI, product, or API on the host that
-will run WebTTY.
+If the runtime host also creates the server, use its authenticated project
+context to create and enroll it together.
 
-If the current machine creates and runs the server, select the project once and
-enroll during creation:
-
-```bash
-rstream project use 'my-project-endpoint'
+```sh
 rstream webtty server create prod-shell --encryption-policy workspace_managed --enroll
-rstream webtty server -v --server-id 'my-server-id' --login-user 'local-user'
 ```
 
-Use the returned server ID and an existing operating system account that
-will run the commands.
+To create the record from another machine, use that project's authenticated
+context there, then run the enrollment command it prints on the runtime host.
 
-If the server record is created from another machine, run the printed
-enrollment command on the runtime host:
-
-```bash
-rstream project use 'my-project-endpoint'
+```sh
 rstream webtty server create prod-shell --encryption-policy workspace_managed
-```
-
-```bash
-rstream webtty server enroll server_id
 ```
 
 Enrollment uses the local authenticated rstream context. It fails before
@@ -181,10 +177,12 @@ server identity is lost, create a new registered server and enroll it instead of
 reusing the old server id. This keeps identity replacement explicit rather than
 turning it into a silent key reset path.
 
-Start the registered server with:
+Start the enrolled server on the runtime host. Replace `my-server-id` with
+the returned server ID and `local-user` with the existing account that will
+run commands.
 
-```bash
-rstream webtty server -v --server-id server_id --login-user operator
+```sh
+rstream webtty server -v --server-id 'my-server-id' --login-user 'local-user'
 ```
 
 `--server-id` implies `--rstream` and starts a managed `protocol=webtty` tunnel.
