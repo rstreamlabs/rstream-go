@@ -297,14 +297,20 @@ func checkDoctorEngine(ctx context.Context, report *Report, resolved config.Reso
 			return
 		}
 		report.add("engine_api_discovery", StatusPass, "mTLS Engine API discovered", map[string]string{"url": apiURL})
-
 	}
 	health, err := client.CheckHealth(runCtx)
 	if err != nil {
 		var apiError *rstream.APIError
-		if errors.As(err, &apiError) && apiError.StatusCode == http.StatusForbidden {
-			report.add("engine", StatusWarn, "credential permissions restrict engine health access; readiness could not be verified", nil)
-			return
+		if errors.As(err, &apiError) {
+			if apiError.StatusCode == http.StatusForbidden {
+				report.add("engine", StatusWarn, "credential permissions restrict engine health access; readiness could not be verified", nil)
+				return
+			}
+			direct := resolved.Context != nil && resolved.Context.APIURL == "" && resolved.Context.ProjectEndpoint == "" && !resolved.HasMTLS()
+			if direct && apiError.StatusCode == http.StatusNotFound && apiError.Path == "/health/live" {
+				checkDirectEngineWithoutLiveness(runCtx, report, client)
+				return
+			}
 		}
 		report.add("engine", StatusFail, "engine health check failed", map[string]string{"error": err.Error()})
 		return
@@ -313,27 +319,52 @@ func checkDoctorEngine(ctx context.Context, report *Report, resolved config.Reso
 		report.add("engine", StatusFail, "engine is running but unavailable", nil)
 		return
 	}
-	clients, err := client.ListClients(runCtx, nil)
+	checkDoctorInventory(runCtx, report, client, true)
+}
+
+func checkDirectEngineWithoutLiveness(ctx context.Context, report *Report, client *rstream.Client) {
+	ready, err := client.CheckReadiness(ctx)
+	var apiError *rstream.APIError
+	switch {
+	case errors.As(err, &apiError) && apiError.StatusCode == http.StatusNotFound:
+		checkDoctorInventory(ctx, report, client, false)
+	case err != nil:
+		report.add("engine", StatusFail, "engine readiness check failed", map[string]string{"error": err.Error()})
+	case !ready:
+		report.add("engine", StatusFail, "engine is running but unavailable", nil)
+	default:
+		report.add("engine", StatusFail, "engine liveness endpoint returned HTTP 404", nil)
+	}
+}
+
+func doctorInventory(ctx context.Context, client *rstream.Client) (map[string]string, error) {
+	clients, err := client.ListClients(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	tunnels, err := client.ListTunnels(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{"clients": strconv.Itoa(len(*clients)), "tunnels": strconv.Itoa(len(*tunnels)), "onlineTunnels": strconv.Itoa(countDoctorOnlineTunnels(*tunnels))}, nil
+}
+
+func checkDoctorInventory(ctx context.Context, report *Report, client *rstream.Client, readinessVerified bool) {
+	details, err := doctorInventory(ctx, client)
 	if err != nil {
 		var apiError *rstream.APIError
-		if errors.As(err, &apiError) && apiError.StatusCode == http.StatusForbidden {
+		if readinessVerified && errors.As(err, &apiError) && apiError.StatusCode == http.StatusForbidden {
 			report.add("engine", StatusWarn, "engine is ready; credential permissions restrict inventory access", nil)
 			return
 		}
 		report.add("engine", StatusFail, "engine API is unavailable", map[string]string{"error": err.Error()})
 		return
 	}
-	tunnels, err := client.ListTunnels(runCtx, nil)
-	if err != nil {
-		var apiError *rstream.APIError
-		if errors.As(err, &apiError) && apiError.StatusCode == http.StatusForbidden {
-			report.add("engine", StatusWarn, "engine is ready; credential permissions restrict inventory access", nil)
-			return
-		}
-		report.add("engine", StatusFail, "engine API is unavailable", map[string]string{"error": err.Error()})
+	if !readinessVerified {
+		report.add("engine", StatusWarn, "inventory is accessible but readiness could not be verified (health endpoints returned HTTP 404)", details)
 		return
 	}
-	report.add("engine", StatusPass, "engine is ready", map[string]string{"clients": strconv.Itoa(len(*clients)), "tunnels": strconv.Itoa(len(*tunnels)), "onlineTunnels": strconv.Itoa(countDoctorOnlineTunnels(*tunnels))})
+	report.add("engine", StatusPass, "engine is ready", details)
 }
 
 func checkDoctorTunnelCreation(ctx context.Context, report *Report, resolved config.Resolved) {

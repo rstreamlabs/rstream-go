@@ -212,9 +212,27 @@ func TestDoctorEngineStopsWhenRuntimeIsUnavailable(t *testing.T) {
 	}
 }
 
+func TestDoctorManagedContextsRequireHealth(t *testing.T) {
+	for _, cfg := range []config.Context{{APIURL: "https://managed.example"}, {ProjectEndpoint: "project"}} {
+		var calls atomic.Int32
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			calls.Add(1)
+			http.NotFound(w, req)
+		}))
+		t.Cleanup(server.Close)
+		resolved := doctorTestResolved(server)
+		resolved.Context = &cfg
+		var report Report
+		checkDoctorEngine(t.Context(), &report, resolved)
+		if len(report.Checks) != 1 || report.Checks[0].Status != StatusFail || calls.Load() != 1 {
+			t.Fatalf("context=%+v checks=%+v requests=%d", cfg, report.Checks, calls.Load())
+		}
+	}
+}
+
 func TestDoctorEngineDistinguishesDeniedHealthFromFailures(t *testing.T) {
 	for _, path := range []string{"/api/health/live", "/api/health/ready"} {
-		for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusInternalServerError} {
+		for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound, http.StatusInternalServerError} {
 			t.Run(path+"/"+http.StatusText(status), func(t *testing.T) {
 				var inventoryRequests atomic.Int32
 				server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

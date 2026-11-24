@@ -388,17 +388,27 @@ func (c *Client) CheckHealth(ctx context.Context) (*EngineHealth, error) {
 	if err := validateHealthResponse(body, "live"); err != nil {
 		return nil, fmt.Errorf("check engine liveness: %w", err)
 	}
+	ready, err := c.CheckReadiness(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &EngineHealth{Live: true, Ready: ready}, nil
+}
+
+// CheckReadiness probes the Engine readiness endpoint. HTTP 503 means the
+// Engine cannot admit work. A missing endpoint or invalid response is an error.
+func (c *Client) CheckReadiness(ctx context.Context) (bool, error) {
 	body, status, err := c.apiDo(ctx, http.MethodGet, "/health/ready", nil, nil, nil, nil)
 	if err != nil {
 		if status == http.StatusServiceUnavailable {
-			return &EngineHealth{Live: true}, nil
+			return false, nil
 		}
-		return nil, fmt.Errorf("check engine readiness: %w", err)
+		return false, fmt.Errorf("check engine readiness: %w", err)
 	}
 	if err := validateHealthResponse(body, "ready"); err != nil {
-		return nil, fmt.Errorf("check engine readiness: %w", err)
+		return false, fmt.Errorf("check engine readiness: %w", err)
 	}
-	return &EngineHealth{Live: true, Ready: true}, nil
+	return true, nil
 }
 
 func validateHealthResponse(body []byte, expected string) error {

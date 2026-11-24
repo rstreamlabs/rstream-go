@@ -53,6 +53,11 @@ probes. With mTLS, the standard probe verifies the transport, discovers the dedi
 The restricted FIPS build also validates its cryptographic runtime before
 starting diagnostics.
 
+With a direct token context, some Engines return HTTP 404 for both health
+probes. If the CLI can still read the client and tunnel inventories, the
+Engine check reports a warning and leaves readiness unknown. An inventory
+error or an explicit HTTP 503 readiness response fails the check.
+
 For a CLI run and its exit status, see
 [product troubleshooting](https://rstream.io/docs/support/troubleshooting).
 

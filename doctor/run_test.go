@@ -140,6 +140,63 @@ func TestRunHealthyEngineAndConcurrentResourceOwnership(t *testing.T) {
 	}
 }
 
+func TestRunDirectEngineWithMissingHealthRoutes(t *testing.T) {
+	for _, tc := range []struct {
+		name                          string
+		live, ready, clients, tunnels int
+		want                          doctor.Status
+		wantRequests                  int
+	}{
+		{"inventory available", 404, 404, 200, 200, doctor.StatusWarn, 4},
+		{"liveness alone missing", 404, 200, 200, 200, doctor.StatusFail, 2},
+		{"readiness alone missing", 200, 404, 200, 200, doctor.StatusFail, 2},
+		{"readiness unavailable", 404, 503, 200, 200, doctor.StatusFail, 2},
+		{"readiness unauthorized", 404, 401, 200, 200, doctor.StatusFail, 2},
+		{"credential rejected", 404, 404, 401, 200, doctor.StatusFail, 3},
+		{"inventory forbidden", 404, 404, 200, 403, doctor.StatusFail, 4},
+		{"wrong API address", 404, 404, 404, 404, doctor.StatusFail, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				if r.Header.Get("Authorization") != "Bearer fixture-token" {
+					t.Error("missing configured credential")
+				}
+				code, body := http.StatusNotFound, ""
+				switch r.URL.Path {
+				case "/api/health/live":
+					code, body = tc.live, `{"status":"live"}`
+				case "/api/health/ready":
+					code, body = tc.ready, `{"status":"ready"}`
+				case "/api/clients":
+					code, body = tc.clients, "[]"
+				case "/api/tunnels":
+					code, body = tc.tunnels, "[]"
+				default:
+					t.Errorf("unexpected path %s", r.URL.Path)
+				}
+				w.WriteHeader(code)
+				_, _ = io.WriteString(w, body)
+			}))
+			server.TLS = &tls.Config{NextProtos: []string{"rstrm/1", "http/1.1"}}
+			server.StartTLS()
+			t.Cleanup(server.Close)
+			roots := x509.NewCertPool()
+			roots.AddCert(server.Certificate())
+			resolved := config.Resolved{Engine: strings.TrimPrefix(server.URL, "https://"), Token: "fixture-token", Context: &config.Context{Name: "direct"}, Transport: &rstream.Transport{}, TLSClientConfig: &tls.Config{RootCAs: roots}}
+			report, err := doctor.Run(t.Context(), resolved, doctor.Options{})
+			engine := checksByName(report)["engine"]
+			if engine.Status != tc.want || (err != nil) != (tc.want == doctor.StatusFail) || requests.Load() != int32(tc.wantRequests) {
+				t.Fatalf("engine=%+v err=%v requests=%d", engine, err, requests.Load())
+			}
+			if tc.want == doctor.StatusWarn && (!strings.Contains(engine.Message, "readiness could not be verified") || engine.Details["tunnels"] != "0") {
+				t.Fatalf("missing inventory or ambiguous readiness: %+v", engine)
+			}
+		})
+	}
+}
+
 func TestRunCancellationPreservesPartialReport(t *testing.T) {
 	for _, alreadyCanceled := range []bool{true, false} {
 		t.Run(map[bool]string{true: "before", false: "during"}[alreadyCanceled], func(t *testing.T) {
@@ -272,12 +329,15 @@ func TestRunMTLSUsesDiscoveredAPIAndRespectsRestrictedPermissions(t *testing.T) 
 	for _, tc := range []struct {
 		name       string
 		deniedPath string
+		status     int
+		want       doctor.Status
 		apiCalls   int32
 	}{
-		{name: "inventory", apiCalls: 4},
-		{name: "restricted-inventory", deniedPath: "/api/clients", apiCalls: 3},
-		{name: "restricted-liveness", deniedPath: "/api/health/live", apiCalls: 1},
-		{name: "restricted-readiness", deniedPath: "/api/health/ready", apiCalls: 2},
+		{name: "inventory", want: doctor.StatusPass, apiCalls: 4},
+		{name: "restricted-inventory", deniedPath: "/api/clients", status: 403, want: doctor.StatusWarn, apiCalls: 3},
+		{name: "restricted-liveness", deniedPath: "/api/health/live", status: 403, want: doctor.StatusWarn, apiCalls: 1},
+		{name: "restricted-readiness", deniedPath: "/api/health/ready", status: 403, want: doctor.StatusWarn, apiCalls: 2},
+		{name: "missing-liveness", deniedPath: "/api/health/live", status: 404, want: doctor.StatusFail, apiCalls: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var discoveryCalls, apiCalls, controlPlaneCalls atomic.Int32
@@ -294,7 +354,7 @@ func TestRunMTLSUsesDiscoveredAPIAndRespectsRestrictedPermissions(t *testing.T) 
 					return
 				}
 				if r.URL.Path == tc.deniedPath {
-					http.Error(w, "Forbidden", http.StatusForbidden)
+					http.Error(w, http.StatusText(tc.status), tc.status)
 					return
 				}
 				switch r.URL.Path {
@@ -326,13 +386,12 @@ func TestRunMTLSUsesDiscoveredAPIAndRespectsRestrictedPermissions(t *testing.T) 
 			roots.AddCert(ordinary.Certificate())
 			roots.AddCert(dedicated.Certificate())
 			resolved := config.Resolved{Engine: strings.TrimPrefix(ordinary.URL, "https://"), APIURL: controlPlane.URL, Transport: &rstream.Transport{}, TLSClientConfig: &tls.Config{RootCAs: roots, Certificates: []tls.Certificate{dedicated.TLS.Certificates[0]}}}
+			if tc.status == http.StatusNotFound {
+				resolved.Context = &config.Context{Name: "direct"}
+			}
 			report, _ := doctor.Run(t.Context(), resolved, doctor.Options{})
 			checks := checksByName(report)
-			want := doctor.StatusPass
-			if tc.deniedPath != "" {
-				want = doctor.StatusWarn
-			}
-			if checks["engine"].Status != want || checks["engine_api_discovery"].Status != doctor.StatusPass || checks["control_plane_auth"].Status != doctor.StatusSkip {
+			if checks["engine"].Status != tc.want || checks["engine_api_discovery"].Status != doctor.StatusPass || checks["control_plane_auth"].Status != doctor.StatusSkip {
 				t.Fatalf("mTLS report: %+v", checks)
 			}
 			if discoveryCalls.Load() != 1 || controlPlaneCalls.Load() != 0 || apiCalls.Load() != tc.apiCalls {
