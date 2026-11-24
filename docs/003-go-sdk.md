@@ -13,16 +13,31 @@ listens on a local port, use the [CLI walkthrough](002-cli-workflow.md#publish-a
 | Self-hosted Community Edition | [Configure a CLI context for the Engine](https://rstream.io/docs/tunnels/self-hosted/deployment#agent-context) using its hostname, CA if needed, and JWT. CE supports published HTTP and private bytestreams. |
 | An existing deployment | Select the context provided by your operator. See [editions and plans](https://rstream.io/docs/support/editions) for listener and policy requirements. |
 
-For a hosted project, sign in and select the value in the `ENDPOINT` column.
+For a hosted project, sign in and approve the request in the browser.
 
 ```sh
 rstream login
-rstream project list
-rstream project use 'my-project-endpoint'
 ```
 
-Replace the example endpoint with that value. If you need a project, follow
-[hosted project setup](https://rstream.io/docs/getting-started/quickstart-guide#select-a-project).
+List the projects available to this identity.
+
+```sh
+rstream project list
+```
+
+If the list is empty, open the workspace in the [Dashboard](https://rstream.io/dashboard).
+Workspace owners and admins can select **Create new project**. Other members
+can ask an owner or admin for access to an existing project. If the CLI login
+was limited to specific projects, run `rstream login` again to include the
+intended project. Run `rstream project list` again after gaining access.
+
+Choose a project that allows HTTP publication. Replace `my-project-endpoint`
+with its `ENDPOINT` value.
+
+```sh
+rstream project use my-project-endpoint
+```
+
 The program below reads the saved context through `config.NewClientFromEnv()`.
 A service with an explicit Engine address and runtime credential can use
 the [shared environment settings](002-cli-workflow.md#contexts-and-environments)
@@ -30,12 +45,12 @@ instead. For a private Engine CA, configure that trust before connecting.
 
 ## Serve a published HTTP route
 
-Use the Go version declared by the SDK module. For this checkout, the
-minimum is in [`go.mod`](../go.mod). Initialize an empty directory.
+Install Go 1.27.4 or newer for this version of the SDK. From an empty
+application directory, initialize the module and add the SDK.
 
 ```sh
 go mod init example.com/rstream-hello
-go get github.com/rstreamlabs/rstream-go
+go get github.com/rstreamlabs/rstream-go@v1.38.1
 ```
 
 The program publishes a disposable HTTP response. It uses the project or
@@ -54,6 +69,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/rstreamlabs/rstream-go"
 	"github.com/rstreamlabs/rstream-go/config"
@@ -66,17 +82,18 @@ func main() {
 }
 
 func serve() error {
+	ctx := context.Background()
 	client, err := config.NewClientFromEnv()
 	if err != nil {
 		return err
 	}
 	defer client.Close()
-	control, err := client.Connect(context.Background(), nil)
+	control, err := client.Connect(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer control.Close()
-	tunnel, err := control.CreateTunnel(context.Background(), rstream.TunnelProperties{
+	tunnel, err := control.CreateTunnel(ctx, rstream.TunnelProperties{
 		Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
 		HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP1_1),
 		Publish:     rstream.BoolPtr(true),
@@ -90,10 +107,17 @@ func serve() error {
 		return err
 	}
 	fmt.Println(address)
-	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "Hello from rstream")
-	})}
-	return server.Serve(tunnel.(rstream.BytestreamTunnel))
+	listener, ok := tunnel.(rstream.BytestreamTunnel)
+	if !ok {
+		return fmt.Errorf("expected a bytestream tunnel")
+	}
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			fmt.Fprintln(w, "Hello from rstream")
+		}),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	return server.Serve(listener)
 }
 ```
 
@@ -143,7 +167,7 @@ func privateHTTPClient(client *rstream.Client) *http.Client {
 }
 ```
 
-Import `net` and `time` in addition to the SDK imports shown above.
+Add `net` to the imports shown above.
 Use this dedicated client for requests to `http://h1-example/`. Close
 each response body and close idle connections when done. The
 [private HTTP pair](../examples/README.md#connect-privately) shows these

@@ -9,7 +9,7 @@ This directory contains end-to-end tests for the rstream Go SDK. Each subdirecto
 | `websocket` | 9 | All upstream × downstream HTTP version combinations (H1, H2C, H3), including public authority and browser Origin preservation |
 | `webtransport` | 2 | Private SDK-dialer and published HTTP/3 reverse-proxy runs covering bidirectional streams, unidirectional streams, datagrams, multi-stream, close codes, and same-origin validation |
 | `http` | 3 | HTTP tunnels over H1, H2C, and H3, including GET and SSE streaming |
-| `stream` | 8 | Bytestream tunnel: plain (unpublished), raw TCP and TLS via engine listeners (published), TLS via SDK dialer (unpublished), TLS passthrough, TLS with upstream TLS, and ALPN rejection checks |
+| `stream` | 7 | Bytestream tunnel: plain (unpublished), TLS via the Engine listener (published), TLS via SDK dialer (unpublished), TLS passthrough, TLS with upstream TLS, and ALPN rejection checks |
 | `datagram` | 22 | Datagram tunnel: private self-dial, shared transport, guaranteed self-dial, DTLS via SDK dialer (unpublished), DTLS via engine listener (published, with and without upstream DTLS), forced DTLS 1.2/1.3 and fragmented DTLS 1.3, QUIC via SDK dialer (unpublished), QUIC via engine listener (published), SCTP via pion/sctp over SDK datagrams and published DTLS, and ALPN rejection checks |
 | `masque` | 2 | Published HTTP/3 datagram tunnels carrying CONNECT-UDP and CONNECT-IP Extended CONNECT sessions end-to-end, including public authority preservation |
 | `connect` | 9 | All upstream × downstream HTTP version combinations for published authority-form CONNECT (H1, H2C, H3) |

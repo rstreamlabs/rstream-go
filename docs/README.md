@@ -46,5 +46,4 @@ with [editions and plans](https://rstream.io/docs/support/editions) or
 | [Filesystem over WebRTC](021-filesystem-webrtc.md) | Choose a peer-to-peer backend for reading files. |
 
 [Contributing](../CONTRIBUTING.md) links to repository practices and the
-[test guide](../test/README.md). See [CLI releases](019-cli-releases.md) for
-release maintenance.
+[test guide](../test/README.md). The [release workflow guide](../.github/scripts/README.md) covers candidate checks and stable promotion.

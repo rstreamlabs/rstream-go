@@ -8,10 +8,15 @@ for managed session operations. To verify a lightweight server first,
 ## Inspect managed sessions
 
 Use the Engine API to inspect a registered server's sessions. List the
-sessions, then replace the example ID with the one you want to inspect:
+sessions in the current project.
 
 ```sh
 rstream webtty sessions list
+```
+
+Replace `my-session-id` with the ID of the session to inspect.
+
+```sh
 rstream webtty sessions show 'my-session-id'
 ```
 

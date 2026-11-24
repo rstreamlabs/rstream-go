@@ -4,7 +4,7 @@ rstream connects services and devices through outbound tunnels. Publish an endpo
 
 This repository contains the reference Go SDK and the `rstream` CLI. The CLI forwards an existing service. The SDK lets an application own its tunnel and use standard Go listeners, connections and packet connections.
 
-| What you want to do | Start here |
+| Task | Start here |
 | --- | --- |
 | Forward an existing service | [Install the CLI](docs/000-installation.md) and [configure your first HTTP tunnel](docs/002-cli-workflow.md#connect-the-cli). |
 | Integrate with a Go application | [Run an HTTP handler on a tunnel](docs/003-go-sdk.md) or [run a private Go pair](examples/README.md#connect-privately). |
@@ -31,18 +31,40 @@ to try this with a disposable service and understand its access policy.
 
 ## Use the Go library
 
-A bytestream tunnel implements `net.Listener`. Pass it to a standard Go HTTP
-server to accept requests inside your application.
+With an authenticated control channel, create a published HTTP/1.1 tunnel
+and pass its listener to `net/http`.
 
 ```go
-func serveHTTP(listener rstream.BytestreamTunnel, handler http.Handler) error {
-	return (&http.Server{Handler: handler}).Serve(listener)
+tunnel, err := control.CreateTunnel(ctx, rstream.TunnelProperties{
+	Protocol:    rstream.ProtocolPtr(rstream.ProtocolHTTP),
+	HTTPVersion: rstream.HTTPVersionPtr(rstream.HTTP1_1),
+	Publish:     rstream.BoolPtr(true),
+})
+if err != nil {
+	return err
 }
+defer tunnel.Close()
+address, err := tunnel.ForwardingAddress()
+if err != nil {
+	return err
+}
+fmt.Println(address)
+listener, ok := tunnel.(rstream.BytestreamTunnel)
+if !ok {
+	return fmt.Errorf("expected a bytestream tunnel")
+}
+server := &http.Server{
+	Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintln(w, "Hello from rstream")
+	}),
+	ReadHeaderTimeout: 5 * time.Second,
+}
+return server.Serve(listener)
 ```
 
-The [Go walkthrough](docs/003-go-sdk.md) creates the listener and runs a complete
-application. The [example catalog](examples/README.md) includes matching
-clients and servers for additional protocols.
+Open the printed HTTPS address to receive `Hello from rstream`. The
+[Go SDK walkthrough](docs/003-go-sdk.md) includes module setup, the complete
+program and a private dialing example.
 
 ## Documentation
 
