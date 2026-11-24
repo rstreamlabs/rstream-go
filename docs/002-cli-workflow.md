@@ -7,14 +7,9 @@ response. Use an [installed CLI](000-installation.md) or
 
 ## Connect the CLI
 
-| Where you connect | How to get a context |
-| --- | --- |
-| Hosted rstream | Sign in, then select a project as shown below. A Basic project can publish the HTTP example. |
-| Self-hosted Community Edition | Use a reachable Engine hostname, trusted certificate and locally signed JWT. See [CE agent context](https://rstream.io/docs/tunnels/self-hosted/deployment#agent-context). For a Compose demo from the host, use the complete native CLI verification in the [CE setup guide](https://rstream.io/guides/self-host-rstream-engine-ce-with-docker-compose). |
-| An existing deployment | Use the context and credentials provided by your operator. See [identity options](#choose-an-identity) when provisioning a device or CI runner. |
-
-For hosted rstream, sign in and approve the request in the browser. On a
-development workstation, select **My computer** and **Development**.
+An existing CLI context with permission to publish HTTP tunnels is sufficient.
+To connect to a hosted project, sign in and approve the request in the browser.
+On a development workstation, select **My computer** and **Development**.
 
 ```sh
 rstream login
@@ -45,15 +40,10 @@ The CLI saves the choice as its default context. Go programs that use
 ## Publish a first HTTP service
 
 These commands use a [working default context](#connect-the-cli), Python 3
-and curl. For the independent Compose configuration, use its native CLI
-recipe for both forwarding and verification. A hosted published address is
-reachable from the Internet. A self-hosted address follows the reachability
-and access policy of its Engine. If your service or project
-requires caller authentication, configure the required proof first. For
-token authentication on a compatible managed project, add `--token-auth`
+and curl. A published address on hosted rstream is reachable from the Internet.
+If the service or project requires caller authentication, configure it before
+forwarding. For token authentication on a compatible managed project, add `--token-auth`
 and [verify a scoped caller token](https://rstream.io/docs/tunnels/http-tunnels/authentication#token-authentication).
-On CE, configure authentication in the
-upstream application or [try private access](004-tunnel-configuration.md#try-a-private-connection).
 
 ### Start the local service
 
@@ -91,17 +81,7 @@ rstream forward 127.0.0.1:8080 --http
 ```
 
 Open the HTTPS address printed by the CLI. Expect `Hello from rstream` at
-both addresses and a request in the local server log. For a CE Engine using a
-private certificate authority, verify the printed hostname with the CA file.
-
-```sh
-curl --cacert /path/to/ca.pem 'https://your-tunnel-host/'
-```
-
-Use `curl.exe` in PowerShell and supply the real URL and CA path. For a local
-Compose deployment, follow the native CLI verification in the
-[CE setup guide](https://rstream.io/guides/self-host-rstream-engine-ce-with-docker-compose)
-to use the mapped host port and resolve the printed hostname on loopback.
+both addresses and a request in the local server log.
 
 Stop the public forwarder with Ctrl+C. Leave the HTTP server running to
 [try private access](004-tunnel-configuration.md#try-a-private-connection)

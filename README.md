@@ -55,16 +55,22 @@ if !ok {
 }
 server := &http.Server{
 	Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprintln(w, "Hello from rstream")
+		hostname, _ := os.Hostname()
+		fmt.Fprintln(w, hostname)
 	}),
 	ReadHeaderTimeout: 5 * time.Second,
 }
 return server.Serve(listener)
 ```
 
-Open the printed HTTPS address to receive `Hello from rstream`. The
-[Go SDK walkthrough](docs/003-go-sdk.md) includes module setup, the complete
-program and a private dialing example.
+The published module includes a complete HTTP server. With a CLI context that permits HTTP publication, Go can fetch and run it directly.
+
+```sh
+go run github.com/rstreamlabs/rstream-go/examples/http-h1-server@v1.38.1 --publish
+```
+
+Open the printed HTTPS address to receive the machine hostname. Stop with Ctrl+C.
+The [Go SDK walkthrough](docs/003-go-sdk.md) covers adding the SDK to an application and dialing a private service.
 
 ## Documentation
 
