@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.38.2](https://github.com/rstreamlabs/rstream-go/compare/v1.38.1...v1.38.2) (2026-11-24)
+
+
+### Bug Fixes
+
+* **examples:** fit nested QUIC packets in the datagram tunnel ([7d35f8d](https://github.com/rstreamlabs/rstream-go/commit/7d35f8db28897ef0b0a6196bcf0bc74f16e56b86))
+
 ## [1.38.1](https://github.com/rstreamlabs/rstream-go/compare/v1.38.0...v1.38.1) (2026-11-20)
 
 
